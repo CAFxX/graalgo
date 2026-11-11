@@ -88,6 +88,12 @@ func runTests(pass *Pass) []Diagnostic {
 			if len(name) < 4 || name[:4] != "Test" {
 				continue
 			}
+			// TestMain has its own signature (*testing.M) and is
+			// checked by the second loop below; it must not be
+			// held to the *testing.T requirement here.
+			if name == "TestMain" {
+				continue
+			}
 			// TestXxx must take *testing.T.
 			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
 				out = append(out, Diagnostic{

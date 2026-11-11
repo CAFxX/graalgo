@@ -25,6 +25,27 @@ func runVetOnSrc(t *testing.T, src string) string {
 	return strings.Join(msgs, "\n")
 }
 
+// runVetOnTestSrc is runVetOnSrc for a _test.go file. The tests
+// analyzer only inspects _test.go files, so fixtures exercising it
+// must use this helper.
+func runVetOnTestSrc(t *testing.T, src string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "x_test.go")
+	if err := os.WriteFile(path, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := Run([]string{path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msgs []string
+	for _, d := range ds {
+		msgs = append(msgs, d.Message)
+	}
+	return strings.Join(msgs, "\n")
+}
+
 func TestStructTag(t *testing.T) {
 	src := `package main
 
@@ -453,5 +474,61 @@ func g(url string) {
 	count := strings.Count(joined, "before checking for errors")
 	if count != 1 {
 		t.Errorf("expected exactly 1 httpresponse diagnostic, got %d:\n%s", count, joined)
+	}
+}
+
+func TestTestMainSignature(t *testing.T) {
+	// A correct TestMain takes *testing.M, not *testing.T: it must
+	// produce no diagnostic. (Regression test: the tests analyzer
+	// used to flag every correct TestMain as "must take *testing.T"
+	// because TestMain starts with "Test".)
+	good := `package main
+
+import (
+	"os"
+	"testing"
+)
+
+func TestMain(m *testing.M) {
+	os.Exit(m.Run())
+}
+
+func TestFoo(t *testing.T) {
+	t.Log("good")
+}
+`
+	if joined := runVetOnTestSrc(t, good); joined != "" {
+		t.Errorf("expected no diagnostics for correct TestMain/TestFoo, got:\n%s", joined)
+	}
+
+	// A TestMain with the wrong arity is still flagged by the
+	// TestMain check, and only once.
+	badMain := `package main
+
+func TestMain() {
+}
+`
+	joined := runVetOnTestSrc(t, badMain)
+	if !strings.Contains(joined, "TestMain must take one *testing.M parameter") {
+		t.Errorf("expected TestMain arity diagnostic, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "Test functions must take") {
+		t.Errorf("TestMain must not be flagged by the TestXxx check, got:\n%s", joined)
+	}
+	if c := strings.Count(joined, "TestMain must take one *testing.M parameter"); c != 1 {
+		t.Errorf("expected exactly 1 TestMain diagnostic, got %d:\n%s", c, joined)
+	}
+
+	// A TestXxx function with the wrong parameter type is still
+	// flagged by the TestXxx check.
+	badTest := `package main
+
+func TestBad(x int) {
+	_ = x
+}
+`
+	joined = runVetOnTestSrc(t, badTest)
+	if !strings.Contains(joined, "Test functions must take *testing.T") {
+		t.Errorf("expected TestXxx diagnostic, got:\n%s", joined)
 	}
 }
