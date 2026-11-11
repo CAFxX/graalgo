@@ -119,7 +119,10 @@ var (
 	asmReTEXT      = regexp.MustCompile(`\bTEXT\b(.*)·([^\(]+)\(SB\)(?:\s*,\s*([0-9A-Z|+()]+))?(?:\s*,\s*\$(-?[0-9]+)(?:-([0-9]+))?)?`)
 	asmReDATA      = regexp.MustCompile(`\b(DATA|GLOBL)\b`)
 	asmReNamedFP   = regexp.MustCompile(`\$?([a-zA-Z0-9_\xFF-\x{10FFFF}]+)(?:\+([0-9]+))\(FP\)`)
-	asmReUnnamedFP = regexp.MustCompile(`[^\+\-0-9]([0-9]+)\(FP\)`)
+	// Groups: 1 is the full "8(FP)" text used in diagnostics, 2 is the
+	// bare offset used by the consumer (m[2]). Dropping the outer group
+	// makes m[2] index out of range and panics the analyzer.
+	asmReUnnamedFP = regexp.MustCompile(`[^\+\-0-9](([0-9]+)\(FP\))`)
 	asmReSP        = regexp.MustCompile(`[^+\-0-9](([0-9]+)\(([A-Z0-9]+)\))`)
 	asmReOpcode    = regexp.MustCompile(`^\s*(?:[A-Z0-9a-z_]+:)?\s*([A-Z]+)\s*([^,]*)(?:,\s*(.*))?`)
 	asmRePpc64Suff = regexp.MustCompile(`([BHWD])(ZU|Z|U|BR)?$`)

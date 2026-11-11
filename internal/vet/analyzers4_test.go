@@ -234,6 +234,47 @@ func noret() int32
 	}
 }
 
+func TestAsmDeclUnnamedFP(t *testing.T) {
+	// Regression test for B4-P1-1: asmReUnnamedFP had a single capture
+	// group while its consumer indexed m[2], so any unnamed FP offset
+	// panicked the analyzer (index out of range) instead of producing
+	// a diagnostic. Unnamed offsets (MOVQ 8(FP), AX) are the common
+	// hand-written-assembly style.
+	goSrc := `package p
+
+func f(a int64) int64
+func g(a int64) int64
+`
+	// On amd64, func f(a int64) int64 has a at 0 and ret at 8, for a
+	// total arg size of 16. Offsets 0 and 8 name known variables;
+	// offset 16 is beyond the frame.
+	asmSrc := "TEXT \u00b7f(SB),$0-16\n" +
+		"\tMOVQ 0(FP), AX\n" +
+		"\tMOVQ AX, 8(FP)\n" +
+		"\tRET\n" +
+		"TEXT \u00b7g(SB),$0-16\n" +
+		"\tMOVQ 16(FP), AX\n" +
+		"\tMOVQ AX, 8(FP)\n" +
+		"\tRET\n"
+	joined := runVetOnModule(t, "", map[string]string{
+		"p.go": goSrc, "p_amd64.s": asmSrc,
+	})
+	// m[1] must be the full "8(FP)" text, not the bare digits: the
+	// display strings pin the two-group shape of the regex.
+	if !strings.Contains(joined, "use of unnamed argument 0(FP); offset 0 is a+0(FP)") {
+		t.Errorf("expected unnamed-offset diagnostic for 0(FP), got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "use of unnamed argument 8(FP); offset 8 is ret+8(FP)") {
+		t.Errorf("expected unnamed-offset diagnostic for 8(FP), got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "use of unnamed argument 16(FP)") {
+		t.Errorf("expected unnamed-offset diagnostic for 16(FP), got:\n%s", joined)
+	}
+	if strings.Contains(joined, "unknown variable") {
+		t.Errorf("unnamed offsets must not be reported as unknown variables:\n%s", joined)
+	}
+}
+
 func TestAsmDeclNoAsm(t *testing.T) {
 	src := `package p
 
