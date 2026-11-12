@@ -60,17 +60,21 @@ case "${1:-build}" in
     # Validate every checked-in golden document plus a fresh export of
     # each valid testdata program — not only straight01.go (the goldens
     # exercise defer/go/nil/method values/atomic/unsafe kinds).
-    # pkgvar_mrarg is excluded: its golden fails validation on 104
-    # synthetic-position errors (line 0 / negative len in the __-helper
-    # funcs) — a pre-existing exporter position bug, not a kind error
-    # (zero unknown-kind errors); tracked as a follow-up, not papered
-    # over by weakening check_pos.
     for golden in testdata/*.json; do
       python3 tools/validate_frontend_v1.py "$golden" || exit 1
     done
+    # Compressed goldens (uncompressed export over the GitHub API blob
+    # limit) validate the same way, decompressed to a temp file — the
+    # *.json glob above never matches them.
+    for gz in testdata/*.json.gz; do
+      [ -f "$gz" ] || continue
+      gzbase=$(basename "$gz" .json.gz)
+      gunzip -c "$gz" > "${TMPDIR:-/tmp}/v1-$gzbase.json"
+      python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-$gzbase.json" || exit 1
+    done
     for src in testdata/straight01.go testdata/straight02.go \
                testdata/methodvalue01.go testdata/timeintr_value.go \
-               testdata/mr_return_named.go; do
+               testdata/mr_return_named.go testdata/pkgvar_mrarg.go; do
       base=$(basename "$src" .go)
       ./gofrontend "$src" > "${TMPDIR:-/tmp}/v1-$base.json"
       python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-$base.json" || exit 1

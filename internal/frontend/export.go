@@ -3329,13 +3329,29 @@ func (e *exporter) pos(n ast.Node) *Pos {
 			src = b
 		}
 	}
-	// M8: Truffle Source.createSection(line, col, len) is char-based, but
-	// go/token positions are byte-based. For non-ASCII sources the byte
-	// length can exceed the char length, and createSection throws
-	// IllegalArgumentException ("charIndex out of range") — a hard crash on
-	// valid programs (found by the M8 fuzzer: fmt.Println("日本語")).
-	// Emit rune-based col/len; off stays a byte offset (NodeFactory ignores it).
-	if src != nil && s.IsValid() && t.IsValid() {
+	// Synthesized nodes (mr_disk __-helpers, desugared temps) carry
+	// token.NoPos or End-before-Pos spans: fset.Position(NoPos) is the
+	// zero Position (line 0) and t.Offset-s.Offset goes negative. The
+	// frontend/v1 schema requires line >= 1 and len >= 0, so normalize
+	// here — the single choke point for every emitted position — instead
+	// of special-casing any synthesized name or package:
+	//   - no valid start (NoPos): no source span exists; emit the
+	//     zero-length sentinel at the start of the file (line 1, col 1).
+	//   - valid start, unknown or earlier end: keep the start, zero the
+	//     length — never emit a negative span.
+	// Valid spans are untouched, including the M8 rune recomputation.
+	if !s.IsValid() {
+		return &Pos{File: fileIdx, Line: 1, Col: 1, Off: 0, Len: 0}
+	}
+	if !t.IsValid() || t.Offset < s.Offset {
+		length = 0
+	} else if src != nil {
+		// M8: Truffle Source.createSection(line, col, len) is char-based, but
+		// go/token positions are byte-based. For non-ASCII sources the byte
+		// length can exceed the char length, and createSection throws
+		// IllegalArgumentException ("charIndex out of range") — a hard crash on
+		// valid programs (found by the M8 fuzzer: fmt.Println("日本語")).
+		// Emit rune-based col/len; off stays a byte offset (NodeFactory ignores it).
 		if f := e.fset.File(n.Pos()); f != nil && s.Offset <= t.Offset && t.Offset <= len(src) {
 			if lo := f.Offset(f.LineStart(s.Line)); lo <= s.Offset {
 				col = utf8.RuneCount(src[lo:s.Offset]) + 1

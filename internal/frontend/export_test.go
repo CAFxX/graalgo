@@ -65,6 +65,80 @@ func TestGolden(t *testing.T) {
 	}
 }
 
+// TestExportedPositionsValid: every position in every non-bad_ testdata
+// export must satisfy the frontend/v1 schema's position rules (line is
+// 1-based; file/line/col/off/len are non-negative ints). Synthesized AST
+// nodes (mr_disk __-helpers, desugared temps) carry token.NoPos or
+// End-before-Pos spans; the exporter must normalize those to schema-valid
+// positions instead of emitting line 0 / negative lengths (pkgvar_mrarg
+// exported 104 violations before the fix: 91 line-0, 13 negative-len).
+func TestExportedPositionsValid(t *testing.T) {
+	files, err := filepath.Glob("testdata/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	posKeys := map[string]bool{"file": true, "line": true, "col": true, "off": true, "len": true}
+	var walk func(t *testing.T, path string, v any, bad *[]string)
+	walk = func(t *testing.T, path string, v any, bad *[]string) {
+		t.Helper()
+		switch n := v.(type) {
+		case map[string]any:
+			if len(n) == len(posKeys) {
+				isPos := true
+				for k := range n {
+					if !posKeys[k] {
+						isPos = false
+					}
+				}
+				if isPos {
+					for k, fv := range n {
+						f, ok := fv.(float64)
+						if !ok || f != float64(int64(f)) || f < 0 {
+							*bad = append(*bad, path+"."+k+": must be non-negative int")
+						}
+					}
+					if line, ok := n["line"].(float64); !ok || line < 1 {
+						*bad = append(*bad, path+".line: line is 1-based")
+					}
+					return
+				}
+			}
+			for k, child := range n {
+				walk(t, path+"."+k, child, bad)
+			}
+		case []any:
+			for i, child := range n {
+				walk(t, path+"["+strconv.Itoa(i)+"]", child, bad)
+			}
+		}
+	}
+	for _, f := range files {
+		base := strings.TrimSuffix(filepath.Base(f), ".go")
+		if strings.HasPrefix(base, "bad_") {
+			continue
+		}
+		t.Run(base, func(t *testing.T) {
+			out, err := ExportFile(f)
+			if err != nil {
+				t.Fatalf("ExportFile(%s): %v", f, err)
+			}
+			var doc any
+			if err := json.Unmarshal([]byte(out), &doc); err != nil {
+				t.Fatalf("export of %s is not valid JSON: %v", f, err)
+			}
+			var bad []string
+			walk(t, "$", doc, &bad)
+			if len(bad) > 0 {
+				shown := bad
+				if len(shown) > 10 {
+					shown = shown[:10]
+				}
+				t.Errorf("%s: %d invalid position(s), e.g.:\n%s", f, len(bad), strings.Join(shown, "\n"))
+			}
+		})
+	}
+}
+
 // goldenFile resolves the golden for base: testdata/<base>.json, falling
 // back to testdata/<base>.json.gz when a compressed golden is registered.
 // The second return is true iff the .gz form exists; UPDATE_GOLDEN=1
