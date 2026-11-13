@@ -86,8 +86,11 @@ ADJUDICATED_REGISTRATIONS = {
 # R23-P1-1 (REVIEW-2026-11-12-23): the scope-limit phrasing
 # ("not in M7 scope", bare "not in scope") and the multi-result
 # desugar phrasing are stub families, not invariant messages.
+# F1 (review R23-P1-1, 2026-11-13): the desugar phrase also matches
+# `multi-result <callee> needs` — synth_os.go:2332, 2345 name the
+# callee (io.ReadAll / io.WriteString) instead of `call(s)`.
 _SCOPE_PHRASE = r"not in M\d+ scope|not in scope"
-_DESUGAR_PHRASE = r"multi-result desugar|multi-result calls? needs?"
+_DESUGAR_PHRASE = r"multi-result desugar|multi-result calls? needs?|multi-result \S+ needs?"
 _STUB_PHRASE = (
     r"not implemented|unimplemented|not supported|unsupported|"
     r"todo|FIXME|unreachable|NYI|not yet|tbd|"
@@ -293,10 +296,15 @@ def check_no_bridges(diff):
     # argument. The phrase list also covers the adjacent fail-fast
     # families found while hunting this class: the multi-result-desugar
     # stubs (`panic("...: multi-result desugar")`,
-    # `panic("...: multi-result call needs the mrM8 desugar ...")`, 552
+    # `panic("...: multi-result call needs the mrM8 desugar ...")`, 554
     # lines in internal/frontend/synth_*.go) and the bare-scope variant
     # (`panic("...: not in scope (multi-result calls need WS D ...)")`,
     # 16 lines: 15 in synth_testing*.go, 1 in synth_time_context.go).
+    # F1 (review R23-P1-1, 2026-11-13): the callee-name variant
+    # `panic("...: multi-result io.ReadAll needs the mrM8 desugar ...")`
+    # (internal/frontend/synth_os.go:2332, 2345) evaded the phrase — the
+    # token between `multi-result` and `needs` is a callee name, not
+    # `call(s)` — so the phrase also matches `multi-result <token> needs`.
     # The optional backslash covers
     # generated-code literals (`panic(\"...\")` in synth_math_big.go,
     # 64 stub-phrase lines). The leading \b keeps short keywords
@@ -304,12 +312,13 @@ def check_no_bridges(diff):
     # not narrow the anchored case (the quote is a non-word char, so a
     # phrase at string start still matches).
     #
-    # Blast radius, adjudicated 2026-11-12 (repo-wide, old vs new
-    # regexes over every `panic(` line in *.go): 859 newly-flagged
-    # occurrences — 316 M-scope, 16 bare-scope, 382 desugar, 145
-    # keyword-mid-string. The desugar count is scope-priority, like the
-    # manifest: 552 lines carry the desugar phrase, of which 170 also
-    # carry a scope phrase and count under scope. The 118 "call sites
+    # Blast radius, adjudicated 2026-11-12, F1-corrected 2026-11-13
+    # (repo-wide, old vs new regexes over every `panic(` line in *.go):
+    # 861 newly-flagged occurrences — 316 M-scope, 16 bare-scope, 384
+    # desugar, 145 keyword-mid-string. The desugar count is
+    # scope-priority, like the manifest: 554 lines carry the desugar
+    # phrase, of which 170 also carry a scope phrase and count under
+    # scope. The 118 "call sites
     # desugar to ..." lines carry the bare word, not the phrase, and flag
     # via their keyword (e.g. unreachable), so they count under
     # keyword-mid-string. All are fail-fast stubs except two upstream invariant

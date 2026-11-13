@@ -333,7 +333,7 @@ index 00000000..11111111 100644
 """
 
 # Adjacent fail-fast family found while hunting the R23-P1-1 class:
-# multi-result-desugar stubs (552 live lines, 47 of them generated-code
+# multi-result-desugar stubs (554 live lines, 47 of them generated-code
 # literals in synth_math_big.go). Long form.
 DESUGAR_PANIC_LONG = """\
 diff --git a/internal/frontend/synth_hash_fnv.go b/internal/frontend/synth_hash_fnv.go
@@ -354,6 +354,31 @@ index 00000000..11111111 100644
 @@ -1,3 +1,4 @@
  package frontend
 +\tpanic("crypto/internal/fips140/nistec: SetBytes: multi-result desugar")
+"""
+
+# F1 (review R23-P1-1, 2026-11-13): the callee-name desugar variant.
+# Verbatim evading lines from internal/frontend/synth_os.go:2332, 2345 —
+# the token between `multi-result` and `needs` is the callee name
+# (io.ReadAll / io.WriteString), not `call(s)`, so the R23-P1-1 phrase
+# missed them. Each must now flag PANIC STUB.
+DESUGAR_PANIC_CALLEE_READALL = """\
+diff --git a/internal/frontend/synth_os.go b/internal/frontend/synth_os.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_os.go
++++ b/internal/frontend/synth_os.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("os: __fileReadFrom: multi-result io.ReadAll needs the mrM8 desugar (re-test: WS D)")
+"""
+
+DESUGAR_PANIC_CALLEE_WRITESTRING = """\
+diff --git a/internal/frontend/synth_os.go b/internal/frontend/synth_os.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_os.go
++++ b/internal/frontend/synth_os.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("os: __fileWriteTo: multi-result io.WriteString needs the mrM8 desugar (re-test: WS D)")
 """
 
 # Scope panic through the composed form: the scope phrase must be
@@ -497,6 +522,14 @@ class TestNoBridgesGate(unittest.TestCase):
 
     def test_desugar_panic_short_flagged(self):
         errs = cnb.check_no_bridges(DESUGAR_PANIC_SHORT)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_desugar_panic_callee_readall_flagged(self):
+        errs = cnb.check_no_bridges(DESUGAR_PANIC_CALLEE_READALL)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_desugar_panic_callee_writestring_flagged(self):
+        errs = cnb.check_no_bridges(DESUGAR_PANIC_CALLEE_WRITESTRING)
         self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
 
     def test_scope_panic_composed_flagged(self):

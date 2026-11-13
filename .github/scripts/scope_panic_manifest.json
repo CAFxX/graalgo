@@ -41,7 +41,7 @@
     }
   },
   "desugar": {
-    "total": 382,
+    "total": 384,
     "files": {
       "synth_crypto_aes.go": 1,
       "synth_crypto_boring.go": 24,
@@ -90,6 +90,7 @@
       "synth_mathbits.go": 12,
       "synth_mathcmplx.go": 1,
       "synth_mathrand.go": 1,
+      "synth_os.go": 2,
       "synth_xml.go": 2
     }
   }
