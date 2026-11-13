@@ -2,7 +2,6 @@ package graalgo.p3reflect;
 
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
@@ -2010,18 +2009,10 @@ public final class ReflectOpNode extends GoExprNode {
         throw new IllegalStateException("reflect: no field " + name);
     }
 
-    /**
-     * Boxes an int[] as a GoSlice of int. Go int is 64-bit (D5: int →
-     * INT64 → long[]), so the backing must be long[]: every slice-element
-     * read goes through Boxing.arrayGet(INT64), which casts to long[].
-     * An int[] backing threw ClassCastException on the first element read
-     * (reflect.StructField.Index element access).
-     */
+    /** Boxes an int[] as a GoSlice of int. */
     private static GoSlice intSlice(int[] vals) {
-        long[] arr = (long[]) Boxing.newArray(GoKind.INT64, vals.length);
-        for (int i = 0; i < vals.length; i++) {
-            arr[i] = vals[i];
-        }
+        Object arr = new int[vals.length];
+        System.arraycopy(vals, 0, (int[]) arr, 0, vals.length);
         return new GoSlice(arr, 0, vals.length, vals.length);
     }
 }
