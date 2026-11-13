@@ -357,9 +357,9 @@ public final class SchedulerCore {
      *
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
-     * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * 2); {@code Goexit} kills just that goroutine; internal errors
+     * ({@code RuntimeException}s, stack overflows, and any other
+     * {@code Error}) are recorded loudly (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
@@ -393,6 +393,17 @@ public final class SchedulerCore {
                     recordCrash("internal error", e);
                 }
             } catch (RuntimeException e) {
+                recordCrash("internal error", e);
+            } catch (Error e) {
+                // B-P1-1 (REVIEW-2026-11-10): any other Error
+                // (AssertionError, OutOfMemoryError, other LinkageErrors)
+                // escaping a goroutine body must be recorded as a crash —
+                // otherwise neither counter increments and both launchers
+                // exit 0. StackOverflowError and the class-loading Errors
+                // above keep their own arms; PanicException/Goexit are
+                // caught earlier and unaffected. recordCrash increments
+                // first, so the crash is counted even if reporting itself
+                // fails under resource exhaustion.
                 recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.

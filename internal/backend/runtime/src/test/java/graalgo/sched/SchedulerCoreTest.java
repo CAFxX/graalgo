@@ -484,6 +484,33 @@ public final class SchedulerCoreTest {
     }
 
     /**
+     * A non-{@code RuntimeException} {@code Error} escaping a goroutine
+     * body is recorded as a crash (launcher exits 1), never swallowed.
+     * verifies: GG-0017 (Goexit/panic/crash discipline).
+     * B-P1-1 (REVIEW-2026-11-10): {@code AssertionError} (and any other
+     * {@code Error} outside the existing arms) escaped
+     * {@code SchedulerCore.spawn}'s catch chain, so neither
+     * {@code panicCount} nor {@code crashCount} incremented and both
+     * launchers exited 0. Red-green: fails while the generic
+     * {@code Error} arm is missing (crashed() stays false).
+     */
+    public void testSpawnedErrorRecorded() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new AssertionError("synthetic internal error");
+            });
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "non-RuntimeException Error recorded as crash");
+            assertTrue(!sched.panicked(), "Error is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Voluntary yield via the quantum-park mechanism.
      * Reviewer2 P1-2: yieldCurrent() had zero coverage. With cap=1 and
      * quantum disabled, a goroutine that never yields would starve the
