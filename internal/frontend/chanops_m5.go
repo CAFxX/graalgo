@@ -223,9 +223,17 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 	cases := make([]*Node, 0, len(s.Body.List))
 	// P3-M5 (WS E, ADR-0005 App C): the p3chan SelectNode builder
 	// requires every select target obj to have a frame slot allocated
-	// by a vardecl DOMINATING the select. := targets (and blank temps)
-	// are therefore declared by a synthesized vardecl emitted
-	// immediately before the select; = targets are already declared.
+	// by a vardecl DOMINATING the select, and rejects BOXED targets
+	// outright ("the exporter must desugar through a plain
+	// temporary"). A user target is boxed whenever its address is
+	// taken anywhere in the function or a loop-captured funclit
+	// references it, so a user variable must NEVER be a select
+	// target: selectRecvTargets receives into a fresh plain temp per
+	// target (declared by the dominating vardecl — a synthetic temp
+	// is never address-taken or funclit-captured, hence never
+	// boxed) and returns a copy-back (v := temp / v = temp) that is
+	// prepended to the case body, mirroring exportRangeChan's
+	// v := __rng_v_N pattern (R2313-P1-1).
 	var declNames []string
 	var declObjs []any
 	seenDecl := map[int]bool{}
@@ -242,6 +250,7 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 			return nil, fmt.Errorf("gofrontend: select body holds %T", stmt)
 		}
 		var fields map[string]any
+		var copyBack []*Node // R2313-P1-1: temp -> target copy-back, prepended to the case body
 		if cc.Comm == nil {
 			fields = map[string]any{"kind": "default"}
 		} else {
@@ -267,10 +276,11 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 				// case v := <-ch: / case v, ok := <-ch: /
 				// case v = <-ch: (targets defined before the body so
 				// the body resolves them).
-				ch, targets, err := e.selectRecvTargets(comm, declare)
+				ch, targets, cb, err := e.selectRecvTargets(comm, declare)
 				if err != nil {
 					return nil, err
 				}
+				copyBack = cb
 				fields = map[string]any{"kind": "recv", "chan": ch}
 				if len(targets) > 0 {
 					fields["targets"] = targets
@@ -282,6 +292,13 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 		body, err := e.exportStmtList(cc.Body, cc)
 		if err != nil {
 			return nil, err
+		}
+		if len(copyBack) > 0 {
+			// R2313-P1-1: the copy-back runs first in the case body,
+			// before any user statement reads the target.
+			if stmts, ok := body.Fields["stmts"].([]*Node); ok {
+				body.Fields["stmts"] = append(append([]*Node{}, copyBack...), stmts...)
+			}
 		}
 		fields["body"] = body
 		cases = append(cases, e.node("selectcase", cc, fields))
@@ -309,42 +326,56 @@ func (e *exporter) selectRecvChan(x ast.Expr) (*Node, error) {
 
 // selectRecvTargets exports the channel operand of a `case v := <-ch:`
 // (or `case v, ok := <-ch:` / `case v = <-ch:`) clause and defines the
-// case-scoped target variables, returning the channel node and the
-// target object ids (parallel to the lhs). Every :=-defined target
-// (including blank temps) is reported via declare so the caller can
-// emit the dominating vardecl the p3chan builder requires.
-func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, int)) (*Node, []int, error) {
+// case-scoped target variables, returning the channel node, the target
+// object ids (parallel to the lhs), and the copy-back statements that
+// move each received value from its temp into the real target at the
+// top of the case body.
+//
+// R2313-P1-1: the wire "targets" are NEVER the user variables — they
+// are fresh plain temps (`__select_tmp_N`, declared via declare so
+// the caller emits the dominating vardecl the p3chan builder
+// requires). A user target is boxed whenever its address is taken
+// anywhere in the function or a loop-captured funclit references it,
+// and SelectNode rejects boxed targets at build time; a synthetic
+// temp is never named by user code, so it is never boxed. The
+// copy-back is `v := temp` for := targets (mirroring exportRangeChan's
+// `v := __rng_v_N`) and `v = temp` for = targets. Blank targets need
+// no copy-back: the temp itself discards the value. Non-identifier
+// targets are still rejected here (R2313-P1-2, sibling lane); that
+// lane can append a `target = temp` assign to the same copyBack list.
+func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, int)) (*Node, []int, []*Node, error) {
 	if len(comm.Rhs) != 1 {
-		return nil, nil, scopeErrorf("select recv case with %d rhs is not supported in frontend/v1 scope (WS D)", len(comm.Rhs))
+		return nil, nil, nil, scopeErrorf("select recv case with %d rhs is not supported in frontend/v1 scope (WS D)", len(comm.Rhs))
 	}
 	ux, ok := unparen(comm.Rhs[0]).(*ast.UnaryExpr)
 	if !ok || ux.Op != token.ARROW {
-		return nil, nil, scopeErrorf("select recv case rhs is %T, want <-ch", comm.Rhs[0])
+		return nil, nil, nil, scopeErrorf("select recv case rhs is %T, want <-ch", comm.Rhs[0])
 	}
 	ch, err := e.exportExpr(ux.X)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Element type (for blank temps).
 	elem, err := chanElemType(e.info, ux.X)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	targets := make([]int, 0, len(comm.Lhs))
-	for _, lhs := range comm.Lhs {
+	var copyBack []*Node
+	for i, lhs := range comm.Lhs {
 		id, ok := lhs.(*ast.Ident)
 		if !ok {
-			return nil, nil, scopeErrorf("select recv case with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
+			return nil, nil, nil, scopeErrorf("select recv case with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
 		}
 		if id.Name == "_" {
 			// Blank: assign to a synthetic temp so target positions
 			// stay stable for the Java builder.
 			e.chanSeq++
 			name := fmt.Sprintf("__select_blank_%d", e.chanSeq)
-			v := types.NewVar(token.NoPos, nil, name, elem)
+			v := types.NewVar(token.NoPos, nil, name, recvTargetType(i, elem))
 			oid, err := e.defVar(v, false)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			declare(name, oid)
 			targets = append(targets, oid)
@@ -352,28 +383,60 @@ func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, 
 		}
 		v, ok := e.info.ObjectOf(id).(*types.Var)
 		if !ok {
-			return nil, nil, fmt.Errorf("gofrontend: select target %q does not denote a variable", id.Name)
+			return nil, nil, nil, fmt.Errorf("gofrontend: select target %q does not denote a variable", id.Name)
 		}
-		var oid int
-		if comm.Tok == token.DEFINE {
-			oid, err = e.defVar(v, false)
-			if err != nil {
-				return nil, nil, err
-			}
-			declare(id.Name, oid)
-		} else {
-			var ok bool
-			oid, ok = e.objIDs[v]
-			if !ok {
-				return nil, nil, fmt.Errorf("gofrontend: select target %q used before declaration", id.Name)
-			}
-		}
+		// Receive into a fresh plain temp, never into the user
+		// variable (see the function comment).
+		e.chanSeq++
+		tmpName := fmt.Sprintf("__select_tmp_%d", e.chanSeq)
+		tv := types.NewVar(token.NoPos, nil, tmpName, v.Type())
+		tmpOid, err := e.defVar(tv, false)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
-		targets = append(targets, oid)
+		declare(tmpName, tmpOid)
+		targets = append(targets, tmpOid)
+		tmpTid, err := e.typeID(v.Type())
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		tmpIdent := e.node("ident", comm, map[string]any{
+			"name": tmpName, "obj": tmpOid, "type": tmpTid,
+		})
+		if comm.Tok == token.DEFINE {
+			oid, err := e.defVar(v, false)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			copyBack = append(copyBack, e.node("vardecl", comm, map[string]any{
+				"names": []string{id.Name}, "objs": []int{oid},
+				"define": true, "type": nil, "values": []*Node{tmpIdent},
+			}))
+		} else {
+			if _, ok := e.objIDs[v]; !ok {
+				return nil, nil, nil, fmt.Errorf("gofrontend: select target %q used before declaration", id.Name)
+			}
+			lhsNode, err := e.exportAssignable(id)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			copyBack = append(copyBack, e.node("assign", comm, map[string]any{
+				"tok": "=", "lhs": []*Node{lhsNode}, "rhs": []*Node{tmpIdent},
+			}))
+		}
 	}
-	return ch, targets, nil
+	return ch, targets, copyBack, nil
+}
+
+// recvTargetType returns the wire type of a select / comma-ok receive
+// target at position i: the channel element type for the value
+// (i == 0), bool for the ok target (i == 1). A blank ok temp must be
+// bool, not elem — the builder rejects a non-bool ok target.
+func recvTargetType(i int, elem types.Type) types.Type {
+	if i == 1 {
+		return types.Typ[types.Bool]
+	}
+	return elem
 }
 
 // exportRangeChan desugars `for v := range ch` (ADR-0005 Appendix C) to
@@ -536,6 +599,13 @@ func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
 // isCommaOkValue only recognizes index/typeassert, so recv{commaOk:true}
 // is not emittable; a blocking single-case select with targets [v, ok]
 // is semantically identical to <-ch plus the closed-channel bit.
+//
+// R2313-P1-1: the select targets are fresh plain temps, never the
+// user variables (a user target is boxed whenever its address is
+// taken or a loop-captured funclit references it, and SelectNode
+// rejects boxed targets); the copy-back (v := temp for :=,
+// v = temp for =) runs after the select, mirroring the select
+// desugar in selectRecvTargets.
 func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*Node, error) {
 	ux := unparen(s.Rhs[0]).(*ast.UnaryExpr)
 	ch, err := e.exportExpr(ux.X)
@@ -547,119 +617,79 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 	if err != nil {
 		return nil, err
 	}
-	// Resolve the two targets. For `=` with a global target, desugar
-	// through a temp (ADR-0005 App C: globals are not in the frame
-	// maps).
+	// Resolve the two targets. Both forms desugar through fresh
+	// plain temps (ADR-0005 App C): user variables must never be
+	// select targets — a boxed target is rejected by the builder
+	// (R2313-P1-1) — and for `=` a global target is additionally not
+	// in the frame maps. The copy-back (v := temp for :=, v = temp
+	// for =) runs after the select.
 	var targetNames []string
 	var targetObjs []int
-	needDecl := define // := targets need a dominating vardecl
-	var copyBack *Node // assign node for global temps (define=false)
+	needDecl := true // temps need a dominating vardecl
+	var copyBack []*Node
 	if !define {
-		// Check for globals.
-		hasGlobal := false
-		for _, lhs := range s.Lhs {
-			id, ok := lhs.(*ast.Ident)
-			if !ok || id.Name == "_" {
-				continue
+		// = : receive into temps, then copy back with a single
+		// multi-target assign (v, ok = tmp0, tmp1).
+		e.chanSeq++
+		seq := e.chanSeq
+		lhs := make([]*Node, 0, 2)
+		rhs := make([]*Node, 0, 2)
+		for i, l := range s.Lhs {
+			id, ok := l.(*ast.Ident)
+			if !ok {
+				return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", l)
 			}
-			if v, ok := e.info.ObjectOf(id).(*types.Var); ok {
-				if e.pkg.Scope().Lookup(v.Name()) == v {
-					hasGlobal = true
-					break
-				}
+			var typ types.Type
+			var userName string
+			if id.Name == "_" {
+				typ = recvTargetType(i, elem)
+				userName = "_"
+			} else {
+				v := e.info.ObjectOf(id).(*types.Var)
+				typ = v.Type()
+				userName = id.Name
 			}
-		}
-		if hasGlobal {
-			// Use temps for the select, then copy back.
-			e.chanSeq++
-			seq := e.chanSeq
-			lhs := make([]*Node, 0, 2)
-			rhs := make([]*Node, 0, 2)
-			for i, l := range s.Lhs {
-				id, ok := l.(*ast.Ident)
-				if !ok {
-					return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", l)
-				}
-				var typ types.Type
-				var userName string
-				if id.Name == "_" {
-					typ = elem
-					userName = "_"
-				} else {
-					v := e.info.ObjectOf(id).(*types.Var)
-					typ = v.Type()
-					userName = id.Name
-				}
-				name := fmt.Sprintf("__rcv_tmp_%d_%d", seq, i)
-				tv := types.NewVar(token.NoPos, nil, name, typ)
-				oid, err := e.defVar(tv, false)
+			name := fmt.Sprintf("__rcv_tmp_%d_%d", seq, i)
+			tv := types.NewVar(token.NoPos, nil, name, typ)
+			oid, err := e.defVar(tv, false)
+			if err != nil {
+				return nil, err
+			}
+			targetNames = append(targetNames, name)
+			targetObjs = append(targetObjs, oid)
+			if userName != "_" {
+				ln, err := e.exportAssignable(l)
 				if err != nil {
 					return nil, err
 				}
-				targetNames = append(targetNames, name)
-				targetObjs = append(targetObjs, oid)
-				if userName != "_" {
-					ln, err := e.exportAssignable(l)
-					if err != nil {
-						return nil, err
-					}
-					lhs = append(lhs, ln)
-					tid, err := e.typeID(typ)
-					if err != nil {
-						return nil, err
-					}
-					rhs = append(rhs, e.node("ident", s, map[string]any{
-						"name": name, "obj": oid, "type": tid,
-					}))
+				lhs = append(lhs, ln)
+				tid, err := e.typeID(typ)
+				if err != nil {
+					return nil, err
 				}
-			}
-			if len(lhs) > 0 {
-				copyBack = e.node("assign", s, map[string]any{
-					"tok": "=", "lhs": lhs, "rhs": rhs,
-				})
-			}
-			needDecl = true // temps need declaration
-		} else {
-			// Locals: use directly, no declaration needed.
-			for _, lhs := range s.Lhs {
-				id, ok := lhs.(*ast.Ident)
-				if !ok {
-					return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
-				}
-				if id.Name == "_" {
-					// Blank local? `_ = <-ch` — use a temp.
-					e.chanSeq++
-					name := fmt.Sprintf("__rcv_blank_%d", e.chanSeq)
-					tv := types.NewVar(token.NoPos, nil, name, elem)
-					oid, err := e.defVar(tv, false)
-					if err != nil {
-						return nil, err
-					}
-					targetNames = append(targetNames, name)
-					targetObjs = append(targetObjs, oid)
-					needDecl = true
-					continue
-				}
-				v := e.info.ObjectOf(id).(*types.Var)
-				oid, ok := e.objIDs[v]
-				if !ok {
-					return nil, fmt.Errorf("gofrontend: comma-ok recv target %q used before declaration", id.Name)
-				}
-				targetNames = append(targetNames, id.Name)
-				targetObjs = append(targetObjs, oid)
+				rhs = append(rhs, e.node("ident", s, map[string]any{
+					"name": name, "obj": oid, "type": tid,
+				}))
 			}
 		}
+		if len(lhs) > 0 {
+			copyBack = append(copyBack, e.node("assign", s, map[string]any{
+				"tok": "=", "lhs": lhs, "rhs": rhs,
+			}))
+		}
 	} else {
-		// := : define the targets.
-		for _, lhs := range s.Lhs {
+		// := : receive into temps, then declare the targets from
+		// them (v := tmp0, ok := tmp1) after the select.
+		e.chanSeq++
+		seq := e.chanSeq
+		for i, lhs := range s.Lhs {
 			id, ok := lhs.(*ast.Ident)
 			if !ok {
 				return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
 			}
 			if id.Name == "_" {
-				e.chanSeq++
-				name := fmt.Sprintf("__rcv_blank_%d", e.chanSeq)
-				tv := types.NewVar(token.NoPos, nil, name, elem)
+				name := fmt.Sprintf("__rcv_tmp_%d_%d", seq, i)
+				tv := types.NewVar(token.NoPos, nil, name, recvTargetType(i, elem))
 				oid, err := e.defVar(tv, false)
 				if err != nil {
 					return nil, err
@@ -672,14 +702,31 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: comma-ok recv target %q does not denote a variable", id.Name)
 			}
+			name := fmt.Sprintf("__rcv_tmp_%d_%d", seq, i)
+			tv := types.NewVar(token.NoPos, nil, name, v.Type())
+			tmpOid, err := e.defVar(tv, false)
+			if err != nil {
+				return nil, err
+			}
+			targetNames = append(targetNames, name)
+			targetObjs = append(targetObjs, tmpOid)
+			tmpTid, err := e.typeID(v.Type())
+			if err != nil {
+				return nil, err
+			}
 			oid, err := e.defVar(v, false)
 			if err != nil {
 				return nil, err
 			}
-			targetNames = append(targetNames, id.Name)
-			targetObjs = append(targetObjs, oid)
+			copyBack = append(copyBack, e.node("vardecl", s, map[string]any{
+				"names": []string{id.Name}, "objs": []int{oid},
+				"define": true, "type": nil, "values": []*Node{e.node("ident", s, map[string]any{
+					"name": name, "obj": tmpOid, "type": tmpTid,
+				})},
+			}))
 		}
 	}
+
 	// Build the select.
 	declObjs := make([]any, len(targetObjs))
 	for i, oid := range targetObjs {
@@ -705,9 +752,7 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 		stmts = append(stmts, vd)
 	}
 	stmts = append(stmts, sel)
-	if copyBack != nil {
-		stmts = append(stmts, copyBack)
-	}
+	stmts = append(stmts, copyBack...)
 	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 

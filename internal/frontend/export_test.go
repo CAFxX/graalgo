@@ -715,3 +715,237 @@ func main() {
 		}
 	}
 }
+
+// TestSelectRecvBoxedDesugar verifies R2313-P1-1: a select receive
+// target must never be the user variable — the backend rejects boxed
+// targets at build time, and a target is boxed whenever its address
+// is taken anywhere in the function or a loop-captured funclit
+// references it. The exporter therefore receives into a fresh plain
+// temp (__select_tmp_N) and copies back at the top of the case body
+// (v := temp / v = temp); the comma-ok desugar does the same with
+// __rcv_tmp_* temps and a copy-back after the select. The test pins
+// the invariant on the wire: every recv case's targets are disjoint
+// from the copy-back's target obj, and each copy-back reads a temp
+// ident. It fails on the pre-fix exporter, where targets ARE the user
+// variables.
+func TestSelectRecvBoxedDesugar(t *testing.T) {
+	src := `package main
+
+func main() {
+	a := make(chan int, 1)
+	a <- 1
+	select {
+	case v := <-a:
+		println(*(&v))
+	}
+	b := 0
+	select {
+	case b = <-a:
+		println(b)
+	}
+	_ = &b
+	c, ok := <-a
+	_ = &c
+	_ = ok
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "selectboxed.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	// Collect every recv selectcase with targets, and every vardecl.
+	type recvCase struct {
+		targets []float64
+		stmts   []any
+	}
+	var cases []recvCase
+	type vardecl struct {
+		names  []string
+		objs   []float64
+		values []any
+	}
+	var decls []vardecl
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if f, ok := v["fields"].(map[string]any); ok {
+				switch v["kind"] {
+				case "selectcase":
+					if f["kind"] == "recv" {
+						if tg, ok := f["targets"].([]any); ok {
+							var tgts []float64
+							for _, x := range tg {
+								n, _ := x.(float64)
+								tgts = append(tgts, n)
+							}
+							var stmts []any
+							if b, ok := f["body"].(map[string]any); ok {
+								if bf, ok := b["fields"].(map[string]any); ok {
+									stmts, _ = bf["stmts"].([]any)
+								}
+							}
+							cases = append(cases, recvCase{tgts, stmts})
+						}
+					}
+				case "vardecl":
+					var d vardecl
+					if names, ok := f["names"].([]any); ok {
+						for _, x := range names {
+							s, _ := x.(string)
+							d.names = append(d.names, s)
+						}
+					}
+					if objs, ok := f["objs"].([]any); ok {
+						for _, x := range objs {
+							n, _ := x.(float64)
+							d.objs = append(d.objs, n)
+						}
+					}
+					d.values, _ = f["values"].([]any)
+					decls = append(decls, d)
+				}
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	// Three recv cases: the := select, the = select, and the
+	// single-case select the comma-ok desugar builds.
+	if len(cases) != 3 {
+		t.Fatalf("want 3 recv cases with targets, got %d", len(cases))
+	}
+	identName := func(n map[string]any) (string, float64) {
+		f, _ := n["fields"].(map[string]any)
+		s, _ := f["name"].(string)
+		o, _ := f["obj"].(float64)
+		return s, o
+	}
+	var commaOk *recvCase
+	for i := range cases {
+		c := &cases[i]
+		if len(c.stmts) == 0 {
+			commaOk = c
+			continue
+		}
+		// The copy-back is the first statement of the case body.
+		first, ok := c.stmts[0].(map[string]any)
+		if !ok {
+			t.Fatalf("case body first stmt is not a node: %v", c.stmts[0])
+		}
+		ff, _ := first["fields"].(map[string]any)
+		var targetObj float64
+		var tempName string
+		switch first["kind"] {
+		case "vardecl": // := target: v := __select_tmp_N
+			if len(ff["objs"].([]any)) != 1 {
+				t.Fatalf("copy-back vardecl objs: %v", ff["objs"])
+			}
+			targetObj, _ = ff["objs"].([]any)[0].(float64)
+			vals, _ := ff["values"].([]any)
+			if len(vals) != 1 {
+				t.Fatalf("copy-back vardecl values: %v", ff["values"])
+			}
+			vn, ok := vals[0].(map[string]any)
+			if !ok || vn["kind"] != "ident" {
+				t.Fatalf("copy-back vardecl value is not an ident: %v", vals[0])
+			}
+			tempName, _ = identName(vn)
+		case "assign": // = target: v = __select_tmp_N
+			lhs, _ := ff["lhs"].([]any)
+			rhs, _ := ff["rhs"].([]any)
+			if len(lhs) != 1 || len(rhs) != 1 {
+				t.Fatalf("copy-back assign lhs/rhs: %v / %v", ff["lhs"], ff["rhs"])
+			}
+			ln, ok := lhs[0].(map[string]any)
+			if !ok || ln["kind"] != "ident" {
+				t.Fatalf("copy-back assign lhs is not an ident: %v", lhs[0])
+			}
+			_, targetObj = identName(ln)
+			rn, ok := rhs[0].(map[string]any)
+			if !ok || rn["kind"] != "ident" {
+				t.Fatalf("copy-back assign rhs is not an ident: %v", rhs[0])
+			}
+			tempName, _ = identName(rn)
+		default:
+			t.Fatalf("case body first stmt is %q, want vardecl (:=) or assign (=)", first["kind"])
+		}
+		if !strings.HasPrefix(tempName, "__select_tmp_") {
+			t.Errorf("copy-back reads %q, want a __select_tmp_* ident", tempName)
+		}
+		for _, tg := range c.targets {
+			if tg == targetObj {
+				t.Errorf("select targets %v contain the user target obj %v; want temps only", c.targets, targetObj)
+			}
+		}
+	}
+	if commaOk == nil {
+		t.Fatal("no empty-body recv case found (comma-ok desugar)")
+	}
+	if len(commaOk.targets) != 2 {
+		t.Fatalf("comma-ok case has %d targets, want 2", len(commaOk.targets))
+	}
+	// The comma-ok copy-back declares c and ok from __rcv_tmp_* temps
+	// after the select; its targets must not be those user objs.
+	for _, want := range []string{"c", "ok"} {
+		found := false
+		for _, d := range decls {
+			if len(d.names) != 1 || d.names[0] != want || len(d.values) != 1 {
+				continue
+			}
+			vn, ok := d.values[0].(map[string]any)
+			if !ok || vn["kind"] != "ident" {
+				continue
+			}
+			tempName, _ := identName(vn)
+			if !strings.HasPrefix(tempName, "__rcv_tmp_") {
+				continue
+			}
+			found = true
+			if len(d.objs) != 1 {
+				t.Fatalf("comma-ok copy-back vardecl objs: %v", d.objs)
+			}
+			for _, tg := range commaOk.targets {
+				if tg == d.objs[0] {
+					t.Errorf("comma-ok targets %v contain the user target obj %v; want temps only", commaOk.targets, d.objs[0])
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no copy-back vardecl %s := __rcv_tmp_* found", want)
+		}
+	}
+	// The dominating vardecls must declare the temps themselves.
+	var sawSelectTemp, sawRcvTemp bool
+	for _, d := range decls {
+		for _, n := range d.names {
+			if strings.HasPrefix(n, "__select_tmp_") {
+				sawSelectTemp = true
+			}
+			if strings.HasPrefix(n, "__rcv_tmp_") {
+				sawRcvTemp = true
+			}
+		}
+	}
+	if !sawSelectTemp {
+		t.Errorf("no dominating vardecl declares a __select_tmp_* temp")
+	}
+	if !sawRcvTemp {
+		t.Errorf("no dominating vardecl declares a __rcv_tmp_* temp")
+	}
+}
