@@ -561,6 +561,199 @@ func assertGostmtZeroArg(t *testing.T, nodes []nodeKind) {
 	}
 }
 
+// R2313-P1-2: select receive cases with non-identifier targets —
+// index, selector, dereference, map index, and the two-target ok form —
+// desugar through a synthetic temp. The recv case keeps a single
+// frame-slotted temp target, and its body opens with the copy-back
+// assignment (target = tmp) so the received value lands in the real
+// target. Pre-fix, every one of these failed export with scopeErrorf.
+// The copy-back runs only on case selection, which is gc's evaluation
+// timing for the target expression (a side-effecting index in a losing
+// case is never evaluated under gc).
+func TestSelectRecvNonIdentTargets(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+type box struct{ x int }
+
+func main() {
+	arr := [1]int{}
+	b := box{}
+	x := 0
+	p := &x
+	m := map[string]int{}
+	buf := [2]int{}
+	var ok bool
+	ch1 := make(chan int, 1)
+	ch1 <- 1
+	select {
+	case arr[0] = <-ch1:
+	default:
+	}
+	ch2 := make(chan int, 1)
+	ch2 <- 2
+	select {
+	case b.x = <-ch2:
+	default:
+	}
+	ch3 := make(chan int, 1)
+	ch3 <- 3
+	select {
+	case *p = <-ch3:
+	default:
+	}
+	ch4 := make(chan int, 1)
+	ch4 <- 4
+	select {
+	case m["k"] = <-ch4:
+	default:
+	}
+	ch5 := make(chan int, 1)
+	ch5 <- 5
+	select {
+	case buf[1], ok = <-ch5:
+	default:
+	}
+	fmt.Println(arr[0], b.x, x, m["k"], buf[1], ok)
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "selrecv.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	// Collect recv selectcases with their (targets, body stmts) and
+	// every vardecl's declared objs (the dominating vardecl must
+	// declare each synthetic temp). Scope the walk to the file's own
+	// main function: ExportFile also exports the generic instantiations
+	// of every imported package (fmt alone pulls in 2000+ funcs, some
+	// with their own selectcases), so a whole-document walk would
+	// count stdlib cases.
+	type recvCase struct {
+		targets []any
+		stmts   []any
+	}
+	var cases []recvCase
+	declared := map[any]bool{}
+	funcs, _ := raw["funcs"].([]any)
+	var mainFn map[string]any
+	for _, f := range funcs {
+		fm, _ := f.(map[string]any)
+		ff, _ := fm["fields"].(map[string]any)
+		if ff["name"] == "main" {
+			mainFn = fm
+			break
+		}
+	}
+	if mainFn == nil {
+		t.Fatal("no main func in export")
+	}
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "selectcase" {
+				if f, ok := v["fields"].(map[string]any); ok && f["kind"] == "recv" {
+					var c recvCase
+					c.targets, _ = f["targets"].([]any)
+					if bf, ok := f["body"].(map[string]any); ok {
+						if ff, ok := bf["fields"].(map[string]any); ok {
+							c.stmts, _ = ff["stmts"].([]any)
+						}
+					}
+					cases = append(cases, c)
+				}
+			}
+			if v["kind"] == "vardecl" {
+				if f, ok := v["fields"].(map[string]any); ok {
+					if objs, ok := f["objs"].([]any); ok {
+						for _, o := range objs {
+							declared[o] = true
+						}
+					}
+				}
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(mainFn)
+	if len(cases) != 5 {
+		t.Fatalf("want 5 recv selectcases, got %d", len(cases))
+	}
+	// Each case must open its body with the copy-back (target = tmp)
+	// where tmp is the case's first declared target. Identify each case
+	// by the shape of the copy-back lhs.
+	seen := map[string]bool{}
+	okForm := 0
+	for _, c := range cases {
+		if len(c.targets) == 2 {
+			okForm++
+		}
+		if len(c.targets) < 1 || len(c.targets) > 2 {
+			t.Errorf("want 1-2 targets, got %v", c.targets)
+			continue
+		}
+		if len(c.stmts) == 0 {
+			t.Errorf("recv case body is empty; want copy-back prologue")
+			continue
+		}
+		first, ok := c.stmts[0].(map[string]any)
+		if !ok || first["kind"] != "assign" {
+			t.Errorf("recv case body does not open with copy-back assign, got %v", c.stmts[0])
+			continue
+		}
+		ff, _ := first["fields"].(map[string]any)
+		if ff["tok"] != "=" {
+			t.Errorf("copy-back tok = %v, want =", ff["tok"])
+		}
+		lhs, _ := ff["lhs"].([]any)
+		rhs, _ := ff["rhs"].([]any)
+		if len(lhs) != 1 || len(rhs) != 1 {
+			t.Errorf("copy-back has %d lhs / %d rhs, want 1/1", len(lhs), len(rhs))
+			continue
+		}
+		ln, _ := lhs[0].(map[string]any)
+		rn, _ := rhs[0].(map[string]any)
+		rf, _ := rn["fields"].(map[string]any)
+		// The rhs temp ident must be the case's first declared target
+		// obj: this is the value the Java builder assigns into, so the
+		// copy-back is what lands the received value in the target.
+		if rn["kind"] != "ident" || rf["obj"] != c.targets[0] {
+			t.Errorf("copy-back rhs %v does not reference the case target %v", rn, c.targets[0])
+		}
+		// The temp must be declared by a dominating vardecl (the
+		// p3chan builder requires a frame slot for every target).
+		if !declared[c.targets[0]] {
+			t.Errorf("copy-back temp obj %v is not declared by any vardecl", c.targets[0])
+		}
+		kind, _ := ln["kind"].(string)
+		seen[kind] = true
+	}
+	if okForm != 1 {
+		t.Errorf("want exactly 1 two-target (ok-form) recv case, got %d", okForm)
+	}
+	for _, want := range []string{"index", "selector", "deref"} {
+		if !seen[want] {
+			t.Errorf("no recv case with %q copy-back target (index=arr[0]/m[k], selector=b.x, deref=*p)", want)
+		}
+	}
+}
+
 // TestGoWithArgsInLoop verifies: GG-0017 — P3-M5 (reviewer1 P2-4) the
 // `go f(args)` desugar inside a loop. The Appendix N desugar emits one
 // __go_arg_* temp per go *statement*; in a loop the temp vardecls must
