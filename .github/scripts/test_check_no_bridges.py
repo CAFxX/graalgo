@@ -276,6 +276,158 @@ index 00000000..11111111 100644
  )
 """
 
+# --- R23-P1-1 (review 2026-11-12-23): panic-stub gate evasions --------
+# The gate's literal regex required the stub keyword at the START of
+# the message, so the codebase's dominant fail-fast phrasing evaded
+# it: the three lines below were run against the gate's actual regexes
+# and all three returned no match. Each must now flag PANIC STUB.
+# The scope/desugar counts for the live tree are pinned by
+# scope_panic_manifest.json (see check_scope_panic_inventory.py).
+
+# Verbatim evading line 1: package-prefixed scope panic (M8).
+SCOPE_PANIC_M8 = """\
+diff --git a/internal/frontend/synth_os.go b/internal/frontend/synth_os.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_os.go
++++ b/internal/frontend/synth_os.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("os.Chown: not in M8 scope (needs numeric chown(2); re-test: Panama FFI numeric-chown intrinsic)")
+"""
+
+# Verbatim evading line 2: scope panic in archive/tar (M7).
+SCOPE_PANIC_TAR = """\
+diff --git a/internal/frontend/synth_archive_tar.go b/internal/frontend/synth_archive_tar.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_archive_tar.go
++++ b/internal/frontend/synth_archive_tar.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("archive/tar.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+"""
+
+# Verbatim evading line 3: "not implemented" hidden behind a package
+# prefix — the keyword is present but not at string start.
+PREFIXED_NOT_IMPLEMENTED = """\
+diff --git a/internal/frontend/synth_mathrandv2.go b/internal/frontend/synth_mathrandv2.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_mathrandv2.go
++++ b/internal/frontend/synth_mathrandv2.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("math/rand/v2: ChaCha8.Read not implemented (P3-M9 tier-5b scope-limit: non-standard ECDSA curves); re-test when ChaCha8 lands")
+"""
+
+# Bare-scope variant: "not in scope" with no M-number (16 live lines:
+# 15 in synth_testing*.go, 1 in synth_time_context.go) — the review's
+# `grep 'not in .* scope'` cannot match this phrasing at all, so it was
+# missing from the 344 count.
+SCOPE_PANIC_BARE = """\
+diff --git a/internal/frontend/synth_testing.go b/internal/frontend/synth_testing.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_testing.go
++++ b/internal/frontend/synth_testing.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("testing.outputWriter.Write: not in scope (multi-result calls need WS D; re-test when it lands)")
+"""
+
+# Adjacent fail-fast family found while hunting the R23-P1-1 class:
+# multi-result-desugar stubs (552 live lines, 47 of them generated-code
+# literals in synth_math_big.go). Long form.
+DESUGAR_PANIC_LONG = """\
+diff --git a/internal/frontend/synth_hash_fnv.go b/internal/frontend/synth_hash_fnv.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_hash_fnv.go
++++ b/internal/frontend/synth_hash_fnv.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("hash/fnv: Write: multi-result call needs the mrM8 desugar (re-test: WS D)")
+"""
+
+# Desugar family, short form.
+DESUGAR_PANIC_SHORT = """\
+diff --git a/internal/frontend/synth_crypto_fips140_nistec.go b/internal/frontend/synth_crypto_fips140_nistec.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_crypto_fips140_nistec.go
++++ b/internal/frontend/synth_crypto_fips140_nistec.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("crypto/internal/fips140/nistec: SetBytes: multi-result desugar")
+"""
+
+# Scope panic through the composed form: the scope phrase must be
+# caught inside fmt.Sprintf's first string argument too.
+SCOPE_PANIC_COMPOSED = """\
+diff --git a/internal/frontend/synth_os.go b/internal/frontend/synth_os.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_os.go
++++ b/internal/frontend/synth_os.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic(fmt.Sprintf("os.Chown: not in M8 scope (%s)", reason))
+"""
+
+# Generated-code literal form (synth_math_big.go builds its synthetic
+# source as string literals, so a new stub there arrives as
+# `"\tpanic(\"...\"...)\n" +`). Raw string: the backslashes are literal
+# file bytes here, not Python escapes.
+SCOPE_PANIC_GENERATED_LITERAL = r"""\
+diff --git a/internal/frontend/synth_math_big.go b/internal/frontend/synth_math_big.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_math_big.go
++++ b/internal/frontend/synth_math_big.go
+@@ -1,3 +1,4 @@ package frontend
++"\tpanic(\"math/big: Foo not in M7 scope (multi-result calls need WS D)\")\n" +
+"""
+
+# Legitimate invariant panics: real failure modes, no stub phrase.
+# The unanchored keyword match must not sweep these in.
+LEGITIMATE_PANICS = """\
+diff --git a/internal/frontend/synth_foo.go b/internal/frontend/synth_foo.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_foo.go
++++ b/internal/frontend/synth_foo.go
+@@ -1,3 +1,7 @@
+ package frontend
++\t\tpanic("division by zero")
++\t\tpanic("d.nx != 0")
++\t\tpanic("output smaller than input")
++\t\tpanic("cannot create context from nil parent")
+"""
+
+# Negatives for the new alternatives: the phrase must match as a
+# phrase, not as loose words.
+NOT_IN_RANGE = """\
+diff --git a/internal/frontend/synth_foo.go b/internal/frontend/synth_foo.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_foo.go
++++ b/internal/frontend/synth_foo.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("value not in range")
+"""
+
+DESUGAR_WORD_ALONE = """\
+diff --git a/internal/frontend/synth_foo.go b/internal/frontend/synth_foo.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_foo.go
++++ b/internal/frontend/synth_foo.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("desugar failed: nil helper")
+"""
+
+OUT_OF_SCOPE_WORD = """\
+diff --git a/internal/frontend/synth_foo.go b/internal/frontend/synth_foo.go
+index 00000000..11111111 100644
+--- a/internal/frontend/synth_foo.go
++++ b/internal/frontend/synth_foo.go
+@@ -1,3 +1,4 @@
+ package frontend
++\tpanic("name out of scope")
+"""
+
 
 class TestNoBridgesGate(unittest.TestCase):
     def test_narrowing_loader_case_not_flagged(self):
@@ -322,6 +474,50 @@ class TestNoBridgesGate(unittest.TestCase):
 
     def test_import_addition_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(IMPORT_ADDITION), [])
+
+    def test_scope_panic_m8_flagged(self):
+        errs = cnb.check_no_bridges(SCOPE_PANIC_M8)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_scope_panic_tar_flagged(self):
+        errs = cnb.check_no_bridges(SCOPE_PANIC_TAR)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_prefixed_not_implemented_flagged(self):
+        errs = cnb.check_no_bridges(PREFIXED_NOT_IMPLEMENTED)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_scope_panic_bare_flagged(self):
+        errs = cnb.check_no_bridges(SCOPE_PANIC_BARE)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_desugar_panic_long_flagged(self):
+        errs = cnb.check_no_bridges(DESUGAR_PANIC_LONG)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_desugar_panic_short_flagged(self):
+        errs = cnb.check_no_bridges(DESUGAR_PANIC_SHORT)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_scope_panic_composed_flagged(self):
+        errs = cnb.check_no_bridges(SCOPE_PANIC_COMPOSED)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_scope_panic_generated_literal_flagged(self):
+        errs = cnb.check_no_bridges(SCOPE_PANIC_GENERATED_LITERAL)
+        self.assertTrue(any("PANIC STUB" in e for e in errs), errs)
+
+    def test_legitimate_panics_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(LEGITIMATE_PANICS), [])
+
+    def test_not_in_range_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(NOT_IN_RANGE), [])
+
+    def test_desugar_word_alone_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(DESUGAR_WORD_ALONE), [])
+
+    def test_out_of_scope_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(OUT_OF_SCOPE_WORD), [])
 
 
 if __name__ == "__main__":

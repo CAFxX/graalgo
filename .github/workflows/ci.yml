@@ -51,6 +51,13 @@ jobs:
         # future gate regression fails CI instead of reverting silently.
         run: python3 .github/scripts/test_check_no_bridges.py
 
+      - name: Scope-panic inventory check (R23-P1-1)
+        # The scope/desugar fail-fast panic counts in synth_*.go are
+        # pinned by .github/scripts/scope_panic_manifest.json — run it
+        # here so a silent count drift fails CI instead of reverting
+        # silently.
+        run: python3 .github/scripts/check_scope_panic_inventory.py
+
       - name: Duplicate-FQN overlay check (review R-01)
         run: python3 .github/scripts/check_duplicate_fqn.py
 

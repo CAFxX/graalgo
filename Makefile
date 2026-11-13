@@ -141,6 +141,7 @@ check:
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
+	python3 .github/scripts/check_scope_panic_inventory.py
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
 	# wire-format validation (internal/frontend/build.sh check).
 	# /tmp is a 512M shared tmpfs: keep the fresh-export JSONs on the

@@ -17,6 +17,22 @@ that retires it, and its phased-removal order. "Needs design" marks entries
 whose retirement mechanism is still open — the entry itself is the
 deliverable until the design lands.
 
+The fail-fast panic counts are pinned separately from the bridge list:
+the scope-limit and multi-result-desugar panic calls in the synthetic
+stdlib sources ([internal/frontend/](../../internal/frontend/)) are
+counted per file in
+[scope_panic_manifest.json](../../.github/scripts/scope_panic_manifest.json),
+checked by
+[check_scope_panic_inventory.py](../../.github/scripts/check_scope_panic_inventory.py)
+(CI and `make check`; R23-P1-1, REVIEW-2026-11-12-23). The gate's Rule 3
+fails on any *added* scope/desugar panic; the manifest fails on any
+*count* drift. When a scope/desugar panic is legitimately added or
+retired, regenerate the manifest in the same change
+(`check_scope_panic_inventory.py --regenerate`) so the count change is
+reviewed, not smuggled in. The archive/mime files are excluded from the
+manifest — their multi-result rows are pinned by
+[check_mr_table_subset.py](../../.github/scripts/check_mr_table_subset.py).
+
 ## Phased removal order
 
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic

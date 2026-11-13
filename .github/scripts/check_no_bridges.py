@@ -79,6 +79,21 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
+# Fail-fast stub phrases for Rule 3 (panic stubs), shared with
+# check_scope_panic_inventory.py — the manifest's scope/desugar
+# definitions MUST come from here, never from a second copy of the
+# list, so the gate and the pinned counts cannot drift apart.
+# R23-P1-1 (REVIEW-2026-11-12-23): the scope-limit phrasing
+# ("not in M7 scope", bare "not in scope") and the multi-result
+# desugar phrasing are stub families, not invariant messages.
+_SCOPE_PHRASE = r"not in M\d+ scope|not in scope"
+_DESUGAR_PHRASE = r"multi-result desugar|multi-result calls? needs?"
+_STUB_PHRASE = (
+    r"not implemented|unimplemented|not supported|unsupported|"
+    r"todo|FIXME|unreachable|NYI|not yet|tbd|"
+    + _SCOPE_PHRASE + r"|" + _DESUGAR_PHRASE
+)
+
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
 
@@ -267,12 +282,53 @@ def check_no_bridges(diff):
     #    panic(), panic(""), panic("unreachable"), and composed messages like
     #    panic(fmt.Sprintf("... not implemented")). Fail loud on all of them —
     #    a human decides whether an added panic is a legitimate invariant.
+    #
+    # R23-P1-1 (REVIEW-2026-11-12-23): the literal form used to require the
+    # stub keyword at the START of the message, so the codebase's dominant
+    # fail-fast phrasing evaded it — `panic("<pkg>.<Fn>: not in M7 scope
+    # ...")` starts with a package path, and "not in M7 scope" was not a
+    # keyword at all; a package prefix likewise hid "not implemented"
+    # (`panic("math/rand/v2: ChaCha8.Read not implemented ...")`). Both
+    # forms now match the stub phrase ANYWHERE in the first string
+    # argument. The phrase list also covers the adjacent fail-fast
+    # families found while hunting this class: the multi-result-desugar
+    # stubs (`panic("...: multi-result desugar")`,
+    # `panic("...: multi-result call needs the mrM8 desugar ...")`, 552
+    # lines in internal/frontend/synth_*.go) and the bare-scope variant
+    # (`panic("...: not in scope (multi-result calls need WS D ...)")`,
+    # 16 lines: 15 in synth_testing*.go, 1 in synth_time_context.go).
+    # The optional backslash covers
+    # generated-code literals (`panic(\"...\")` in synth_math_big.go,
+    # 64 stub-phrase lines). The leading \b keeps short keywords
+    # ("todo", "tbd", "NYI") from matching inside longer words; it does
+    # not narrow the anchored case (the quote is a non-word char, so a
+    # phrase at string start still matches).
+    #
+    # Blast radius, adjudicated 2026-11-12 (repo-wide, old vs new
+    # regexes over every `panic(` line in *.go): 859 newly-flagged
+    # occurrences — 316 M-scope, 16 bare-scope, 382 desugar, 145
+    # keyword-mid-string. The desugar count is scope-priority, like the
+    # manifest: 552 lines carry the desugar phrase, of which 170 also
+    # carry a scope phrase and count under scope. The 118 "call sites
+    # desugar to ..." lines carry the bare word, not the phrase, and flag
+    # via their keyword (e.g. unreachable), so they count under
+    # keyword-mid-string. All are fail-fast stubs except two upstream invariant
+    # panics that merely mention a keyword mid-sentence
+    # (internal/frontend/go/importer/importer.go:70 "not supported (issue
+    # #13847)", internal/frontend/go/types/trie.go:80 "trie.insert:
+    # unreachable"): those flag only if a diff re-adds the exact line,
+    # and the tripwire's human adjudication is the intended handling —
+    # no exemption (an upstream-dir exemption would re-open an evasion
+    # hole). Legitimate invariant panics ("division by zero", "d.nx !=
+    # 0", "output smaller than input", ...) contain no stub phrase and
+    # still do not flag; see test_check_no_bridges.py.
     panic_stub_res = [
         r'panic\s*\(\s*\)',            # bare panic() — nothing to go on
         r'panic\s*\(\s*""\s*\)',       # panic("") — nothing to go on
-        r'panic\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd)',
-        # Stub keyword anywhere in the first string arg of a composed panic.
-        r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet)',
+        # Stub phrase anywhere in the first string arg of a literal panic.
+        rf'panic\s*\(\s*\\?"[^"]*\b(?:{_STUB_PHRASE})',
+        # Stub phrase anywhere in the first string arg of a composed panic.
+        rf'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*\\?"[^"]*\b(?:{_STUB_PHRASE})',
     ]
     for fname, line in added_lines:
         if not fname or not fname.endswith(".go"):
