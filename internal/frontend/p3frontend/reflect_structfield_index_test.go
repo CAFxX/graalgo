@@ -55,7 +55,11 @@ func main() {
 	fmt.Println(xf.Index[0], xf.Index[1], len(xf.Index))
 	fmt.Println(xf.Index)
 	xf2 := ot.FieldByIndex([]int{1, 0})
-	fmt.Println(xf2.Index[0], xf2.Index[1], len(xf2.Index))
+	// FieldByIndex returns the field with Index relative to the innermost
+	// struct ([0], len 1) — NOT the full [1, 0] path: indexing xf2.Index[1]
+	// panics under gc, so only Index[0] is readable here.
+	fmt.Println(xf2.Index[0], len(xf2.Index))
+	fmt.Println(xf2.Index)
 	yf := ot.Field(0)
 	fmt.Println(yf.Index[0], len(yf.Index))
 }
@@ -76,7 +80,7 @@ func main() {
 	}
 	gc := runCommand(t, dir, progPath)
 	gr := graalgoRun(t, mergedPath)
-	const want = "0 1\n0\n[0]\n1 0 2\n[1 0]\n1 0 2\n0 1\n"
+	const want = "0 1\n0\n[0]\n1 0 2\n[1 0]\n0 1\n[0]\n0 1\n"
 	if gc.stdout != want {
 		t.Fatalf("gc oracle moved: stdout=%q want=%q", gc.stdout, want)
 	}
