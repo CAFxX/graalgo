@@ -536,6 +536,27 @@ func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
 // isCommaOkValue only recognizes index/typeassert, so recv{commaOk:true}
 // is not emittable; a blocking single-case select with targets [v, ok]
 // is semantically identical to <-ch plus the closed-channel bit.
+//
+// R2314-P1-1: in the `=` form a target may be any assignable expression
+// (index, selector, dereference, map index), not just an identifier —
+// it desugars through a fresh plain temp that takes the frame slot,
+// with the assignment to the target expression emitted after the
+// select (copy-back via exportAssignable, mirroring the globals-temp
+// branch and selectRecvTargets). The temp type is the position type:
+// channel element type for the value, bool for ok (an ok temp typed
+// as the element type is a mistyped frame slot). The `:=` form keeps
+// rejecting non-identifier targets: gc rejects them too ("non-name
+// a[0] on left side of :="), so they are invalid Go, not a frontend
+// gap.
+//
+// Evaluation-order note: the copy-back evaluates the target expression
+// after the receive. That is exactly gc's timing for plain-variable
+// operands (gc re-reads a variable index/container after the rhs —
+// verified: a[i] with i mutated mid-block stores to a[2]), but a
+// side-effecting non-variable operand (e.g. a[f()]) runs before the
+// receive under gc and after it here. Hoisting such operands before
+// the select is a follow-up; it needs pre-select operand temps and a
+// rebuilt copy-back lhs, which is a larger change than this fix.
 func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*Node, error) {
 	ux := unparen(s.Rhs[0]).(*ast.UnaryExpr)
 	ch, err := e.exportExpr(ux.X)
@@ -547,17 +568,26 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 	if err != nil {
 		return nil, err
 	}
+	// posType is the temp type for target position i: the channel
+	// element type for the value (i==0), bool for ok (i==1).
+	posType := func(i int) types.Type {
+		if i == 1 {
+			return types.Typ[types.Bool]
+		}
+		return elem
+	}
 	// Resolve the two targets. For `=` with a global target, desugar
 	// through a temp (ADR-0005 App C: globals are not in the frame
 	// maps).
 	var targetNames []string
 	var targetObjs []int
 	needDecl := define // := targets need a dominating vardecl
-	var copyBack *Node // assign node for global temps (define=false)
+	var copyBack *Node // assign node for temp copy-backs (define=false)
 	if !define {
 		// Check for globals.
 		hasGlobal := false
 		for _, lhs := range s.Lhs {
+			lhs = unparen(lhs)
 			id, ok := lhs.(*ast.Ident)
 			if !ok || id.Name == "_" {
 				continue
@@ -576,14 +606,19 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 			lhs := make([]*Node, 0, 2)
 			rhs := make([]*Node, 0, 2)
 			for i, l := range s.Lhs {
-				id, ok := l.(*ast.Ident)
-				if !ok {
-					return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", l)
-				}
+				l = unparen(l)
+				id, isIdent := l.(*ast.Ident)
 				var typ types.Type
 				var userName string
-				if id.Name == "_" {
-					typ = elem
+				if !isIdent {
+					// R2314-P1-1: non-identifier target desugars
+					// through a temp of the position type; the
+					// copy-back below (userName "" != "_") emits
+					// the assignment to the target expression.
+					typ = posType(i)
+					userName = ""
+				} else if id.Name == "_" {
+					typ = posType(i)
 					userName = "_"
 				} else {
 					v := e.info.ObjectOf(id).(*types.Var)
@@ -620,17 +655,46 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 			}
 			needDecl = true // temps need declaration
 		} else {
-			// Locals: use directly, no declaration needed.
-			for _, lhs := range s.Lhs {
+			// Locals: use directly, no declaration needed — except
+			// non-identifier targets, which desugar through a temp
+			// (R2314-P1-1) with a copy-back after the select.
+			var cbLhs, cbRhs []*Node
+			for i, lhs := range s.Lhs {
+				lhs = unparen(lhs)
 				id, ok := lhs.(*ast.Ident)
 				if !ok {
-					return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
+					// R2314-P1-1: receive into a fresh plain temp
+					// of the position type; copy back below.
+					typ := posType(i)
+					e.chanSeq++
+					name := fmt.Sprintf("__rcv_tmp_%d_%d", e.chanSeq, i)
+					tv := types.NewVar(token.NoPos, nil, name, typ)
+					oid, err := e.defVar(tv, false)
+					if err != nil {
+						return nil, err
+					}
+					targetNames = append(targetNames, name)
+					targetObjs = append(targetObjs, oid)
+					ln, err := e.exportAssignable(lhs)
+					if err != nil {
+						return nil, err
+					}
+					tid, err := e.typeID(typ)
+					if err != nil {
+						return nil, err
+					}
+					cbLhs = append(cbLhs, ln)
+					cbRhs = append(cbRhs, e.node("ident", s, map[string]any{
+						"name": name, "obj": oid, "type": tid,
+					}))
+					needDecl = true
+					continue
 				}
 				if id.Name == "_" {
 					// Blank local? `_ = <-ch` — use a temp.
 					e.chanSeq++
 					name := fmt.Sprintf("__rcv_blank_%d", e.chanSeq)
-					tv := types.NewVar(token.NoPos, nil, name, elem)
+					tv := types.NewVar(token.NoPos, nil, name, posType(i))
 					oid, err := e.defVar(tv, false)
 					if err != nil {
 						return nil, err
@@ -648,18 +712,30 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 				targetNames = append(targetNames, id.Name)
 				targetObjs = append(targetObjs, oid)
 			}
+			if len(cbLhs) > 0 {
+				copyBack = e.node("assign", s, map[string]any{
+					"tok": "=", "lhs": cbLhs, "rhs": cbRhs,
+				})
+			}
 		}
 	} else {
 		// := : define the targets.
-		for _, lhs := range s.Lhs {
+		for i, lhs := range s.Lhs {
 			id, ok := lhs.(*ast.Ident)
 			if !ok {
+				// gc rejects this too ("non-name a[0] on left
+				// side of :=" — and likewise "(v)" is a non-name
+				// here, so do NOT unparen). Unreachable via
+				// ExportFile — go/types rejects it first, before
+				// export runs — but kept as defense-in-depth so
+				// a caller that skips type-checking still fails
+				// loud here instead of panicking below.
 				return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
 			}
 			if id.Name == "_" {
 				e.chanSeq++
 				name := fmt.Sprintf("__rcv_blank_%d", e.chanSeq)
-				tv := types.NewVar(token.NoPos, nil, name, elem)
+				tv := types.NewVar(token.NoPos, nil, name, posType(i))
 				oid, err := e.defVar(tv, false)
 				if err != nil {
 					return nil, err
