@@ -93,7 +93,7 @@ public final class Boxing {
      * array clone would let {@code b := a; b[i].f = x} observably mutate
      * {@code a}), everything else is already a reference or immutable.
      */
-    static Object copyForAssign(GoKind kind, Object value) {
+    public static Object copyForAssign(GoKind kind, Object value) {
         if (value instanceof GoStruct gs && kind == GoKind.STRUCT) {
             return gs.deepCopy();
         }

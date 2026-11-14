@@ -33,6 +33,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+        // R10-P1-5 (REVIEW-2026-11-10-07): typedmemmove/typedslicecopy
+        // deep-copy struct/array values (gc byte-copy semantics).
+        TESTS.add(graalgo.p3reflect.ReflectLinknamesCopyTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.

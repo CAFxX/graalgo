@@ -191,9 +191,22 @@ public final class ReflectLinknames {
     // Memory moves.
     // ------------------------------------------------------------------
 
-    /** {@code typedmemmove(t, dst, src)}: copies one t from src to dst. */
+    /**
+     * {@code typedmemmove(t, dst, src)}: copies one t from src to dst.
+     * R10-P1-5: gc's typedmemmove is a byte copy, so the destination is
+     * field-independent of the source afterwards. The store side only
+     * shallow-copies ({@code copyOfAggregate}), so a STRUCT/ARRAY value
+     * is deep-copied here first (via {@code Boxing.copyForAssign},
+     * STRUCT/ARRAY-gated; INTERFACE passes through header-only, per
+     * the F-34 precedent) — otherwise nested struct/array fields stay
+     * aliased across the move.
+     */
     private static void typedmemmove(long tok, Object dst, Object src) {
         Object value = loadPointerValue(src, tok, "reflect.typedmemmove");
+        ReflectTypes.TypeInfo t = ReflectTypes.table().info(tok);
+        if (t.kind == GoKind.STRUCT || t.kind == GoKind.ARRAY) {
+            value = graalgo.frontend.Boxing.copyForAssign(t.kind, value);
+        }
         storePointerValue(dst, tok, value, "reflect.typedmemmove");
     }
 
@@ -236,8 +249,20 @@ public final class ReflectLinknames {
         Object[] d = sliceBacking(dst);
         Object[] s = sliceBacking(src);
         int n = Math.min((Integer) d[2], (Integer) s[2]);
-        for (int i = 0; i < n; i++) {
+        // R10-P1-5: each STRUCT/ARRAY element is deep-copied (gc byte-copy
+        // semantics); INTERFACE elements stay header-only, per the F-34
+        // precedent. Overlap-correct direction (same rule as the F-34
+        // memmove): back-to-front when the destination starts after the
+        // source in the same backing array, so elements are read before
+        // they are overwritten.
+        boolean elemCopy = t.elem.kind == GoKind.STRUCT || t.elem.kind == GoKind.ARRAY;
+        boolean backward = d[0] == s[0] && (Integer) d[1] > (Integer) s[1];
+        for (int k = 0; k < n; k++) {
+            int i = backward ? n - 1 - k : k;
             Object v = ReflectValues.arrayGet(s[0], t.elem.kind, (Integer) s[1] + i);
+            if (elemCopy) {
+                v = graalgo.frontend.Boxing.copyForAssign(t.elem.kind, v);
+            }
             ReflectValues.arraySet(d[0], t.elem.kind, (Integer) d[1] + i, v);
         }
         return (long) n;
