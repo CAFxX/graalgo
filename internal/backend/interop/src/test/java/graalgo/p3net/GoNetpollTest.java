@@ -86,10 +86,12 @@ public final class GoNetpollTest {
 
     /** Wire-format AF_INET 127.0.0.1:port. */
     private static GoSlice v4(int port) {
-        int[] a = new int[7];
+        // 9c92153d: []byte is byte[]-backed now; the old int-array backing
+        // died in GoNet.goBuf's (byte[]) cast.
+        byte[] a = new byte[7];
         a[0] = 2;
-        a[1] = (port >>> 8) & 0xFF;
-        a[2] = port & 0xFF;
+        a[1] = (byte) ((port >>> 8) & 0xFF);
+        a[2] = (byte) (port & 0xFF);
         a[3] = 127;
         a[4] = 0;
         a[5] = 0;
@@ -99,23 +101,17 @@ public final class GoNetpollTest {
 
     private static GoSlice bytes(String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int[] a = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            a[i] = b[i] & 0xFF;
-        }
-        return new GoSlice(a, 0, a.length, a.length);
+        return new GoSlice(b, 0, b.length, b.length);
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static String str(GoSlice gs, int n) {
-        int[] a = (int[]) gs.array();
+        byte[] a = (byte[]) gs.array();
         byte[] b = new byte[n];
-        for (int i = 0; i < n; i++) {
-            b[i] = (byte) a[gs.offset() + i];
-        }
+        System.arraycopy(a, gs.offset(), b, 0, n);
         return new String(b, java.nio.charset.StandardCharsets.UTF_8);
     }
 
@@ -123,7 +119,7 @@ public final class GoNetpollTest {
         GoSlice b = buf(23);
         long r = GoNet.getsockname(cookie, b);
         assertTrue(r > 0, "getsockname ok: " + r);
-        int[] a = (int[]) b.array();
+        byte[] a = (byte[]) b.array();
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
@@ -231,7 +227,7 @@ public final class GoNetpollTest {
             // Peer addresses agree (fd-domain unification: cookies resolve).
             GoSlice pb = buf(23);
             assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
-            int[] a = (int[]) pb.array();
+            byte[] a = (byte[]) pb.array();
             assertEq(2, a[0], "peer family");
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
@@ -756,7 +752,7 @@ public final class GoNetpollTest {
                 GoSlice rb = buf(64);
                 GoSlice ab = buf(23);
                 long r = GoNet.recvfrom(a, rb, ab);
-                int[] aa = (int[]) ab.array();
+                byte[] aa = (byte[]) ab.array();
                 peer.set("fam=" + aa[0]);
                 got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
                 return null;
@@ -961,6 +957,108 @@ public final class GoNetpollTest {
             Object closed = Linknames.dispatch("graalgo.os.close",
                     new Object[]{cookie});
             assertEq(0, (Long) closed, "close via table");
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * R0614-P0-2: concurrent read+write waits on one fd must not lose
+     * interest bits. A reader goroutine and a writer goroutine loop
+     * {@code pollWait} on the same connected socket — the routine shape
+     * of a {@code net.Conn} with concurrent reader and writer goroutines.
+     * The socket is permanently readable (1KB primed into the receive
+     * buffer and never drained — level-triggered) and permanently
+     * writable (empty send buffer), so every wait must return
+     * {@code NO_ERROR} promptly. A wait that runs to its deadline
+     * ({@code TIMEOUT}) means its interest bit was lost by the
+     * unsynchronized {@code interestOps} read-modify-write in
+     * {@code setInterest}: the waiter parked with nothing armed and no
+     * periodic re-arm exists to rescue it. On the unfixed code this
+     * fails within a few thousand iterations; with the fix it is green.
+     */
+    public void testConcurrentReadWriteInterestRace() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long sctx = GoNetpoll.pollOpen(ss);
+            // Prime 1KB into the server socket's receive buffer; the
+            // test never reads it, so OP_READ stays ready forever.
+            StringBuilder primer = new StringBuilder(1024);
+            for (int i = 0; i < 1024; i++) {
+                primer.append('x');
+            }
+            long wn = GoOs.write(cli[0], bytes(primer.toString()));
+            assertEq(1025, wn, "primer write n+1");
+            final int iters = 3000;
+            final long deadlineNanos = 400_000_000L;
+            final long boundNanos = 350_000_000L;
+            AtomicLong readTimeouts = new AtomicLong();
+            AtomicLong writeTimeouts = new AtomicLong();
+            AtomicLong readMaxNanos = new AtomicLong();
+            AtomicLong writeMaxNanos = new AtomicLong();
+            AtomicReference<Throwable> readErr = new AtomicReference<>();
+            AtomicReference<Throwable> writeErr = new AtomicReference<>();
+            CountDownLatch done = new CountDownLatch(2);
+            sched.spawn(() -> {
+                try {
+                    for (int i = 0; i < iters; i++) {
+                        GoNetpoll.pollSetDeadline(sctx, deadlineNanos, (long) 'r');
+                        long t0 = System.nanoTime();
+                        long r = GoNetpoll.pollWait(sctx, (long) 'r');
+                        long dt = System.nanoTime() - t0;
+                        readMaxNanos.accumulateAndGet(dt, Math::max);
+                        if (r == GoNetpoll.POLL_ERR_TIMEOUT) {
+                            readTimeouts.incrementAndGet();
+                        } else {
+                            assertEq(0, r, "read wait result");
+                        }
+                    }
+                } catch (Throwable t) {
+                    readErr.set(t);
+                } finally {
+                    done.countDown();
+                }
+            });
+            sched.spawn(() -> {
+                try {
+                    for (int i = 0; i < iters; i++) {
+                        GoNetpoll.pollSetDeadline(sctx, deadlineNanos, (long) 'w');
+                        long t0 = System.nanoTime();
+                        long r = GoNetpoll.pollWait(sctx, (long) 'w');
+                        long dt = System.nanoTime() - t0;
+                        writeMaxNanos.accumulateAndGet(dt, Math::max);
+                        if (r == GoNetpoll.POLL_ERR_TIMEOUT) {
+                            writeTimeouts.incrementAndGet();
+                        } else {
+                            assertEq(0, r, "write wait result");
+                        }
+                    }
+                } catch (Throwable t) {
+                    writeErr.set(t);
+                } finally {
+                    done.countDown();
+                }
+            });
+            assertTrue(done.await(300, TimeUnit.SECONDS), "both waiters finished");
+            assertTrue(readErr.get() == null, "reader error: " + readErr.get());
+            assertTrue(writeErr.get() == null, "writer error: " + writeErr.get());
+            assertEq(0, readTimeouts.get(),
+                    "read waits lost to the interest race (TIMEOUT), max wait ns="
+                            + readMaxNanos.get());
+            assertEq(0, writeTimeouts.get(),
+                    "write waits lost to the interest race (TIMEOUT), max wait ns="
+                            + writeMaxNanos.get());
+            assertTrue(readMaxNanos.get() < boundNanos,
+                    "read wait too slow, max ns=" + readMaxNanos.get());
+            assertTrue(writeMaxNanos.get() < boundNanos,
+                    "write wait too slow, max ns=" + writeMaxNanos.get());
+            closeSock(ss, sctx);
+            closeSock(cli[0], cli[1]);
+            closeSock(srv[0], srv[1]);
         } finally {
             teardown(prev);
         }

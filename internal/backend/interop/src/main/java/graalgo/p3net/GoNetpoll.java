@@ -677,26 +677,49 @@ public final class GoNetpoll {
         }
     }
 
+    /**
+     * Arms or disarms one mode's interest bit on the desc's key.
+     *
+     * <p>R0614-P0-2: the read-modify-write on {@code key.interestOps()}
+     * is serialized on the {@code PollDesc} monitor. A reader waiter and
+     * a writer waiter on one fd (the {@code net.Conn} shape: concurrent
+     * reader + writer goroutines) otherwise interleave — both read the
+     * same ops, each sets only its own bit, and the last writer wins,
+     * silently dropping the other's bit. The loser then parks with
+     * nothing armed and no periodic re-arm exists to rescue it, so its
+     * wait runs to its deadline. The poller thread's
+     * {@link #clearInterestConnect} is the third RMW site on the same
+     * key and takes the same monitor, so all three serialize.
+     * Reentrant-safe: {@link #migrateSocketChannel} already holds the
+     * monitor when it re-arms via {@link #rearmClaimed}.
+     */
     private static void setInterest(PollDesc pd, int mode, boolean on) {
-        SelectionKey key = pd.key;
-        if (key == null || !key.isValid()) {
-            return;
-        }
-        int bit;
-        if (mode == MODE_WRITE && pd.connecting) {
-            bit = SelectionKey.OP_CONNECT;
-        } else if (mode == MODE_READ && pd.listener) {
-            bit = SelectionKey.OP_ACCEPT;
-        } else {
-            bit = mode == MODE_READ ? SelectionKey.OP_READ : SelectionKey.OP_WRITE;
-        }
-        try {
-            int ops = key.interestOps();
-            key.interestOps(on ? (ops | bit) : (ops & ~bit));
-        } catch (CancelledKeyException ignored) {
-            // Raced with close; the waiter will observe closing via checkErr
-            // on its next wait, and the current wait's waker paths are
-            // CAS-guarded.
+        synchronized (pd) {
+            SelectionKey key = pd.key;
+            if (key == null || !key.isValid()) {
+                return;
+            }
+            // The bit is derived inside the lock: the connecting/listener
+            // flags and the RMW are then atomic w.r.t. the poller
+            // thread's clearInterestConnect (same monitor), so a
+            // connect that completes between the flag read and the RMW
+            // cannot leave a stale OP_CONNECT re-armed.
+            int bit;
+            if (mode == MODE_WRITE && pd.connecting) {
+                bit = SelectionKey.OP_CONNECT;
+            } else if (mode == MODE_READ && pd.listener) {
+                bit = SelectionKey.OP_ACCEPT;
+            } else {
+                bit = mode == MODE_READ ? SelectionKey.OP_READ : SelectionKey.OP_WRITE;
+            }
+            try {
+                int ops = key.interestOps();
+                key.interestOps(on ? (ops | bit) : (ops & ~bit));
+            } catch (CancelledKeyException ignored) {
+                // Raced with close; the waiter will observe closing via checkErr
+                // on its next wait, and the current wait's waker paths are
+                // CAS-guarded.
+            }
         }
         Selector sel = selector;
         if (sel != null) {
@@ -898,13 +921,23 @@ public final class GoNetpoll {
         }
     }
 
+    /**
+     * Clears OP_CONNECT after a nonblocking connect completes.
+     *
+     * <p>R0614-P0-2: same serialization as {@link #setInterest} — the
+     * read-modify-write runs under the {@code PollDesc} monitor, so the
+     * poller thread's clear cannot interleave with a waiter thread's
+     * arm/disarm of OP_READ or OP_WRITE and drop its bit.
+     */
     private static void clearInterestConnect(PollDesc pd) {
-        SelectionKey key = pd.key;
-        if (key != null && key.isValid()) {
-            try {
-                key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT);
-            } catch (CancelledKeyException ignored) {
-                // Raced with close.
+        synchronized (pd) {
+            SelectionKey key = pd.key;
+            if (key != null && key.isValid()) {
+                try {
+                    key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT);
+                } catch (CancelledKeyException ignored) {
+                    // Raced with close.
+                }
             }
         }
     }
