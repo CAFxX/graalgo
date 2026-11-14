@@ -47,19 +47,25 @@ func runStringIntConv(pass *Pass) []Diagnostic {
 			if !ok || argTv.Type == nil {
 				return true
 			}
-			// Flag string(int) where int is not rune/byte. Check the actual
-			// type name, not just the kind, since rune is int32.
+			// Flag string(<int>) for every integer kind except the
+			// rune/byte kinds, mirroring gc vet (stringintconv): in
+			// go/types rune IS int32 (types.Rune == types.Int32) and
+			// byte IS uint8 (types.Byte == types.Uint8), so gc cannot
+			// distinguish a rune value from an int32 value (or a byte
+			// from a uint8) and exempts the whole kind, along with
+			// untyped rune constants. A name-based check is wrong
+			// here: it flags string(int32) and named int32/rune types.
 			t := argTv.Type
-			typeName := t.String()
-			if typeName == "rune" || typeName == "byte" ||
-				typeName == "untyped rune" {
-				return true // legitimate
-			}
 			if b, ok := t.Underlying().(*types.Basic); ok && isIntKind(b.Kind()) {
-				out = append(out, Diagnostic{
-					pass.position(call),
-					"conversion from int to string yields a string of one rune, not a string of digits",
-				})
+				switch b.Kind() {
+				case types.Int32, types.Uint8, types.UntypedRune:
+					// rune / byte / untyped rune constant: legitimate.
+				default:
+					out = append(out, Diagnostic{
+						pass.position(call),
+						"conversion from int to string yields a string of one rune, not a string of digits",
+					})
+				}
 			}
 			return true
 		})
