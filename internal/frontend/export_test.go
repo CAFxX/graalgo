@@ -727,7 +727,11 @@ func main() {
 // the invariant on the wire: every recv case's targets are disjoint
 // from the copy-back's target obj, and each copy-back reads a temp
 // ident. It fails on the pre-fix exporter, where targets ARE the user
-// variables.
+// variables. Coverage added for the review (CHANGES-REQUESTED):
+// F1 — the comma-ok = form (d, ok2 = <-ch) must desugar through
+// temps + a single multi-target copy-back assign; F2 — the blank ok
+// temp in both comma-ok forms must be typed bool (checked against
+// the objects table), not the channel element type.
 func TestSelectRecvBoxedDesugar(t *testing.T) {
 	src := `package main
 
@@ -747,6 +751,22 @@ func main() {
 	c, ok := <-a
 	_ = &c
 	_ = ok
+	// F1 (review CHANGES-REQUESTED): the = comma-ok form desugars
+	// through temps + a single multi-target copy-back assign
+	// (d, ok2 = __rcv_tmp_*, __rcv_tmp_*) after the select.
+	d := 0
+	ok2 := false
+	d, ok2 = <-a
+	_ = ok2
+	_ = &d
+	// F2 (review CHANGES-REQUESTED): blank ok in both comma-ok
+	// forms; the blank temp at position 1 must be typed bool, not
+	// the channel element type.
+	g, _ := <-a
+	_ = &g
+	h := 0
+	h, _ = <-a
+	_ = &h
 }
 `
 	dir := t.TempDir()
@@ -774,6 +794,20 @@ func main() {
 		values []any
 	}
 	var decls []vardecl
+	// A copy-back assign (comma-ok = form): lhs/rhs idents only.
+	type rcvAssign struct {
+		lhsNames []string
+		lhsObjs  []float64
+		rhsNames []string
+		rhsObjs  []float64
+	}
+	var rcvAssigns []rcvAssign
+	identName := func(n map[string]any) (string, float64) {
+		f, _ := n["fields"].(map[string]any)
+		s, _ := f["name"].(string)
+		o, _ := f["obj"].(float64)
+		return s, o
+	}
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
@@ -813,6 +847,27 @@ func main() {
 					}
 					d.values, _ = f["values"].([]any)
 					decls = append(decls, d)
+				case "assign":
+					var a rcvAssign
+					if lhs, ok := f["lhs"].([]any); ok {
+						for _, x := range lhs {
+							if xn, ok := x.(map[string]any); ok && xn["kind"] == "ident" {
+								n, o := identName(xn)
+								a.lhsNames = append(a.lhsNames, n)
+								a.lhsObjs = append(a.lhsObjs, o)
+							}
+						}
+					}
+					if rhs, ok := f["rhs"].([]any); ok {
+						for _, x := range rhs {
+							if xn, ok := x.(map[string]any); ok && xn["kind"] == "ident" {
+								n, o := identName(xn)
+								a.rhsNames = append(a.rhsNames, n)
+								a.rhsObjs = append(a.rhsObjs, o)
+							}
+						}
+					}
+					rcvAssigns = append(rcvAssigns, a)
 				}
 			}
 			for _, c := range v {
@@ -825,22 +880,17 @@ func main() {
 		}
 	}
 	walk(raw)
-	// Three recv cases: the := select, the = select, and the
-	// single-case select the comma-ok desugar builds.
-	if len(cases) != 3 {
-		t.Fatalf("want 3 recv cases with targets, got %d", len(cases))
+	// Six recv cases: the := select, the = select, and the four
+	// single-case selects the comma-ok desugars build (:= c/ok,
+	// = d/ok2, := g/blank, = h/blank).
+	if len(cases) != 6 {
+		t.Fatalf("want 6 recv cases with targets, got %d", len(cases))
 	}
-	identName := func(n map[string]any) (string, float64) {
-		f, _ := n["fields"].(map[string]any)
-		s, _ := f["name"].(string)
-		o, _ := f["obj"].(float64)
-		return s, o
-	}
-	var commaOk *recvCase
+	var commaOkCases []*recvCase
 	for i := range cases {
 		c := &cases[i]
 		if len(c.stmts) == 0 {
-			commaOk = c
+			commaOkCases = append(commaOkCases, c)
 			continue
 		}
 		// The copy-back is the first statement of the case body.
@@ -894,15 +944,70 @@ func main() {
 			}
 		}
 	}
-	if commaOk == nil {
-		t.Fatal("no empty-body recv case found (comma-ok desugar)")
+	// F1+F2: the four comma-ok desugars (:= c/ok, = d/ok2, :=
+	// g/blank, = h/blank). Each has 2 targets, both __rcv_tmp_*
+	// temps; the copy-back pairs each non-blank target with its
+	// temp by obj id. Order-independent: cases are matched to
+	// copy-backs by temp obj, never by emission order.
+	if len(commaOkCases) != 4 {
+		t.Fatalf("want 4 comma-ok recv cases, got %d", len(commaOkCases))
 	}
-	if len(commaOk.targets) != 2 {
-		t.Fatalf("comma-ok case has %d targets, want 2", len(commaOk.targets))
+	// Objects table: obj id -> (name, wire type id).
+	objects, _ := raw["objects"].([]any)
+	objName := func(obj float64) string {
+		if int(obj) >= 0 && int(obj) < len(objects) {
+			if ent, ok := objects[int(obj)].(map[string]any); ok {
+				s, _ := ent["name"].(string)
+				return s
+			}
+		}
+		return ""
 	}
-	// The comma-ok copy-back declares c and ok from __rcv_tmp_* temps
-	// after the select; its targets must not be those user objs.
-	for _, want := range []string{"c", "ok"} {
+	objType := func(obj float64) float64 {
+		if int(obj) >= 0 && int(obj) < len(objects) {
+			if ent, ok := objects[int(obj)].(map[string]any); ok {
+				n, _ := ent["type"].(float64)
+				return n
+			}
+		}
+		return -1
+	}
+	// The bool and int wire type ids, from the known vars ok and c.
+	boolType, intType := float64(-1), float64(-1)
+	for _, d := range decls {
+		if len(d.names) == 1 && len(d.objs) == 1 {
+			switch d.names[0] {
+			case "ok":
+				boolType = objType(d.objs[0])
+			case "c":
+				intType = objType(d.objs[0])
+			}
+		}
+	}
+	if boolType < 0 {
+		t.Fatal("no copy-back vardecl for ok found; cannot learn the bool wire type id")
+	}
+	if intType < 0 {
+		t.Fatal("no copy-back vardecl for c found; cannot learn the int wire type id")
+	}
+	// Every comma-ok target must be a __rcv_tmp_* temp, never a user obj.
+	allTargets := map[float64]bool{}
+	for _, c := range commaOkCases {
+		if len(c.targets) != 2 {
+			t.Fatalf("comma-ok case has %d targets, want 2", len(c.targets))
+		}
+		for _, tg := range c.targets {
+			if !strings.HasPrefix(objName(tg), "__rcv_tmp_") {
+				t.Errorf("comma-ok target obj %v is %q, want a __rcv_tmp_* temp", tg, objName(tg))
+			}
+			allTargets[tg] = true
+		}
+	}
+	// := copy-backs: one vardecl per non-blank target (c, ok, g).
+	// The vardecl's value ident obj must be one of the case targets,
+	// and the declared obj must not itself be a target.
+	covered := map[float64]bool{}
+	for _, want := range []string{"c", "ok", "g"} {
 		found := false
 		for _, d := range decls {
 			if len(d.names) != 1 || d.names[0] != want || len(d.values) != 1 {
@@ -912,7 +1017,7 @@ func main() {
 			if !ok || vn["kind"] != "ident" {
 				continue
 			}
-			tempName, _ := identName(vn)
+			tempName, tempObj := identName(vn)
 			if !strings.HasPrefix(tempName, "__rcv_tmp_") {
 				continue
 			}
@@ -920,14 +1025,98 @@ func main() {
 			if len(d.objs) != 1 {
 				t.Fatalf("comma-ok copy-back vardecl objs: %v", d.objs)
 			}
-			for _, tg := range commaOk.targets {
-				if tg == d.objs[0] {
-					t.Errorf("comma-ok targets %v contain the user target obj %v; want temps only", commaOk.targets, d.objs[0])
-				}
+			if allTargets[d.objs[0]] {
+				t.Errorf("comma-ok copy-back declares user obj %v which is itself a case target", d.objs[0])
 			}
+			if !allTargets[tempObj] {
+				t.Errorf("comma-ok copy-back %s reads temp obj %v which is not a case target", want, tempObj)
+			}
+			covered[tempObj] = true
 		}
 		if !found {
 			t.Errorf("no copy-back vardecl %s := __rcv_tmp_* found", want)
+		}
+	}
+	// F1: = copy-backs are single multi-target assigns (d, ok2 = tmp,
+	// tmp) and (h = tmp); their rhs temps must be case targets and
+	// their lhs user objs must not be.
+	rcvCopyAssigns := []rcvAssign{}
+	for _, a := range rcvAssigns {
+		if len(a.rhsNames) == 0 || len(a.rhsNames) != len(a.lhsNames) {
+			continue
+		}
+		allRcv := true
+		for _, n := range a.rhsNames {
+			if !strings.HasPrefix(n, "__rcv_tmp_") {
+				allRcv = false
+			}
+		}
+		if allRcv {
+			rcvCopyAssigns = append(rcvCopyAssigns, a)
+		}
+	}
+	if len(rcvCopyAssigns) != 2 {
+		t.Fatalf("want 2 comma-ok copy-back assigns, got %d: %+v", len(rcvCopyAssigns), rcvCopyAssigns)
+	}
+	for _, a := range rcvCopyAssigns {
+		for i, rhsObj := range a.rhsObjs {
+			if !allTargets[rhsObj] {
+				t.Errorf("comma-ok copy-back assign reads temp obj %v which is not a case target", rhsObj)
+			}
+			covered[rhsObj] = true
+			if allTargets[a.lhsObjs[i]] {
+				t.Errorf("comma-ok copy-back assign lhs obj %v is itself a case target", a.lhsObjs[i])
+			}
+		}
+		switch len(a.lhsNames) {
+		case 2:
+			if a.lhsNames[0] != "d" || a.lhsNames[1] != "ok2" {
+				t.Errorf("2-target comma-ok copy-back assign lhs is %v, want [d ok2]", a.lhsNames)
+			}
+		case 1:
+			if a.lhsNames[0] != "h" {
+				t.Errorf("1-target comma-ok copy-back assign lhs is %v, want [h]", a.lhsNames)
+			}
+		default:
+			t.Errorf("comma-ok copy-back assign has %d lhs, want 1 or 2", len(a.lhsNames))
+		}
+	}
+	// F2: the temps no copy-back references are exactly the two blank
+	// ok temps; each must sit at target position 1 of its case and
+	// its wire type must be the bool type id, not the element type.
+	var blanks []float64
+	for tg := range allTargets {
+		if !covered[tg] {
+			blanks = append(blanks, tg)
+		}
+	}
+	if len(blanks) != 2 {
+		t.Fatalf("want exactly 2 unreferenced (blank-ok) temps, got %d: %v", len(blanks), blanks)
+	}
+	for _, b := range blanks {
+		if !strings.HasPrefix(objName(b), "__rcv_tmp_") {
+			t.Errorf("blank temp obj %v is %q, want a __rcv_tmp_* temp", b, objName(b))
+		}
+		if objType(b) != boolType {
+			t.Errorf("blank ok temp obj %v has wire type %v, want bool type %v (element type is %v)", b, objType(b), boolType, intType)
+		}
+		atPos1 := false
+		for _, c := range commaOkCases {
+			if len(c.targets) == 2 && c.targets[1] == b {
+				atPos1 = true
+			}
+			if len(c.targets) == 2 && c.targets[0] == b {
+				t.Errorf("blank ok temp obj %v sits at value position 0", b)
+			}
+		}
+		if !atPos1 {
+			t.Errorf("blank ok temp obj %v is not at target position 1 of any comma-ok case", b)
+		}
+	}
+	// Value temps (position 0) carry the element type.
+	for _, c := range commaOkCases {
+		if objType(c.targets[0]) != intType {
+			t.Errorf("value temp obj %v has wire type %v, want element (int) type %v", c.targets[0], objType(c.targets[0]), intType)
 		}
 	}
 	// The dominating vardecls must declare the temps themselves.
