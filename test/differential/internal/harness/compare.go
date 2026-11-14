@@ -31,8 +31,18 @@ func Compare(ref, alt Outcome) Comparison {
 	case !ref.BuildOK && alt.BuildOK:
 		add("build: ref failed: %s, alt ok", firstLines(ref.BuildLog, 5))
 	case !ref.BuildOK && !alt.BuildOK:
-		if ref.BuildLog != alt.BuildLog {
-			add("build: both failed but logs differ: %s", firstDiffLine(ref.BuildLog, alt.BuildLog))
+		// Compare only the backend stderr portion: the runner's BuildOnly
+		// failure path prefixes BuildLog with "build [<full command>]
+		// failed: ...", and the command differs by construction between
+		// backends ("go build -o ..." vs "graalgo-sync-run --check ..."),
+		// so comparing the raw log would report divergence for identical
+		// build errors. The prefix line carries no error text, and the
+		// build command's exit status is not a program observable, so
+		// stripping it loses no signal. The full log is still shown in
+		// the one-sided failure branches above, where it aids diagnosis.
+		refErr, altErr := stripBuildPrefix(ref.BuildLog), stripBuildPrefix(alt.BuildLog)
+		if refErr != altErr {
+			add("build: both failed but logs differ: %s", firstDiffLine(refErr, altErr))
 		}
 		return c // nothing else to compare
 	}
@@ -72,6 +82,37 @@ func firstDiffLine(a, b string) string {
 		return fmt.Sprintf("line %d: length differs, extra=%q", n+1, extra)
 	}
 	return "<identical>"
+}
+
+// stripBuildPrefix drops the runner-added "build [<command>] failed: ..."
+// first line from a build log, if present (see runner.go BuildOnly
+// failure path). Any other first line — including a bare stderr line with
+// no prefix, or a log consisting of a lone prefix line with empty stderr
+// (which then strips to "") — is left untouched except for the prefix
+// case. Only the first line is ever dropped.
+func stripBuildPrefix(log string) string {
+	line, rest, ok := strings.Cut(log, "\n")
+	if !ok {
+		if isBuildPrefixLine(line) {
+			return ""
+		}
+		return log
+	}
+	if isBuildPrefixLine(line) {
+		return rest
+	}
+	return log
+}
+
+// isBuildPrefixLine reports whether line has the exact shape the runner
+// emits: "build [<command>] failed: <err>". The "] failed: " marker after
+// the bracketed command is what distinguishes the runner's prefix from a
+// compiler diagnostic that merely happens to start with "build [".
+func isBuildPrefixLine(line string) bool {
+	if !strings.HasPrefix(line, "build [") {
+		return false
+	}
+	return strings.Contains(line, "] failed: ")
 }
 
 func firstLines(s string, n int) string {

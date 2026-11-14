@@ -74,16 +74,62 @@ func TestCompare_StderrNormalizedEqual(t *testing.T) {
 }
 
 func TestCompare_BothBuildFail(t *testing.T) {
+	// Production-shaped logs, as emitted by the runner's BuildOnly
+	// failure path: "build [<full backend command>] failed: <err>\n"
+	// + backend stderr. The two commands differ by construction
+	// ("go build -o ..." vs "graalgo-sync-run --check ..."), so the
+	// prefix must not decide the verdict — only the error text may.
+	// (R0614-P1-9: the pre-fix comparison of the raw logs reported
+	// DIVERGE for identical errors, with the reason showing the
+	// command line instead of the error.)
+	refLog := func(err string) string {
+		return Normalize("build [/home/hatch/tools/go/bin/go build -o {WORK}/prog ./main.go] failed: exit status 1\n" + err)
+	}
+	altLog := func(err string) string {
+		return Normalize("build [/home/hatch/workspace/graalgo/build/graalgo-sync-run --check ./main.go] failed: exit status 1\n" + err)
+	}
 	a, b := mkOutcome("a"), mkOutcome("b")
 	a.BuildOK, b.BuildOK = false, false
-	a.BuildLog = Normalize("./main.go:4: undefined: foo")
-	b.BuildLog = Normalize("./main.go:4: undefined: foo")
+	a.BuildLog = refLog("./main.go:4: undefined: foo")
+	b.BuildLog = altLog("./main.go:4: undefined: foo")
 	if c := Compare(a, b); !c.Same {
 		t.Fatalf("identical build failures diverged: %+v", c)
 	}
-	b.BuildLog = Normalize("./main.go:5: undefined: bar")
+	// Differing errors must still diverge — and the reason must name
+	// the differing error line, not the (always differing) command.
+	b.BuildLog = altLog("./main.go:5: undefined: bar")
 	if c := Compare(a, b); c.Same {
 		t.Fatal("differing build failures not detected")
+	} else if c.Reasons[0] == "" || !strings.Contains(c.Reasons[0], "undefined: bar") {
+		t.Fatalf("divergence reason hides the real error: %v", c.Reasons)
+	}
+	// Bare stderr with no command prefix (e.g. logs recorded before
+	// the prefix existed) still compares on the error text.
+	a.BuildLog = Normalize("./main.go:4: undefined: foo")
+	b.BuildLog = Normalize("./main.go:4: undefined: foo")
+	if c := Compare(a, b); !c.Same {
+		t.Fatalf("identical bare build failures diverged: %+v", c)
+	}
+}
+
+func TestStripBuildPrefix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"build [/bin/go build -o x ./main.go] failed: exit status 1\n./main.go:4: undefined: foo", "./main.go:4: undefined: foo"},
+		{"build [/bin/go build -o x ./main.go] failed: exit status 1\n", ""},
+		{"build [/bin/go build -o x ./main.go] failed: exit status 1", ""},
+		{"./main.go:4: undefined: foo", "./main.go:4: undefined: foo"},
+		{"", ""},
+		// Looks like a prefix but lacks the "] failed: " marker: kept.
+		{"build [something] else\n./main.go:4: undefined: foo", "build [something] else\n./main.go:4: undefined: foo"},
+		// Prefix-shaped line after the first line is real stderr: kept.
+		{"./main.go:4: undefined: foo\nbuild [/bin/go] failed: exit status 1", "./main.go:4: undefined: foo\nbuild [/bin/go] failed: exit status 1"},
+		// Multi-line stderr survives intact after the prefix.
+		{"build [/bin/go build -o x ./main.go] failed: exit status 1\n# pkg\n./main.go:4: undefined: foo\n./main.go:5: undefined: bar", "# pkg\n./main.go:4: undefined: foo\n./main.go:5: undefined: bar"},
+	}
+	for i, tc := range cases {
+		if got := stripBuildPrefix(tc.in); got != tc.want {
+			t.Errorf("case %d: stripBuildPrefix(%q) = %q, want %q", i, tc.in, got, tc.want)
+		}
 	}
 }
 
