@@ -562,11 +562,16 @@ func assertGostmtZeroArg(t *testing.T, nodes []nodeKind) {
 }
 
 // R2313-P1-2: select receive cases with non-identifier targets —
-// index, selector, dereference, map index, and the two-target ok form —
-// desugar through a synthetic temp. The recv case keeps a single
-// frame-slotted temp target, and its body opens with the copy-back
-// assignment (target = tmp) so the received value lands in the real
-// target. Pre-fix, every one of these failed export with scopeErrorf.
+// index, selector, dereference, map index, the two-target ok form,
+// a non-identifier target in the ok position, and both targets
+// non-identifier — desugar through a synthetic temp. The recv case
+// keeps frame-slotted temp targets, and its body opens with the
+// copy-back assignment(s) (target = tmp) so the received value lands
+// in the real target(s). Pre-fix, every one of these failed export
+// with scopeErrorf. The ok-position temp must be bool-typed
+// (chanops_m5.go:375): a temp mistyped as the element type would be
+// rejected by the backend ("ok target must be bool"), so the test
+// asserts the ok temp's type as well as its copy-back.
 // The copy-back runs only on case selection, which is gc's evaluation
 // timing for the target expression (a side-effecting index in a losing
 // case is never evaluated under gc).
@@ -585,6 +590,10 @@ func main() {
 	m := map[string]int{}
 	buf := [2]int{}
 	var ok bool
+	v := 0
+	okArr := [1]bool{}
+	buf2 := [1]int{}
+	okArr2 := [1]bool{}
 	ch1 := make(chan int, 1)
 	ch1 <- 1
 	select {
@@ -615,7 +624,19 @@ func main() {
 	case buf[1], ok = <-ch5:
 	default:
 	}
-	fmt.Println(arr[0], b.x, x, m["k"], buf[1], ok)
+	ch6 := make(chan int, 1)
+	ch6 <- 6
+	select {
+	case v, okArr[0] = <-ch6:
+	default:
+	}
+	ch7 := make(chan int, 1)
+	ch7 <- 7
+	select {
+	case buf2[0], okArr2[0] = <-ch7:
+	default:
+	}
+	fmt.Println(arr[0], b.x, x, m["k"], buf[1], ok, v, okArr[0], buf2[0], okArr2[0])
 }
 `
 	dir := t.TempDir()
@@ -692,60 +713,126 @@ func main() {
 		}
 	}
 	walk(mainFn)
-	if len(cases) != 5 {
-		t.Fatalf("want 5 recv selectcases, got %d", len(cases))
+	if len(cases) != 7 {
+		t.Fatalf("want 7 recv selectcases, got %d", len(cases))
 	}
-	// Each case must open its body with the copy-back (target = tmp)
-	// where tmp is the case's first declared target. Identify each case
-	// by the shape of the copy-back lhs.
+	// Expected copy-back structure, as target-position signatures
+	// (which of the case's targets feed the leading copy-backs, in
+	// order). The four single-target cases each have one copy-back at
+	// position 0. The three two-target cases cover every combination:
+	// {0} (non-identifier value, identifier ok), {1} (identifier
+	// value, non-identifier ok — the bool-temp branch at
+	// chanops_m5.go:375), and {0, 1} (both non-identifier, so 2
+	// copy-backs). Signatures are matched as a multiset: the walk
+	// visits map values, so case order is not asserted.
+	typesRaw, _ := raw["types"].([]any)
+	types := make([]map[string]any, len(typesRaw))
+	for i, tr := range typesRaw {
+		m, _ := tr.(map[string]any)
+		types[i] = m
+	}
+	// Each case must open its body with the copy-back(s) (target = tmp)
+	// where each tmp is the case's declared target at the expected
+	// position. Identify each case by the shape of the copy-back lhs.
 	seen := map[string]bool{}
 	okForm := 0
-	for _, c := range cases {
+	twoTargetSigs := map[string]int{}
+	for i, c := range cases {
 		if len(c.targets) == 2 {
 			okForm++
 		}
 		if len(c.targets) < 1 || len(c.targets) > 2 {
-			t.Errorf("want 1-2 targets, got %v", c.targets)
+			t.Errorf("case %d: want 1-2 targets, got %v", i+1, c.targets)
 			continue
 		}
 		if len(c.stmts) == 0 {
-			t.Errorf("recv case body is empty; want copy-back prologue")
+			t.Errorf("case %d: recv case body is empty; want copy-back prologue", i+1)
 			continue
 		}
-		first, ok := c.stmts[0].(map[string]any)
-		if !ok || first["kind"] != "assign" {
-			t.Errorf("recv case body does not open with copy-back assign, got %v", c.stmts[0])
-			continue
+		// Collect the leading copy-back run: single-target "="
+		// assigns whose rhs is an ident, and resolve each rhs
+		// ident to its target position.
+		var positions []int
+		for _, s := range c.stmts {
+			sm, ok := s.(map[string]any)
+			if !ok || sm["kind"] != "assign" {
+				break
+			}
+			sf, _ := sm["fields"].(map[string]any)
+			if sf["tok"] != "=" {
+				break
+			}
+			lhs, _ := sf["lhs"].([]any)
+			rhs, _ := sf["rhs"].([]any)
+			if len(lhs) != 1 || len(rhs) != 1 {
+				break
+			}
+			rn, _ := rhs[0].(map[string]any)
+			rf, _ := rn["fields"].(map[string]any)
+			if rn["kind"] != "ident" {
+				break
+			}
+			pos := -1
+			for j, tgt := range c.targets {
+				if rf["obj"] == tgt {
+					pos = j
+					break
+				}
+			}
+			if pos < 0 {
+				t.Errorf("case %d: copy-back rhs %v does not reference any of the case targets %v", i+1, rn, c.targets)
+				break
+			}
+			// The temp must be declared by a dominating vardecl (the
+			// p3chan builder requires a frame slot for every target).
+			if !declared[c.targets[pos]] {
+				t.Errorf("case %d: copy-back temp obj %v is not declared by any vardecl", i+1, c.targets[pos])
+			}
+			// An ok-position temp (target index 1 of a two-target
+			// receive) must be bool-typed: the backend rejects a
+			// non-bool ok target, so a temp mistyped as the element
+			// type must fail here, not at runtime.
+			if len(c.targets) == 2 && pos == 1 {
+				tid, ok := rf["type"].(float64)
+				if !ok {
+					t.Errorf("case %d: ok temp ident has no numeric type field: %v", i+1, rf)
+				} else if kind, name := typeKindName(types, int(tid)); kind != "basic" || name != "bool" {
+					t.Errorf("case %d: ok temp type = %s %q, want basic bool", i+1, kind, name)
+				}
+			}
+			ln, _ := lhs[0].(map[string]any)
+			kind, _ := ln["kind"].(string)
+			seen[kind] = true
+			positions = append(positions, pos)
 		}
-		ff, _ := first["fields"].(map[string]any)
-		if ff["tok"] != "=" {
-			t.Errorf("copy-back tok = %v, want =", ff["tok"])
+		if len(c.targets) == 1 {
+			if len(positions) != 1 || positions[0] != 0 {
+				t.Errorf("case %d: single-target case want copy-back positions [0], got %v", i+1, positions)
+			}
+		} else {
+			sig := ""
+			for _, p := range positions {
+				sig += string(rune('0' + p))
+			}
+			twoTargetSigs[sig]++
+			switch sig {
+			case "0", "1", "01":
+			default:
+				t.Errorf("case %d: two-target case want copy-back positions one of [0], [1], [0 1], got %v", i+1, positions)
+			}
 		}
-		lhs, _ := ff["lhs"].([]any)
-		rhs, _ := ff["rhs"].([]any)
-		if len(lhs) != 1 || len(rhs) != 1 {
-			t.Errorf("copy-back has %d lhs / %d rhs, want 1/1", len(lhs), len(rhs))
-			continue
-		}
-		ln, _ := lhs[0].(map[string]any)
-		rn, _ := rhs[0].(map[string]any)
-		rf, _ := rn["fields"].(map[string]any)
-		// The rhs temp ident must be the case's first declared target
-		// obj: this is the value the Java builder assigns into, so the
-		// copy-back is what lands the received value in the target.
-		if rn["kind"] != "ident" || rf["obj"] != c.targets[0] {
-			t.Errorf("copy-back rhs %v does not reference the case target %v", rn, c.targets[0])
-		}
-		// The temp must be declared by a dominating vardecl (the
-		// p3chan builder requires a frame slot for every target).
-		if !declared[c.targets[0]] {
-			t.Errorf("copy-back temp obj %v is not declared by any vardecl", c.targets[0])
-		}
-		kind, _ := ln["kind"].(string)
-		seen[kind] = true
 	}
-	if okForm != 1 {
-		t.Errorf("want exactly 1 two-target (ok-form) recv case, got %d", okForm)
+	if okForm != 3 {
+		t.Errorf("want exactly 3 two-target (ok-form) recv cases, got %d", okForm)
+	}
+	// The three two-target signatures must each occur exactly once:
+	// {0} is the pre-existing buf[1],ok case, {1} is the new
+	// ok-position non-identifier case, {01} is the new both-non-ident
+	// case. A missing signature means its branch never executed.
+	for _, want := range []string{"0", "1", "01"} {
+		if twoTargetSigs[want] != 1 {
+			t.Errorf("want exactly 1 two-target case with copy-back positions [%s], got %d (sigs %v)", want, twoTargetSigs[want], twoTargetSigs)
+		}
 	}
 	for _, want := range []string{"index", "selector", "deref"} {
 		if !seen[want] {
