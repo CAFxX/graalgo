@@ -58,8 +58,12 @@ import graalgo.values.GoSlice;
  *       is the M9 target).
  * </ul>
  * {@code recvfrom} writes the peer address in this format into its third
- * argument (which must have room for 23 bytes); byte 0 = 0 means "no
- * address" (should not happen for datagrams; defensive).
+ * argument: null means "no address wanted" (connected-UDP Read) and the
+ * datagram is returned as-is; a non-null argument must hold the wire
+ * address for the socket's family (7 bytes AF_INET, 23 bytes AF_INET6) —
+ * a too-small buffer reports -EMSGSIZE before consuming the datagram,
+ * so it stays queued for a retry. Byte 0 = 0 means "no address"
+ * (should not happen for datagrams; defensive).
  *
  * <p>Handle model: sockets are cookies in {@link GoOs}'s unified handle
  * table ({@code KIND_SOCKET}), allocated from the same
@@ -955,7 +959,13 @@ public final class GoNet {
         }
     }
 
-    /** graalgo.net.recvfrom — n+1 or -errno; peer wire address written into addrArg. */
+    /** graalgo.net.recvfrom — n+1 or -errno; peer wire address written into addrArg.
+     * R0614-P0-1: a null addrArg means "no address wanted" (connected-UDP
+     * Read: the synth's __udpConnRead passes nil) — the datagram is
+     * returned, never -EMSGSIZE. A non-null addrArg too small for the
+     * wire address of this socket's family (7 bytes AF_INET, 23 bytes
+     * AF_INET6) reports -EMSGSIZE BEFORE the receive, so the datagram
+     * stays queued for a retry with a big enough buffer. */
     public static long recvfrom(Object cookieArg, Object bufArg, Object addrArg) {
         long cookie = num(cookieArg);
         java.nio.channels.Channel ch = GoOs.socketChannel(cookie);
@@ -966,6 +976,16 @@ public final class GoNet {
             return -EOPNOTSUPP;
         }
         ByteBuffer bb = goBuf(bufArg);
+        if (addrArg != null) {
+            // Pre-receive capacity check (R0614-P0-1): the wire length is
+            // fixed by the socket's family, so a too-small buffer is known
+            // before consuming anything — the datagram stays queued.
+            SockState st = STATES.get(cookie);
+            int need = (st != null && st.domain == AF_INET6) ? 23 : 7;
+            if (((GoSlice) addrArg).len() < need) {
+                return -EMSGSIZE;
+            }
+        }
         try {
             SocketAddress src = dc.receive(bb);
             if (src == null) {
@@ -973,10 +993,13 @@ public final class GoNet {
             }
             int n = bb.position();
             goBufBack(bufArg, bb, n);
+            if (addrArg == null) {
+                return (long) n + 1; // no address wanted (R0614-P0-1)
+            }
             byte[] wire = src instanceof InetSocketAddress isa
                     ? renderAddr(isa) : new byte[]{(byte) 0};
             if (goBufPut(addrArg, wire) < 0) {
-                return -EMSGSIZE; // peer buffer too small for the wire address
+                return -EMSGSIZE; // unreachable given the pre-check; defensive
             }
             return (long) n + 1;
         } catch (IOException e) {
