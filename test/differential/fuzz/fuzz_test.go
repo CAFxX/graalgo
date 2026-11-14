@@ -1,8 +1,10 @@
 // Native differential fuzz targets (GG-0037(i)): testing.F fuzzing of
 // pure stdlib functions with identical corpora under gc and graalgo.
 //
-// Each FuzzXxx target grows a corpus in testdata/fuzz/FuzzXxx/ via
-// `go test -fuzz`. The replay driver (replay.py) materializes every corpus
+// Each FuzzXxx target grows a corpus in $GOCACHE/fuzz/diffharness/fuzz/
+// FuzzXxx/ via `go test -fuzz` (the fuzzer writes to the fuzz cache only,
+// never to testdata/fuzz/). The replay driver (replay.py) materializes
+// every corpus
 // entry as a single-file program and runs it differential gc vs graalgo
 // through the shared diffharness oracle. A divergence is a graalgo bug
 // (the functions are pure; inputs are fixed seeds + fuzzer mutations).

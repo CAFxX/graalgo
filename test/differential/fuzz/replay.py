@@ -1,18 +1,31 @@
 #!/usr/bin/env python3
 """Replay native fuzz corpora differentially (GG-0037(i)).
 
-Reads testdata/fuzz/FuzzXxx/ corpus files (grown by `go test -fuzz`),
+Reads the Go fuzz corpus for this package from the fuzz cache
+($GOCACHE/fuzz/<import-path>/FuzzXxx/, grown by `go test -fuzz`),
 materializes each entry as a single-file Go program calling the target
 stdlib function, and writes a diffharness corpus directory. The caller
 then runs `diffharness run -config backends.json -corpus <dir>` for the
 gc-vs-graalgo differential.
 
-Usage: replay.py --fuzzdir DIR --out DIR
+The corpus does NOT live in testdata/fuzz/: `go test -fuzz` writes new
+interesting inputs to the fuzz cache only (testdata/fuzz/ holds optional
+hand-written seed files, and this package has none). Pointing replay at
+testdata/fuzz/ materializes zero programs and the differential that
+follows is vacuously green — a dead pipeline. So the default fuzz dir
+is resolved from `go env GOCACHE` plus this package's import path (read
+from the enclosing go.mod); --fuzzdir overrides it explicitly, e.g. to
+replay a copied corpus. Exits non-zero when zero programs are
+materialized (pass --allow-empty to override).
+
+Usage: replay.py [--fuzzdir DIR] [--allow-empty] --out DIR
 """
 import argparse
 import ast as pyast
 import os
 import re
+import shutil
+import subprocess
 import sys
 
 # TEMPLATES[target] = (imports, argtypes, body-template).
@@ -113,15 +126,60 @@ def parse_go_literal(typ, lit):
 
 
 def unquote_go_string(lit):
-    # Use Python's literal parsing after translating Go escapes.
+    # Unquote a Go string literal. The result is a str holding one char
+    # per BYTE of the Go string value (latin1-mapped), which is the
+    # representation go_quote_string re-encodes. The old
+    # unicode_escape+latin1 round-trip crashed on \\u/\\U escapes above
+    # U+00FF and silently corrupted \\u escapes in U+0080..U+00FF (it
+    # emitted one byte 0xE9 for "é", whose true value is C3 A9).
     if len(lit) >= 2 and lit[0] == '"' and lit[-1] == '"':
-        inner = lit[1:-1]
-        # Translate Go-specific escapes Python doesn't know.
-        inner = inner.replace('\\x', '\\x')  # same syntax
-        return bytes(inner, 'utf-8').decode('unicode_escape').encode('latin1').decode('latin1')
+        return parse_go_quoted(lit[1:-1])
     if len(lit) >= 2 and lit[0] == '`' and lit[-1] == '`':
         return lit[1:-1]
     raise ValueError(f'cannot unquote {lit!r}')
+
+
+_SIMPLE_ESCAPES = {
+    'a': '\a', 'b': '\b', 'f': '\f', 'n': '\n', 'r': '\r',
+    't': '\t', 'v': '\v', '\\': '\\', '"': '"', "'": "'",
+}
+
+
+def parse_go_quoted(inner):
+    """Parse the inside of a Go double-quoted literal to latin1 bytes-as-str."""
+    out = []
+    i = 0
+    n = len(inner)
+    while i < n:
+        ch = inner[i]
+        if ch != '\\':
+            # Literal char: append its UTF-8 encoding, byte by byte.
+            for b in ch.encode('utf-8'):
+                out.append(chr(b))
+            i += 1
+            continue
+        i += 1
+        if i >= n:
+            raise ValueError('trailing backslash in Go string literal')
+        e = inner[i]
+        if e in _SIMPLE_ESCAPES:
+            out.append(_SIMPLE_ESCAPES[e])
+            i += 1
+        elif e == 'x':
+            out.append(chr(int(inner[i + 1:i + 3], 16)))
+            i += 3
+        elif e == 'u':
+            out.extend(chr(b) for b in chr(int(inner[i + 1:i + 5], 16)).encode('utf-8'))
+            i += 5
+        elif e == 'U':
+            out.extend(chr(b) for b in chr(int(inner[i + 1:i + 9], 16)).encode('utf-8'))
+            i += 9
+        elif e in '01234567':
+            out.append(chr(int(inner[i:i + 3], 8)))
+            i += 3
+        else:
+            raise ValueError(f'unknown Go escape \\{e}')
+    return ''.join(out)
 
 
 def render_arg(typ, val):
@@ -134,11 +192,78 @@ def render_arg(typ, val):
     raise ValueError(f'unsupported arg type {typ}')
 
 
+def go_cache_dir():
+    """Return the Go build cache dir (`go env GOCACHE`)."""
+    env = os.environ.get('GOCACHE')
+    if env:
+        return env
+    go = shutil.which('go')
+    if go:
+        try:
+            out = subprocess.run([go, 'env', 'GOCACHE'],
+                                 capture_output=True, text=True, timeout=30)
+            if out.returncode == 0 and out.stdout.strip():
+                return out.stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return os.path.expanduser('~/.cache/go-build')
+
+
+def import_path_of(pkgdir):
+    """Import path of pkgdir: module (from the enclosing go.mod) + rel dir."""
+    cur = os.path.abspath(pkgdir)
+    while True:
+        gomod = os.path.join(cur, 'go.mod')
+        if os.path.isfile(gomod):
+            module = None
+            with open(gomod) as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('module '):
+                        module = line.split(None, 1)[1].strip()
+                        break
+            if not module:
+                raise ValueError(f'{gomod}: no module line')
+            rel = os.path.relpath(os.path.abspath(pkgdir), cur)
+            return module if rel == '.' else module + '/' + rel.replace(os.sep, '/')
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            raise ValueError(f'no go.mod found above {pkgdir}')
+        cur = parent
+
+
+def default_fuzzdir():
+    """Fuzz cache dir for this package: $GOCACHE/fuzz/<import-path>/."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(go_cache_dir(), 'fuzz', import_path_of(here))
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--fuzzdir', required=True, help='dir with testdata/fuzz/FuzzXxx/')
+    ap.add_argument('--fuzzdir', default=None,
+                    help='dir with FuzzXxx/ corpus subdirs '
+                         '(default: $GOCACHE/fuzz/<import-path>/, resolved '
+                         'via `go env GOCACHE` + the enclosing go.mod)')
     ap.add_argument('--out', required=True, help='diffharness corpus output dir')
+    ap.add_argument('--allow-empty', action='store_true',
+                    help='exit 0 even if no replay programs are materialized')
     args = ap.parse_args()
+
+    if args.fuzzdir is None:
+        try:
+            args.fuzzdir = default_fuzzdir()
+        except ValueError as e:
+            print(f'replay.py: cannot resolve fuzz cache dir: {e}; '
+                  f'pass --fuzzdir explicitly', file=sys.stderr)
+            return 2
+        print(f'using fuzz cache dir {args.fuzzdir}')
+    if not os.path.isdir(args.fuzzdir):
+        print(f'replay.py: fuzz corpus dir {args.fuzzdir} does not exist',
+              file=sys.stderr)
+        print('run `go test -fuzz` in the fuzz package first; the corpus '
+              'lives in $GOCACHE/fuzz/, not testdata/fuzz/',
+              file=sys.stderr)
+        return 2
 
     n = 0
     for target, (imports, argtypes, body) in sorted(TEMPLATES.items()):
@@ -179,7 +304,13 @@ def main():
                 f.write(main_go)
             n += 1
     print(f'materialized {n} replay programs in {args.out}')
+    if n == 0 and not args.allow_empty:
+        print('replay.py: no replay programs materialized; refusing to run '
+              'an empty differential (pass --allow-empty to override)',
+              file=sys.stderr)
+        return 3
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

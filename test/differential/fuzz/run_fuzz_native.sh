@@ -2,9 +2,11 @@
 # Native differential fuzzing (GG-0037(i)): testing.F fuzzing of pure
 # stdlib functions with identical corpora under gc and graalgo.
 #
-# 1. `go test -fuzz` grows the corpus per target in testdata/fuzz/FuzzXxx/
-#    (fuzzer mutations supply input diversity; seeds in fuzz_test.go).
-# 2. replay.py materializes every corpus entry as a single-file program.
+# 1. `go test -fuzz` grows the corpus per target in the fuzz cache
+#    ($GOCACHE/fuzz/diffharness/fuzz/FuzzXxx/ — the fuzzer writes new
+#    interesting inputs to the cache only, never to testdata/fuzz/).
+# 2. replay.py materializes every corpus entry as a single-file program
+#    (it resolves the cache dir itself via `go env GOCACHE` + go.mod).
 # 3. `diffharness run` executes the materialized corpus differential
 #    gc vs graalgo through the shared oracle (GG-0030).
 #
@@ -16,7 +18,10 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE1_DIR   phase-1 tree with the graalgo-run launcher
+#   PHASE1_DIR   backend tree with the graalgo-run launcher
+#                (default: <repo>/internal/backend)
+#   FUZZDIR      explicit fuzz corpus dir for replay.py
+#                (default: resolved from `go env GOCACHE`)
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +41,16 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/phases/phase1}"
+export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/internal/backend}"
+
+if [ ! -x "$PHASE1_DIR/graalgo-run" ]; then
+  echo "fuzz-native: $PHASE1_DIR/graalgo-run missing/not executable" >&2
+  exit 2
+fi
+if [ ! -d "$PHASE1_DIR/runtime/out/classes" ]; then
+  echo "fuzz-native: backend classes not built; run 'make build' at the repo root first" >&2
+  exit 2
+fi
 
 FUZZTIME="30"
 OUTDIR=""
@@ -62,7 +76,11 @@ done
 echo "== [2/4] replay: materialize differential corpus =="
 REPLAY_DIR="$OUTDIR/replay-corpus"
 rm -rf "$REPLAY_DIR" && mkdir -p "$REPLAY_DIR"
-python3 "$HERE/replay.py" --fuzzdir "$HERE/testdata/fuzz" --out "$REPLAY_DIR" | tee "$OUTDIR/replay.log"
+REPLAY_ARGS=()
+if [ -n "${FUZZDIR:-}" ]; then
+  REPLAY_ARGS+=(--fuzzdir "$FUZZDIR")
+fi
+python3 "$HERE/replay.py" "${REPLAY_ARGS[@]}" --out "$REPLAY_DIR" | tee "$OUTDIR/replay.log"
 
 echo "== [3/4] differential: gc vs graalgo =="
 cd "$DH_ROOT"
