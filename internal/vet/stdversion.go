@@ -425,7 +425,13 @@ func runStdVersion(pass *Pass) []Diagnostic {
 		}
 		// Direct uses: package-level funcs, types, vars, consts, including
 		// qualified references like bytes.ContainsFunc.
+		// pass.Info.Uses is package-wide, but this loop runs once per
+		// file in the package: only report uses that live in this file,
+		// otherwise a single use is reported once per file (R0614-P1-17).
 		for id, obj := range pass.Info.Uses {
+			if pass.Fset.Position(id.Pos()).Filename != filename {
+				continue
+			}
 			if obj.Pkg() == nil || !isStdPkgPath(obj.Pkg().Path()) {
 				continue
 			}
@@ -445,7 +451,12 @@ func runStdVersion(pass *Pass) []Diagnostic {
 			report(id, obj.Pkg().Name(), obj.Name(), ver)
 		}
 		// Selections: methods and fields.
+		// pass.Info.Selections is package-wide; only report selections
+		// that live in this file (R0614-P1-17, same as direct uses).
 		for sel := range pass.Info.Selections {
+			if pass.Fset.Position(sel.Pos()).Filename != filename {
+				continue
+			}
 			key, recvObj, ok := stdSelectionKey(pass, sel)
 			if !ok {
 				continue

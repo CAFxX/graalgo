@@ -147,6 +147,54 @@ var _ = x509.OIDFromInts([]uint64{1, 2})
 	}
 }
 
+func TestStdVersionNoDuplicatesMultiFile(t *testing.T) {
+	// R0614-P1-17: a 2-file package with a single too-new use must yield
+	// exactly one diagnostic, not one per file in the package.
+	use := `package p
+
+import "crypto/x509"
+
+// NOTE: OIDFromInts returns (OID, error), so the two-blank form is
+// required: the single-blank form is a type error and go/types
+// best-effort info then drops the second file's uses, which would make
+// the two-use control below pass for the wrong reason.
+var _, _ = x509.OIDFromInts([]uint64{1, 2})
+`
+	other := `package p
+
+func Helper() int { return 42 }
+`
+	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": use, "q.go": other})
+	want := "x509.OIDFromInts requires go1.22 or later (module is go1.21)"
+	if got := strings.Count(joined, want); got != 1 {
+		t.Errorf("expected exactly 1 diagnostic for one too-new use in a 2-file package, got %d:\n%s", got, joined)
+	}
+	// Same for a too-new method selection: (*archive/tar.Writer).AddFS.
+	useMethod := `package p
+
+import (
+	"archive/tar"
+	"io/fs"
+)
+
+func h(w *tar.Writer, fsys fs.FS) error { return w.AddFS(fsys) }
+`
+	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": useMethod, "q.go": other})
+	wantMethod := "tar.(*Writer).AddFS requires go1.22 or later (module is go1.21)"
+	if got := strings.Count(joined, wantMethod); got != 1 {
+		t.Errorf("expected exactly 1 diagnostic for one too-new method use in a 2-file package, got %d:\n%s", got, joined)
+	}
+	// Control: two distinct too-new uses in two files must still yield
+	// two diagnostics (one per use); the fix must not collapse them.
+	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": use, "q.go": use})
+	if got := strings.Count(joined, want); got != 2 {
+		t.Errorf("expected 2 diagnostics for two distinct too-new uses, got %d:\n%s", got, joined)
+	}
+}
+
 func TestCgoCall(t *testing.T) {
 	src := `package p
 
