@@ -161,6 +161,36 @@ public final class AtomicPointerPublishE2ETest {
             + "\tfmt.Println(*(*int)(atomic.LoadPointer(&p)))\n"
             + "}\n";
 
+    /**
+     * R2315-13-P1-1: untyped nil VALUE arguments to the pointer atomics
+     * must store/compare the nil word (0), not die with an internal
+     * error. The frontend types untyped nil as the empty interface, so
+     * the wire value arg is an INTERFACE-kind NilNode with no long
+     * value; without the handleArg helper the node died with
+     * UnsupportedOperationException. Expected stdout is gc 1.27.1 output
+     * for the same program, verified by running it under gc.
+     * Distinct from F1 (nil ADDRESS, which must panic): a nil VALUE
+     * in a valid address is legal Go.
+     */
+    private static final String PROG_NILVALUE =
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"sync/atomic\"\n\t\"unsafe\"\n)\n\n"
+            + "func main() {\n"
+            + "\tvar p unsafe.Pointer\n"
+            + "\tatomic.StorePointer(&p, nil)\n"
+            + "\tif atomic.LoadPointer(&p) == nil {\n"
+            + "\t\tfmt.Println(\"store-nil: nil\")\n"
+            + "\t}\n"
+            + "\tx := 1\n"
+            + "\tatomic.StorePointer(&p, unsafe.Pointer(&x))\n"
+            + "\told := atomic.SwapPointer(&p, nil)\n"
+            + "\tfmt.Println(\"swap-nil: old-payload\", *(*int)(old), \"now-nil\", atomic.LoadPointer(&p) == nil)\n"
+            + "\ty := 2\n"
+            + "\tok := atomic.CompareAndSwapPointer(&p, nil, unsafe.Pointer(&y))\n"
+            + "\tfmt.Println(\"cas-nil-old: ok\", ok, \"payload\", *(*int)(atomic.LoadPointer(&p)))\n"
+            + "\tok2 := atomic.CompareAndSwapPointer(&p, unsafe.Pointer(&y), nil)\n"
+            + "\tfmt.Println(\"cas-nil-new: ok\", ok2, \"now-nil\", atomic.LoadPointer(&p) == nil)\n"
+            + "}\n";
+
     private static final int REPS = 10;
 
     private static void assertTrue(boolean cond, String msg) {
@@ -231,5 +261,11 @@ public final class AtomicPointerPublishE2ETest {
     /** F2: StorePointer evaluates its address argument before its value argument. */
     public void testStoreEvaluatesAddressBeforeValue() throws Exception {
         checkRepeated("atomicptrevalorder.go", PROG_EVALORDER, "addr\nval\n42");
+    }
+
+    /** R2315-13-P1-1: nil value args store/compare the nil word. */
+    public void testNilValueArgs() throws Exception {
+        checkRepeated("atomicptrnilvalue.go", PROG_NILVALUE,
+                "store-nil: nil\nswap-nil: old-payload 1 now-nil true\ncas-nil-old: ok true payload 2\ncas-nil-new: ok true now-nil true");
     }
 }

@@ -4,6 +4,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
+import graalgo.frontend.NilNode;
 import graalgo.frontend.NodeFactory;
 import graalgo.p3unsafe.UnsafeTable;
 import graalgo.runtime.GoErrors;
@@ -180,6 +181,22 @@ public final class AtomicPtrOpNode extends GoExprNode {
                 + s.getClass().getName());
     }
 
+    /**
+     * Reads a value argument as a handle. An untyped {@code nil} lowers
+     * to an INTERFACE-kind {@link NilNode}, which has no long value; a
+     * nil pointer is the zero word (0). Every other argument is a
+     * long-valued handle expression. (R2315-13-P1-1: without this, a nil
+     * value argument to store/swap/CAS died with
+     * UnsupportedOperationException.) Address arguments never go through
+     * here: a nil address must panic (F1), and {@link #storage} handles it.
+     */
+    private static long handleArg(GoExprNode arg, VirtualFrame frame) {
+        if (arg instanceof NilNode) {
+            return 0L;
+        }
+        return arg.executeLong(frame);
+    }
+
     @Override
     public long executeLong(VirtualFrame frame) {
         // load: no value argument. store/swap: one. (cas is boolean-kind
@@ -190,13 +207,13 @@ public final class AtomicPtrOpNode extends GoExprNode {
             }
             case "store" -> {
                 Object s = storage(frame);
-                long newVal = argChildren[0].executeLong(frame);
+                long newVal = handleArg(argChildren[0], frame);
                 return storeHandle(s, newVal);
             }
             case "swap" -> {
                 // swap: returns the old handle.
                 Object s = storage(frame);
-                long newVal = argChildren[0].executeLong(frame);
+                long newVal = handleArg(argChildren[0], frame);
                 if (s instanceof AtomicReference<?> ar) {
                     @SuppressWarnings("unchecked")
                     AtomicReference<Object> cell = (AtomicReference<Object>) ar;
@@ -225,8 +242,8 @@ public final class AtomicPtrOpNode extends GoExprNode {
     public boolean executeBoolean(VirtualFrame frame) {
         // cas: compares the stored handle against old, stores new on match.
         Object s = storage(frame);
-        long oldVal = argChildren[0].executeLong(frame);
-        long newVal = argChildren[1].executeLong(frame);
+        long oldVal = handleArg(argChildren[0], frame);
+        long newVal = handleArg(argChildren[1], frame);
         if (s instanceof AtomicReference<?> ar) {
             @SuppressWarnings("unchecked")
             AtomicReference<Object> cell = (AtomicReference<Object>) ar;
