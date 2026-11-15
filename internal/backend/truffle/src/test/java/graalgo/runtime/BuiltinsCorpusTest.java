@@ -102,4 +102,37 @@ public final class BuiltinsCorpusTest {
             throw new AssertionError(src + ": graalgo stderr must name UnsafeEscapeException, got: " + g.stderr());
         }
     }
+
+    // fix-redmaster-r27 (review F1 on 24d87358): the spanning
+    // unsafe.Pointer read *(*unsafe.Pointer)(unsafe.Pointer(&b[0])) over
+    // []byte is defined under gc (the 8 bytes read little-endian as the
+    // word, 578437695752307201) but has no flat memory behind it in
+    // graalgo's model — the byte[] carrier holds one byte per element.
+    // graalgo must trap loudly (UnsafeEscapeException, exit 1) instead of
+    // returning the single byte as the word (1). DELIBERATE divergence
+    // from gc: this test asserts the trap, not parity, so it cannot use
+    // Differential.checkProgram. Falsifiability: pre-guard graalgo exits 0
+    // printing "uptr-word: 1" (probe r27-p4-pre.log), so the exit-1
+    // assertion fails without the guard.
+    public void testBi24SpanningUptrTrap() throws Exception {
+        Path src = prog("bi24_spanning_uptr_trap");
+        Differential.GcResult gc = Differential.runGc(src);
+        if (gc.exit() != 0) {
+            throw new AssertionError(src + ": gc oracle failed (exit " + gc.exit() + ")");
+        }
+        if (!"uptr-word: 578437695752307201\n".equals(gc.stdout())) {
+            throw new AssertionError(src + ": gc oracle stdout changed: " + gc.stdout());
+        }
+        Differential.GraalgoResult g = Differential.runGraalgo(src);
+        if (g.exit() != 1) {
+            throw new AssertionError(src + ": graalgo must trap with exit 1, got " + g.exit()
+                    + "\n--- stdout ---\n" + g.stdout() + "\n--- stderr ---\n" + g.stderr());
+        }
+        if (!g.stdout().isEmpty()) {
+            throw new AssertionError(src + ": graalgo must print nothing on stdout, got: " + g.stdout());
+        }
+        if (!g.stderr().contains("UnsafeEscapeException")) {
+            throw new AssertionError(src + ": graalgo stderr must name UnsafeEscapeException, got: " + g.stderr());
+        }
+    }
 }

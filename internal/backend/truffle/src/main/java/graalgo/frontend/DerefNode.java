@@ -173,16 +173,25 @@ public final class DerefNode extends GoExprNode {
             // not Java null (cf. SelectorNode.read).
             return Long.valueOf(0);
         }
-        if ((kind().isIntKind() || kind().isFloatKind()) && o instanceof Number) {
-            // fix-redmaster-r26 (review F1 on a158aaa6, same bug family as
-            // the ReflectRefs carrier branches): this dereference yields a
-            // single narrower value (one array element peeled above, or one
-            // scalar cell) — a wider target has no flat memory behind it,
-            // so trap loudly instead of returning the single value
-            // zero/sign-extended (e.g. int64 from byte[] would read one
-            // byte). Narrower-or-equal targets keep the existing behavior
-            // (Boxing.toLong narrows to the target width). Long leaves are
-            // handled above via fromLongBits, which already narrows.
+        if ((kind().isIntKind() || kind().isFloatKind() || kind().isComplexKind()
+                || kind() == GoKind.UNSAFE_POINTER) && o instanceof Number) {
+            // fix-redmaster-r27 (review F1 on 24d87358: the r26 guard
+            // covered int/float only, so an 8-byte unsafe.Pointer target
+            // over a 1-byte leaf silently returned the single byte as
+            // the word): this dereference yields a single narrower value
+            // (one array element peeled above, or one scalar cell) — a
+            // wider target has no flat memory behind it, so trap loudly
+            // instead of returning the single value zero/sign-extended
+            // (e.g. unsafe.Pointer from byte[] would read one byte as
+            // the word). The rule is the commit message's stated rule:
+            // trap when the target is wider than the single value the
+            // peel/cell yields, for every kind the peel covers whose
+            // size can exceed a leaf's (int/float/complex/
+            // unsafe.Pointer; BOOL is 1 byte, the minimum leaf size,
+            // so the guard can never fire for it and it is not listed).
+            // Narrower-or-equal targets keep the existing behavior
+            // (Boxing.toLong narrows to the target width). Long leaves
+            // are handled above via fromLongBits, which already narrows.
             GoKind leafKind = boxKindOf(o);
             if (leafKind != null && elemSize(kind()) > elemSize(leafKind)) {
                 throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
@@ -233,6 +242,11 @@ public final class DerefNode extends GoExprNode {
             case INT16, UINT16 -> 2;
             case INT32, UINT32, FLOAT32 -> 4;
             case INT64, UINT64, FLOAT64, COMPLEX64 -> 8;
+            // fix-redmaster-r27: UNSAFE_POINTER is word-sized (8 bytes
+            // on this 64-bit target), matching the Long-carried word
+            // model — without this case the guard above could never
+            // fire for unsafe.Pointer targets (elemSize returned -1).
+            case UNSAFE_POINTER -> 8;
             case COMPLEX128 -> 16;
             default -> -1;
         };
