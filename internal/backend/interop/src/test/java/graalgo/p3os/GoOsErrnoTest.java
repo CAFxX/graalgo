@@ -40,6 +40,7 @@ public final class GoOsErrnoTest {
     private static final int O_CREAT = 64;
     private static final int O_EXCL = 128;
     private static final int O_TRUNC = 512;
+    private static final int O_APPEND = 1024;
 
     private static Path scratch;
 
@@ -92,6 +93,21 @@ public final class GoOsErrnoTest {
         for (int i = 0; i < gs.len(); i++) {
             out[i] = (byte) arr[gs.offset() + i];
         }
+        return out;
+    }
+
+    // byte[]-backed buffers for the R2315-P1-1 / Nov2-P1-29 tests: the
+    // canonical guest []byte backing is byte[] (Boxing.newArray, D5),
+    // unlike buf()/bytesBuf() above, which build int[]-backed slices
+    // (R2315-P2-3 — those helpers are out of scope here).
+    private static GoSlice byteBackedBuf(int n) {
+        return new GoSlice(new byte[n], 0, n, n);
+    }
+
+    private static byte[] byteSliceBytes(GoSlice gs) {
+        byte[] arr = (byte[]) gs.array();
+        byte[] out = new byte[gs.len()];
+        System.arraycopy(arr, gs.offset(), out, 0, gs.len());
         return out;
     }
 
@@ -288,6 +304,149 @@ public final class GoOsErrnoTest {
 
             checkEq(-GoOs.EBADF, GoOs.read(999999L, buf(8)), "read bad cookie");
             checkEq(-GoOs.EBADF, GoOs.handleKind(999999L), "kind bad cookie");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // JDK quirk (found by this lane): FileChannel.open(READ, CREATE)
+    // throws NoSuchFileException on a missing file, while gc creates
+    // it. GoOs pre-creates so the READ open succeeds.
+    public void testOpenReadOnlyCreat() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("rc").toString();
+            long h = GoOs.open(gs(name), O_RDONLY | O_CREAT, 0644);
+            check(h >= 16, "open cookie, got " + h);
+            checkEq(0, Files.size(Path.of(name)), "created file is empty");
+            checkEq(0, GoOs.close(h), "close");
+            // O_CREAT|O_EXCL on the now-existing file is EEXIST.
+            checkEq(-GoOs.EEXIST,
+                    GoOs.open(gs(name), O_RDONLY | O_CREAT | O_EXCL, 0644), "O_EXCL on existing");
+            // O_CREAT|O_EXCL on a missing file creates it (gc parity).
+            String name2 = scratch.resolve("rc2").toString();
+            long h2 = GoOs.open(gs(name2), O_RDONLY | O_CREAT | O_EXCL, 0644);
+            check(h2 >= 16, "O_EXCL create cookie, got " + h2);
+            checkEq(0, GoOs.close(h2), "close2");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R2315-P1-1: O_RDONLY|O_TRUNC must truncate (the JDK accepts
+    // READ+TRUNCATE_EXISTING as a silent no-op; GoOs truncates
+    // explicitly). The handle stays read-only.
+    public void testOpenReadOnlyTrunc() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("rt").toString();
+            Files.write(Path.of(name), "data".getBytes(StandardCharsets.UTF_8));
+            long h = GoOs.open(gs(name), O_RDONLY | O_TRUNC, 0);
+            check(h >= 16, "open cookie, got " + h);
+            checkEq(0, Files.size(Path.of(name)), "O_RDONLY|O_TRUNC truncates");
+            checkEq(0, GoOs.read(h, byteBackedBuf(16)), "EOF after truncate");
+            checkEq(-GoOs.EBADF, GoOs.write(h, byteBackedBuf(1)), "write on read-only");
+            checkEq(0, GoOs.close(h), "close");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R2315-P1-1: a just-created 0444 file must still succeed (gc does):
+    // the explicit truncate runs before the O_CREAT perm application.
+    public void testOpenReadOnlyTruncCreat0444() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("c0444").toString();
+            long h = GoOs.open(gs(name), O_RDONLY | O_TRUNC | O_CREAT, 0444);
+            check(h >= 16, "open cookie, got " + h);
+            checkEq(0, Files.size(Path.of(name)), "created file is empty");
+            checkEq(0, GoOs.close(h), "close");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R2315-P1-1: on a 0444 file the kernel requires write access for
+    // O_TRUNC, so gc fails EACCES and leaves the content. As root the
+    // file is still writable, so the EACCES arm cannot be observed —
+    // skip then (the gc probe in evidence/r2315-p1-1 covers the
+    // mechanism as non-root).
+    public void testOpenReadOnlyTruncNoWritePerm() throws IOException {
+        initScratch();
+        try {
+            Path p = scratch.resolve("nw");
+            Files.write(p, "data".getBytes(StandardCharsets.UTF_8));
+            check(p.toFile().setWritable(false, false), "drop write bits");
+            if (Files.isWritable(p)) {
+                return; // effectively root: EACCES is unobservable here
+            }
+            checkEq(-GoOs.EACCES, GoOs.open(gs(p.toString()), O_RDONLY | O_TRUNC, 0),
+                    "O_RDONLY|O_TRUNC on 0444");
+            checkEq(4, Files.size(p), "content intact after failed open");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // Nov2-P1-29: O_RDONLY|O_APPEND must open (gc accepts it); the
+    // JDK's READ+APPEND rejection must not escape the intrinsic.
+    // Later writes fail EBADF; content is untouched.
+    public void testOpenReadOnlyAppend() throws IOException {
+        initScratch();
+        try {
+            String name = scratch.resolve("ra").toString();
+            Files.write(Path.of(name), "data".getBytes(StandardCharsets.UTF_8));
+            long h = GoOs.open(gs(name), O_RDONLY | O_APPEND, 0);
+            check(h >= 16, "open cookie, got " + h);
+            checkEq(4, Files.size(Path.of(name)), "content intact");
+            GoSlice b = byteBackedBuf(16);
+            checkEq(5, GoOs.read(h, b), "read n+1");
+            checkEq(0, "data".compareTo(new String(byteSliceBytes(b), 0, 4, StandardCharsets.UTF_8)),
+                    "read content");
+            checkEq(-GoOs.EBADF, GoOs.write(h, byteBackedBuf(1)), "write on read-only|append");
+            checkEq(0, GoOs.close(h), "close");
+        } finally {
+            cleanScratch();
+        }
+    }
+
+    // R2315-P1-1: O_RDONLY|O_TRUNC on a FIFO must not hang — the
+    // explicit truncate is gated on regular files, so no second (write)
+    // open is attempted. A writer thread provides the FIFO open
+    // rendezvous; the open itself runs in a worker thread with a
+    // timeout so a hang fails the test instead of the suite.
+    public void testOpenReadOnlyTruncFifo() throws Exception {
+        initScratch();
+        try {
+            Path fifo = scratch.resolve("fifo");
+            Process mk = new ProcessBuilder("mkfifo", fifo.toString()).start();
+            if (mk.waitFor() != 0) {
+                return; // no mkfifo(1): cannot construct the fixture here
+            }
+            Thread writer = new Thread(() -> {
+                try (var out = Files.newOutputStream(fifo)) {
+                    // Rendezvous only: the open unblocks the reader.
+                } catch (IOException ignored) {
+                    // Reader closed first; nothing to assert.
+                }
+            });
+            writer.setDaemon(true);
+            writer.start();
+            final long[] result = new long[1];
+            Thread opener = new Thread(() -> {
+                result[0] = GoOs.open(gs(fifo.toString()), O_RDONLY | O_TRUNC, 0);
+            });
+            opener.setDaemon(true);
+            opener.start();
+            opener.join(10_000);
+            if (opener.isAlive()) {
+                throw new AssertionError("O_RDONLY|O_TRUNC on a FIFO hung");
+            }
+            long h = result[0];
+            check(h >= 16, "FIFO open cookie, got " + h);
+            checkEq(0, GoOs.close(h), "close FIFO handle");
+            writer.join(5_000);
         } finally {
             cleanScratch();
         }

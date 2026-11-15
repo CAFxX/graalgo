@@ -708,6 +708,36 @@ public final class GoOs {
                 HANDLES.put(h, dh);
                 return h;
             }
+            // O_CREAT|O_EXCL on an existing path is EEXIST (gc probe;
+            // same check as the R11-GOOS lane): the JDK ignores
+            // CREATE_NEW on read-only opens, so the open below cannot
+            // enforce it. NOFOLLOW_LINKS so a dangling link counts as
+            // existing.
+            if (create && excl && Files.exists(p, LinkOption.NOFOLLOW_LINKS)) {
+                return -EEXIST;
+            }
+            // JDK quirk (found by this lane): FileChannel.open(READ,
+            // CREATE) throws NoSuchFileException on a missing file
+            // instead of creating it, while gc creates it — so an
+            // O_RDONLY|O_CREAT open of a missing file returned ENOENT.
+            // Pre-create with the atomic Files.createFile (which also
+            // supplies the O_EXCL check); the plain READ open below
+            // then succeeds. A lost create race falls through to the
+            // open (EEXIST when O_EXCL is set). Known remaining gap:
+            // a dangling symlink + O_RDONLY|O_CREAT still reports
+            // ENOENT where gc would create the target.
+            boolean preCreated = false;
+            if (create && accmode == O_RDONLY && !Files.exists(p)) {
+                try {
+                    Files.createFile(p);
+                    preCreated = true;
+                } catch (FileAlreadyExistsException e) {
+                    if (excl) {
+                        return -EEXIST;
+                    }
+                    // Lost the create race: the open below opens it.
+                }
+            }
             Set<StandardOpenOption> opts = EnumSet.noneOf(StandardOpenOption.class);
             if (accmode == O_RDONLY) {
                 opts.add(StandardOpenOption.READ);
@@ -717,19 +747,50 @@ public final class GoOs {
                 opts.add(StandardOpenOption.READ);
                 opts.add(StandardOpenOption.WRITE);
             }
-            if (append) {
+            // Nov2-P1-29: the JDK rejects READ+APPEND with
+            // IllegalArgumentException, but gc accepts O_RDONLY|O_APPEND
+            // (a later write fails EBADF via the handle's writable flag).
+            // Only request APPEND when the access mode includes write.
+            if (append && write) {
                 opts.add(StandardOpenOption.APPEND);
             }
-            if (create) {
+            if (create && !preCreated) {
                 opts.add(excl ? StandardOpenOption.CREATE_NEW : StandardOpenOption.CREATE);
             }
-            if (trunc) {
+            // R2315-P1-1: the JDK accepts READ+TRUNCATE_EXISTING as a
+            // silent no-op while the kernel truncates, so only request
+            // it when the access mode includes write; the O_RDONLY case
+            // is truncated explicitly below.
+            if (trunc && write) {
                 opts.add(StandardOpenOption.TRUNCATE_EXISTING);
             }
             if (sync) {
                 opts.add(StandardOpenOption.SYNC);
             }
             FileChannel ch = FileChannel.open(p, opts);
+            if (trunc && accmode == O_RDONLY && Files.isRegularFile(p)) {
+                // R2315-P1-1: the kernel truncates on O_RDONLY|O_TRUNC
+                // (and requires write access for it: a 0444 file fails
+                // EACCES, verified by gc probe as non-root), but the JDK
+                // accepts READ+TRUNCATE_EXISTING as a silent no-op, so
+                // truncate explicitly through a short-lived WRITE channel
+                // and keep the returned handle read-only. Only regular
+                // files: the kernel ignores O_TRUNC for FIFOs/devices.
+                // This runs BEFORE the O_CREAT perm application below: a
+                // just-created 0444 file must still succeed (gc does),
+                // which a post-perm WRITE open would fail with EACCES.
+                try (FileChannel tc = FileChannel.open(p, StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING)) {
+                    // Truncation happens on open; nothing to write.
+                } catch (IOException | SecurityException e) {
+                    try {
+                        ch.close();
+                    } catch (IOException ignored) {
+                        // Best effort; the open already failed.
+                    }
+                    return e instanceof SecurityException ? -EACCES : -errno(e);
+                }
+            }
             if (create) {
                 // D1: apply the requested 0777 bits exactly (the JVM
                 // cannot read umask, so gc's perm&~umask is approximated
