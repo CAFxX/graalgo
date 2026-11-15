@@ -177,7 +177,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `abifuncpc` | `kind` ∈ {`FuncPCABI0`,`FuncPCABIInternal`}, `arg`: expr node (the func value), `type`: type id (uintptr) — internal/abi FuncPC* compile intrinsics |
 | `sliceoverlap` | `x`, `y`: expr nodes (the two []byte slices), `inexact`: bool, `type`: type id (bool) — crypto/internal/fips140/alias AnyOverlap/InexactOverlap |
 | `atomicaddr` | `addr`: expr node, `cell` ∈ {`int32`,`int64`,`bool`} — sync/atomic word-op address cell (the backend wraps the address in a delegating AtomicLong/AtomicInteger cell) |
-| `atomicptrop` | `op` ∈ {`swap`,`cas`}, `addr`: expr node, `args`: [expr nodes], `type`: type id — atomic.SwapPointer/CompareAndSwapPointer |
+| `atomicptrop` | `op` ∈ {`load`,`store`,`swap`,`cas`}, `addr`: expr node, `args`: [expr nodes] (none for load, new value for store/swap, old+new for cas), `type`: type id — atomic.LoadPointer/StorePointer/SwapPointer/CompareAndSwapPointer |
 | `syncop` | `op` ∈ {`Load`,`Store`,`Add`,`Swap`,`CompareAndSwap`,`And`,`Or`,`LoadOrStore`,`LoadAndDelete`}, `synctyp`: str (`atomic.*` or `Map`), `recv`: expr node (an atomicaddr cell for word ops, the map expr for sync.Map), `args`: [expr nodes], `type`: type id — sync/atomic word ops and sync.Map multi-result methods |
 | `reflectop` | `op`: str, `args`: [expr nodes], `type`: type id — a table-backed reflect operation (the `op` vocabulary is owned by the exporter: the reflect*MethodOp tables plus the `__reflect_*` intrinsic names) |
 | `runtimecaller` | `skip`: expr node, `type`: type id (the pair type of the desugared temp) — `runtime.Caller(skip)` multi-result desugar |

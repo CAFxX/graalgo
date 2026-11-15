@@ -638,9 +638,16 @@ def check_node(ctx, path, node, expr):
         expr_node("addr")
         str_field("cell", {"int32", "int64", "bool"})
     elif kind == "atomicptrop":
-        # atomic.SwapPointer/CompareAndSwapPointer: `op` is "swap"/"cas",
-        # `addr` the addressed word, `args` the remaining operands.
-        str_field("op", {"swap", "cas"})
+        # atomic.LoadPointer/StorePointer/SwapPointer/
+        # CompareAndSwapPointer: `op` is "load"/"store"/"swap"/"cas",
+        # `addr` the addressed word, `args` the remaining operands
+        # (none for load, the new value for store/swap, old+new for
+        # cas — the arities AtomicPtrOpNode enforces on the backend;
+        # the validator checks shape only, like syncop, and its
+        # NEW_KIND_FIELDS fixture is a minimal swap with args []).
+        # The validator used to allow only swap/cas, which rejected
+        # the P1-1 load/store lowering (CI run 43729326524).
+        str_field("op", {"load", "store", "swap", "cas"})
         expr_node("addr")
         node_list("args")
         type_ref("type")
