@@ -9,6 +9,8 @@ import graalgo.frontend.NodeFactory;
 import graalgo.frontend.TypeTable;
 import graalgo.p3reflect.ReflectRefs.Cell;
 import graalgo.p3reflect.ReflectTypes.TypeInfo;
+import graalgo.values.GoBox;
+import graalgo.values.GoCell;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
@@ -17,7 +19,9 @@ import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The {@code "reflectop"} wire node (P3-M8, wave 2, reflect package).
@@ -469,6 +473,16 @@ public final class ReflectOpNode extends GoExprNode {
                 mapIterReset(asTok(argv[0]), asValue(argv[1]));
                 yield null;
             }
+            case "mapsiterinit" -> {
+                mapsIterInit(argv[0], argv[1], argv[2]);
+                yield null;
+            }
+            case "mapsiternext" -> {
+                mapsIterNext(argv[0]);
+                yield null;
+            }
+            case "mapsiterkey" -> mapsIterKey(argv[0]);
+            case "mapsiterelem" -> mapsIterElem(argv[0]);
             default -> throw new IllegalStateException("reflect: unknown op " + op);
         };
     }
@@ -1820,6 +1834,205 @@ public final class ReflectOpNode extends GoExprNode {
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         st.reset((GoMap) d5, t.key.tok, t.elem.tok);
+    }
+
+    // ------------------------------------------------------------------
+    // maps.Iter method family (fix-redmaster-r19, bi21).
+    // ------------------------------------------------------------------
+
+    /**
+     * Per-Iter iteration state for the intercepted
+     * {@code (*maps.Iter)} method family (exporter ops
+     * {@code mapsiter*}). The guest {@code maps.Iter} struct cannot
+     * run on the GoMap carrier — its Swiss-table fields
+     * ({@code dirPtr}/{@code group}/{@code tab}) name memory graalgo
+     * does not have — so the exporter replaces the family with these
+     * ops, reusing {@link MapIterState}'s snapshot semantics (keys
+     * snapshot at Init; values re-read from the live map; entries
+     * deleted since Init are skipped). State is keyed by the Iter
+     * struct's identity: every call in the reflect path
+     * ({@code mapIterStart}/{@code mapIterNext}/{@code MapIter.Key}/
+     * {@code Value}) reaches the same struct object through the same
+     * {@code &it} pointer. A value copy of a mid-iteration Iter does
+     * NOT carry the state (the copy reads as uninitialized) — the
+     * same limitation as the handle-keyed synthetic mapiter state.
+     * Entries are never removed (a fresh Iter struct is a fresh
+     * identity, so stale entries cannot collide); the leak is
+     * bounded by the number of Iter values created per run.
+     */
+    private static final Map<GoStruct, MapIterState> MAPS_ITER_STATES = new IdentityHashMap<>();
+
+    /** Field index of a named field of a struct value's descriptor. */
+    private static int iterFieldIndex(GoStruct gs, String name) {
+        List<GoStructDescriptor.Field> fields = gs.descriptor().fields();
+        for (int i = 0; i < fields.size(); i++) {
+            if (fields.get(i).name().equals(name)) {
+                return i;
+            }
+        }
+        throw new IllegalStateException("maps.Iter: no field " + name
+                + " on " + gs.descriptor().typeName());
+    }
+
+    /**
+     * Unwraps a {@code *maps.Iter} receiver to the Iter struct value.
+     * Accepts a GoPointer (the value-model shape) or a Long intern
+     * handle (the reflect world's unsafe.Pointer shape).
+     */
+    private static GoStruct iterStruct(Object recv) {
+        Object target = recv;
+        if (target instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                throw new IllegalStateException("maps.Iter method on nil receiver");
+            }
+            target = gp.referent();
+        } else if (target instanceof Number n) {
+            if (n.longValue() == 0) {
+                throw new IllegalStateException("maps.Iter method on nil receiver");
+            }
+            target = ReflectRefs.resolve(n.longValue());
+        }
+        while (target instanceof GoCell gc) {
+            target = gc.get();
+        }
+        while (target instanceof Cell rc) {
+            target = rc.value;
+        }
+        if (!(target instanceof GoStruct gs)) {
+            throw new IllegalStateException("maps.Iter method on non-struct receiver: "
+                    + (target == null ? "null" : target.getClass().getName()));
+        }
+        return gs;
+    }
+
+    /**
+     * Unwraps a {@code *maps.Map} argument to the GoMap, or null for a
+     * nil map. Accepts a GoPointer or a Long intern handle.
+     */
+    private static GoMap iterMap(Object m) {
+        if (m == null) {
+            return null;
+        }
+        Object target = m;
+        if (target instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                return null;
+            }
+            target = gp.referent();
+        } else if (target instanceof Number n) {
+            if (n.longValue() == 0) {
+                return null;
+            }
+            target = ReflectRefs.resolve(n.longValue());
+        }
+        while (target instanceof GoCell gc) {
+            target = gc.get();
+        }
+        while (target instanceof Cell rc) {
+            target = rc.value;
+        }
+        if (!(target instanceof GoMap gm)) {
+            throw new IllegalStateException("maps.Iter.Init: map argument is not a GoMap: "
+                    + (target == null ? "null" : target.getClass().getName()));
+        }
+        return gm;
+    }
+
+    /**
+     * {@code (*maps.Iter).Init}: stores the type and map words (so the
+     * un-intercepted {@code Initialized}/{@code Map} field reads keep
+     * working) and snapshots the map's keys. Mirrors the guest early
+     * return exactly: a nil or empty map leaves {@code it.m}
+     * untouched and registers no state, so a later {@code Next}
+     * yields nil keys.
+     */
+    private static void mapsIterInit(Object recv, Object typ, Object m) {
+        GoStruct it = iterStruct(recv);
+        it.setObject(iterFieldIndex(it, "typ"), typ);
+        GoMap map = iterMap(m);
+        if (map == null || map.size() == 0) {
+            return;
+        }
+        it.setObject(iterFieldIndex(it, "m"), m);
+        MAPS_ITER_STATES.put(it, new MapIterState(map, 0, 0));
+    }
+
+    /**
+     * {@code (*maps.Iter).Next}: advances the snapshot, skipping keys
+     * deleted since Init, and writes the current key/elem pointers
+     * into the Iter struct's fields (nil at exhaustion, and when the
+     * Iter was never initialized). A present entry whose value is nil
+     * still gets a non-nil elem pointer (a cell pointer to a null
+     * cell — the shape of {@code &x} for a nil-valued variable), so
+     * reflect's {@code MapIter.Value} does not mistake it for
+     * exhaustion.
+     */
+    private static void mapsIterNext(Object recv) {
+        GoStruct it = iterStruct(recv);
+        int keyIdx = iterFieldIndex(it, "key");
+        int elemIdx = iterFieldIndex(it, "elem");
+        MapIterState st = MAPS_ITER_STATES.get(it);
+        if (st == null) {
+            it.setObject(keyIdx, null);
+            it.setObject(elemIdx, null);
+            return;
+        }
+        while (st.index < st.snapshot.length) {
+            Object key = st.snapshot[st.index++];
+            if (!st.map.containsKey(key)) {
+                continue;
+            }
+            st.key = key;
+            st.val = st.map.get(key);
+            it.setObject(keyIdx, new GoPointer(key));
+            it.setObject(elemIdx, st.val == null
+                    ? new GoPointer(new GoBox(null))
+                    : new GoPointer(st.val));
+            return;
+        }
+        st.key = null;
+        st.val = null;
+        it.setObject(keyIdx, null);
+        it.setObject(elemIdx, null);
+    }
+
+    /** {@code (*maps.Iter).Key}: the current key pointer (nil at exhaustion). */
+    private static Object mapsIterKey(Object recv) {
+        GoStruct it = iterStruct(recv);
+        return keyElemHandle(it.getObject(iterFieldIndex(it, "key")));
+    }
+
+    /** {@code (*maps.Iter).Elem}: the current elem pointer (nil at exhaustion). */
+    private static Object mapsIterElem(Object recv) {
+        GoStruct it = iterStruct(recv);
+        return keyElemHandle(it.getObject(iterFieldIndex(it, "elem")));
+    }
+
+    /**
+     * The word shape of a maps.Iter key/elem pointer (fix-redmaster-r22,
+     * bi21): the exporter kinds mapsiterkey/mapsiterelem by the Go return
+     * type unsafe.Pointer, so the op's result is consumed as a Long word —
+     * returning the stored GoPointer object dies in the consumer's
+     * Boxing.toLong. Return the Long intern handle instead (null → 0,
+     * the nil pointer), unwrapping a GoPointer to its referent first —
+     * the same shape as the proven synthetic-path mapIterKey
+     * (intern(st.key)).
+     */
+    private static Long keyElemHandle(Object v) {
+        if (v == null) {
+            return Long.valueOf(0);
+        }
+        Object target = v;
+        if (target instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                return Long.valueOf(0);
+            }
+            target = gp.referent();
+        }
+        if (target == null) {
+            return Long.valueOf(0);
+        }
+        return Long.valueOf(ReflectRefs.intern(target));
     }
 
     // ------------------------------------------------------------------

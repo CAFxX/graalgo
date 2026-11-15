@@ -40,9 +40,16 @@ public final class SectionClampTest {
      * sectionFor before any clamping happens (scheduled full-suite run
      * 41441646157). The clamp under test is about line/col range, not
      * about missing keys.
+     *
+     * <p>The document likewise carries a faithful {@code "package"}
+     * object: {@code LinknameIntrinsics.bindGoFuncs} requires the key
+     * and the real exporter always emits {@code Pkg{name,files,lang}},
+     * so a fixture without it dies before any clamping happens
+     * (scheduled full-suite run 42618328122).
      */
     private static final String DOC_OUT_OF_RANGE = "{"
             + "\"frontend\":\"v1\","
+            + "\"package\":{\"name\":\"main\",\"files\":[\"clamp.go\"],\"lang\":\"go\"},"
             + "\"types\":" + TYPES + ","
             + "\"objects\":" + OBJECTS + ","
             + "\"funcs\":[{"

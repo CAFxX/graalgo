@@ -10183,6 +10183,28 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 		}
 		return e.node("reflectop", c, fields), nil
 	}
+	// fix-redmaster-r19 (bi21): the (*maps.Iter) method family is
+	// routed to the table-backed reflectop machinery for the same
+	// reason as reflect.Value above — the guest Iter struct cannot
+	// run on the GoMap carrier (its Swiss-table fields name memory
+	// graalgo does not have), so Init/Next/Key/Elem are replaced by
+	// Java ops reusing ReflectOpNode's MapIterState snapshot
+	// semantics. Map/Initialized stay ordinary guest code: they are
+	// plain field reads once Init stores typ/m (see the Java ops).
+	if op := mapsIterMethodOp(selection, sel.Sel.Name); op != "" {
+		args, err := e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := e.callType(c)
+		if err != nil {
+			return nil, err
+		}
+		fields := map[string]any{
+			"op": op, "args": append([]*Node{recv}, args...), "type": typ,
+		}
+		return e.node("reflectop", c, fields), nil
+	}
 	fun, err := e.methodRefNode(c, sel, selection, recv)
 	if err != nil {
 		return nil, err
@@ -11197,6 +11219,52 @@ func reflectValueMethodOp(selection *types.Selection, mname string) string {
 		return ""
 	}
 	if named.Obj().Pkg().Path() != "reflect" || named.Obj().Name() != "Value" {
+		return ""
+	}
+	return op
+}
+
+// mapsIterMethodOp maps a method called on *maps.Iter to the
+// table-backed reflectop operation, or "" otherwise. The
+// discriminator is the method's receiver (exact, like
+// reflectValueMethodOp above): only internal/runtime/maps.Iter has
+// Init/Next/Key/Elem/Map/Initialized among concrete types, and the
+// receiver check excludes same-named methods on other types. The
+// receiver is a pointer type, so it is unwrapped before the named
+// check. Map and Initialized are NOT intercepted (they are plain
+// field reads once Init stores typ/m) — only the four methods whose
+// bodies touch the Swiss-table layout need ops.
+func mapsIterMethodOp(selection *types.Selection, mname string) string {
+	var op string
+	switch mname {
+	case "Init":
+		op = "mapsiterinit"
+	case "Next":
+		op = "mapsiternext"
+	case "Key":
+		op = "mapsiterkey"
+	case "Elem":
+		op = "mapsiterelem"
+	default:
+		return ""
+	}
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok || fn.Type() == nil {
+		return ""
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Recv() == nil {
+		return ""
+	}
+	rt := types.Unalias(sig.Recv().Type())
+	if p, ok := rt.(*types.Pointer); ok {
+		rt = types.Unalias(p.Elem())
+	}
+	named, ok := rt.(*types.Named)
+	if !ok || named.Obj() == nil || named.Obj().Pkg() == nil {
+		return ""
+	}
+	if named.Obj().Pkg().Path() != "internal/runtime/maps" || named.Obj().Name() != "Iter" {
 		return ""
 	}
 	return op

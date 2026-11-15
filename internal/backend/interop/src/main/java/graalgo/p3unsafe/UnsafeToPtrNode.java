@@ -175,12 +175,20 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 if (fieldPtr != null) {
                     return fieldPtr;
                 }
+                fieldPtr = nestedFieldPointer(resolved, view.byteOffset());
+                if (fieldPtr != null) {
+                    return fieldPtr;
+                }
                 return derivedPointer(resolved, view.byteOffset());
             }
             if (hit.fieldTok() != hit.targetTok()
                     && headerQName == null && prefixTarget == null
                     && viewLayout == null && ifaceLayout == null) {
                 Object fieldPtr = continuedFieldPointer(resolved, view.byteOffset());
+                if (fieldPtr != null) {
+                    return fieldPtr;
+                }
+                fieldPtr = nestedFieldPointer(resolved, view.byteOffset());
                 if (fieldPtr != null) {
                     return fieldPtr;
                 }
@@ -586,6 +594,144 @@ public final class UnsafeToPtrNode extends GoExprNode {
                     f.type.tok, targetTok);
         }
         return null;
+    }
+
+    /**
+     * Pointer into a NESTED struct field (fix-redmaster-r19, bi20).
+     * A byte offset that lands strictly inside a struct-typed direct
+     * field — or exactly on one whose type differs from the conversion
+     * target — names a field of the nested struct, not of the root:
+     * real reflect's {@code Field} forms {@code add(v.ptr, offset)}
+     * on the OUTER struct's handle even for fields of an inner struct
+     * (offset-0 derivations return the base handle unchanged, so the
+     * inner struct's fields keep outer-relative offsets). The direct
+     * matcher ({@link #structFieldAt}) and the array rules
+     * ({@link #continuedFieldPointer}) both miss that shape, and the
+     * caller then traps in the array-derivation path (bi20:
+     * {@code nestedMixed.M.B} at offset 8 of the outer struct).
+     * Mirrors the descent {@code ReflectRefs.readStructFieldAt}
+     * already performs for scalar reads: recurse into the nested
+     * struct with the remainder offset, returning a pointer to the
+     * ultimate field's storage (a {@code GoFieldCell} pointer, the
+     * same aliasing shape {@code structFieldAt} produces), or null
+     * when no nested field boundary matches — the caller keeps its
+     * loud derivation failure. Depth-capped (value nesting is
+     * finite in Go); layout facts only, never type or field names.
+     */
+    private Object nestedFieldPointer(Object referent, long byteOffset) {
+        return nestedFieldPointerDepth(referent, byteOffset, 0);
+    }
+
+    private Object nestedFieldPointerDepth(Object referent, long byteOffset, int depth) {
+        if (depth > 8 || targetElemWireId < 0) {
+            return null;
+        }
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
+        }
+        if (!(root instanceof GoStruct gs)) {
+            return null;
+        }
+        ReflectTypes.TypeInfo rootInfo;
+        long targetTok;
+        try {
+            rootInfo = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (rootInfo == null) {
+                rootInfo = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+            targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (rootInfo == null || targetTok < 0
+                || rootInfo.fields == null || rootInfo.kind != GoKind.STRUCT) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : rootInfo.fields) {
+            if (f.type == null || f.index.length != 1) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                return null;
+            }
+            long rel = byteOffset - f.offset;
+            if (rel < 0) {
+                continue;
+            }
+            if (rel == 0) {
+                if (f.type.tok == targetTok) {
+                    return UnsafeTable.pointerFor(
+                            new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()));
+                }
+                if (f.type.kind == GoKind.STRUCT) {
+                    Object fv = nestedFieldValue(gs, ord);
+                    if (fv instanceof GoStruct nested) {
+                        Object p = nestedFieldPointerDepth(nested, 0, depth + 1);
+                        if (p != null) {
+                            return p;
+                        }
+                    }
+                }
+                if (f.type.kind == GoKind.ARRAY) {
+                    Object p = arrayElemPointer(gs, byteOffset);
+                    if (p != null) {
+                        return p;
+                    }
+                    p = arrayFieldPointer(gs, byteOffset);
+                    if (p != null) {
+                        return p;
+                    }
+                }
+                continue;
+            }
+            if (f.type.size <= 0 || rel >= f.type.size) {
+                continue;
+            }
+            if (f.type.kind == GoKind.STRUCT) {
+                Object fv = nestedFieldValue(gs, ord);
+                if (fv instanceof GoStruct nested) {
+                    Object p = nestedFieldPointerDepth(nested, rel, depth + 1);
+                    if (p != null) {
+                        return p;
+                    }
+                }
+            }
+            if (f.type.kind == GoKind.ARRAY) {
+                Object p = arrayElemPointer(gs, byteOffset);
+                if (p != null) {
+                    return p;
+                }
+                p = arrayFieldPointer(gs, byteOffset);
+                if (p != null) {
+                    return p;
+                }
+            }
+        }
+        return null;
+    }
+
+    /** The live value of a struct field, unwrapping storage cells. */
+    private static Object nestedFieldValue(GoStruct gs, int ord) {
+        Object fv = new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()).get();
+        while (true) {
+            if (fv instanceof GoCell cell) {
+                fv = cell.get();
+            } else if (fv instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                fv = rc.value;
+            } else {
+                break;
+            }
+        }
+        return fv;
     }
 
     /**

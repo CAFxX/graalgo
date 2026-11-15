@@ -69,6 +69,29 @@ public final class GoPointer {
         }
     }
 
+    /**
+     * fix-redmaster-r22 (bi21): referent→handle intern hook, registered
+     * by the unsafe runtime (interop) for intern handles the values
+     * package cannot mint. The frontend's unsafe.Pointer-word branch
+     * consults it to land a dereferenced reference value as its intern
+     * handle. Unset (or unresolvable) it yields null and the caller
+     * falls back to its previous behavior. Set once at class-load of
+     * the unsafe table; never cleared.
+     */
+    public static java.util.function.Function<Object, Long> internHook;
+
+    /** Interns a referent via {@link #internHook}, or null. */
+    public static Long internHandle(Object referent) {
+        if (internHook == null) {
+            return null;
+        }
+        try {
+            return internHook.apply(referent);
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Creates a pointer to the storage behind a {@link GoCell} (&x, &s.f). */
     public GoPointer(GoCell cell) {
         this.cell = cell;

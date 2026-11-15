@@ -79,8 +79,22 @@ public final class ReflectLinknames {
                     args -> resolveTypeOff(args[1]), 2);
             Linknames.register(pkg + ".chanlen",
                     args -> (long) ChanOps.len(asChan(args[0], pkg + ".chanlen")), 1);
-            Linknames.register(pkg + ".maplen",
-                    args -> (long) asMap(args[0], pkg + ".maplen").size(), 1);
+            Linknames.register(pkg + ".maplen", args -> {
+                // gc: Len of a nil map is 0. A nil map word arrives as a
+                // null handle (Long 0), which asMap rejects with "not a
+                // map" — same nil-guard shape as reflect.mapclear below
+                // (r53): null / null-handle map words read as length 0.
+                // asMap itself stays strict: mapassign on nil must panic.
+                Object ptr = args[0];
+                if (ptr == null) {
+                    return 0L;
+                }
+                if (ptr instanceof Number n
+                        && ReflectRefs.denotedValue(n.longValue(), GoKind.MAP) == null) {
+                    return 0L;
+                }
+                return (long) asMap(ptr, pkg + ".maplen").size();
+            }, 1);
             Linknames.register(pkg + ".ifaceE2I", args -> {
                 ifaceE2I(tokForTypeArg(args[0], pkg + ".ifaceE2I"), args[1], args[2]);
                 return null;

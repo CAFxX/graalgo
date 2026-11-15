@@ -149,6 +149,23 @@ public final class DerefNode extends GoExprNode {
             // Long-carried value: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
         }
+        if (kind() == GoKind.UNSAFE_POINTER && o != null) {
+            // fix-redmaster-r22 (bi21): the word of an unsafe.Pointer
+            // dereference whose pointer chain carries an extra GoPointer
+            // layer (maps.Iter key/elem handles denote the stored
+            // GoPointer; UnsafeToPtrNode wraps the resolved referent
+            // once more, so the single unwrap above leaves a GoPointer
+            // or the raw referent — either dies in Boxing.toLong).
+            // Intern single-word reference values (GoMap, GoFunc) so
+            // the word is the same intern handle the key/elem op
+            // returned (proven: deref-word of a GoMap == its elem
+            // handle). Structs, slices, strings and interfaces keep
+            // the existing branches and still fail loudly.
+            Long word = unsafePointerWord(o);
+            if (word != null) {
+                return word;
+            }
+        }
         if (o == null && kind() == GoKind.UNSAFE_POINTER) {
             // Nil unsafe.Pointer referent: the zero value is address 0,
             // not Java null (cf. SelectorNode.read).
@@ -159,6 +176,32 @@ public final class DerefNode extends GoExprNode {
 
     /** Sentinel for "no offset-0 field matches" (a null value is a legitimate result). */
     private static final Object NOT_FOUND = new Object();
+
+    /**
+     * The word of an unsafe.Pointer dereference read (fix-redmaster-r22,
+     * bi21 — see the call site in {@link #read}): unwraps a GoPointer
+     * (nil → word 0) and interns single-word reference values (GoMap,
+     * GoFunc) to their intern handle. Returns null for anything else —
+     * the caller falls through to the existing behavior (loud failure
+     * downstream, never a silent value). Null when the intern hook is
+     * unset (pure-frontend tests): the caller falls through as well.
+     */
+    private static Long unsafePointerWord(Object o) {
+        Object target = o;
+        if (target instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                return Long.valueOf(0);
+            }
+            target = gp.referent();
+        }
+        if (target == null) {
+            return Long.valueOf(0);
+        }
+        if (target instanceof graalgo.values.GoMap || target instanceof graalgo.values.GoFunc) {
+            return GoPointer.internHandle(target);
+        }
+        return null;
+    }
 
     /**
      * Reads the value at byte offset 0 of struct gs as kind: the

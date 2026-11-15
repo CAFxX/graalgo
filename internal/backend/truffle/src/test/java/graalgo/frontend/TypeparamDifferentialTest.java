@@ -330,6 +330,16 @@ public final class TypeparamDifferentialTest {
         pb.environment().put("GOTOOLCHAIN", "local");
         pb.environment().put("DH_GO", ToolPaths.stockGoRoot().toString());
         pb.environment().put("REPO_DIR", repoDir().toAbsolutePath().toString());
+        // The graalgo backend in test/differential/backends.json locates
+        // the launcher via ${PHASE1_DIR}/../../internal/backend/graalgo-run.
+        // PHASE1_DIR is set by the snapshot Makefile targets but by nothing
+        // on the `make test` path; without it the expansion is the
+        // nonexistent absolute path /../../internal/backend/graalgo-run
+        // and the batch silently yields empty outcomes (37 phantom
+        // divergences with empty build logs, scheduled full-suite run
+        // 42618328122). Same pattern as DH_GO/REPO_DIR above.
+        pb.environment().put("PHASE1_DIR", repoDir().resolve("internal")
+                .resolve("backend").toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         Process p = pb.start();
         // Stream the adapter's progress to the test log.

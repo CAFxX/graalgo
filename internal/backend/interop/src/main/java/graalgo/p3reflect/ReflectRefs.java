@@ -482,6 +482,33 @@ public final class ReflectRefs {
                 throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                         "reflect: scalar kind " + kind + " has no element size (D5)");
             }
+            GoKind targetKind = normalizeKind(kind);
+            GoKind carrierKind = carrierKindOf(cur);
+            if (carrierKind != null && carrierKind != targetKind) {
+                // fix-redmaster-r19 (bi17): the carrier's component kind
+                // differs from the requested kind — a bare scalar box
+                // interned via UnsafeTable.normalizeScalar (Integer→
+                // int[1]) read as a narrower kind (UINT8), or any
+                // flat-memory read across carrier boundaries. Read the
+                // element in the carrier's own kind and convert
+                // (little-endian flat-memory semantics); the old code
+                // cast the array to the target's backing store and
+                // died with a ClassCastException (int[] as byte[]).
+                long ces = elemSize(carrierKind);
+                if (ces <= 0) {
+                    throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                            "reflect: carrier kind " + carrierKind + " has no element size (D5)");
+                }
+                long index = off / ces;
+                long rem = off % ces;
+                if (index < 0 || index >= len) {
+                    throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                            "reflect: byte-derived element index " + index + " out of range [0, "
+                                    + len + ") (D5: derivation cannot leave its referent)");
+                }
+                Object elem = ReflectValues.arrayGet(cur, carrierKind, (int) index);
+                return boxFromBits(bitsOf(elem, carrierKind) >>> (int) (rem * 8), targetKind);
+            }
             if (off % es != 0) {
                 throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                         "reflect: byte offset " + off + " is not a multiple of the target "
@@ -515,7 +542,15 @@ public final class ReflectRefs {
             }
             return boxedScalar(elem, kind);
         }
-        return ReflectValues.arrayGet(array, normalizeKind(kind), index);
+        GoKind targetKind = normalizeKind(kind);
+        GoKind carrierKind = carrierKindOf(array);
+        if (carrierKind != null && carrierKind != targetKind) {
+            // fix-redmaster-r19 (bi17): same carrier-kind mismatch as
+            // readScalarWalk — read in the carrier's own kind, convert.
+            Object elem = ReflectValues.arrayGet(array, carrierKind, index);
+            return boxFromBits(bitsOf(elem, carrierKind), targetKind);
+        }
+        return ReflectValues.arrayGet(array, targetKind, index);
     }
 
     /** A boxed scalar element (e.g. []any) read as the given kind. */
@@ -525,19 +560,105 @@ public final class ReflectRefs {
                     "reflect: cannot read scalar from a null element (D5)");
         }
         GoKind k = normalizeKind(kind);
-        boolean ok = (elem instanceof Long && (k == GoKind.INT64 || k == GoKind.UINT64))
-                || (elem instanceof Integer && (k == GoKind.INT32 || k == GoKind.UINT32))
-                || (elem instanceof Short && (k == GoKind.INT16 || k == GoKind.UINT16))
-                || (elem instanceof Byte && (k == GoKind.INT8 || k == GoKind.UINT8))
-                || (elem instanceof Boolean && k == GoKind.BOOL)
-                || (elem instanceof Float && k == GoKind.FLOAT32)
-                || (elem instanceof Double && k == GoKind.FLOAT64);
-        if (!ok) {
-            throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
-                    "reflect: element " + elem.getClass().getSimpleName()
-                            + " does not carry scalar kind " + kind + " (D5)");
+        if (elem instanceof Number num) {
+            // fix-redmaster-r19 (bi17): D5 widens every narrow integer
+            // kind to Integer on load (ReflectValues.arrayGet), so a
+            // box's Java class is its CARRIER kind, not the Go kind —
+            // an Integer box may carry any of INT8/16/32 or
+            // UINT8/16/32. Convert numerically instead of rejecting
+            // the read; float boxes stay exact (Float↔FLOAT32,
+            // Double↔FLOAT64), as before.
+            GoKind boxKind = elem instanceof Byte ? GoKind.INT8
+                    : elem instanceof Short ? GoKind.INT16
+                    : elem instanceof Integer ? GoKind.INT32
+                    : elem instanceof Long ? GoKind.INT64
+                    : elem instanceof Float ? GoKind.FLOAT32
+                    : elem instanceof Double ? GoKind.FLOAT64 : null;
+            if (boxKind != null && isIntegerKind(k) && isIntegerKind(boxKind)) {
+                return boxFromBits(bitsOf(num, boxKind), k);
+            }
+            boolean ok = boxKind != null && boxKind == k;
+            if (!ok) {
+                throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                        "reflect: element " + elem.getClass().getSimpleName()
+                                + " does not carry scalar kind " + kind + " (D5)");
+            }
+            return elem;
         }
-        return elem;
+        if (elem instanceof Boolean && k == GoKind.BOOL) {
+            return elem;
+        }
+        throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                "reflect: element " + elem.getClass().getSimpleName()
+                        + " does not carry scalar kind " + kind + " (D5)");
+    }
+
+    /** Integer kinds (signed and unsigned). */
+    private static boolean isIntegerKind(GoKind kind) {
+        return switch (normalizeKind(kind)) {
+            case INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64 -> true;
+            default -> false;
+        };
+    }
+
+    /** The scalar kind a primitive array's component type carries, or null. */
+    private static GoKind carrierKindOf(Object array) {
+        if (array instanceof byte[]) {
+            return GoKind.INT8;
+        }
+        if (array instanceof short[]) {
+            return GoKind.INT16;
+        }
+        if (array instanceof int[]) {
+            return GoKind.INT32;
+        }
+        if (array instanceof long[]) {
+            return GoKind.INT64;
+        }
+        if (array instanceof float[]) {
+            return GoKind.FLOAT32;
+        }
+        if (array instanceof double[]) {
+            return GoKind.FLOAT64;
+        }
+        if (array instanceof boolean[]) {
+            return GoKind.BOOL;
+        }
+        return null;
+    }
+
+    /** Raw bit pattern of a boxed scalar in its carrier kind. */
+    private static long bitsOf(Object boxed, GoKind carrierKind) {
+        return switch (normalizeKind(carrierKind)) {
+            case INT8, UINT8 -> ((Number) boxed).longValue() & 0xFFL;
+            case INT16, UINT16 -> ((Number) boxed).longValue() & 0xFFFFL;
+            case INT32, UINT32 -> ((Number) boxed).longValue() & 0xFFFFFFFFL;
+            case INT64, UINT64 -> ((Number) boxed).longValue();
+            case FLOAT32 -> Float.floatToIntBits(((Number) boxed).floatValue()) & 0xFFFFFFFFL;
+            case FLOAT64 -> Double.doubleToLongBits(((Number) boxed).doubleValue());
+            case BOOL -> Boolean.TRUE.equals(boxed) ? 1L : 0L;
+            default -> throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                    "reflect: carrier kind " + carrierKind + " has no bit pattern (D5)");
+        };
+    }
+
+    /** Canonical boxed form of a scalar of {@code kind} from its raw bit pattern. */
+    private static Object boxFromBits(long bits, GoKind kind) {
+        return switch (normalizeKind(kind)) {
+            case INT8 -> Integer.valueOf((byte) bits);
+            case INT16 -> Integer.valueOf((short) bits);
+            case INT32 -> Integer.valueOf((int) bits);
+            case INT64 -> Long.valueOf(bits);
+            case UINT8 -> Integer.valueOf((int) (bits & 0xFFL));
+            case UINT16 -> Integer.valueOf((int) (bits & 0xFFFFL));
+            case UINT32 -> Integer.valueOf((int) bits);
+            case UINT64 -> Long.valueOf(bits);
+            case FLOAT32 -> Float.valueOf(Float.intBitsToFloat((int) bits));
+            case FLOAT64 -> Double.valueOf(Double.longBitsToDouble(bits));
+            case BOOL -> Boolean.valueOf(bits != 0);
+            default -> throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                    "reflect: cannot box scalar kind " + kind + " (D5)");
+        };
     }
 
     /**
