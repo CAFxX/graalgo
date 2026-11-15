@@ -17,19 +17,37 @@
 #     the pinned "not in M8 scope" message on stderr (checked).
 set -u
 
-PIPE="$HOME/workspace/graalgo-m8-pipe"
-OSDIR="$PIPE/phases/phase3/corpus/wave2/os"
-export TMPDIR="$PIPE/phases/phase3/hidden_files/m8-tmp/os"
+# Repo root: this script's own tree (override with GR).
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+GR="${GR:-$(cd "$SCRIPT_DIR/../../../.." && pwd)}"
+BE="$GR/internal/backend"
+OSDIR="$SCRIPT_DIR"
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-graalgo-m8-os}"
 export GOCACHE="$HOME/workspace/.gocache-m8-os"
 mkdir -p "$TMPDIR" "$GOCACHE"
 GO="$HOME/tools/go/bin/go"
-RUN="${GRAALGO_RUN:-$PIPE/phases/phase3/out/graalgo-sync-run}"
+RUN="${GRAALGO_RUN:-$BE/graalgo-sync-run}"
+# Build precondition: the product launcher (internal/backend/graalgo-sync-run)
+# needs the backend classes (internal/backend/*/out/classes) and the
+# gofrontend binary (internal/frontend/gofrontend). Build what's missing at
+# the repo root; the stdlib gate already builds, so this is normally a
+# no-op check. (The old phases/phase{1,2,3} layout was deleted 2026-10-14.)
+if [ ! -d "$BE/interop/out/classes" ] || [ ! -d "$BE/runtime/out/classes" ] \
+    || [ ! -d "$BE/truffle/out/classes" ]; then
+    echo "== building backend (make build) =="
+    make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+fi
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build > /dev/null ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
 
 pass=0; fail=0; failed_cases=()
 
 if [[ ! -x "$RUN" ]]; then
     echo "FAIL: graalgo launcher not found: $RUN"
-    echo "  build phase3 first (make main), or set GRAALGO_RUN"
+    echo "  run 'make build' at the repo root first, or set GRAALGO_RUN"
     exit 1
 fi
 
