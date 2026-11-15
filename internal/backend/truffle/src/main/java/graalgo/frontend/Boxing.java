@@ -314,10 +314,33 @@ public final class Boxing {
      */
     public static long toLong(Object boxed, graalgo.values.GoKind kind) {
         if (boxed instanceof Long l) {
-            return l.longValue();
+            // fix-redmaster-r26 (review F1, same bug family): narrow the
+            // long to the target kind's width (mirror fromLongBits) — a
+            // Long carrying more bits than the kind must not leak them.
+            return switch (kind) {
+                case INT8 -> (long) (byte) l.longValue();
+                case INT16 -> (long) (short) l.longValue();
+                case INT32 -> (long) (int) l.longValue();
+                case UINT8 -> l.longValue() & 0xFFL;
+                case UINT16 -> l.longValue() & 0xFFFFL;
+                case UINT32 -> l.longValue() & 0xFFFFFFFFL;
+                default -> l.longValue();
+            };
         }
         int i = ((Number) boxed).intValue();
-        return kind.isUintKind() ? (i & 0xFFFFFFFFL) : (long) i;
+        // fix-redmaster-r26 (review F1, same bug family): narrow to the
+        // target kind's width instead of the blanket 32-bit mask — a
+        // uint8 read of an int32 element must be its low byte (254),
+        // not the whole 32-bit pattern (4294967294).
+        return switch (kind) {
+            case INT8 -> (long) (byte) i;
+            case INT16 -> (long) (short) i;
+            case INT32 -> (long) i;
+            case UINT8 -> (long) (i & 0xFF);
+            case UINT16 -> (long) (i & 0xFFFF);
+            case UINT32 -> (long) (i & 0xFFFFFFFFL);
+            default -> kind.isUintKind() ? (i & 0xFFFFFFFFL) : (long) i;
+        };
     }
 
     /**

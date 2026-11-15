@@ -19,6 +19,7 @@ import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
@@ -1844,9 +1845,10 @@ public final class ReflectOpNode extends GoExprNode {
      * Per-Iter iteration state for the intercepted
      * {@code (*maps.Iter)} method family (exporter ops
      * {@code mapsiter*}). The guest {@code maps.Iter} struct cannot
-     * run on the GoMap carrier — its Swiss-table fields
-     * ({@code dirPtr}/{@code group}/{@code tab}) name memory graalgo
-     * does not have — so the exporter replaces the family with these
+     * run on the GoMap carrier — its Swiss-table traversal fields
+     * ({@code dirIdx}/{@code group}/{@code tab}/{@code entryIdx})
+     * name memory graalgo does not have — so the exporter replaces
+     * the family with these
      * ops, reusing {@link MapIterState}'s snapshot semantics (keys
      * snapshot at Init; values re-read from the live map; entries
      * deleted since Init are skipped). State is keyed by the Iter
@@ -1859,8 +1861,15 @@ public final class ReflectOpNode extends GoExprNode {
      * Entries are never removed (a fresh Iter struct is a fresh
      * identity, so stale entries cannot collide); the leak is
      * bounded by the number of Iter values created per run.
+     * Synchronized (fix-redmaster-r26, review F2 on a158aaa6) because
+     * the map is static and reachable from concurrent guest threads;
+     * a ConcurrentHashMap would be WRONG here — GoStruct has value
+     * equals/hashCode, so an equals-based map would collide distinct
+     * Iter values with equal contents. Only put/get occur, so a
+     * synchronized identity map suffices.
      */
-    private static final Map<GoStruct, MapIterState> MAPS_ITER_STATES = new IdentityHashMap<>();
+    private static final Map<GoStruct, MapIterState> MAPS_ITER_STATES =
+            Collections.synchronizedMap(new IdentityHashMap<>());
 
     /** Field index of a named field of a struct value's descriptor. */
     private static int iterFieldIndex(GoStruct gs, String name) {

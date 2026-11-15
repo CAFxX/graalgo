@@ -70,4 +70,36 @@ public final class BuiltinsCorpusTest {
     public void testBi20StructPrint() throws Exception { Differential.checkProgram(prog("bi20_struct_print")); }
     public void testBi21NestedMaps() throws Exception { Differential.checkProgram(prog("bi21_nested_maps")); }
     public void testBi22FloatEdge() throws Exception { Differential.checkProgram(prog("bi22_float_edge")); }
+
+    // fix-redmaster-r26 (review F1 on a158aaa6): the spanning carrier read
+    // *(*int64)(unsafe.Pointer(&b[0])) over []byte is defined under gc (the
+    // 8 bytes read little-endian) but has no flat memory behind it in
+    // graalgo's model — the byte[] carrier holds one byte per element.
+    // graalgo must trap loudly (UnsafeEscapeException, exit 1) instead of
+    // returning the single byte zero-extended. DELIBERATE divergence from
+    // gc: this test asserts the trap, not parity, so it cannot use
+    // Differential.checkProgram. Falsifiability: pre-guard graalgo exits 0
+    // printing 1 (probe r26-probe-pre.log), so the exit-1 assertion fails
+    // without the guard.
+    public void testBi23SpanningCarrierTrap() throws Exception {
+        Path src = prog("bi23_spanning_carrier_trap");
+        Differential.GcResult gc = Differential.runGc(src);
+        if (gc.exit() != 0) {
+            throw new AssertionError(src + ": gc oracle failed (exit " + gc.exit() + ")");
+        }
+        if (!"578437695752307201\n".equals(gc.stdout())) {
+            throw new AssertionError(src + ": gc oracle stdout changed: " + gc.stdout());
+        }
+        Differential.GraalgoResult g = Differential.runGraalgo(src);
+        if (g.exit() != 1) {
+            throw new AssertionError(src + ": graalgo must trap with exit 1, got " + g.exit()
+                    + "\n--- stdout ---\n" + g.stdout() + "\n--- stderr ---\n" + g.stderr());
+        }
+        if (!g.stdout().isEmpty()) {
+            throw new AssertionError(src + ": graalgo must print nothing on stdout, got: " + g.stdout());
+        }
+        if (!g.stderr().contains("UnsafeEscapeException")) {
+            throw new AssertionError(src + ": graalgo stderr must name UnsafeEscapeException, got: " + g.stderr());
+        }
+    }
 }

@@ -159,8 +159,10 @@ public final class DerefNode extends GoExprNode {
             // Intern single-word reference values (GoMap, GoFunc) so
             // the word is the same intern handle the key/elem op
             // returned (proven: deref-word of a GoMap == its elem
-            // handle). Structs, slices, strings and interfaces keep
-            // the existing branches and still fail loudly.
+            // handle). Other referents (structs, slices, strings,
+            // interfaces) have no branch here; they fall through to
+            // the final return below and fail loudly downstream
+            // (e.g. in Boxing.toLong).
             Long word = unsafePointerWord(o);
             if (word != null) {
                 return word;
@@ -171,7 +173,69 @@ public final class DerefNode extends GoExprNode {
             // not Java null (cf. SelectorNode.read).
             return Long.valueOf(0);
         }
+        if ((kind().isIntKind() || kind().isFloatKind()) && o instanceof Number) {
+            // fix-redmaster-r26 (review F1 on a158aaa6, same bug family as
+            // the ReflectRefs carrier branches): this dereference yields a
+            // single narrower value (one array element peeled above, or one
+            // scalar cell) — a wider target has no flat memory behind it,
+            // so trap loudly instead of returning the single value
+            // zero/sign-extended (e.g. int64 from byte[] would read one
+            // byte). Narrower-or-equal targets keep the existing behavior
+            // (Boxing.toLong narrows to the target width). Long leaves are
+            // handled above via fromLongBits, which already narrows.
+            GoKind leafKind = boxKindOf(o);
+            if (leafKind != null && elemSize(kind()) > elemSize(leafKind)) {
+                throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                        "reflect: scalar kind " + kind() + " (" + elemSize(kind()) + " bytes) does not fit "
+                                + "in one value of kind " + leafKind + " (" + elemSize(leafKind)
+                                + " bytes) (D5: spanning carrier reads trap)");
+            }
+        }
+        if (kind().isIntKind() && o instanceof Number) {
+            // fix-redmaster-r26 (same bug family): narrow the single value
+            // to the target kind — a narrower target reads only the low
+            // bits of the carrier value (e.g. int32(-2) read as uint8 is
+            // 254, not -2 zero-extended to 32 bits). Long leaves are
+            // already narrowed above via fromLongBits; this covers the
+            // Integer/Short/Byte leaves the peel and cell paths yield.
+            o = Boxing.fromLongBits(kind(), ((Number) o).longValue());
+        }
         return o;
+    }
+
+    /** The GoKind of a Java scalar box, or null for non-scalar boxes. */
+    private static GoKind boxKindOf(Object o) {
+        if (o instanceof Byte) {
+            return GoKind.INT8;
+        }
+        if (o instanceof Short) {
+            return GoKind.INT16;
+        }
+        if (o instanceof Integer) {
+            return GoKind.INT32;
+        }
+        if (o instanceof Long) {
+            return GoKind.INT64;
+        }
+        if (o instanceof Float) {
+            return GoKind.FLOAT32;
+        }
+        if (o instanceof Double) {
+            return GoKind.FLOAT64;
+        }
+        return null;
+    }
+
+    /** Element size in bytes of a scalar kind (mirrors ReflectRefs.elemSize); -1 for non-scalars. */
+    private static long elemSize(GoKind kind) {
+        return switch (kind) {
+            case INT8, UINT8, BOOL -> 1;
+            case INT16, UINT16 -> 2;
+            case INT32, UINT32, FLOAT32 -> 4;
+            case INT64, UINT64, FLOAT64, COMPLEX64 -> 8;
+            case COMPLEX128 -> 16;
+            default -> -1;
+        };
     }
 
     /** Sentinel for "no offset-0 field matches" (a null value is a legitimate result). */

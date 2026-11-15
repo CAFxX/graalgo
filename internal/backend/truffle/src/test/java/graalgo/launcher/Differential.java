@@ -51,6 +51,61 @@ public final class Differential {
 
     private record ProcResult(int exit, String stdout, String stderr) {}
 
+    /** Result of a stock-gc build + run: exit code and stdout. */
+    public record GcResult(int exit, String stdout) {}
+
+    /**
+     * Runs one corpus program under stock gc (freshly built binary, not
+     * {@code go run}) and returns its exit code and stdout. For tests whose
+     * expected graalgo behavior deliberately diverges from gc (e.g. a loud
+     * trap where gc reads flat memory), the oracle is asserted separately
+     * instead of through {@link #checkProgram}.
+     */
+    public static GcResult runGc(Path src) throws Exception {
+        src = src.toAbsolutePath().normalize();
+        Path dir = Files.createTempDirectory("graalgo-difftest");
+        Path bin = dir.resolve("prog");
+        ProcResult build = runProc(new ProcessBuilder(
+                ToolPaths.stockGo().toString(), "build", "-o", bin.toString(), src.toString()),
+                src, "gc build");
+        if (build.exit != 0) {
+            throw new AssertionError(src + ": stock gc build failed (exit " + build.exit + "): "
+                    + build.stderr);
+        }
+        ProcResult expected = runProc(new ProcessBuilder(bin.toString()), src, "gc run");
+        return new GcResult(expected.exit, expected.stdout);
+    }
+
+    /** Result of an in-process graalgo run: exit code, captured stdout/stderr. */
+    public record GraalgoResult(int exit, String stdout, String stderr) {}
+
+    /**
+     * Runs one corpus program under graalgo in-process with captured
+     * streams and returns the exit code and both streams. Lives here (same
+     * package as {@link Main}) because {@code Main.run} is package-private.
+     * For tests whose expected graalgo behavior deliberately diverges from
+     * gc (e.g. a loud trap where gc reads flat memory).
+     */
+    public static GraalgoResult runGraalgo(Path src) throws Exception {
+        src = src.toAbsolutePath().normalize();
+        ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        PrintStream oldOut = System.out;
+        PrintStream oldErr = System.err;
+        int code;
+        try {
+            System.setOut(new PrintStream(outBuf, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
+            code = Main.run(new String[] {src.toString()});
+        } finally {
+            System.setOut(oldOut);
+            System.setErr(oldErr);
+        }
+        return new GraalgoResult(code,
+                outBuf.toString(StandardCharsets.UTF_8),
+                errBuf.toString(StandardCharsets.UTF_8));
+    }
+
     private static ProcResult runProc(ProcessBuilder pb, Path src, String what) throws Exception {
         pb.environment().put("GOTOOLCHAIN", "local");
         pb.environment().put("GOMAXPROCS", "1");

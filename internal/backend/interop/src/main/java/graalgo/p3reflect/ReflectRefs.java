@@ -494,6 +494,12 @@ public final class ReflectRefs {
                 // (little-endian flat-memory semantics); the old code
                 // cast the array to the target's backing store and
                 // died with a ClassCastException (int[] as byte[]).
+                // Only when the target fits in one carrier element
+                // (rem + es <= ces): a wider target has no flat memory
+                // behind it in this model, so it traps
+                // (fix-redmaster-r26, review F1 on a158aaa6) instead of
+                // returning the single element zero-extended (a silent
+                // wrong value).
                 long ces = elemSize(carrierKind);
                 if (ces <= 0) {
                     throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
@@ -501,6 +507,12 @@ public final class ReflectRefs {
                 }
                 long index = off / ces;
                 long rem = off % ces;
+                if (rem + es > ces) {
+                    throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                            "reflect: scalar kind " + targetKind + " (" + es + " bytes) does not fit "
+                                    + "in one carrier element of kind " + carrierKind + " (" + ces
+                                    + " bytes) at remainder " + rem + " (D5: spanning carrier reads trap)");
+                }
                 if (index < 0 || index >= len) {
                     throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                             "reflect: byte-derived element index " + index + " out of range [0, "
@@ -547,6 +559,17 @@ public final class ReflectRefs {
         if (carrierKind != null && carrierKind != targetKind) {
             // fix-redmaster-r19 (bi17): same carrier-kind mismatch as
             // readScalarWalk — read in the carrier's own kind, convert.
+            // Only when the target fits in one carrier element
+            // (fix-redmaster-r26, review F1 on a158aaa6): a wider target
+            // traps instead of returning the single element zero-extended.
+            long es = elemSize(targetKind);
+            long ces = elemSize(carrierKind);
+            if (es > ces) {
+                throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                        "reflect: scalar kind " + targetKind + " (" + es + " bytes) does not fit "
+                                + "in one carrier element of kind " + carrierKind + " (" + ces
+                                + " bytes) (D5: spanning carrier reads trap)");
+            }
             Object elem = ReflectValues.arrayGet(array, carrierKind, index);
             return boxFromBits(bitsOf(elem, carrierKind), targetKind);
         }
@@ -575,6 +598,17 @@ public final class ReflectRefs {
                     : elem instanceof Float ? GoKind.FLOAT32
                     : elem instanceof Double ? GoKind.FLOAT64 : null;
             if (boxKind != null && isIntegerKind(k) && isIntegerKind(boxKind)) {
+                // fix-redmaster-r26 (review F1 on a158aaa6): trap when the
+                // target is wider than the box's carrier kind — a narrow
+                // box read as a wider kind has no flat memory behind it
+                // (e.g. Integer(-1) as INT64 must not become 4294967295);
+                // narrower-or-equal reads keep the low-bits conversion.
+                if (elemSize(k) > elemSize(boxKind)) {
+                    throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                            "reflect: scalar kind " + k + " (" + elemSize(k) + " bytes) does not fit "
+                                    + "in one box of kind " + boxKind + " (" + elemSize(boxKind)
+                                    + " bytes) (D5: spanning carrier reads trap)");
+                }
                 return boxFromBits(bitsOf(num, boxKind), k);
             }
             boolean ok = boxKind != null && boxKind == k;

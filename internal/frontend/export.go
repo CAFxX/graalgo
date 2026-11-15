@@ -10186,8 +10186,9 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	// fix-redmaster-r19 (bi21): the (*maps.Iter) method family is
 	// routed to the table-backed reflectop machinery for the same
 	// reason as reflect.Value above — the guest Iter struct cannot
-	// run on the GoMap carrier (its Swiss-table fields name memory
-	// graalgo does not have), so Init/Next/Key/Elem are replaced by
+	// run on the GoMap carrier (its Swiss-table traversal fields —
+	// dirIdx, tab, group, entryIdx — name memory graalgo does not
+	// have), so Init/Next/Key/Elem are replaced by
 	// Java ops reusing ReflectOpNode's MapIterState snapshot
 	// semantics. Map/Initialized stay ordinary guest code: they are
 	// plain field reads once Init stores typ/m (see the Java ops).
