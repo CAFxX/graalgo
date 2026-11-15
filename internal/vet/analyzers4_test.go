@@ -269,3 +269,52 @@ func TestFramePointer(t *testing.T) {
 		t.Errorf("expected exactly 1 framepointer diagnostic, got %d:\n%s", n, joined)
 	}
 }
+
+// TestTestsAnalyzerSkipsMethods is a regression test: the tests analyzer
+// used to treat methods named Test* as test functions, so every
+// testify-suite test method (e.g. func (s *Suite) TestFoo(), zero params)
+// was flagged "Test functions must take one *testing.T parameter". Only
+// top-level functions are test functions; methods are skipped outright,
+// matching upstream (x/tools tests.go: `if !ok || fn.Recv != nil`).
+func TestTestsAnalyzerSkipsMethods(t *testing.T) {
+	// Suite-shaped methods plus a correct top-level test must be quiet.
+	suite := `package main
+
+import "testing"
+
+type Suite struct{}
+
+func (s *Suite) TestFoo() {
+	_ = s
+}
+
+func (s *Suite) TestHelper(x int) {
+	_ = s
+	_ = x
+}
+
+func (s *Suite) TestMain() {
+	_ = s
+}
+
+func TestGood(t *testing.T) {
+	t.Log("good")
+}
+`
+	if joined := runVetOnModule(t, "", map[string]string{"x_test.go": suite}); joined != "" {
+		t.Errorf("expected no diagnostics for suite test methods, got:\n%s", joined)
+	}
+
+	// A plain TestXxx function with the wrong parameter type is still
+	// flagged by the TestXxx check, exactly once.
+	badTest := `package main
+
+func TestBad(x int) {
+	_ = x
+}
+`
+	joined := runVetOnModule(t, "", map[string]string{"x_test.go": badTest})
+	if c := strings.Count(joined, "Test functions must take *testing.T"); c != 1 {
+		t.Errorf("expected exactly 1 TestXxx diagnostic, got %d:\n%s", c, joined)
+	}
+}

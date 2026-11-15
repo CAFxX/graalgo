@@ -84,6 +84,15 @@ func runTests(pass *Pass) []Diagnostic {
 			if !ok {
 				continue
 			}
+			// Methods are not test functions: only top-level
+			// funcs named Test* are checked (matching upstream,
+			// which skips fn.Recv != nil outright). Without this,
+			// e.g. testify-suite methods like
+			// func (s *Suite) TestFoo() were flagged as malformed
+			// test functions.
+			if fn.Recv != nil {
+				continue
+			}
 			name := fn.Name.Name
 			if len(name) < 4 || name[:4] != "Test" {
 				continue
@@ -108,7 +117,7 @@ func runTests(pass *Pass) []Diagnostic {
 		// Check TestMain signature.
 		for _, decl := range f.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Name.Name != "TestMain" {
+			if !ok || fn.Recv != nil || fn.Name.Name != "TestMain" {
 				continue
 			}
 			if fn.Type.Params == nil || len(fn.Type.Params.List) != 1 {
