@@ -78,13 +78,17 @@ public final class MainTest {
 
     public void testCheckRejectsScopeError() throws Exception {
         // P3-M5 (WS E, ADR-0005 App C): `select {}` is now IN scope (it
-        // lowers to the "select" wire node). Use a multi-result function
-        // literal, which remains out of scope (WS D), as the scope-error
-        // example. NB: writeTempGo prepends "package main\n\nfunc main() {\n",
-        // so the body must be valid INSIDE main: a func literal (not a
-        // nested func declaration, which is a Go syntax error that fires
-        // before the scope check).
-        Path bad = writeTempGo("f := func() (int, int) { return 1, 2 }\n_ = f\n");
+        // lowers to the "select" wire node). The scope-error example is a
+        // select receive case whose target is a struct field, not an
+        // identifier — the frontend rejects non-identifier select targets
+        // (WS D). (An earlier revision used a multi-result function
+        // literal here, but those are supported now — PKG-035 — so that
+        // example no longer rejects.) NB: writeTempGo prepends
+        // "package main\n\nfunc main() {\n", so the body must be valid
+        // INSIDE main.
+        Path bad = writeTempGo("ch := make(chan int)\n"
+                + "s := struct{ F int }{}\n"
+                + "select { case s.F = <-ch: }\n");
         final int[] code = new int[1];
         String err = captureStderr(() -> {
             code[0] = Main.run(new String[] {"--check", bad.toString()});
@@ -298,26 +302,41 @@ public final class MainTest {
         }
     }
 
-    public void testCheckRejectsClearBuiltin() throws Exception {
-        // M8 fuzzer find (P2): clear/min/max are outside the v1 builtin
-        // surface but the exporter emitted them, and NodeFactory died with
-        // "internal error building AST". The exporter must fail fast with a
-        // clean WS G scope error instead. Pre-fix, stderr said
-        // "not implemented in NodeFactory v1", not "not supported in
-        // frontend/v1 scope".
-        for (String prog : new String[] {
-                "m := map[string]int{\"a\": 1}\n\tclear(m)\n",
-                "println(min(1, 2), max(3, 4))\n"}) {
-            Path bad = writeTempGo(prog);
-            final int[] code = new int[1];
-            String err = captureStderr(() -> {
-                code[0] = Main.run(new String[] {"--check", bad.toString()});
-                return code[0];
-            });
-            assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on " + prog.trim());
-            assertContains(err, "not supported in frontend/v1 scope",
-                    "--check stderr is a clean scope error for " + prog.trim());
-            assertContains(err, "WS G", "--check stderr names WS G for " + prog.trim());
+    public void testClearMinMaxRun() throws Exception {
+        // P4 (driver-harden) landed clear/min/max as real wire nodes:
+        // the exporter lowers clear to "clear" and min/max to "minmax",
+        // and interop registers builders for both. They are no longer
+        // rejected builtins, so this is a run test, not a rejection test.
+        // Expected stdout is the gc oracle (verified with stock go run):
+        // the "2 1" line prints BEFORE clear; after clear the map is
+        // empty ("0 0"); min(1, 2) = 1, max(3, 4) = 4.
+        Path dir = Files.createTempDirectory("graalgo-main-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\nimport \"fmt\"\n\n" +
+                "func main() {\n" +
+                "\tm := map[string]int{\"a\": 1, \"b\": 2}\n" +
+                "\tfmt.Println(len(m), m[\"a\"])\n" +
+                "\tclear(m)\n" +
+                "\tfmt.Println(len(m), m[\"a\"])\n" +
+                "\tfmt.Println(min(1, 2), max(3, 4))\n" +
+                "}\n",
+                StandardCharsets.UTF_8);
+        PrintStream old = System.out;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        int code;
+        try {
+            code = Main.run(new String[] {f.toString()});
+        } finally {
+            System.setOut(old);
+        }
+        assertEq(Main.EXIT_OK, code, "run exit on clear/min/max program");
+        String out = buf.toString(StandardCharsets.UTF_8);
+        String expected = "2 1\n0 0\n1 4\n";
+        if (!expected.equals(out)) {
+            throw new AssertionError("stdout on clear/min/max: expected <"
+                    + expected + "> but got <" + out + ">");
         }
     }
 
