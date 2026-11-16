@@ -451,7 +451,7 @@ public final class TypeparamDifferentialTest {
     // missing detail (defaults to "").
 
     public void testReadExclusionsEdgeCases() throws IOException {
-        Path fixture = repoRoot().resolve("tools").resolve("diffharness")
+        Path fixture = repoRoot().resolve("test").resolve("differential")
                 .resolve("testdata").resolve("exclusions-edge.yaml");
         Map<String, String[]> got = readExclusions(fixture);
         Map<String, String[]> want = Map.of(
