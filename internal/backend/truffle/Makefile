@@ -37,6 +37,17 @@ GO_BIN_DIR := $(dir $(GO))
 RUNTIME := ../runtime
 RUNTIME_CLASSES := $(RUNTIME)/out/classes
 
+# Interop (P3 wire-kind providers, e.g. ifacemethod/minmax/clear): the test
+# and run JVMs discover WireKindRegistrar providers via ServiceLoader, and
+# the only provider lives in interop/out/classes — so both classpaths must
+# include it (the product launcher internal/backend/graalgo-run already
+# does). Interop's main depends on the truffle+runtime main targets, a
+# different target from test/run, so there is no build cycle.
+INTEROP := ../interop
+INTEROP_CLASSES := $(INTEROP)/out/classes
+$(INTEROP_CLASSES)/.built:
+	$(MAKE) -C $(INTEROP) main
+
 LIB := $(wildcard lib/*.jar)
 CP  := $(subst $(eval) ,:,$(strip $(LIB)))
 
@@ -115,20 +126,20 @@ $(OUT_SMOKE)/.built: $(SRC_SMOKE) lib/SHA256SUMS.txt
 
 # graalgo-run: frontend + Truffle AST execution for one Go file.
 # (graalgo.launcher.Main compiles in the runtime module's joint round.)
-run: main
-	$(JAVA) $(JAVA_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.launcher.Main $(ARGS)
+run: main $(INTEROP_CLASSES)/.built
+	$(JAVA) $(JAVA_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(INTEROP_CLASSES):$(CP)" graalgo.launcher.Main $(ARGS)
 
 # The differential test runner (graalgo.test.Runner) exercises the launcher
 # too, so the runtime classes join the test classpath (shadow order:
 # replacements before stubs).
-test: main $(OUT_TEST)/.built
+test: main $(OUT_TEST)/.built $(INTEROP_CLASSES)/.built
 	mkdir -p out/test-tmp
 	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the differential
 	# tests would fill it. GOTMPDIR covers go; -Djava.io.tmpdir covers Java
 	# (Java ignores the TMPDIR env var for java.io.tmpdir).
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(P1_DIR_PROP) $(JAVA_FLAGS) \
-	-cp "$(OUT_TEST):$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" graalgo.test.Runner
+	-cp "$(OUT_TEST):$(RUNTIME_CLASSES):$(OUT_MAIN):$(INTEROP_CLASSES):$(CP)" graalgo.test.Runner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(OUT_MAIN):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
