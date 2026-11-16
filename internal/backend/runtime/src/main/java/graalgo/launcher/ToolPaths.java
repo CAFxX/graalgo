@@ -22,8 +22,9 @@ import java.nio.file.Paths;
  * </ol>
  *
  * <p>Stock Go (differential-test oracle only) resolution order:
- * {@code GRAALGO_GO}, else {@code ~/tools/go/bin/go}, else bare {@code go}
- * on {@code PATH}.
+ * {@code GRAALGO_GO}, else {@code ~/tools/go/bin/go}, else the first
+ * executable {@code go} on {@code PATH} (absolute path), else bare
+ * {@code go} on {@code PATH}.
  */
 public final class ToolPaths {
     private ToolPaths() {}
@@ -63,6 +64,22 @@ public final class ToolPaths {
                 Path p = Paths.get(home, "tools", "go", "bin", "go");
                 if (Files.isExecutable(p)) {
                     return p;
+                }
+            }
+        }
+        // In CI, Go comes from setup-go on PATH (ci.yml) — resolve it to an
+        // absolute path. A bare relative "go" has no parent, so callers doing
+        // stockGo().getParent().getParent() (e.g. to derive GOROOT) would
+        // NPE; only fall back to it when PATH has no go at all.
+        String pathEnv = System.getenv("PATH");
+        if (pathEnv != null && !pathEnv.isEmpty()) {
+            for (String dir : pathEnv.split(java.io.File.pathSeparator)) {
+                if (dir.isEmpty()) {
+                    continue;
+                }
+                Path p = Paths.get(dir, "go");
+                if (Files.isExecutable(p)) {
+                    return p.toAbsolutePath().normalize();
                 }
             }
         }
