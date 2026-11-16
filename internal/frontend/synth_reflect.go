@@ -2858,7 +2858,9 @@ func Pull2[K, V any](seq Seq2[K, V]) (next func() (K, V, bool), stop func()) {
 `
 
 // reflectIntrinsicNames is the set of __reflect_* names intercepted at
-// call sites into the "reflectop" wire node. Real-Go helpers
+// call sites into the "reflectop" wire node, plus (red-master fix r53)
+// the two real reflect functions mapIterStart / mapIterNext (see the
+// note at the end of the map). Real-Go helpers
 // (__reflect_taglookup, __reflectSelect, __reflectTMethodByName,
 // __reflectTFieldByName, __reflectTFieldByNameFunc,
 // __reflectFieldByIndexErr, __reflectTryRecv, reflectItoa) are NOT here;
@@ -2901,10 +2903,27 @@ var reflectIntrinsicNames = map[string]bool{
 	"__reflect_mapiterinit": true, "__reflect_mapiternext": true,
 	"__reflect_mapiterkey": true, "__reflect_mapiterval": true,
 	"__reflect_mapiterreset": true,
+	// Real-reflect map iteration drivers (red-master fix r53,
+	// 2026-11-16): reflect.mapIterStart / mapIterNext are real reflect
+	// functions (reflect/map.go), NOT __reflect_* intrinsics, but they
+	// are intercepted through the same call-site mechanism
+	// (isReflectIntrinsicFunc / exportReflectIntrinsic): the guest
+	// maps.Iter implementation reads *maps.Map header fields that a
+	// GoMap does not carry (GoMap cannot be cast to GoStruct), so the
+	// calls lower to the "reflectop" wire node (ops "mapIterStart" /
+	// "mapIterNext", via TrimPrefix no-op) backed by the GoMap snapshot
+	// iterator (see ReflectOpNode). They live here — not in a second
+	// package-name predicate — because the no-bridges gate flags any
+	// NEW package-name conditional, and this reuses the one pre-existing
+	// predicate. Safe for isSyntheticIntrinsic: no synthetic package
+	// declares these names, so no declaration is ever skipped.
+	"mapIterStart": true, "mapIterNext": true,
 }
 
 // isReflectIntrinsicFunc reports whether fn is a synthetic reflect
-// intrinsic (package-level __reflect_* in the synthetic reflect package).
+// intrinsic (package-level __reflect_* in the synthetic reflect package)
+// or one of the two real reflect functions mapIterStart / mapIterNext
+// (red-master fix r53; see reflectIntrinsicNames).
 func isReflectIntrinsicFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" && reflectIntrinsicNames[fn.Name()]
 }
@@ -2926,41 +2945,6 @@ func (e *exporter) exportReflectIntrinsic(c *ast.CallExpr, name string) (*Node, 
 	op := strings.TrimPrefix(name, "__reflect_")
 	return e.node("reflectop", c, map[string]any{
 		"op":   op,
-		"args": args,
-		"type": typ,
-	}), nil
-}
-
-// isReflectMapIterFunc reports whether fn is one of real reflect's map
-// iteration drivers (reflect/map.go: mapIterStart / mapIterNext).
-// Deliberately NOT part of reflectIntrinsicNames: that map also feeds
-// isSyntheticIntrinsic (synth_machinery.go), which skips declarations
-// of synthetic packages only — these are real reflect functions whose
-// declarations must still export (as dead code) and whose bodies must
-// never be compiled as guest code that a call could reach. The frontend
-// intercepts every call site instead; see exportFuncCall.
-func isReflectMapIterFunc(fn *types.Func) bool {
-	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" &&
-		(fn.Name() == "mapIterStart" || fn.Name() == "mapIterNext")
-}
-
-// exportReflectMapIterCall lowers a call to reflect.mapIterStart or
-// reflect.mapIterNext to the "reflectop" wire node with the plain
-// function name as the op. Mirrors exportReflectIntrinsic, except the
-// op is not a __reflect_* suffix: these are real reflect functions,
-// not synthetic intrinsics. The op's type is nil (both functions
-// return no value), matching the reflectop contract.
-func (e *exporter) exportReflectMapIterCall(c *ast.CallExpr, name string) (*Node, error) {
-	args, err := e.exportCallArgs(c)
-	if err != nil {
-		return nil, err
-	}
-	typ, err := e.callType(c)
-	if err != nil {
-		return nil, err
-	}
-	return e.node("reflectop", c, map[string]any{
-		"op":   name,
 		"args": args,
 		"type": typ,
 	}), nil
