@@ -80,9 +80,13 @@ func runCopyLocks(pass *Pass) []Diagnostic {
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
-				// Check arguments passed by value.
+				// Check arguments passed by value. Builtins such as len
+				// use their argument for its type only; skip them.
+				if isBuiltinCall(pass, n) {
+					return true
+				}
 				for _, arg := range n.Args {
-					if isLock(pass, arg) {
+					if rhsCopiesLock(pass, arg) {
 						out = append(out, Diagnostic{
 							pass.position(arg),
 							"call copies lock value",
@@ -91,10 +95,45 @@ func runCopyLocks(pass *Pass) []Diagnostic {
 				}
 			case *ast.ReturnStmt:
 				for _, r := range n.Results {
-					if isLock(pass, r) {
+					if rhsCopiesLock(pass, r) {
 						out = append(out, Diagnostic{
 							pass.position(r),
 							"return copies lock value",
+						})
+					}
+				}
+			case *ast.GenDecl:
+				// var x T = lockVal copies, just like an assignment.
+				if n.Tok != token.VAR {
+					return true
+				}
+				for _, spec := range n.Specs {
+					vs, ok := spec.(*ast.ValueSpec)
+					if !ok {
+						continue
+					}
+					for i, v := range vs.Values {
+						if i < len(vs.Names) && rhsCopiesLock(pass, v) {
+							out = append(out, Diagnostic{
+								pass.position(v),
+								"variable declaration copies lock value",
+							})
+						}
+					}
+				}
+			case *ast.CompositeLit:
+				// A lock value copied INTO a literal is a real copy,
+				// even though the literal itself constructs a fresh
+				// value (so it is skipped as an assignment/call/return
+				// argument). Check each element.
+				for _, elt := range n.Elts {
+					if kv, ok := elt.(*ast.KeyValueExpr); ok {
+						elt = kv.Value
+					}
+					if rhsCopiesLock(pass, elt) {
+						out = append(out, Diagnostic{
+							pass.position(elt),
+							"literal copies lock value",
 						})
 					}
 				}
@@ -103,7 +142,7 @@ func runCopyLocks(pass *Pass) []Diagnostic {
 				// is also a copy. Flag plain assignments of lock values.
 				if n.Tok == token.ASSIGN || n.Tok == token.DEFINE {
 					for i, lhs := range n.Lhs {
-						if i < len(n.Rhs) && isLock(pass, n.Rhs[i]) {
+						if i < len(n.Rhs) && rhsCopiesLock(pass, n.Rhs[i]) {
 							// Don't flag if LHS is also a lock-typed var
 							// being initialized (still a copy, but idiomatic
 							// in some patterns). go vet flags all copies.
@@ -122,6 +161,65 @@ func runCopyLocks(pass *Pass) []Diagnostic {
 	return out
 }
 
+// rhsCopiesLock reports whether copying the value denoted by e copies a
+// lock, mirroring gc's lockPathRhs: a composite literal constructs a fresh
+// value, and a call result may be a zero value, so neither counts as a
+// copy at the assignment/call/return/var-declaration site (any copy is
+// reported where the value is built or returned instead). A dereference
+// of a call result is likewise exempt; a dereference of an existing
+// pointer is a real copy and still counts.
+func rhsCopiesLock(pass *Pass, e ast.Expr) bool {
+	x := e
+	for {
+		if par, ok := x.(*ast.ParenExpr); ok {
+			x = par.X
+			continue
+		}
+		break
+	}
+	switch y := x.(type) {
+	case *ast.CompositeLit:
+		return false
+	case *ast.CallExpr:
+		return false
+	case *ast.StarExpr:
+		inner := y.X
+		for {
+			if par, ok := inner.(*ast.ParenExpr); ok {
+				inner = par.X
+				continue
+			}
+			break
+		}
+		if _, ok := inner.(*ast.CallExpr); ok {
+			return false
+		}
+	}
+	return isLock(pass, e)
+}
+
+// isBuiltinCall reports whether ce calls len, cap, Sizeof, Offsetof, or
+// Alignof -- builtins whose argument is used for its type only (or, for
+// len/cap of a slice, does not copy it). gc's vet exempts them.
+func isBuiltinCall(pass *Pass, ce *ast.CallExpr) bool {
+	var id *ast.Ident
+	switch fun := ce.Fun.(type) {
+	case *ast.Ident:
+		id = fun
+	case *ast.SelectorExpr:
+		id = fun.Sel
+	default:
+		return false
+	}
+	if obj, ok := pass.Info.Uses[id].(*types.Builtin); ok {
+		switch obj.Name() {
+		case "len", "cap", "Sizeof", "Offsetof", "Alignof":
+			return true
+		}
+	}
+	return false
+}
+
 // isLock reports whether e has a type that contains a sync lock.
 func isLock(pass *Pass, e ast.Expr) bool {
 	tv, ok := pass.Info.Types[e]
@@ -131,31 +229,50 @@ func isLock(pass *Pass, e ast.Expr) bool {
 	return typeContainsLock(tv.Type, make(map[types.Type]bool))
 }
 
+// lockerIface is the sync.Locker interface (Lock/Unlock with no
+// arguments or results), built literally so the check needs no import
+// of sync. A type is a lock when a pointer to it implements Locker but
+// a value does not -- the same rule gc's copylocks uses.
+var lockerIface = types.NewInterfaceType([]*types.Func{
+	types.NewFunc(token.NoPos, nil, "Lock", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)),
+	types.NewFunc(token.NoPos, nil, "Unlock", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(), false)),
+}, nil).Complete()
+
 func typeContainsLock(t types.Type, seen map[types.Type]bool) bool {
 	if seen[t] {
 		return false
 	}
 	seen[t] = true
-	// Unwrap pointer: *sync.Mutex is fine, sync.Mutex is the lock.
-	if p, ok := t.(*types.Pointer); ok {
-		return typeContainsLock(p.Elem(), seen)
-	}
-	named, ok := t.(*types.Named)
-	if !ok {
-		// Check struct types directly.
-		if s, ok := t.Underlying().(*types.Struct); ok {
-			return structContainsLock(s, seen)
-		}
+	// A pointer is not a lock value: passing *sync.Mutex copies only the
+	// pointer, never the lock. Do not unwrap pointers.
+	if _, ok := t.(*types.Pointer); ok {
 		return false
 	}
-	obj := named.Obj()
-	if obj.Pkg() != nil && obj.Pkg().Path() == "sync" {
-		switch obj.Name() {
-		case "Mutex", "RWMutex", "WaitGroup":
-			return true
-		}
+	// An array value embeds its elements, so copying the array copies
+	// any lock it holds. (Named array types unwrap through Underlying,
+	// so type Mutexes [2]sync.Mutex is covered too.)
+	if arr, ok := t.Underlying().(*types.Array); ok {
+		return typeContainsLock(arr.Elem(), seen)
 	}
-	return structContainsLock(named.Underlying(), seen)
+	// Only structs can contain a lock value. Slices, maps, interfaces,
+	// channels, and function values are headers or pointers to the data:
+	// copying them copies no lock, and gc's vet is silent on all of these
+	// (verified against go1.27.1 go vet).
+	st, ok := t.Underlying().(*types.Struct)
+	if !ok {
+		return false
+	}
+	// A type is a lock when a pointer to it implements sync.Locker but
+	// a value does not. This is gc's copylocks rule, applied
+	// structurally: it covers sync.Mutex and sync.RWMutex directly,
+	// sync.noCopy and sync/atomic.noCopy (both have pointer-receiver
+	// Lock/Unlock), and any user type with pointer-receiver Lock/Unlock
+	// methods. Defined types aliasing a lock (type MyMutex sync.Mutex)
+	// are caught through their noCopy field, not by name.
+	if types.Implements(types.NewPointer(t), lockerIface) && !types.Implements(t, lockerIface) {
+		return true
+	}
+	return structContainsLock(st, seen)
 }
 
 func structContainsLock(t types.Type, seen map[types.Type]bool) bool {
