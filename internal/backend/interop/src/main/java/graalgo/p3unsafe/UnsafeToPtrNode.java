@@ -7,6 +7,7 @@ import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.p3reflect.AbiTypes;
 import graalgo.p3reflect.ReflectTypes;
+import graalgo.p3reflect.ReflectValues;
 import graalgo.values.GoCell;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
@@ -573,17 +574,43 @@ public final class UnsafeToPtrNode extends GoExprNode {
             return null;
         }
         for (ReflectTypes.FieldInfo f : rootInfo.fields) {
-            if (f.offset != byteOffset || f.type == null || f.index.length != 1) {
+            if (f.type == null || f.index.length != 1) {
                 continue;
             }
-            int ord = f.index[0];
-            if (ord < 0 || ord >= gs.descriptor().fields().size()
-                    || !gs.descriptor().field(ord).name().equals(f.name)) {
-                return null;
+            if (f.offset == byteOffset) {
+                int ord = f.index[0];
+                if (ord < 0 || ord >= gs.descriptor().fields().size()
+                        || !gs.descriptor().field(ord).name().equals(f.name)) {
+                    return null;
+                }
+                return new FieldHit(
+                        new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()),
+                        f.type.tok, targetTok);
             }
-            return new FieldHit(
-                    new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()),
-                    f.type.tok, targetTok);
+            // fix-redmaster-r51: an offset strictly inside a
+            // struct-typed direct field descends into that field with
+            // the remainder (gc flat memory; mirrors
+            // ReflectRefs.readStructFieldAt). Without this, reflect's
+            // Field chain on a nested struct (add(structPtr,
+            // outerOffset + innerOffset), then a typed deref — e.g.
+            // fmt printing a nested struct's string field through
+            // Value.String()'s *(*string)(v.ptr)) finds no direct
+            // field at the composite offset and falls through to the
+            // array-derivation trap. Array-typed fields stay with
+            // continuedFieldPointer (the array-element path below).
+            if (f.type.kind == GoKind.STRUCT && f.type.size > 0
+                    && byteOffset > f.offset && byteOffset < f.offset + f.type.size) {
+                int ord = f.index[0];
+                if (ord < 0 || ord >= gs.descriptor().fields().size()
+                        || !gs.descriptor().field(ord).name().equals(f.name)) {
+                    return null;
+                }
+                Object nested = ReflectValues.structFieldGet(gs, ord, f.type.kind);
+                if (!(nested instanceof GoStruct nestedStruct)) {
+                    return null;
+                }
+                return structFieldAt(nestedStruct, byteOffset - f.offset);
+            }
         }
         return null;
     }
