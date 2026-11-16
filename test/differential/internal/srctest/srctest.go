@@ -191,9 +191,12 @@ func classify(testDir, name string) typeparam.TFile {
 			return tf
 		}
 	}
-	// Concurrency primitives (chan types, go statements, select, channel
-	// send/receive) need the phase-2 scheduler; the phase-1 pipeline is
-	// single-threaded. These programs belong to layer 3 (P3SyncMain).
+	// Concurrency primitives (channel creation via make, go statements,
+	// select, channel send/receive) need the phase-2 scheduler; the
+	// phase-1 pipeline is single-threaded. These programs belong to
+	// layer 3 (P3SyncMain). Channel *types* alone do not count: a bare
+	// `type Chan chan int` declaration, a `(chan int)(nil)` conversion,
+	// or a `map[chan int]v` key creates no live channel (R2316-04-P1-1).
 	if usesConcurrency(f2) {
 		tf.Class = "exclude:deferred-parity"
 		tf.Detail = "needs concurrency (chan/go/select): phase-2 scheduler domain, covered by layer 3"
@@ -220,7 +223,13 @@ func firstErrLine(err error) string {
 }
 
 // usesConcurrency reports whether the file uses channel/goroutine/select
-// primitives (phase-2 scheduler domain).
+// primitives (phase-2 scheduler domain). It detects channel *operations*,
+// not channel *types*: a live channel in a single-file program always
+// traces back to a make(chan ...) in the same file (a channel from a
+// parameter, field, or return still originates at a make there; a nil
+// channel blocks forever and is caught by the run timeout). A bare type
+// mention — `type Chan chan int`, `(chan int)(nil)`, `map[chan int]v` —
+// creates no channel and must not exclude the file.
 func usesConcurrency(f *ast.File) bool {
 	found := false
 	ast.Inspect(f, func(n ast.Node) bool {
@@ -228,8 +237,6 @@ func usesConcurrency(f *ast.File) bool {
 			return false
 		}
 		switch n := n.(type) {
-		case *ast.ChanType:
-			found = true
 		case *ast.GoStmt:
 			found = true
 		case *ast.SelectStmt:
@@ -239,6 +246,15 @@ func usesConcurrency(f *ast.File) bool {
 		case *ast.UnaryExpr:
 			if n.Op == token.ARROW {
 				found = true
+			}
+		case *ast.CallExpr:
+			// make(chan T[, n]): the only way to create a live channel.
+			// A conversion such as (chan int)(nil) is also a CallExpr
+			// but its Fun is the channel type, not the make builtin.
+			if id, ok := n.Fun.(*ast.Ident); ok && id.Name == "make" && len(n.Args) > 0 {
+				if _, ok := n.Args[0].(*ast.ChanType); ok {
+					found = true
+				}
 			}
 		}
 		return !found

@@ -215,9 +215,31 @@ func TestClassifyNegativeSyntax(t *testing.T) {
 	}
 }
 
+func TestClassifyChanTypeOnlyStaysRun(t *testing.T) {
+	// R2316-04-P1-1: a channel *type* with no channel *operation* must
+	// not exclude the file. Each case mirrors a real GOROOT/test file
+	// the old ChanType arm misclassified (named.go, deferprint.go,
+	// map1.go). Every case asserts the exact class, so a regression to
+	// exclude:deferred-parity fails the test.
+	cases := []struct{ name, body string }{
+		{"named.go", "package main\n\ntype Chan chan int\n\nfunc main() {}\n"},
+		{"deferprint.go", "package main\n\nfunc main() {\n\tdefer println((chan int)(nil))\n}\n"},
+		{"mapkey.go", "package main\n\ntype v int\n\nfunc main() {\n\t_ = map[chan int]v{}\n}\n"},
+		{"dirtype.go", "package main\n\nvar c1 chan<- int\n\nvar c2 <-chan int\n\nfunc main() {\n\t_, _ = c1, c2\n}\n"},
+	}
+	for _, c := range cases {
+		class, _ := classifyOne(t, c.name, c.body)
+		if class != "run" {
+			t.Errorf("%s: want run, got %q", c.name, class)
+		}
+	}
+}
+
 func TestClassifyConcurrency(t *testing.T) {
 	cases := []struct{ name, body string }{
 		{"chan.go", "package main\n\nfunc main() {\n\tch := make(chan int)\n\t_ = ch\n}\n"},
+		{"chanbuf.go", "package main\n\nfunc main() {\n\tch := make(chan int, 10)\n\t_ = ch\n}\n"},
+		{"chandir.go", "package main\n\nfunc main() {\n\tch := make(chan<- int, 1)\n\t_ = ch\n}\n"},
 		{"go.go", "package main\n\nfunc main() {\n\tgo func() {}()\n}\n"},
 		{"select.go", "package main\n\nfunc main() {\n\tselect {}\n}\n"},
 		{"send.go", "package main\n\nfunc f(ch chan int) {\n\tch <- 1\n}\n\nfunc main() {}\n"},
