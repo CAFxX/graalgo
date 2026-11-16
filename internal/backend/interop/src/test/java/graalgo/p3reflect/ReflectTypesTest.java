@@ -57,6 +57,33 @@ public void testInvalidTypeWireEntryFailsLoud() {
     }
 
     /**
+     * fix-redmaster-r54 (GG-0014, mirror of IfaceMethodTablesTest
+     * .testMissingObjIdFailsFast): a method entry whose objId has no GoFunc
+     * fails fast naming the method and objId — the entry is not silently
+     * dropped. Disk-MR methods reach the table through their __-helper
+     * since fix-redmaster-r40, so a missing func is a malformed or
+     * incomplete document, never a vestigial stub.
+     */
+    public void testMissingObjIdFailsFast() {
+        String doc = """
+                {"types": [
+                  {"kind": "named", "detail": {
+                     "name": "main.Missing", "pkgpath": "main", "underlying": 1,
+                     "methods": [{"name": "M", "obj": 9, "recv": "value"}]}},
+                  {"kind": "basic", "detail": {"name": "string", "class": "string", "untyped": false}}
+                ]}
+                """;
+        try {
+            ReflectTypes.install(parseDoc(doc), Map.of());
+        } catch (FrontendException e) {
+            assertTrue(e.getMessage().contains("\"M\""), "names the method: " + e.getMessage());
+            assertTrue(e.getMessage().contains("9"), "names the objID: " + e.getMessage());
+            return;
+        }
+        throw new AssertionError("expected FrontendException for missing objID 9");
+    }
+
+    /**
      * P1-5: a signature referencing a later-declared named type is a
      * forward reference (signature wire id &lt; named wire id). The built
      * parameter TypeInfo must be complete — kind, fields, size — not a

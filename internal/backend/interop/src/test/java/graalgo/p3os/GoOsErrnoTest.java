@@ -74,23 +74,23 @@ public final class GoOsErrnoTest {
         return GoString.fromUtf8(s);
     }
 
+    // fix-redmaster-r54: []byte is byte[]-backed (D5; Boxing.newArray
+    // allocates byte[] for UINT8). The old int[] backing built a []int32
+    // shape that goBuf's (byte[]) cast rejects.
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static GoSlice bytesBuf(byte[] data) {
-        int[] arr = new int[data.length];
-        for (int i = 0; i < data.length; i++) {
-            arr[i] = data[i] & 0xFF;
-        }
+        byte[] arr = java.util.Arrays.copyOf(data, data.length);
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 
     private static byte[] sliceBytes(GoSlice gs) {
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] out = new byte[gs.len()];
         for (int i = 0; i < gs.len(); i++) {
-            out[i] = (byte) arr[gs.offset() + i];
+            out[i] = arr[gs.offset() + i];
         }
         return out;
     }
@@ -553,9 +553,9 @@ public final class GoOsErrnoTest {
     // init first (channels bound), then rebind, write, rebind, write.
     // It FAILS on the old code (both writes land on the real stdout and
     // both buffers stay empty) and passes on the dynamic delegates.
-    // NOTE: uses a byte[]-backed slice, not the shared bytesBuf helper:
-    // D5 stores []byte in byte[] backing arrays (goBuf casts to byte[]),
-    // while bytesBuf still builds int[]-backed slices.
+    // NOTE: uses a byte[]-backed slice, not the shared bytesBuf helper
+    // (bytesBuf is byte[]-backed too since fix-redmaster-r54; this one
+    // clones so the test owns the buffer).
     private static GoSlice byteSlice(byte[] data) {
         return new GoSlice(data.clone(), 0, data.length, data.length);
     }

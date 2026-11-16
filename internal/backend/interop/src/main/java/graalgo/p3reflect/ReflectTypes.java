@@ -9,7 +9,6 @@ import graalgo.frontend.TypeTable;
 import graalgo.iface.IfaceItab;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTarget;
-import graalgo.p3log.P3Log;
 import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
@@ -1134,13 +1133,16 @@ public final class ReflectTypes {
             }
             GoFunc func = functions.get(objId);
             if (func == null) {
-                // Disk-MR stubs are skipped by the frontend; the method is
-                // not available via reflect. Skip instead of failing.
-                P3Log.warn(ReflectTypes.class,
+                // fix-redmaster-r54 (GG-0014, mirror of IfaceMethodTables):
+                // a method entry whose objId has no GoFunc is a malformed
+                // or incomplete document — fail fast naming the method and
+                // objId. Disk-MR methods reach the table through their
+                // __-helper since fix-redmaster-r40, so a missing func is
+                // never a vestigial stub; silently dropping the entry hid
+                // the method from reflect.
+                throw new FrontendException(
                         path + ": reflect: method \"" + name
-                        + "\" refers to unknown function object id " + objId
-                        + " (skipped; likely a disk-MR stub)");
-                continue;
+                        + "\" refers to unknown function object id " + objId);
             }
             Integer sigId = funcdeclSig.get(objId);
             if (sigId == null) {

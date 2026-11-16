@@ -8,7 +8,6 @@ import java.util.Map;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
 import graalgo.frontend.TypeTable;
-import graalgo.p3log.P3Log;
 import graalgo.values.GoFunc;
 
 /**
@@ -101,15 +100,18 @@ public final class IfaceMethodTables {
                 } else {
                     f = functions.get(ref.objId);
                     if (f == null) {
-                        // Disk-MR stubs are skipped by the frontend (desugar
-                        // rewrites all calls to the __-helper); the method
-                        // table entry is vestigial. Skip instead of failing.
-                        P3Log.warn(IfaceMethodTables.class,
+                        // fix-redmaster-r54 (GG-0014): a method-table entry
+                        // whose objId has no GoFunc is a malformed or
+                        // incomplete document — fail fast naming the method
+                        // and objId. Disk-MR methods reach the table through
+                        // their __-helper since fix-redmaster-r40, so a
+                        // missing func is never a vestigial stub; silently
+                        // dropping the entry hid the method from interface
+                        // dispatch and reflect alike.
+                        throw new FrontendException(
                                 "ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
-                                + "\" refers to unknown function object id " + ref.objId
-                                + " (skipped; likely a disk-MR stub)");
-                        continue;
+                                + "\" refers to unknown function object id " + ref.objId);
                     }
                     embMethods = List.of();
                 }
