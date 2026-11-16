@@ -343,8 +343,12 @@ func TestChannelOpsM5(t *testing.T) {
 	src := `package main
 
 func main() {
+	type Chan chan int
 	a := make(chan int)
 	b := make(chan int, 3)
+	c := make(Chan)
+	c <- 3
+	_ = <-c
 	a <- 1
 	x := <-b
 	y, ok := <-b
@@ -416,10 +420,12 @@ func main() {
 	}
 	// makechan: unbuffered has no "size"; buffered does; both carry elem+type.
 	var sawBare, sawSized bool
+	var makechanCount int
 	for _, n := range nodes {
 		if n.kind != "makechan" {
 			continue
 		}
+		makechanCount++
 		if _, ok := n.fields["elem"]; !ok {
 			t.Errorf("makechan missing elem")
 		}
@@ -434,6 +440,43 @@ func main() {
 	}
 	if !sawBare || !sawSized {
 		t.Errorf("want one bare and one sized makechan (bare=%v sized=%v)", sawBare, sawSized)
+	}
+	// Three makechan nodes: bare chan, sized chan, and the named
+	// channel type below (R2316-04-P1-1: make(Chan) for
+	// `type Chan chan int` must lower to makechan, not the frozen
+	// builtin make path).
+	if makechanCount != 3 {
+		t.Errorf("want 3 makechan nodes, got %d", makechanCount)
+	}
+	// The named-chan makechan carries the NAMED type id in "type"
+	// (the Java builder resolves it to the underlying chan); exactly
+	// one makechan must have a "named" type whose underlying entry
+	// is a chan.
+	entries := typeEntries(t, raw)
+	var namedMakechan int
+	for _, n := range nodes {
+		if n.kind != "makechan" {
+			continue
+		}
+		tid, ok := n.fields["type"].(float64)
+		if !ok {
+			t.Errorf("makechan type = %v, want a type-table id", n.fields["type"])
+			continue
+		}
+		te, _ := entries[int(tid)].(map[string]any)
+		if te == nil || te["kind"] != "named" {
+			continue
+		}
+		namedMakechan++
+		d, _ := te["detail"].(map[string]any)
+		under, _ := d["underlying"].(float64)
+		ue, _ := entries[int(under)].(map[string]any)
+		if ue == nil || ue["kind"] != "chan" {
+			t.Errorf("named makechan type underlying kind = %v, want chan", ue["kind"])
+		}
+	}
+	if namedMakechan != 1 {
+		t.Errorf("want exactly 1 makechan on a named channel type, got %d", namedMakechan)
 	}
 	// recv: plain `<-ch` emits recv nodes; the v, ok := <-ch shape
 	// desugars to a single-case select (ADR-0005 App C, reconciled

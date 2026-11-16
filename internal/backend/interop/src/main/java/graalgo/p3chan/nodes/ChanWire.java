@@ -123,6 +123,36 @@ final class ChanWire {
     }
 
     /**
+     * The type-table entry for a type id with named types resolved to
+     * their underlying type and aliases to their right-hand side (the
+     * same chain walk as {@link #kindOf}, but returning the resolved
+     * entry so callers can read its kind/detail). A plain composite or
+     * basic id resolves to itself. gc parity: {@code make(NamedChan)}
+     * is valid -- a named channel type IS a channel type -- so builders
+     * that validate a type-table id must resolve before judging it.
+     */
+    static Json.Object resolveEntry(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        Json.Object entry = ctx.types.entry(typeId, path);
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
+            String ek = entry.string("kind", path);
+            if ("named".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("underlying", path);
+                entry = ctx.types.entry(typeId, path);
+            } else if ("alias".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("rhs", path);
+                entry = ctx.types.entry(typeId, path);
+            } else {
+                break;
+            }
+        }
+        return entry;
+    }
+
+    /**
      * The type-table id of the {@code "struct"} entry underlying a
      * (possibly named/aliased) struct type id. Mirrors the chain walk in
      * {@code NodeFactory.structDescriptorFor}.

@@ -95,16 +95,20 @@ public final class ChanBuilderTest {
     private static final int T_STRUCT = 2;
     private static final int T_CHAN_STRUCT = 3;
     private static final int T_BOOL = 4;
+    private static final int T_NAMED_CHAN_INT = 5;
+    private static final int T_NAMED_INT = 6;
 
     private static final String TYPES_JSON = "["
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"int\",\"name\":\"int\"}},"
             + "{\"kind\":\"chan\",\"detail\":{\"elem\":0}},"
             + "{\"kind\":\"struct\",\"detail\":{\"fields\":[{\"name\":\"x\",\"type\":0}]}},"
             + "{\"kind\":\"chan\",\"detail\":{\"elem\":2}},"
-            + "{\"kind\":\"basic\",\"detail\":{\"class\":\"bool\",\"name\":\"bool\"}}"
+            + "{\"kind\":\"basic\",\"detail\":{\"class\":\"bool\",\"name\":\"bool\"}},"
+            + "{\"kind\":\"named\",\"detail\":{\"name\":\"Chan\",\"underlying\":1,\"methods\":[]}},"
+            + "{\"kind\":\"named\",\"detail\":{\"name\":\"Int\",\"underlying\":0,\"methods\":[]}}"
             + "]";
 
-    private static final String POS = "{\"line\":1,\"col\":1,\"len\":1}";
+    private static final String POS = "{\"file\":0,\"line\":1,\"col\":1,\"len\":1}";
 
     private NodeFactory factory;
     private NodeFactory.BuildCtx ctx;
@@ -302,6 +306,22 @@ public final class ChanBuilderTest {
         });
     }
 
+    /** makechan with a NAMED channel type field works (R2316-04-P1-1:
+     * gc accepts make(Chan) for `type Chan chan int`; the exporter emits
+     * the named type id, so the builder must resolve it to the underlying
+     * chan before validating). */
+    public void testMakechanNamedTypeField() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            GoExprNode n = buildExpr("{\"kind\":\"makechan\",\"pos\":" + POS
+                    + ",\"fields\":{\"elem\":" + T_INT + ",\"size\":2,\"type\":" + T_NAMED_CHAN_INT + "}}");
+            VirtualFrame f = newFrame();
+            Object ch = n.executeObject(f);
+            assertTrue(ch instanceof GoChan, "makechan on named chan yields a GoChan");
+            assertEq(2, ((GoChan) ch).capacity(), "buffered capacity");
+        });
+    }
+
     /** makechan with a mismatched "type" field fails fast at build. */
     public void testMakechanMismatchedTypeField() throws Exception {
         withScheduler(() -> {
@@ -319,6 +339,16 @@ public final class ChanBuilderTest {
                 assertTrue(false, "elem mismatch must be rejected");
             } catch (FrontendException fe) {
                 assertTrue(fe.getMessage().contains("mismatch"), "rejection message");
+            }
+            try {
+                // A named type whose UNDERLYING type is not a chan must
+                // still be rejected: unwrapping must not blindly accept
+                // named types.
+                buildExpr("{\"kind\":\"makechan\",\"pos\":" + POS
+                        + ",\"fields\":{\"elem\":" + T_INT + ",\"type\":" + T_NAMED_INT + "}}");
+                assertTrue(false, "named non-chan type must be rejected");
+            } catch (FrontendException fe) {
+                assertTrue(fe.getMessage().contains("must be a chan"), "rejection message");
             }
         });
     }

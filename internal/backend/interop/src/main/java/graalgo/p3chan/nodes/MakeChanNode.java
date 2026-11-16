@@ -60,7 +60,10 @@ public final class MakeChanNode extends GoExprNode {
      * {@code elem} (element type-table id), {@code size} (optional buffer
      * capacity: literal number or int-valued expression node),
      * {@code type} (optional channel type-table id — validated when
-     * present, never used for codegen).
+     * present, never used for codegen). A named or alias channel type
+     * resolves to its underlying chan before validation (gc parity:
+     * {@code make(NamedChan)} is valid); a type whose underlying type
+     * is not a chan is still rejected.
      */
     public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
             NodeFactory factory) {
@@ -70,7 +73,11 @@ public final class MakeChanNode extends GoExprNode {
         Json.Value tv = f.opt("type");
         if (tv instanceof Json.Num num) {
             int chanId = (int) num.asLong(path + ".type");
-            Json.Object entry = ctx.types.entry(chanId, path);
+            // Named/alias channel types resolve to their underlying chan
+            // (R2316-04-P1-1: make(Chan) with `type Chan chan int` was
+            // rejected as "got named" — the exporter emits the named
+            // type id, and the underlying chan is what must be checked).
+            Json.Object entry = ChanWire.resolveEntry(ctx, chanId, path);
             if (!"chan".equals(entry.string("kind", path))) {
                 throw new FrontendException(path + ": makechan type must be a chan, got "
                         + entry.string("kind", path));
