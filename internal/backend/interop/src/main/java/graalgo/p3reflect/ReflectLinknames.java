@@ -80,7 +80,7 @@ public final class ReflectLinknames {
             Linknames.register(pkg + ".chanlen",
                     args -> (long) ChanOps.len(asChan(args[0], pkg + ".chanlen")), 1);
             Linknames.register(pkg + ".maplen",
-                    args -> (long) asMap(args[0], pkg + ".maplen").size(), 1);
+                    args -> (long) mapLen(args[0], pkg + ".maplen"), 1);
             Linknames.register(pkg + ".ifaceE2I", args -> {
                 ifaceE2I(tokForTypeArg(args[0], pkg + ".ifaceE2I"), args[1], args[2]);
                 return null;
@@ -1287,6 +1287,27 @@ public final class ReflectLinknames {
             return ch;
         }
         throw new IllegalStateException(symbol + ": not a channel: " + describe(ptr));
+    }
+
+    /**
+     * Length of the map denoted by {@code ptr} (fix-redmaster-r51).
+     * gc's runtime maplen returns 0 for a nil map
+     * ({@code if h == nil { return 0 }}), and reflect's
+     * {@code Value.Len} passes a nil map's (nil) data word straight
+     * through — so a nil map word must read as length 0, not fail
+     * the "not a map" check in {@link #asMap}. The nil test mirrors
+     * the mapclear precedent above (null word, or a number handle
+     * denoting no value); any other non-map word still fails loudly.
+     */
+    private static int mapLen(Object ptr, String symbol) {
+        if (ptr == null) {
+            return 0;
+        }
+        if (ptr instanceof Number n
+                && ReflectRefs.denotedValue(n.longValue(), GoKind.MAP) == null) {
+            return 0;
+        }
+        return asMap(ptr, symbol).size();
     }
 
     private static GoMap asMap(Object ptr, String symbol) {
