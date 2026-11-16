@@ -1,2 +1,0 @@
-reason: ChaCha8 requires & on SelectorExpr (e.g., &c.state) which is not supported in frontend/v1 scope (WS D)
-retest: frontend/v1 supports & on SelectorExpr, or ChaCha8 helpers are refactored to avoid pointer-to-field
