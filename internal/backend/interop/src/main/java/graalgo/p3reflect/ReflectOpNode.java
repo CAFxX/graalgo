@@ -1962,8 +1962,23 @@ public final class ReflectOpNode extends GoExprNode {
         Object ref = ptr instanceof Number n
                 ? ReflectRefs.denotedValue(n.longValue(), GoKind.MAP)
                 : ptr instanceof GoPointer p ? p.referent() : ptr;
-        if (ref instanceof Cell c) {
-            ref = ReflectRefs.deref(c.value);
+        // A nil map (possibly through GoPointer/Cell wrappers — a nil
+        // map value stored in a map reaches here double-wrapped as
+        // GoPointer(GoPointer{nil})) iterates as empty, never as an
+        // error. The depth cap mirrors DerefNode's hang guard.
+        for (int depth = 0; depth < 64; depth++) {
+            if (ref == null) {
+                return null;
+            }
+            if (ref instanceof GoPointer p) {
+                ref = p.referent();
+                continue;
+            }
+            if (ref instanceof Cell c) {
+                ref = ReflectRefs.deref(c.value);
+                continue;
+            }
+            break;
         }
         if (ref instanceof GoMap m) {
             return m;

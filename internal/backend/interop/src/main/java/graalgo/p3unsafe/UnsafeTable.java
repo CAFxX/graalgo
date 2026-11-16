@@ -233,6 +233,11 @@ public final class UnsafeTable {
         // frontend's word-store branch. This class loads before
         // any handle exists, so the hook is always set in time.
         graalgo.values.GoPointer.handleResolveHook = UnsafeTable::resolveHandleStatic;
+        // fix-redmaster-r53: likewise let the values package mint
+        // intern handles for the frontend's word-read branch (a
+        // *(*unsafe.Pointer)(p) dereference of a pointer-like heap
+        // object held in a storage cell).
+        graalgo.values.GoPointer.handleInternHook = UnsafeTable::internHandleStatic;
     }
 
     /** Hook implementation: the referent for a handle, or null. */
@@ -241,6 +246,11 @@ public final class UnsafeTable {
             return null;
         }
         return current().resolve(handle);
+    }
+
+    /** Hook implementation: the intern handle for a referent. */
+    private static Long internHandleStatic(Object referent) {
+        return Long.valueOf(current().intern(referent));
     }
 
     /**

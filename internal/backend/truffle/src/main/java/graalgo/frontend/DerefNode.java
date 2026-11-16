@@ -1,10 +1,13 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.runtime.GoChan;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
+import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
@@ -153,6 +156,44 @@ public final class DerefNode extends GoExprNode {
             // Nil unsafe.Pointer referent: the zero value is address 0,
             // not Java null (cf. SelectorNode.read).
             return Long.valueOf(0);
+        }
+        // fix-redmaster-r53: a word read (*(*unsafe.Pointer)(p)) whose
+        // referent is a pointer-like heap object (a map/chan/func/*T
+        // value held in a storage cell): in gc the word holds the
+        // object's address; here the address is the object's intern
+        // handle. Without this, Boxing.toLong dies casting the object
+        // to Number (bi21: reflect.copyVal's direct branch on a map
+        // value, reached via the r53 mapIterStart intercept — the
+        // Iter slot holds the value in a Cell, and copyVal reads it
+        // back as a word). Only UNSAFE_POINTER reads translate:
+        // object kinds return the object unchanged, and struct/array/
+        // interface reads keep their branches above. A nil *T reads
+        // as address 0. The hook is null in pure-frontend tests;
+        // then the old behavior (loud failure downstream) is kept.
+        if (kind() == GoKind.UNSAFE_POINTER
+                && (o instanceof GoMap || o instanceof GoChan
+                        || o instanceof GoFunc || o instanceof GoPointer)) {
+            // A nil *T reads as address 0 — including a nil reached
+            // through GoPointer wrappers (a nil map value stored in a
+            // map reaches here double-wrapped: GoPointer(GoPointer
+            // {nil})). The depth cap mirrors descendOffsetZero's hang
+            // guard; over-long chains fall through to interning.
+            if (o instanceof GoPointer gp) {
+                Object r = gp;
+                for (int depth = 0; depth < 64 && r instanceof GoPointer g; depth++) {
+                    if (g.isNil()) {
+                        return Long.valueOf(0);
+                    }
+                    r = g.referent();
+                }
+                if (r == null) {
+                    return Long.valueOf(0);
+                }
+            }
+            Long h = GoPointer.internHandle(o);
+            if (h != null) {
+                return h;
+            }
         }
         return o;
     }
