@@ -9512,6 +9512,17 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if isReflectIntrinsicFunc(fn) {
 		return e.exportReflectIntrinsic(c, fn.Name())
 	}
+	// real-reflect (red-master fix r53, 2026-11-16): reflect.mapIterStart
+	// / mapIterNext drive maps.Iter over graalgo GoMap values; the guest
+	// maps.Iter implementation reads *maps.Map header fields that a GoMap
+	// does not carry (GoMap cannot be cast to GoStruct). Lower to the
+	// "reflectop" wire node (ops "mapIterStart" / "mapIterNext"), backed
+	// by the GoMap snapshot iterator (see ReflectOpNode). The real
+	// declarations still export normally as dead code. Intercepted
+	// before the funcByObj lookup.
+	if isReflectMapIterFunc(fn) {
+		return e.exportReflectMapIterCall(c, fn.Name())
+	}
 	// P3-M9 (unsafe patterns): crypto/internal/fips140/alias.AnyOverlap and
 	// InexactOverlap use uintptr(unsafe.Pointer(...)) which traps under D5.
 	// Lower to the "sliceoverlap" wire node which implements overlap detection

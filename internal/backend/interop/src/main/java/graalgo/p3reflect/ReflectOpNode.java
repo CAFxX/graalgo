@@ -16,8 +16,11 @@ import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * The {@code "reflectop"} wire node (P3-M8, wave 2, reflect package).
@@ -467,6 +470,17 @@ public final class ReflectOpNode extends GoExprNode {
             case "mapiterval" -> mapIterVal(asTok(argv[0]));
             case "mapiterreset" -> {
                 mapIterReset(asTok(argv[0]), asValue(argv[1]));
+                yield null;
+            }
+            // real-reflect (red-master fix r53, 2026-11-16): the
+            // reflect.mapIterStart / mapIterNext drivers, intercepted
+            // by the frontend. Both return no value.
+            case "mapIterStart" -> {
+                reflectMapIterStart(argv[0], argv[1], argv[2]);
+                yield null;
+            }
+            case "mapIterNext" -> {
+                reflectMapIterNext(argv[0]);
                 yield null;
             }
             default -> throw new IllegalStateException("reflect: unknown op " + op);
@@ -1820,6 +1834,198 @@ public final class ReflectOpNode extends GoExprNode {
         TypeInfo t = ReflectTypes.table().info(p.typ());
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         st.reset((GoMap) d5, t.key.tok, t.elem.tok);
+    }
+
+    // ------------------------------------------------------------------
+    // Real-reflect map iteration drivers (red-master fix r53,
+    // 2026-11-16).
+    // ------------------------------------------------------------------
+    //
+    // reflect.Value.MapKeys / MapRange (and fmt's map printing via
+    // fmtsort.Sort) drive iteration through reflect.mapIterStart /
+    // mapIterNext (reflect/map.go), which call maps.Iter.Init / Next —
+    // guest code that reads *maps.Map header fields (used, dirLen,
+    // dirPtr, globalDepth, clearSeq) by struct-field selection. A
+    // graalgo map value's data word is a GoMap (open-addressing Java
+    // table), not a *maps.Map header struct, so the first selection
+    // dies with "GoMap cannot be cast to GoStruct".
+    //
+    // The frontend intercepts calls to mapIterStart / mapIterNext and
+    // lowers them to these ops, which drive the GoMap snapshot
+    // iterator (the same machinery as mapiterinit / mapiternext
+    // above) and keep the guest maps.Iter struct's observable fields
+    // (key, elem, typ, m) in sync, so the guest code that only READS
+    // those fields (Iter.Key / Elem / Initialized / Map, and
+    // reflect's copyVal) keeps working. Guest Iter.Init / Next is
+    // never executed: reflect's only drivers are the two intercepted
+    // functions.
+    //
+    // The key/elem fields hold interned Cell handles (the unsafe_New
+    // canonical form): reflect's copyVal does unsafe_New +
+    // typedmemmove for non-direct-iface keys (loadPointerValue
+    // unwraps the Cell) and *(*unsafe.Pointer)(ptr) for direct-iface
+    // keys (DerefNode unwraps the Cell), so both key representations
+    // round-trip. A null key/elem (exhausted iterator) is stored as
+    // Java null, which reads back as Long 0 (nil unsafe.Pointer).
+    //
+    // Iterator state lives in a side table keyed by the Iter struct's
+    // IDENTITY: GoStruct has structural equals/hashCode, and its hash
+    // changes as key/elem are written, so it cannot key a hash map.
+    // Entries are weak — when the guest Iter struct is garbage the
+    // entry is dropped on the next access.
+
+    /** Field indices of internal/runtime/maps.Iter, resolved by name. */
+    private record IterFields(int key, int elem, int typ, int m) {}
+
+    private static IterFields iterFields(GoStruct iter) {
+        GoStructDescriptor desc = iter.descriptor();
+        int key = -1, elem = -1, typ = -1, m = -1;
+        for (int i = 0; i < desc.fields().size(); i++) {
+            switch (desc.fields().get(i).name()) {
+                case "key" -> key = i;
+                case "elem" -> elem = i;
+                case "typ" -> typ = i;
+                case "m" -> m = i;
+            }
+        }
+        if (key < 0 || elem < 0 || typ < 0 || m < 0) {
+            throw new IllegalStateException("reflect.mapIterStart: maps.Iter descriptor "
+                    + desc.typeName() + " lacks key/elem/typ/m fields (found key=" + key
+                    + " elem=" + elem + " typ=" + typ + " m=" + m + ")");
+        }
+        return new IterFields(key, elem, typ, m);
+    }
+
+    /** Identity-keyed weak side table for real-reflect Iter state. */
+    private static final class RealIterStates {
+        private record Entry(WeakReference<GoStruct> iter, MapIterState state) {}
+
+        private static final Map<Integer, List<Entry>> BY_ID = new HashMap<>();
+
+        static synchronized MapIterState get(GoStruct iter) {
+            purge();
+            List<Entry> bucket = BY_ID.get(System.identityHashCode(iter));
+            if (bucket == null) {
+                return null;
+            }
+            for (Entry e : bucket) {
+                if (e.iter().get() == iter) {
+                    return e.state();
+                }
+            }
+            return null;
+        }
+
+        static synchronized void put(GoStruct iter, MapIterState state) {
+            purge();
+            int id = System.identityHashCode(iter);
+            List<Entry> bucket = BY_ID.computeIfAbsent(id, k -> new ArrayList<>());
+            bucket.removeIf(e -> e.iter().get() == iter || e.iter().get() == null);
+            bucket.add(new Entry(new WeakReference<>(iter), state));
+        }
+
+        /** Drops entries whose Iter struct was collected. */
+        private static void purge() {
+            BY_ID.values().removeIf(bucket -> {
+                bucket.removeIf(e -> e.iter().get() == null);
+                return bucket.isEmpty();
+            });
+        }
+    }
+
+    /** Resolves the maps.Iter struct denoted by a *Iter argument. */
+    private static GoStruct iterStruct(Object ptr, String op) {
+        Object ref = ptr;
+        if (ptr instanceof GoPointer p) {
+            ref = p.referent();
+        } else if (ptr instanceof Number n) {
+            ref = ReflectRefs.resolve(n.longValue());
+        }
+        if (ref instanceof Cell c) {
+            ref = ReflectRefs.deref(c.value);
+        }
+        if (ref instanceof GoStruct gs) {
+            return gs;
+        }
+        throw new IllegalStateException("reflect." + op
+                + ": iterator argument does not denote a maps.Iter struct: " + describeArg(ptr));
+    }
+
+    /** Resolves a map argument to a GoMap, or null for a nil map. */
+    private static GoMap iterMap(Object ptr, String op) {
+        if (ptr == null) {
+            return null;
+        }
+        if (ptr instanceof Number n && n.longValue() == 0) {
+            return null;
+        }
+        Object ref = ptr instanceof Number n
+                ? ReflectRefs.denotedValue(n.longValue(), GoKind.MAP)
+                : ptr instanceof GoPointer p ? p.referent() : ptr;
+        if (ref instanceof Cell c) {
+            ref = ReflectRefs.deref(c.value);
+        }
+        if (ref instanceof GoMap m) {
+            return m;
+        }
+        throw new IllegalStateException("reflect." + op
+                + ": map argument is not a map: " + describeArg(ptr));
+    }
+
+    private static String describeArg(Object v) {
+        return v == null ? "null" : v.getClass().getSimpleName() + "(" + v + ")";
+    }
+
+    /** Advances one entry, writing it.key / it.elem (null on exhaustion). */
+    private static void iterAdvance(GoStruct iter, IterFields f, MapIterState st) {
+        if (st.index >= st.snapshot.length) {
+            iter.setObject(f.key(), null);
+            iter.setObject(f.elem(), null);
+            return;
+        }
+        // The snapshot holds keys; the value is looked up from the
+        // live map (mirrors mapIterNext above).
+        Object key = st.snapshot[st.index++];
+        st.key = key;
+        Object val = st.map.get(key);
+        st.val = val;
+        iter.setObject(f.key(), ReflectRefs.intern(new Cell(key)));
+        iter.setObject(f.elem(), ReflectRefs.intern(new Cell(val)));
+    }
+
+    /** reflect.mapIterStart(t, m, it): (re)initialise it and prime the first entry. */
+    private static void reflectMapIterStart(Object tArg, Object mArg, Object itArg) {
+        GoStruct iter = iterStruct(itArg, "mapIterStart");
+        IterFields f = iterFields(iter);
+        long tok = ReflectLinknames.tokForTypeArg(tArg, "reflect.mapIterStart");
+        TypeInfo info = ReflectTypes.table().info(tok);
+        if (info.kind != GoKind.MAP || info.key == null || info.elem == null) {
+            throw new IllegalStateException("reflect.mapIterStart: type argument is not a map type: "
+                    + ReflectTypes.typeString(tok));
+        }
+        GoMap map = iterMap(mArg, "mapIterStart");
+        // Mirror the guest Init: typ is set even for a nil/empty map
+        // (Initialized() reads it); m is stored exactly as received.
+        iter.setObject(f.typ(), tArg);
+        iter.setObject(f.m(), mArg);
+        // A nil map iterates as empty; MapIterState snapshots the
+        // (empty) map, so use a fresh GoMap for the nil case.
+        MapIterState st = new MapIterState(
+                map == null ? new GoMap() : map, info.key.tok, info.elem.tok);
+        RealIterStates.put(iter, st);
+        iterAdvance(iter, f, st);
+    }
+
+    /** reflect.mapIterNext(it): advance one entry (null key/elem on exhaustion). */
+    private static void reflectMapIterNext(Object itArg) {
+        GoStruct iter = iterStruct(itArg, "mapIterNext");
+        MapIterState st = RealIterStates.get(iter);
+        if (st == null) {
+            throw new IllegalStateException(
+                    "reflect.mapIterNext: no iterator state for this maps.Iter "
+                            + "(mapIterStart was not called on it)");
+        }
+        iterAdvance(iter, iterFields(iter), st);
     }
 
     // ------------------------------------------------------------------

@@ -2930,3 +2930,38 @@ func (e *exporter) exportReflectIntrinsic(c *ast.CallExpr, name string) (*Node, 
 		"type": typ,
 	}), nil
 }
+
+// isReflectMapIterFunc reports whether fn is one of real reflect's map
+// iteration drivers (reflect/map.go: mapIterStart / mapIterNext).
+// Deliberately NOT part of reflectIntrinsicNames: that map also feeds
+// isSyntheticIntrinsic (synth_machinery.go), which skips declarations
+// of synthetic packages only — these are real reflect functions whose
+// declarations must still export (as dead code) and whose bodies must
+// never be compiled as guest code that a call could reach. The frontend
+// intercepts every call site instead; see exportFuncCall.
+func isReflectMapIterFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" &&
+		(fn.Name() == "mapIterStart" || fn.Name() == "mapIterNext")
+}
+
+// exportReflectMapIterCall lowers a call to reflect.mapIterStart or
+// reflect.mapIterNext to the "reflectop" wire node with the plain
+// function name as the op. Mirrors exportReflectIntrinsic, except the
+// op is not a __reflect_* suffix: these are real reflect functions,
+// not synthetic intrinsics. The op's type is nil (both functions
+// return no value), matching the reflectop contract.
+func (e *exporter) exportReflectMapIterCall(c *ast.CallExpr, name string) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("reflectop", c, map[string]any{
+		"op":   name,
+		"args": args,
+		"type": typ,
+	}), nil
+}
