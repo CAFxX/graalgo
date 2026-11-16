@@ -394,6 +394,26 @@ public final class ReflectRefs {
                     "reflect: cannot read scalar at byte offset " + byteOffset
                             + " through a non-array root (D5)");
         }
+        // fix-redmaster-r51: a bare scalar box is normalized by the
+        // table into a single-element carrier array (Integer -> int[1],
+        // Long -> long[1], ...), and Value.Interface() on a derived
+        // element re-interns the read-out box, so a scalar Value can
+        // denote its carrier rather than array storage. Reading the
+        // carrier as the target kind's array (arrayGet) casts by kind
+        // and dies when the box's carrier differs from the kind's
+        // (uint8 element read from an int[1] carrier: [I -> [B). A
+        // carrier at offset 0 IS the scalar: unwrap it (deref) instead
+        // of walking it as an array. Genuine single-element arrays
+        // read identically either way (element 0 is the value), so
+        // only the carrier/kind-mismatch case changes behavior.
+        // Nonzero offsets keep the walk (a derived byte offset into a
+        // carrier is a reinterpretation and still traps below).
+        if (baseIndex == 0 && byteOffset == 0) {
+            Object unwrapped = deref(array);
+            if (unwrapped != array) {
+                return unwrapped;
+            }
+        }
         if (baseIndex != 0) {
             // An ArrayRef/GoSlice root names an element, not byte 0:
             // a further byte offset is gc flat-memory arithmetic on
@@ -514,6 +534,14 @@ public final class ReflectRefs {
                 return readScalarWalk(elem, 0, kind);
             }
             return boxedScalar(elem, kind);
+        }
+        // fix-redmaster-r51: single-element carrier at index 0 (see
+        // readScalarAt above) — unwrap instead of casting by kind.
+        if (index == 0) {
+            Object unwrapped = deref(array);
+            if (unwrapped != array) {
+                return unwrapped;
+            }
         }
         return ReflectValues.arrayGet(array, normalizeKind(kind), index);
     }
