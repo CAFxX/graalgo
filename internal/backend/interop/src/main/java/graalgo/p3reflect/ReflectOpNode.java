@@ -7,6 +7,7 @@ import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.frontend.TypeTable;
+import graalgo.runtime.Panic;
 import graalgo.p3reflect.ReflectRefs.Cell;
 import graalgo.p3reflect.ReflectTypes.TypeInfo;
 import graalgo.values.GoKind;
@@ -286,7 +287,7 @@ public final class ReflectOpNode extends GoExprNode {
             // token; it is resolved with the same machinery as the
             // constructor linknames.
             case "typeNumMethod" -> (long) ReflectTypes.methodSetFor(resolveTypeValue(argv[0], "reflect.Type.Method")).size();
-            case "typeMethod" -> packMethod(ReflectTypes.methodSetFor(resolveTypeValue(argv[0], "reflect.Type.Method")).get(asInt(argv[1])));
+            case "typeMethod" -> packMethod(methodChecked(resolveTypeValue(argv[0], "reflect.Type.Method"), asInt(argv[1])));
             case "typeMethodByName" -> methodByNamePair(resolveTypeValue(argv[0], "reflect.Type.Method"), asString(argv[1]));
             case "tElem" -> ReflectTypes.table().info(asTok(argv[0])).elem.tok;
             case "tKey" -> ReflectTypes.table().info(asTok(argv[0])).key.tok;
@@ -1398,12 +1399,11 @@ public final class ReflectOpNode extends GoExprNode {
         return out.toArray();
     }
 
-    /** __reflect_methodval: bound method value. */
+    /** __reflect_methodval: bound method value. Uses the computed method set (methodSetFor), not the raw table entry — StructOf products carry no methods in the entry — and bounds-checks with gc's "reflect: Method index out of range" (reflect/value.go:1915). */
     private static GoStruct methodVal(GoStruct v, int i) {
         v = toSyntheticValue(v);
         ReflectValues.ValueParts p = ReflectValues.parts(v);
-        TypeInfo t = ReflectTypes.table().info(p.typ());
-        ReflectTypes.MethodInfo mi = t.methods.get(i);
+        ReflectTypes.MethodInfo mi = methodChecked(p.typ(), i);
         Object receiver = unboxValue(v);
         // Pointer-receiver adaptation: if the method needs a pointer but
         // the value is addressable, wrap it.
@@ -1845,8 +1845,23 @@ public final class ReflectOpNode extends GoExprNode {
     }
 
     /** __reflect_tMethod: packs a Method struct. */
+    /**
+     * __reflect_tMethod: gc panics "reflect: Method index out of range"
+     * (reflect/type.go:651) for an out-of-range index — never a Java
+     * IndexOutOfBoundsException, which recover() cannot catch.
+     */
     private static GoStruct method(long tok, int i) {
-        return packMethod(ReflectTypes.methodSetFor(tok).get(i));
+        return packMethod(methodChecked(tok, i));
+    }
+
+    /** The i-th method of a type's method set, bounds-checked with gc's panic. Shared by method(), methodVal() and the typeMethod dispatch (which used to index the set directly). */
+    private static ReflectTypes.MethodInfo methodChecked(long tok, int i) {
+        java.util.List<ReflectTypes.MethodInfo> ms = ReflectTypes.methodSetFor(tok);
+        if (i < 0 || i >= ms.size()) {
+            Panic.throwPanic(GoString.fromUtf8("reflect: Method index out of range"));
+            throw new IllegalStateException("throwPanic returned");
+        }
+        return ms.get(i);
     }
 
     /** Packs a Method struct from a resolved method-set entry. */

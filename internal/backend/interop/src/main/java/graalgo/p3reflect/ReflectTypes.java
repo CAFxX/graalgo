@@ -11,6 +11,8 @@ import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTarget;
 import graalgo.p3log.P3Log;
 import graalgo.runtime.GoCalls;
+import graalgo.runtime.Panic;
+import graalgo.values.GoString;
 import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
@@ -1625,11 +1627,16 @@ public final class ReflectTypes {
         if (u.interfaceMethods.isEmpty()) {
             return true;
         }
-        if (t.methods.isEmpty()) {
+        // StructOf products carry no methods in the table entry — their
+        // set is computed from their fields (methodSetFor); using the
+        // raw entry would report "does not implement" for every
+        // interface on a StructOf product.
+        List<MethodInfo> tSet = methodSetFor(t.tok);
+        if (tSet.isEmpty()) {
             return false;
         }
         java.util.Set<String> tKeys = new java.util.HashSet<>();
-        for (MethodInfo m : t.methods) {
+        for (MethodInfo m : tSet) {
             tKeys.add(m.implKey);
         }
         for (String need : u.interfaceMethods) {
@@ -1997,9 +2004,13 @@ public final class ReflectTypes {
                 null, null, 0, null, fieldInfos, List.of(),
                 List.of(), List.of(), false, List.of(), "", -1);
         table.byTok.add(info);
-        // Promoted methods from anonymous (embedded) fields, gc rules:
-        // shallower embedding depth wins; same-depth duplicates are
-        // ambiguous and dropped; only exported method names promote.
+        // Promoted methods from anonymous (embedded) fields, gc rules
+        // (reflect/type.go StructOf, verified against gc 1.27.1):
+        // gc appends the pointer method set then the elem method set,
+        // keeping duplicates (e.g. *E yields [Get Ptr Pub unexp Get
+        // Pub unexp]); unexported methods DO promote (NumMethod lists
+        // them); embedded interfaces promote as stubs that panic on
+        // call (see promoteMethods).
         List<MethodInfo> promoted = promoteMethods(table, info, fieldInfos);
         if (!promoted.isEmpty()) {
             table.byTok.set((int) newTok, new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
@@ -2017,19 +2028,22 @@ public final class ReflectTypes {
     /**
      * Computes the promoted method set for a synthesized struct type,
      * mirroring gc's StructOf promotion (reflect/type.go) exactly:
-     * single-level, in field order; the Go side (StructOf validation)
-     * already enforced the Issue-15924 position/count panics, so any
-     * embedded field with methods here is necessarily the first and
-     * only field.
+     * single-level, in field order.
      *
      * <ul>
-     *   <li>Embedded struct E: promote E's methods.
+     *   <li>Embedded struct E: promote E's methods.</li>
      *   <li>Embedded *E: promote *E's methods, then E's methods (gc
      *       appends both; duplicates are kept — observed gc behavior).
-     *   <li>Embedded interface: gc promotes via a stub; the redispatch
-     *       machinery needs a wire interface id which synthesized types
-     *       lack — documented gap, skipped (the Go side still mirrors
-     *       gc's unexported-method panic).
+     *       The elem append is NOT struct-only: gc appends the elem's
+     *       methods for any elem kind (*MyInt appends MyInt's value
+     *       methods, yielding [Get Ptr Get]).</li>
+     *   <li>Embedded named non-struct type with methods (MyInt, MyChan,
+     *       MyFunc): promote its methods, like a struct.</li>
+     *   <li>Embedded interface: gc promotes via a stub whose call
+     *       panics with "reflect: StructOf does not support methods of
+     *       embedded interfaces"; the stub's signature resolves from
+     *       the wire type-table entry (same pattern as
+     *       {@link #readRedispatchMethod}).</li>
      * </ul>
      *
      * <p>Each promoted method wraps the embedded type's GoFunc so the
@@ -2047,29 +2061,151 @@ public final class ReflectTypes {
                 continue;
             }
             TypeInfo ft = f.type;
+            int[] path = new int[]{i};
             if (ft.kind == GoKind.INTERFACE) {
+                out.addAll(interfaceStubMethods(table, outer, ft, out.size()));
                 continue;
             }
-            int[] path = new int[]{i};
             if (ft.kind == GoKind.POINTER && ft.elem != null) {
                 boolean ptrEmbed = true;
                 for (MethodInfo m : ft.methods) {
                     out.add(promoteOne(table, outer, m, path, ptrEmbed, out.size()));
                 }
-                if (ft.elem.kind == GoKind.STRUCT) {
-                    for (MethodInfo m : ft.elem.methods) {
-                        out.add(promoteOne(table, outer, m, path, ptrEmbed, out.size()));
-                    }
+                // gc appends the elem's methods for ANY elem kind, not
+                // just structs (*MyInt appends MyInt's value methods
+                // after *MyInt's; duplicates kept).
+                for (MethodInfo m : ft.elem.methods) {
+                    out.add(promoteOne(table, outer, m, path, ptrEmbed, out.size()));
                 }
-            } else if (ft.kind == GoKind.STRUCT) {
+            } else {
+                // Any kind with methods promotes: named int/chan/func
+                // as well as structs (MyInt/MyChan yield their value
+                // method); kinds without methods contribute nothing.
                 for (MethodInfo m : ft.methods) {
                     out.add(promoteOne(table, outer, m, path, false, out.size()));
                 }
             }
-            // Other kinds (e.g. *int): no methods to promote.
         }
         return List.copyOf(out);
     }
+
+    /**
+     * The promoted stub methods for an embedded interface field, with
+     * true signatures resolved from the wire type-table entry (same
+     * pattern as {@link #readRedispatchMethod}): the table's interface
+     * entries carry only implkeys, so each method's signature
+     * (params/results) comes from the wire detail.methods[] entry via
+     * the interface type's representative wire id. The receiver is the
+     * outer struct; the func panics on call, exactly like gc.
+     * Every promoted method reports PkgPath "" (gc-observed: the
+     * StructOf product's Method values carry no package path, even
+     * for unexported methods).
+     */
+    /**
+     * The wire methods array for an interface wire id, following
+     * underlying/rhs links: named interfaces carry their methods on
+     * the underlying interface entry, aliases on their rhs entry.
+     * Returns null when no entry in the chain carries a methods list.
+     */
+    private static Json.Array interfaceMethodsFromWire(
+            graalgo.frontend.TypeTable types, int wireId) {
+        int id = wireId;
+        for (int hop = 0; hop < 8; hop++) {
+            String path = "types[" + id + "]";
+            Json.Object entry = types.entry(id, path);
+            Json.Object detail = entry.object("detail", path);
+            Json.Value mv = detail.opt("methods");
+            if (mv instanceof Json.Array arr && arr.size() > 0) {
+                return arr;
+            }
+            Json.Value uv = detail.opt("underlying");
+            if (uv instanceof Json.Num un) {
+                id = (int) un.asLong(path);
+                continue;
+            }
+            Json.Value rv = detail.opt("rhs");
+            if (rv instanceof Json.Num rn) {
+                id = (int) rn.asLong(path);
+                continue;
+            }
+            return null;
+        }
+        return null;
+    }
+
+    private static List<MethodInfo> interfaceStubMethods(Table table, TypeInfo outer,
+            TypeInfo ft, int startIndex) {
+        graalgo.frontend.TypeTable types = cachedTypes;
+        if (types == null) {
+            throw new IllegalStateException("reflect: type table not cached");
+        }
+        // Resolve the methods-bearing wire entry: a NAMED interface
+        // entry carries NO methods (methods: []) — they live on its
+        // underlying interface entry — and an ALIAS entry carries none
+        // either (they live on its rhs). Follow underlying/rhs links
+        // (capped; the wire is acyclic here) to the entry that has
+        // them. When the token's entry already carries methods (an
+        // unnamed interface id), it is used directly.
+        Json.Array imethods = interfaceMethodsFromWire(types, ft.wireId);
+        if (imethods == null) {
+            return List.of();
+        }
+        String ipath = "types[" + ft.wireId + "]";
+        List<MethodInfo> out = new ArrayList<>();
+        for (int i = 0; i < imethods.size(); i++) {
+            Json.Object im = arrObj(imethods, i, ipath);
+            String name = im.string("name", ipath);
+            Json.Value sv = im.opt("sig");
+            if (!(sv instanceof Json.Num sn)) {
+                throw new FrontendException(ipath
+                        + ": reflect: embedded interface method \"" + name
+                        + "\" has no signature (exporter bug)");
+            }
+            int sigId = (int) sn.asLong(ipath);
+            long sigTok = tokForWireId(sigId);
+            if (sigTok < 0) {
+                throw new FrontendException(ipath
+                        + ": reflect: embedded interface method \"" + name
+                        + "\" has no token for sig " + sigId);
+            }
+            TypeInfo sigInfo = table.info(sigTok);
+            Json.Value ik = im.opt("implkey");
+            String implKey = ik instanceof Json.Str s ? s.value() : name;
+            // Func type: interface signature with the outer struct
+            // prepended as receiver (interface method signatures never
+            // declare a receiver).
+            List<TypeInfo> ins = new ArrayList<>();
+            ins.add(outer);
+            ins.addAll(sigInfo.ins);
+            long funcTok = table.byTok.size();
+            TypeInfo funcType = new TypeInfo(funcTok, GoKind.FUNC, "", "", 8, 8,
+                    null, null, 0, null, List.of(), List.of(),
+                    List.copyOf(ins), sigInfo.outs, sigInfo.variadic,
+                    List.of(), "", sigId);
+            table.byTok.add(funcType);
+            out.add(new MethodInfo(name, "", funcType,
+                    makeStructOfIfaceStub(name), false, startIndex + out.size(), implKey));
+        }
+        return List.copyOf(out);
+    }
+
+    /** GoFunc that panics exactly like gc when a StructOf-promoted embedded-interface method is called. */
+    private static GoFunc makeStructOfIfaceStub(String methodName) {
+        RootNode root = new RootNode(null) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                // A GoString value, not a java.lang.String: PanicRendering
+                // only renders GoString panic values faithfully (see
+                // UnimplementedRootNode).
+                Panic.throwPanic(GoString.fromUtf8(
+                        "reflect: StructOf does not support methods of embedded interfaces"),
+                        null, null, this);
+                throw new IllegalStateException("throwPanic returned");
+            }
+        };
+        return new GoFunc(root.getCallTarget(), null);
+    }
+
 
     /** Promotes one method: wraps it to route the outer receiver down the embedding path. */
     private static MethodInfo promoteOne(Table table, TypeInfo outer, MethodInfo m,
@@ -2137,8 +2273,8 @@ public final class ReflectTypes {
      *       products, whose synthesis carries fields but no methods)
      *       compute the promoted set from their fields with the same
      *       {@link #promoteMethods} machinery the structOf builder
-     *       uses, sorted by name (stable, so StructOf duplicates keep
-     *       field order and lookup finds the first).</li>
+     *       uses, in gc append order (duplicates kept; lookup finds
+     *       the first).</li>
      *   <li>Everything else (including pointer-to-dynamic-struct sets,
      *       a known gap) yields empty, preserving today's behavior.</li>
      * </ul>
@@ -2162,8 +2298,10 @@ public final class ReflectTypes {
             if (cached != null) {
                 return cached;
             }
+            // gc append order, NOT sorted: *E yields [Get Ptr Pub
+            // unexp Get Pub unexp] (sorting would break Method(i)
+            // indices and MethodByName's first-match).
             List<MethodInfo> promoted = new ArrayList<>(promoteMethods(table(), t, t.fields));
-            promoted.sort((a, b) -> a.name.compareTo(b.name));
             List<MethodInfo> result = List.copyOf(promoted);
             METHOD_SET_CACHE.put(tok, result);
             return result;
@@ -2391,31 +2529,46 @@ public final class ReflectTypes {
     }
 
     /**
-     * Boxes a type token as a {@code reflect.Type} interface value
-     * (GoInterface over an rtype struct). The itab is left null and built
-     * lazily by the dispatch path from the descriptor name — exactly like
-     * {@code InterfaceBoxNode}; the dispatch path never reads a stored
-     * itab. (An earlier version eagerly called itabFor with a captured
-     * {@code reflect.Type} interface descriptor, but that descriptor is
-     * only built when the frontend references the named interface id, so
-     * the capture was null and every boxType crashed.)
+     * Boxes a type token as a {@code reflect.Type} interface value.
+     * The itab is left null and built lazily by the dispatch path
+     * from the descriptor name — exactly like {@code InterfaceBoxNode};
+     * the dispatch path never reads a stored itab.
+     *
+     * <p>Shape (gc 1.27.1, reflect/type.go): {@code rtype} is
+     * {@code struct { t abi.Type }} and every Type value is a
+     * {@code *rtype} ({@code toRType: (*rtype)(unsafe.Pointer(t))}).
+     * The rtype struct's single field MUST hold the abi.Type VIEW
+     * STRUCT for the token (minted by
+     * {@link AbiTypes#abiPointerForTok}); the interface data is a
+     * pointer to the fresh rtype wrapper (the abi shell itself is
+     * shared/memoized; the wrapper is fresh per box, like the real
+     * toRType conversion). Two earlier shapes were wrong and both
+     * died on the first dispatch of the boxed value:
+     * <ul>
+     *   <li>a value-boxed rtype holding the bare token Long
+     *       (descriptor {@code reflect.rtype}) — no method table is
+     *       installed for the value descriptor (the named rtype entry
+     *       carries no methods; they live on *rtype), so dispatch
+     *       died with "no method table installed for dynamic type
+     *       reflect.rtype";</li>
+     *   <li>a pointer-boxed rtype still holding the bare token Long
+     *       in field {@code t} — dispatch found the *rtype table, but
+     *       {@code Kind()} does {@code t.t.Kind()}, and the abi.Type
+     *       method reads an int field off the Long
+     *       (ClassCastException).</li>
+     * </ul>
+     * The pointer descriptor is canonical (NAMED_DESCS, same instance
+     * the frontend materializes).
      */
     public static graalgo.values.GoInterface boxType(long tok) {
+        graalgo.values.GoPointer abiPtr = AbiTypes.abiPointerForTok(tok);
+        Object abiView = abiPtr.referent();
         graalgo.values.GoStruct rt = new graalgo.values.GoStruct(
-                rtypeDescStruct, new long[0], new Object[]{tok});
-        // fix-redmaster-r43: rtypeDesc comes from the patch-03
-        // registry, which only covers wire ids the frontend emitted
-        // descriptors for; ordinary reflect users never name
-        // reflect.rtype directly, so it is routinely null. A named
-        // descriptor for the qualified name is equivalent
-        // (descriptorForTok builds exactly this for named types, and
-        // the lazy itab path keys on the descriptor name), so fall
-        // back to it instead of crashing.
-        graalgo.values.GoTypeDescriptor desc = rtypeDesc;
-        if (desc == null) {
-            desc = graalgo.frontend.NodeFactory.namedDescriptorFor(
-                    "reflect.rtype", graalgo.values.GoKind.STRUCT);
-        }
-        return new graalgo.values.GoInterface(desc, rt, null);
+                rtypeDescStruct, new long[0], new Object[]{abiView});
+        graalgo.values.GoTypeDescriptor desc =
+                graalgo.frontend.NodeFactory.namedDescriptorFor(
+                        "*reflect.rtype", graalgo.values.GoKind.POINTER);
+        return new graalgo.values.GoInterface(desc,
+                new graalgo.values.GoPointer(rt), null);
     }
 }
