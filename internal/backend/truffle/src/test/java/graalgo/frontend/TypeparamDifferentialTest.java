@@ -330,6 +330,15 @@ public final class TypeparamDifferentialTest {
         pb.environment().put("GOTOOLCHAIN", "local");
         pb.environment().put("DH_GO", ToolPaths.stockGo().getParent().getParent().toString());
         pb.environment().put("REPO_DIR", repoDir().toAbsolutePath().toString());
+        // red-master fix r53 (2026-11-16): backends.json resolves the
+        // graalgo launcher as ${PHASE1_DIR}/../../internal/backend/graalgo-run;
+        // the Makefile snapshot targets and run.sh export PHASE1_DIR, but
+        // this test did not, so it expanded to /../../internal/backend/graalgo-run,
+        // the batch exec failed, and every comparison diverged with an empty
+        // "build: alt failed: ". PHASE1_DIR is <repo>/internal/backend here,
+        // mirroring the Makefile (PHASE1_DIR="$(CURDIR)/internal/backend").
+        pb.environment().put("PHASE1_DIR",
+                repoDir().resolve("internal/backend").toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         Process p = pb.start();
         // Stream the adapter's progress to the test log.
