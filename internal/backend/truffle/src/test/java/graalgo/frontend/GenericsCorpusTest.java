@@ -4,6 +4,7 @@ import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import graalgo.launcher.Main;
+import graalgo.frontend.WireKindRegistrar;
 import graalgo.launcher.ToolPaths;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Stream;
+import java.util.ServiceLoader;
 
 /**
  * M6 acceptance: the generics corpus, differential vs stock gc.
@@ -194,7 +196,27 @@ public final class GenericsCorpusTest {
         String json = Main.runGofrontend(src);
         String text = Files.readString(src, StandardCharsets.UTF_8);
         Source source = Source.newBuilder("go", text, src.getFileName().toString()).build();
-        NodeFactory.Program program = new NodeFactory(source).buildProgram(json);
+        // fix-redmaster-r51: a bare new NodeFactory never installs
+        // the Phase-3 wire-kind registrars, so programs using real
+        // stdlib packages (fmt via sync.Pool, reflect) fail on
+        // unregistered wire kinds (ifacemethod) even with interop on
+        // the classpath. Mirror the product launcher (Main.runOne):
+        // discover the registrars via ServiceLoader, register before
+        // the build, run afterBuild once built. Each test method uses
+        // a fresh factory, so the duplicate-registration guard cannot
+        // fire; the afterBuild installs replace (never accumulate)
+        // global tables, so repeated installs are safe.
+        NodeFactory factory = new NodeFactory(source);
+        List<WireKindRegistrar> registrars = new ArrayList<>();
+        for (WireKindRegistrar registrar
+                : ServiceLoader.load(WireKindRegistrar.class)) {
+            registrars.add(registrar);
+            registrar.registerAll(factory);
+        }
+        NodeFactory.Program program = factory.buildProgram(json);
+        for (WireKindRegistrar registrar : registrars) {
+            registrar.afterBuild(factory, program);
+        }
         VirtualFrame frame = Truffle.getRuntime()
                 .createVirtualFrame(new Object[0], program.descriptor());
         program.root().execute(frame);
