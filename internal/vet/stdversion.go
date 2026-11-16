@@ -173,6 +173,13 @@ func parseAPIKeys(content string) []string {
 			if i := strings.Index(t, ", "); i >= 0 {
 				name, sub = t[:i], strings.TrimSpace(t[i+2:])
 			}
+			// The declaration kind ("struct" / "interface") is the word
+			// after the type name, before any ", " member: "Reader
+			// interface", "Dialer struct". Test it here, not on the whole
+			// line — a struct field's type may itself mention
+			// "interface" (e.g. "Value interface{}"), which must not
+			// flip the branch.
+			isIface := strings.HasSuffix(name, " interface")
 			if i := strings.IndexAny(name, "[ "); i >= 0 {
 				name = name[:i]
 			}
@@ -181,14 +188,38 @@ func parseAPIKeys(content string) []string {
 			}
 			keys = append(keys, pkg+"."+name)
 			if sub != "" {
-				if strings.Contains(t, "interface") {
+				if isIface {
+					// Interface method: "Read([]byte) (int, error)" ->
+					// "Read"; generic methods cut at "[".
+					if i := strings.IndexAny(sub, "(["); i >= 0 {
+						sub = sub[:i]
+					}
 					keys = append(keys, "("+pkg+"."+name+")."+sub)
 				} else {
-					keys = append(keys, pkg+"."+name+"."+sub)
+					// Struct field: the api line carries the field type
+					// after the name ("KeepAliveConfig KeepAliveConfig",
+					// "Pattern string"); the key is the bare field name.
+					// An embedded field ("embedded FileHeader") keys on
+					// the embedded type's name.
+					fields := strings.Fields(sub)
+					if len(fields) > 0 {
+						field := fields[0]
+						if field == "embedded" && len(fields) > 1 {
+							field = strings.TrimPrefix(fields[1], "*")
+						}
+						keys = append(keys, pkg+"."+name+"."+field)
+					}
 				}
 			}
 		case strings.HasPrefix(decl, "var ") || strings.HasPrefix(decl, "const "):
-			name := decl[4:]
+			// "const " is 6 chars, "var " is 4: decl[4:] left every
+			// const key as "pkg.t".
+			name := decl
+			if strings.HasPrefix(decl, "const ") {
+				name = decl[len("const "):]
+			} else {
+				name = decl[len("var "):]
+			}
 			if i := strings.IndexAny(name, " =("); i >= 0 {
 				name = name[:i]
 			}
@@ -336,7 +367,6 @@ func stdSelectionKey(pass *Pass, sel *ast.SelectorExpr) (key string, recvObj typ
 	if tobj.Pkg() == nil {
 		return "", nil, false
 	}
-	tpath := tobj.Pkg().Path() + "." + tobj.Name()
 	switch o := s.Obj().(type) {
 	case *types.Func:
 		// Match the api "method (Recv) Name" key format using the
@@ -364,7 +394,36 @@ func stdSelectionKey(pass *Pass, sel *ast.SelectorExpr) (key string, recvObj typ
 		if !o.IsField() {
 			return "", nil, false
 		}
-		return tpath + "." + o.Name(), tobj, true
+		// A promoted field is declared on an embedded struct, not on the
+		// receiver type: walk the selection's index path from the
+		// receiver type to the struct that declares the field and key on
+		// that type. A direct field has a one-element path, so the walk
+		// is a no-op and the key is unchanged.
+		decl := named
+		idx := s.Index()
+		if len(idx) == 0 {
+			return "", nil, false
+		}
+		for _, i := range idx[:len(idx)-1] {
+			st, ok := decl.Underlying().(*types.Struct)
+			if !ok {
+				return "", nil, false
+			}
+			ft := st.Field(i).Type()
+			if p, isPtr := ft.(*types.Pointer); isPtr {
+				ft = p.Elem()
+			}
+			n, ok := ft.(*types.Named)
+			if !ok {
+				return "", nil, false
+			}
+			decl = n
+		}
+		dobj := decl.Origin().Obj()
+		if dobj.Pkg() == nil {
+			return "", nil, false
+		}
+		return dobj.Pkg().Path() + "." + dobj.Name() + "." + o.Name(), tobj, true
 	}
 	return "", nil, false
 }

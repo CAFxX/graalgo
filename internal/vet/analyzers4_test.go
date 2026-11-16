@@ -40,7 +40,8 @@ func runVetOnModule(t *testing.T, goMod string, files map[string]string, targets
 }
 
 func TestStdVersion(t *testing.T) {
-	// cmp.Or was added in go1.21; use a go1.22 symbol with a go1.21 module.
+	// cmp.Or was added in go1.22 and cmp.Compare in go1.21; at go1.21
+	// only Or must be flagged.
 	// (Modules below go1.21 are skipped entirely, matching go vet.)
 	src := `package p
 
@@ -82,7 +83,16 @@ var _ = x509.OIDFromInts([]uint64{1, 2})
 	if strings.Contains(joined, "requires go1.22") {
 		t.Errorf("should skip without go.mod:\n%s", joined)
 	}
-	_ = src
+	// Wire the cmp fixture into a real Run call: Or (go1.22) must be
+	// flagged at go1.21, Compare (go1.21) must not.
+	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": src})
+	if !strings.Contains(joined, "cmp.Or requires go1.22 or later (module is go1.21)") {
+		t.Errorf("expected cmp.Or diagnostic, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "cmp.Compare requires") {
+		t.Errorf("false positive on go1.21 symbol cmp.Compare:\n%s", joined)
+	}
 }
 
 func TestStdVersionMethod(t *testing.T) {
@@ -267,5 +277,191 @@ func TestFramePointer(t *testing.T) {
 	n := strings.Count(joined, "frame pointer is clobbered before saving")
 	if n != 1 {
 		t.Errorf("expected exactly 1 framepointer diagnostic, got %d:\n%s", n, joined)
+	}
+}
+
+func TestParseAPIKeys(t *testing.T) {
+	cases := []struct {
+		line string
+		want []string
+	}{
+		// Struct field: the key is the bare field name, not "name type".
+		{"pkg net, type Dialer struct, KeepAliveConfig KeepAliveConfig #62254",
+			[]string{"net.Dialer", "net.Dialer.KeepAliveConfig"}},
+		{"pkg net/http, type Request struct, Pattern string #66405",
+			[]string{"net/http.Request", "net/http.Request.Pattern"}},
+		// Embedded field: the key is the embedded type's name.
+		{"pkg archive/zip, type File struct, embedded FileHeader",
+			[]string{"archive/zip.File", "archive/zip.File.FileHeader"}},
+		// Bare-name field (old api form) keeps working.
+		{"pkg crypto/tls, type ConnectionState struct, TLSUnique //deprecated",
+			[]string{"crypto/tls.ConnectionState", "crypto/tls.ConnectionState.TLSUnique"}},
+		// Interface method: the key is the bare method name.
+		{"pkg io, type Reader interface, Read([]byte) (int, error)",
+			[]string{"io.Reader", "(io.Reader).Read"}},
+		{"pkg reflect, type Type interface, CanSeq() bool #66056",
+			[]string{"reflect.Type", "(reflect.Type).CanSeq"}},
+		// Const: "const " is 6 chars, not 4; every const key used to be "pkg.t".
+		{"pkg crypto/tls, const QUICEncryptionLevelApplication = 3 #44886",
+			[]string{"crypto/tls.QUICEncryptionLevelApplication"}},
+		{"pkg crypto/tls, const QUICEncryptionLevelApplication QUICEncryptionLevel #44886",
+			[]string{"crypto/tls.QUICEncryptionLevelApplication"}},
+		// Var: unchanged behaviour.
+		{"pkg foo, var V int",
+			[]string{"foo.V"}},
+		// Func and method keys were already correct; pin them.
+		{"pkg slices, func Concat[S ~[]E, E any](slices ...S) S",
+			[]string{"slices.Concat"}},
+		{"pkg net/http, method (*Request) PathValue(string) string",
+			[]string{"(*net/http.Request).PathValue"}},
+	}
+	for _, tc := range cases {
+		got := parseAPIKeys(tc.line + "\n")
+		if len(got) != len(tc.want) {
+			t.Errorf("parseAPIKeys(%q) = %q, want %q", tc.line, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("parseAPIKeys(%q) = %q, want %q", tc.line, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
+func TestStdVersionStructField(t *testing.T) {
+	// net.Dialer.KeepAliveConfig and http.Request.Pattern were added in
+	// go1.23. The DB keys for struct fields must be the bare field name:
+	// parseAPIKeys used to keep the field's type in the key
+	// (net.Dialer.KeepAliveConfig KeepAliveConfig), which no lookup key
+	// could ever match, so no struct-field check could fire.
+	src := `package p
+
+import (
+	"net"
+	"net/http"
+)
+
+var d net.Dialer
+var _ = d.KeepAliveConfig
+var _ = d.Timeout
+
+var r http.Request
+var _ = r.Pattern
+var _ = r.Method
+`
+	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": src})
+	if !strings.Contains(joined, "net.Dialer.KeepAliveConfig requires go1.23 or later (module is go1.21)") {
+		t.Errorf("expected KeepAliveConfig diagnostic, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "http.Request.Pattern requires go1.23 or later (module is go1.21)") {
+		t.Errorf("expected Pattern diagnostic, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "Timeout requires") || strings.Contains(joined, "Method requires") {
+		t.Errorf("false positive on old field:\n%s", joined)
+	}
+	// Module at go1.23: no diagnostic.
+	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.23\n",
+		map[string]string{"p.go": src})
+	if strings.Contains(joined, "requires go1.23") {
+		t.Errorf("false positive at go1.23:\n%s", joined)
+	}
+}
+
+func TestStdVersionPromotedField(t *testing.T) {
+	// A field promoted through an embedded stdlib struct is declared on
+	// the embedded struct, so the DB key must use the declaring struct,
+	// not the receiver type: md.KeepAliveConfig is net.Dialer.KeepAliveConfig,
+	// not fixture.MyDialer.KeepAliveConfig.
+	src := `package p
+
+import (
+	"net"
+	"net/http"
+)
+
+type MyDialer struct{ net.Dialer }
+type MyPDialer struct{ *net.Dialer }
+type MyReq struct{ http.Request }
+
+var md MyDialer
+var _ = md.KeepAliveConfig
+var _ = md.Timeout
+
+var mpd MyPDialer
+var _ = mpd.KeepAliveConfig
+
+var mr MyReq
+var _ = mr.Pattern
+var _ = mr.Method
+`
+	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": src})
+	if n := strings.Count(joined, "KeepAliveConfig requires go1.23 or later (module is go1.21)"); n != 2 {
+		t.Errorf("expected 2 promoted KeepAliveConfig diagnostics (value + pointer embedding), got %d:\n%s", n, joined)
+	}
+	if !strings.Contains(joined, "Pattern requires go1.23 or later (module is go1.21)") {
+		t.Errorf("expected promoted Pattern diagnostic, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "Timeout requires") || strings.Contains(joined, "Method requires") {
+		t.Errorf("false positive on old promoted field:\n%s", joined)
+	}
+}
+
+func TestStdVersionConst(t *testing.T) {
+	// crypto/tls.QUICResumeSession was added in go1.23. (The
+	// crypto/tls.QUICEncryptionLevelApplication const from the review is
+	// go1.21, so no module version can flag it end to end — the analyzer
+	// deliberately skips modules below go1.21 — and it is pinned at the
+	// parseAPIKeys level in TestParseAPIKeys instead.)
+	src := `package p
+
+import "crypto/tls"
+
+var _ = tls.QUICResumeSession
+var _ = tls.VersionTLS12
+`
+	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": src})
+	if !strings.Contains(joined, "tls.QUICResumeSession requires go1.23 or later (module is go1.21)") {
+		t.Errorf("expected QUICResumeSession diagnostic, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "VersionTLS12 requires") {
+		t.Errorf("false positive on old const:\n%s", joined)
+	}
+	// Module at go1.23: no diagnostic.
+	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.23\n",
+		map[string]string{"p.go": src})
+	if strings.Contains(joined, "requires go1.23") {
+		t.Errorf("false positive at go1.23:\n%s", joined)
+	}
+}
+
+func TestStdVersionInterfaceMethod(t *testing.T) {
+	// reflect.Type.CanSeq was added in go1.23 on the long-existing
+	// reflect.Type interface. The DB key is the bare method name:
+	// (reflect.Type).CanSeq, not (reflect.Type).CanSeq() bool.
+	src := `package p
+
+import "reflect"
+
+func f(t reflect.Type) bool { return t.CanSeq() }
+func g(t reflect.Type) bool { return t.Comparable() }
+`
+	joined := runVetOnModule(t, "module example.com/p\n\ngo 1.21\n",
+		map[string]string{"p.go": src})
+	if !strings.Contains(joined, "reflect.(Type).CanSeq requires go1.23 or later (module is go1.21)") {
+		t.Errorf("expected CanSeq diagnostic, got:\n%s", joined)
+	}
+	if strings.Contains(joined, "Comparable requires") {
+		t.Errorf("false positive on old interface method:\n%s", joined)
+	}
+	// Module at go1.23: no diagnostic.
+	joined = runVetOnModule(t, "module example.com/p\n\ngo 1.23\n",
+		map[string]string{"p.go": src})
+	if strings.Contains(joined, "requires go1.23") {
+		t.Errorf("false positive at go1.23:\n%s", joined)
 	}
 }
