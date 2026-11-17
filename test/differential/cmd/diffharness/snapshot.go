@@ -151,6 +151,7 @@ type snapshotFlags struct {
 	jobs         int
 	timeout      int
 	retries      int
+	failFast     bool
 }
 
 func baseSnapshotFlags(fs *flag.FlagSet, mode string) *snapshotFlags {
@@ -172,6 +173,7 @@ func baseSnapshotFlags(fs *flag.FlagSet, mode string) *snapshotFlags {
 		fs.StringVar(&sf.programs, "programs", "", "comma-separated program names to check (default: whole corpus)")
 		fs.StringVar(&sf.verifyRef, "verify-ref", "", "also re-run this reference backend and fail on drift from the snapshot")
 		fs.IntVar(&sf.retries, "infra-retries", 2, "re-runs of a program whose failure has an infrastructure signature")
+		fs.BoolVar(&sf.failFast, "fail-fast", false, "run programs one at a time and stop at the first DRIFT/STALE (mutation testing)")
 	}
 	return sf
 }
@@ -475,16 +477,30 @@ func cmdSnapshotCheck(args []string) error {
 			}
 		}
 	}
-	outs := runAll(cfg, b, live, workRoot, sf.jobs)
+	var outs []harness.Outcome
+	if !sf.failFast {
+		outs = runAll(cfg, b, live, workRoot, sf.jobs)
+	}
 	for i, p := range live {
-		got := entryFromOutcome(p, outs[i], corpusRoot)
+		var oc harness.Outcome
+		if sf.failFast {
+			oc = harness.RunProgram(cfg, b, p, workRoot)
+		} else {
+			oc = outs[i]
+		}
+		got := entryFromOutcome(p, oc, corpusRoot)
 		d := diffBehavior(want[p.Name], got)
 		for try := 0; d != "" && isInfra(got) && try < sf.retries; try++ {
 			fmt.Printf("RETRY %-28s infrastructure signature: %s\n", p.Name, d)
 			got = entryFromOutcome(p, harness.RunProgram(cfg, b, p, workRoot), corpusRoot)
 			d = diffBehavior(want[p.Name], got)
 		}
-		verdicts = append(verdicts, classify(p.Name, d, isInfra(got), expected))
+		v := classify(p.Name, d, isInfra(got), expected)
+		verdicts = append(verdicts, v)
+		if sf.failFast && (v.kind == "DRIFT" || v.kind == "STALE") {
+			fmt.Printf("fail-fast: stopping after %s %s (%d/%d programs run)\n", v.kind, p.Name, i+1, len(live))
+			break
+		}
 	}
 	return report(verdicts, len(live), snap, b.Name)
 }

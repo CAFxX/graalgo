@@ -236,7 +236,7 @@ func (c *config) gate(copyDir, dh, programs string) (string, string) {
 	os.MkdirAll(tmp, 0o755)
 	args := []string{"-n", "19", dh, "snapshot", "check",
 		"-config", "backends-p3.json", "-corpus", "corpus", "-backend", "graalgo",
-		"-snapshot", c.snapshot, "-expected", c.expected, "-jobs", "1", "-timeout", "120"}
+		"-snapshot", c.snapshot, "-expected", c.expected, "-jobs", "1", "-timeout", "120", "-fail-fast"}
 	if programs != "" {
 		args = append(args, "-programs", programs)
 	}
