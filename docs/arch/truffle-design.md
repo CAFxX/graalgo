@@ -1212,3 +1212,707 @@ parameters: a Go program could then call only methods annotated
 
 This needs the owner's decision because it relaxes "never `ALL`" for
 standalone programs in substance if not in name.
+
+## 6. Instrumentation and tooling (GG-0024, GG-0008)
+
+Everything in this section is unlocked by §2 (a registered language executing
+inside a context) plus correct tags and source sections. None of it works
+today, because the nodes belong to no language.
+
+### 6.1 Jars to add
+
+[lib/](../../internal/backend/truffle/lib/) holds only the language API,
+runtime and DSL processor ([LIB.md](../../internal/backend/truffle/lib/LIB.md)).
+The tools are separate Maven artifacts on the same version as the pin; TR-0
+adds them with checksums under the existing lockstep rule: the Chrome
+inspector, the profiler (CPU sampler, CPU tracer, memory tracer), the coverage
+tool, the DAP server, Insight, their shared JSON dependency, and the polyglot
+TCK for tests. The exact coordinates (`org.graalvm.tools:*-tool`,
+`org.graalvm.sdk:polyglot-tck`, `org.graalvm.truffle:truffle-tck*`) are to be
+confirmed against Maven Central when they are fetched; they were not
+verifiable offline.
+
+### 6.2 Source sections
+
+- One `Source` per Go file, created by the loader from the bundle's file table
+  (trimpath-applied names, toolexec design §3.2), language `go`, content
+  loaded lazily from disk; when the file is gone the section is still valid as
+  line/column without text.
+- Nodes do not store a `SourceSection` object (H21). `GoNode` stores a packed
+  `int` (index into the function's position table: line, column, length) set
+  by the factory at construction, and `getSourceSection()` builds the section
+  on demand from the root's `Source`. Nodes without a position return `null`
+  and tools use `getEncapsulatingSourceSection()`.
+- Positions come from `go/token` via GIR and must be the positions gc reports:
+  the *call* expression's position for a call node (what `runtime.Caller`
+  reports), the statement's first token for statements. The panic-trace
+  differential test of TR-7 is the oracle.
+- `//line` directives are honoured by the frontend before positions are
+  emitted (they change what gc reports, so they are part of drop-in).
+
+### 6.3 Tags and wrappers
+
+| Tag | Nodes |
+|---|---|
+| `RootTag` | the function root's body wrapper node |
+| `RootBodyTag` | the user-visible body (after the prologue), so "step into" lands on the first statement |
+| `StatementTag` | every Go statement node (simple statements, `if`/`for`/`switch` headers, `return`, `defer`, `go`) |
+| `CallTag` | every call node (static, func-value, interface, `go`, `defer` at the point the deferred call runs) |
+| `ExpressionTag` | expression nodes with a source position; off the hot path because wrappers exist only when an instrument asks |
+| `ReadVariableTag` / `WriteVariableTag` | local and global variable nodes, with `getNodeObject()` giving the name |
+
+Mechanics: `StmtNode` and `ExprNode` implement `InstrumentableNode` and are
+annotated `@GenerateWrapper`; `isInstrumentable()` is `position != NONE`;
+`hasTag` is a table lookup on a per-class tag mask. The generated
+`WrapperNode` for the typed families delegates each typed `execute*` method
+(`@GenerateWrapper` supports this through the `@InstrumentableNode` execute
+signatures; each family base class gets its own wrapper). Wrappers are inserted
+lazily by the instrumentation framework: an uninstrumented program has none,
+so tags cost one `int` per node class.
+
+Statement tagging is what `go test -cover` would need if it used Truffle; it
+does not (T10). Truffle's `--coverage` then works as a free extra and as a
+cross-check of the stock tool's counts.
+
+### 6.4 Debugger (Chrome inspector, DAP)
+
+With the inspector jar on the path the engine options `inspect` (CDP, SPEC
+§3.10) and `dap` (Debug Adapter Protocol, i.e. VS Code and GoLand-style
+clients; not required by GG-0024 but free) become available; the launcher
+forwards `GRAALGO_INSPECT=port` / `-inspect` to them. What the language must
+supply beyond tags:
+
+- **Scopes.** Instrumentable nodes export `NodeLibrary` (`hasScope`,
+  `getScope`): a scope object whose members are the Go locals visible at that
+  node, built from the frame descriptor's slot names plus the factory's
+  lexical-block table; cells are dereferenced transparently; `hasRootInstance`
+  is false; the receiver is an ordinary named parameter.
+- **Language views.** `getLanguageView(context, value)` wraps primitives so the
+  debugger prints them as Go would: a `long` slot holding a `uint64`, an `int`
+  holding a `uint8` or a `rune`. The view object gets the static type from the
+  scope (the value alone cannot say, H18).
+- **Meta objects.** `GoType` descriptors (§5.2).
+- **Goroutines.** Each goroutine thread appears as a debugger thread. With
+  recycling (§2.6) the thread name is updated to `goroutine N` when a `G` is
+  installed.
+- **Asynchronous stacks.** `RootNode.findAsynchronousFrames(frame)` `[JAR]` on
+  the goroutine-entry root returns the `go` statement's stack, which is gc's
+  "created by …" line and the inspector's async call stack.
+
+Risk: the virtual-thread limitation of §2.6 ("access to caller frames in write
+or materialize mode") is exactly what a debugger does to show and modify
+variables in frames below the top one. P-C (§13.2) tests it. If it fails,
+`--inspect`/`--dap` imply `go.GoroutineThreads=platform`; the scheduler is
+unaffected, only the goroutine-count ceiling of a debug session drops.
+
+Delve remains structurally unsupported (SPEC §3.10).
+
+### 6.5 Stack traces, `runtime.Callers`, goroutine dumps
+
+Today every call pushes a `GoStackFrame` (H3) and the
+[rtstack/](../../internal/backend/interop/src/main/java/graalgo/rtstack/)
+nodes read that chain. Replacement:
+
+- **Panics.** `PanicException` is an `AbstractTruffleException` created with
+  its throw-site node. Truffle records the guest frames lazily while the
+  exception unwinds through call targets;
+  `TruffleStackTrace.getStackTrace(ex)` `[JAR]` returns elements with
+  `getTarget()` (function name from the root) and `getLocation()` (the call
+  node, hence file:line). The fatal-panic printer formats gc's layout from
+  those. Cost is paid only when a panic is thrown. The stack depth captured is
+  unlimited for panics (`AbstractTruffleException.UNLIMITED_STACK_TRACE`),
+  because gc prints the whole stack (with its own elision of the middle of
+  very deep stacks, which the printer reproduces).
+- **`runtime.Callers` / `Caller` / `Stack`.** A `@TruffleBoundary` intrinsic
+  walks `Truffle.getRuntime().iterateFrames(visitor)` with read-only frame
+  access, which works on virtual threads. Each frame yields
+  `(call target, call node)`.
+- **PCs.** Go code stores program counters as `uintptr` and resolves them
+  later (`runtime.CallersFrames`, `runtime.FuncForPC`). A PC is
+  `functionIndex << 24 | siteIndex + 1`, where `functionIndex` is the
+  language-level index of the `FunctionUnit` and `siteIndex` the ordinal of
+  the call node (or statement) within the function, both assigned at decode
+  time. `FuncForPC(pc).Name()`, `.FileLine(pc)`, `.Entry()` are table lookups
+  in the language-level PC table (§2.4). This keeps gc's property that
+  `pc - 1` is inside the call instruction.
+- **All-goroutine dumps** (`GOTRACEBACK=all`, SIGQUIT, `runtime.Stack(buf,
+  true)`, `pprof` goroutine profile): `env.submitThreadLocal(threads, action)`
+  with a synchronous action that captures each thread's guest stack — the
+  purpose `ThreadLocalAction` was built for. Blocked goroutines respond
+  because parks go through `setBlocked…` (§2.7); the dump prints the park
+  reason from `G` as gc does (`[chan receive]`, `[select]`, …).
+- Internal roots (thunks, goroutine entry) are `isInternal()` and skipped, so
+  traces contain exactly the frames gc shows; inlining by Truffle never hides
+  a frame (guest frames are reconstructed from compiler metadata), which is
+  stronger than gc's own inlined-frame handling.
+
+`rtstack` shrinks to the intrinsic bodies for the `runtime` facade functions;
+`GoStackFrame`, `pushGoStack`, `updateTopFrameSection` and `StackTrace`'s
+chain walk are deleted.
+
+### 6.6 Logging and internal diagnostics
+
+- Internal diagnostics use `TruffleLogger.getLogger("go", "<component>")`
+  (`sched`, `loader`, `itab`, `interop`), enabled with
+  `--log.go.<component>.level=FINE`. No `System.err` prints from runtime code.
+- Output that is part of Go's observable behaviour (panic text, `GODEBUG`
+  traces such as `schedtrace`, `println`) is **not** logging: it goes to the
+  program's fd 2 exactly as gc writes it.
+- The hand-rolled probes (`CallSiteProbes`, `InterfaceDispatchProbes`,
+  `megamorphicTransitions`, H17) are deleted. Call-site polymorphism for SPEC
+  §2.6.1's "measure real distributions" is read from the DSL's own
+  introspection (`@Introspectable` on the dispatch nodes) or
+  `engine.SpecializationStatistics`, by a test-only instrument.
+
+### 6.7 Profiling and the pprof bridge
+
+- **CPU.** The `cpusampler` instrument samples guest stacks through
+  safepoints and works on any registered language; `--cpusampler` output shows
+  Go function names once roots have names and sections. The pprof bridge
+  (SPEC §3.10) obtains the sampler through the instrument lookup
+  (`env.lookup(instrumentInfo, CPUSampler.class)`), starts and stops it for
+  `runtime/pprof.StartCPUProfile`/`StopCPUProfile` and for the
+  `net/http/pprof` handler, and translates samples (stack of
+  `(root, source section)` plus counts) into `profile.proto`. JFR
+  `jdk.ExecutionSample` translation remains the alternative for host-level
+  frames.
+- **Heap.** Allocation nodes (`new`, `make`, composite literals, `append`
+  growth, string concatenation, closure creation) call the language's
+  `AllocationReporter` (`env.lookup(AllocationReporter.class)`) guarded by
+  `reporter.isActive()`, which is a constant-folded assumption when no
+  listener is attached. `runtime.MemProfile` and the pprof heap profile attach
+  a sampling listener (gc's default rate: one sample per 512 KiB allocated).
+  Live-heap figures (`runtime.ReadMemStats`) stay on JVM memory beans as
+  today.
+- **Insight** scripts and the CPU tracer work unmodified once tags exist; no
+  language work.
+- **JFR** events of SPEC §3.10 are host-level and unchanged, except that
+  goroutine events are emitted when a `G` is installed on or removed from a
+  thread rather than at thread start/end.
+- **Heap dumps / VisualVM** (JIT mode, GG-0008): a heap dump shows
+  `GoStruct`, `GoSlice`, `GoString` instances. Truffle's heap-dump integration
+  for guest-level views is not pursued in v1; `toDisplayString` and meta
+  objects make the inspector's object view usable instead.
+
+### 6.8 Acceptance tests for tooling
+
+Each is a scripted, headless test (TR-10): (1) CDP client sets a breakpoint by
+file:line in a goroutine, resumes, reads a local of each carrier and a struct
+field, steps over, steps into a call through an interface, evaluates nothing;
+(2) the same through DAP; (3) `--cpusampler` on the `fib` benchmark attributes
+> 90 % of samples to `main.fib`; (4) `--coverage` line counts equal the stock
+`cover` tool's counts on a corpus program; (5) a panic trace and a
+`runtime.Callers` dump are byte-identical to gc after the harness's existing
+normalization of addresses and goroutine ids.
+
+## 7. Native Image and the three modes (GG-0006, GG-0049, GG-0050)
+
+### 7.1 What Truffle on SubstrateVM requires of the language
+
+- **Closed world.** No class is defined at run time. The DSL, library exports
+  and wrappers are generated at build time, so §4–§6 comply. Struct layout by
+  descriptor (SPEC §3.4) was chosen for this reason and is kept.
+- **PE hygiene is checked statically.** The image builder computes every
+  method reachable for runtime compilation from the `execute` methods. Code
+  that is PE-hostile and not behind `@TruffleBoundary` fails the build or
+  bloats the image (Truffle's image feature has a blocklist check for methods
+  such as string formatting and collection internals reached without a
+  boundary; the exact host option name is to be taken from the pinned
+  `native-image`, `[RECALL]`). This is the strongest PE gate available and
+  becomes part of CI once an image builds (TR-12).
+- **Reflection, resources, proxies** need reachability metadata (GG-0052).
+  The language itself uses none; see §7.2 for what the current runtime does.
+- **Runtime compilation** is included when the Truffle runtime and compiler
+  are on the image builder's module path, and is omitted for mode (b)
+  (interpreter-only runtime). Languages are discovered from the module/class
+  path (the `GoLanguageProvider` service entry the processor generates
+  `[PROTO]`); there is no `--language:go` flag for a third-party language and
+  no language home, since bundles are self-contained (§2.1).
+- **Image-heap state.** Anything initialized at build time is frozen into the
+  image. With §2.4 there is no static program state; `GoLanguage` and the
+  `TypeTable` entries for predeclared types may be build-time initialized.
+- **Host inlining** (`@InliningCutoff`, small `execute` methods) determines
+  interpreter speed in the image; §11 rule P5.
+
+### 7.2 What in the current code breaks it `[CODE]`
+
+| Item | Where | Problem | Resolution |
+|---|---|---|---|
+| same-FQN shadow classes resolved by class-path order | the 8 stubs listed in [truffle/Makefile](../../internal/backend/truffle/Makefile), shadowed by `runtime/` | the image builder sees two definitions of one class; which wins is an accident of path order | RECOVERY T0.D (flatten) — prerequisite for any image |
+| `ClassPreloader` (`Class.forName` over every `graalgo.*` class) | [ClassPreloader.java](../../internal/backend/runtime/src/main/java/graalgo/launcher/ClassPreloader.java) | meaningless in an image, and drags every class into reachability | JIT-mode only; guarded by `ImageInfo.inImageCode()` |
+| reflection | `GoOs` (`Class.forName("com.sun.security.auth.module.UnixSystem")`, `sun.misc.Signal`) | needs metadata; `sun.misc.Signal` is supported by Native Image but must be referenced directly | direct references or generated metadata (GG-0052) |
+| `ServiceLoader` registrars | `WireKindRegistrar`, `OsSurfaceInitializer` | work in images when the service files are present, but exist only to break the compile cycle between the three modules | disappear with T0.D and the v1 factory |
+| process-global mutable statics (H18, H20) | scheduler, descriptor maps, `FuncIds`, `GoOs` | initialized at build time they are frozen into the image; initialized at run time they still prevent a second context | §2.4 |
+| `ThreadLocal` goroutine state (H2) | `GoroutineState`, `SchedulerCore` | functional in an image, but wrong with more than one context per thread and slower than the context-thread-local | §2.5 |
+| string-keyed JSON factory and `Map<String, Object>` trees | v1 `NodeFactory` | huge reachable surface, no runtime compilation benefit | deleted at M3 |
+| no `@TruffleBoundary` (H1) | everywhere | the runtime-compilable method set would be the whole JDK; the build fails its PE checks | T0.B for v1; §11 for the new package |
+| `-Xss32m` assumption | launchers | image stack size is set differently (§9) | T3 |
+
+### 7.3 The modes, stated precisely
+
+| Mode | What is compiled ahead of time | How Go code runs |
+|---|---|---|
+| (a) JIT on HotSpot | nothing | interpreted, then compiled by Graal through PE, with OSR |
+| (b) pure AOT | the Truffle interpreter, the runtime library, and (optionally) the decoded program in the image heap | **interpreted, always** |
+| (c) hybrid | the same as (b) plus the Graal compiler and the encoded graphs of all runtime-compilable methods | interpreted, then compiled at run time as in (a) |
+
+Native Image does not turn a Go function into machine code ahead of time in
+any of these modes; it compiles the *interpreter*. SPEC §2.5 says so for (b)
+("interpreter-only fallback runtime … lowest peak performance"), but GG-0050
+then requires the AOT baseline to be "performant without the runtime JIT".
+With an AST interpreter that baseline is the AST interpreter's speed, which
+for Truffle languages is typically one to two orders of magnitude below
+compiled code. Three levers exist, in order of cost:
+
+1. Make the interpreter fast: the conventions of §11 (small typed `execute`
+   methods, no switches, host-inlining discipline) and, structurally, the
+   Bytecode DSL (§8).
+2. In mode (c), compile eagerly instead of waiting for profiles:
+   `engine.CompileAOTOnCreate` / `RootNode.prepareForAOT()` `[JAR]` ("Truffle
+   AOT" in the documentation). Go's static types make profile-free
+   compilation unusually effective, because nothing needs type feedback except
+   the four sites of §4.6. This requires the compiler in the image and
+   executable memory, so it is not available in (b) or on W^X platforms.
+3. Persisting compiled code across runs (auxiliary engine caching) is an
+   Oracle GraalVM feature for native images `[RECALL]`; whether it is
+   available to a third-party language on the pin is a T3 question.
+
+P-D (§13.2) measures lever 1's starting point today, in an afternoon, by
+running the benchmark set with `engine.Compilation=false`. The number decides
+how much weight §8 carries. This is finding 2 of §0.2.
+
+Packaging follows the toolexec design §4.2: the first AOT deliverable is a
+**generic runtime image** (launcher + language + runtime, built once per
+graalgo release, loading a bundle at start). In this design that image is
+simply `Context.eval(bundle)` in a native launcher; a per-program image is the
+same launcher with the bundle embedded and, optionally, pre-parsed during
+image build.
+
+### 7.4 Goroutines in images
+
+Per the changelog entry quoted in §2.6, a polyglot context in a native image
+runs "virtual" threads on platform threads. Until upstream implements Loom
+support for Truffle in images, modes (b) and (c) therefore have
+goroutine = OS thread: correct, but with a goroutine ceiling of a few
+thousand to tens of thousands and context-switch costs that SPEC §3.5 did not
+assume. Options, none free:
+
+- accept and document the ceiling for image modes, with thread-stack size
+  tuned down and recycling (§2.6) to cap creation cost;
+- track upstream and re-test at each pin bump (the natural re-test trigger);
+- keep JIT mode the default (GG-0049's meta-gate would probably decide this on
+  its own once "goroutine scalability" is measured).
+
+A user-space continuation mechanism inside the interpreter is not an option:
+Bytecode DSL continuations suspend a single method `[DOC]`, and a goroutine
+can block at any call depth.
+
+This must be verified on the pinned `native-image` before it is acted on
+(P-F), and it is the owner's call (§14).
+
+## 8. Bytecode DSL or AST
+
+SPEC §3.3 and GG-0014 specify an AST with typed execute methods. Truffle's
+Bytecode DSL generates, from operation definitions written as small DSL nodes,
+a bytecode interpreter per language. It is in the pinned API
+(`com.oracle.truffle.api.bytecode`, 51 classes `[JAR]`) and is documented as
+experimental, with APIs that "may change between releases" `[DOC]`; the
+changelog shows breaking changes in most 25.x releases.
+
+| Criterion | AST (as designed in §4) | Bytecode DSL |
+|---|---|---|
+| Peak performance | same compiler, same PE | "same peak performance as ASTs" `[DOC]` |
+| Interpreter speed (mode (b), warm-up, cold isolates — GG-0050) | one virtual call per node; megamorphic `execute` sites | one dispatch loop per function, quickening, boxing elimination; documented as the main advantage |
+| Footprint (std has 2.48 M AST nodes; a hello-world executes ~300 functions — toolexec design §3.2, §5.5) | tens of bytes per node object; lazy decoding bounds it to executed functions | a byte array plus constants per function; an uncached tier executes without allocating specialization state |
+| Host stack per Go call (§9) | one host frame per nested node on the path to the call: tens of frames | one interpreter frame per Go function plus the call boundary |
+| `goto` | `GotoBlockNode` state machine (§4.8) | native branches (forward branches and structured loops; whether a backward `goto` needs restructuring is to be checked) |
+| `defer` | open-coded in the root (§4.5) | the same, expressed with the epilog/finally operations |
+| `select`, goroutine parking | runtime call | runtime call; single-method continuations do not help (§7.4) |
+| Instrumentation | wrappers (§6.3) | tag instrumentation built in |
+| Serialization | not needed (GIR is the format) | available, not needed |
+| Maturity on the pin | the mainstream path of every production Truffle language | experimental; 25.0 LTS receives fixes, API moves on the innovation line |
+| Cost now | the plan of record | every statement and expression emitted through a builder; ~110 node classes re-expressed as operations; SPEC amendment |
+| Risk to the recovery | none added | M1a slips while the team learns an experimental API |
+
+**Recommendation.**
+
+1. Build the new node package as an AST, as SPEC says. The recovery's critical
+   path (toolexec M1a–M1d) cannot absorb an experimental interpreter
+   generator.
+2. Keep the door open by convention, not by abstraction layers: operation
+   semantics live in static `@Specialization` methods and in static runtime
+   helpers (§4.2), which is the form a Bytecode DSL `@Operation` or
+   `@OperationProxy` consumes; type-directed selection lives in pure functions
+   of `(operation, Go type)` in the factory, separate from node construction.
+   A later port then rewrites the factory's emission layer and the control-flow
+   nodes, and reuses the operation bodies, the value model, interop,
+   the language class and the runtime.
+3. Decide at a **named gate: after toolexec M1d** (real `fmt`), with the
+   bake-off TR-13: port the benchmark set's functions to one
+   `@GenerateBytecode` root and compare interpreter-only speed, bytes per
+   loaded function, maximum recursion depth, warm-up and peak. Switch if the
+   bake-off shows any of: interpreter-only ≥ 2× faster on the benchmark set;
+   recursion depth ≥ 3× deeper at equal stack; footprint per function ≤ 50 %
+   — and P-D has shown that interpreter speed matters for GG-0050.
+4. A switch is a **spec amendment** to §3.3 (the wording "expression nodes
+   with typed execute methods … void statement nodes"). GG-0014 itself ("one
+   Truffle AST … no second backend") is about having a single executable
+   representation for all three modes; a bytecode root node satisfies that
+   intent, but the owner decides (§14, A5). Running both representations side
+   by side is ruled out: that *would* be a second backend.
+
+## 9. Stack depth and recursion
+
+**Today** `[CODE]` ([limitations.md](limitations.md)): with `-Xss32m`,
+recursion to depth 15,000 passes and 20,000 fails with a clean
+`stack overflow`, i.e. about 1.6–2 KB of host stack per Go call in the
+interpreter. gc's limit is a 1 GB goroutine stack with frames of tens of
+bytes; programs that recurse 10⁵–10⁶ deep (recursive walks over long lists or
+deep trees, naive recursive algorithms in tests) work under gc and fail here.
+
+**Mechanics that matter.**
+
+- A mounted virtual thread runs on its carrier's stack; frames are copied to
+  the heap when it parks and thawed lazily when it resumes. The depth limit of
+  a goroutine is therefore the **carrier's** stack size, i.e. the JVM's
+  default thread stack size (`-Xss`), which is what the current launchers set.
+- Compiled code uses one host frame per *call target*, not per node, and none
+  for inlined calls. Once functions compile (T0.B), a hot recursive function
+  uses a small fraction of the interpreter's stack per level. The limit then
+  depends on whether the recursion has become hot before it becomes deep —
+  usually yes for loops of recursive calls, not for a single cold deep
+  descent, which runs entirely in the interpreter.
+- Deoptimization of a deep compiled stack converts frames back to interpreter
+  frames lazily, one activation at a time as control returns to it, so it does
+  not need the whole interpreter-sized stack at once.
+- `StackOverflowError` can surface anywhere, including inside runtime code
+  holding locks. It is not safely recoverable as a guest-level event.
+
+**Decisions.**
+
+1. **Stack overflow is fatal**, as in gc (`runtime: goroutine stack exceeds
+   1000000000-byte limit` … `fatal error: stack overflow`, exit status 2). It
+   is never a `panic`, deferred functions do not run, `recover` cannot see it.
+   Go nodes never catch `StackOverflowError`; the goroutine-entry root does,
+   and hands the report to the fatal-error reporter running on a different
+   thread with a fresh stack (lane T0.A already runs the reporter "unfrozen").
+   The reporter prints gc's two lines and a truncated stack obtained from the
+   failing thread *after* it has unwound to its entry (so from the exception's
+   Truffle stack trace, not from a live walk).
+2. **Raise the limit with stack size first.** Stack memory is reserved
+   virtually and committed on touch, and only the carriers (≤ GOMAXPROCS plus
+   a few compensating threads) and foreign threads ever run Go code. Setting
+   the default thread stack size to hundreds of megabytes — up to gc's own
+   1 GB — costs address space, not RSS, until a goroutine actually recurses.
+   P-E (§13.2) measures depth, RSS after a deep recursion (carrier stacks do
+   not shrink, gc's do), start-up time and any interaction with the JVM's own
+   threads, at 32 MB, 256 MB and 1 GB. In images the equivalent is the image's
+   stack-size setting; with platform-thread goroutines (§7.4) a large default
+   multiplies by the goroutine count in *virtual* size only, but the
+   per-thread reservation must then be chosen with the goroutine ceiling in
+   mind.
+3. **Re-measure after T0.B**, which the limitation entry already names as its
+   re-test trigger, with two programs: a hot recursive function and a single
+   cold descent.
+4. **Reduce interpreter frames per call** by construction: no wrapper nodes
+   around loops or calls, argument evaluation in the call node itself, blocks
+   that execute children directly. The structural fix is the Bytecode DSL
+   (one interpreter frame per function), and recursion depth is one of the
+   three switch criteria in §8.
+5. "Stack-depth parity" is one of GG-0049's six experiments; P-E plus item 3
+   are that experiment's JIT-mode half.
+
+Rejected: an explicit heap-allocated Go stack or CPS-transformed calls. They
+would remove the host limit but defeat Truffle's inlining and escape analysis
+and amount to a different execution model than SPEC §3.3.
+
+## 10. Migration plan
+
+### 10.1 Sequencing against the other lanes
+
+- **T0.B (JIT lane)** keeps repairing v1 nodes minimally so the benchmark set
+  compiles. Nothing below refactors v1 node classes; v1 nodes are deleted at
+  toolexec M3.
+- **T0.A (runtime lifecycle)** and **T0.D (flatten the module overlay)** land
+  before TR-1: TR-1 edits the launchers and `SchedulerCore.spawn`, which T0.A
+  is changing, and a language class needs one module.
+- **Toolexec M1a (W4: loader and new node factory)** is where the idiomatic
+  node package is born. TR-3 and TR-4 are not separate deliveries after W4;
+  they are W4's node work done to §11, with the estimate below being the
+  *additional* cost over reusing the old classes.
+- The runtime library (`graalgo.runtime`, scheduler, channels) is shared by
+  v1 and the new path until M3. Changes to it (TR-5, TR-6, TR-7) must keep v1
+  green or be switchable; the table says which.
+
+### 10.2 Work packages
+
+Effort is in focused agent-days `[EST]`.
+
+| WP | Scope | Depends on | Acceptance (all measurable) | Effort |
+|---|---|---|---|---|
+| **TR-0** Gates and jars | Tool and TCK jars added to `lib/` with checksums. `make pe-check`: runs the benchmark set (branch `wt/recovery/jit`, `test/bench/`) and a corpus subset with `engine.CompilationFailureAction=ExitVM`, `engine.BackgroundCompilation=false`, performance warnings fatal; counts bailouts. DSL warnings are already errors (`-Werror`). | T0.B merged | `pe-check` red on a seeded bailout (a node calling `String.format` without a boundary), green otherwise; bailouts on the benchmark set = 0 | 1–2 |
+| **TR-1** Language shell on v1 | `GoLanguage`/`GoContext` (policy `EXCLUSIVE`, second context refused); root nodes get the language; launchers create an `Engine`/`Context` and `eval` a byte `Source` (bundle MIME type reserved; v1 wire JSON under a temporary MIME type); goroutine threads through `newTruffleThreadBuilder`; `os.Exit` through `closeExited`. Statics stay. | T0.A, T0.D | every existing suite green through the polyglot launcher; a JUnit test evaluates a program from Java and reads its exit status; `--cpusampler` lists Go function names; second context fails with the documented message; benchmark set within 5 % of pre-TR-1 except goroutine-spawn microbenchmarks, which are recorded | 3–5 |
+| **TR-2** Decision spikes | P-A … P-F of §13.2 | TR-1 for P-A/B/C | a dated results section appended to this document; decisions T3, T4, T11, T12 confirmed or replaced | 4–6 |
+| **TR-3** Core node package (inside toolexec W4) | §12 layout; base classes; locals, cells, globals; arithmetic/compare/convert for all carriers (§3.1); strings, slices, arrays, structs; control flow (§4.8); static calls; roots with open-coded defers; panics. Unit test and PE test per node class (§11, T-rules). | TR-2 (calling convention), toolexec W2 schema | toolexec M1a's corpus gate; `pe-check` bailouts = 0 on that corpus under `CompileImmediately`; arithmetic differential sweep vs gc over all widths and operators including overflow, shifts ≥ width, `MIN / -1`, unsigned compare (generated, ≥ 10⁵ cases); `fib`, `loop`, `slicesum`, `structs` benchmarks ≤ 2× gc steady state `[EST]` as the first target, tightened after measurement | +6–10 over W4's 15–25 |
+| **TR-4** Dynamic sites and splitting | `GoIface`/`GoEface`/`GoItab`, language-level itab cache, `IfaceCallNode`, func-value call node, type assertion/switch nodes, map nodes per key kind, `cloneUninitialized` through GIR re-decode, `@ReportPolymorphism` | TR-3 | `iface` and `maps` benchmarks: the monomorphic interface call is inlined (asserted from the compilation trace), no megamorphic site on the benchmark set; a `sort.Interface`-style test with three receiver types shows three split copies and a direct call in each; SPEC §2.6.1's falsifying benchmark can now be run (gc+PGO vs graalgo steady state) | 6–9 |
+| **TR-5** Context-ification | all statics of H18/H20 into `GoLanguage`/`GoContext`; `ContextThreadLocal<M>`, `G`; scheduler per context; policy `SHARED`; context cancel/close stops goroutines | TR-1; after M3 for v1-only statics, or switchable | two contexts on one engine run two programs concurrently with correct, separate output; closing a context with 10⁴ parked goroutines returns within 1 s and leaks no thread; a static-state audit script (no non-final or collection-typed static field under the node and runtime packages except an allow-list) is a `make check` gate | 4–7 |
+| **TR-6** Safepoints | per P-B: monitor thread + `ThreadLocalAction` preemption (or the flag fallback); every park through `setBlocked…`; pin sections through `setAllowActions`; delete `Safepoint.poll` | TR-5, P-B | scheduler suites (`SchedulerCoreTest`, `WakeupModelTest`, `TortureBattery`, fairness tests) green; `loop` benchmark improves or is unchanged; `engine.TraceMissingSafepointPollInterval` reports nothing above 10 ms on the corpus | 3–5 |
+| **TR-7** Stack traces | §6.5: Truffle stack traces for panics, `iterateFrames` for `runtime.Callers`, PC table, goroutine dump action; delete the shadow stack and the chain-walking half of `rtstack` | TR-1 (panics), TR-3 (new roots) | panic-trace and `runtime.Caller(s)` corpus byte-identical to gc after existing normalization; `fib` benchmark allocation rate per call = 0 in compiled code (JFR allocation profile) | 4–6 |
+| **TR-8** Interop exports | §5.2–5.4: `@ExportLibrary` on all value kinds, `ToInteropNode`/`ToGoNode`, exceptions, module object, embedding tests | TR-4, TR-5 | Java-side conformance suite: one test per row of §5.2 and §5.3 through `org.graalvm.polyglot.Value`; the polyglot TCK passes for the language provider; hot-path check: benchmark set unchanged (±2 %) with exports present | 8–12 |
+| **TR-9** `graalgo/java` | §5.5–5.6: package source, intrinsics, `Throwable`, `Func`/`As` generics, host-access policy, build-time Java stub generator | TR-8, toolexec M1b (intrinsic registry), owner decision A4 | Go-side conformance suite: every function of §5.5 against `java.util` classes; a Java exception is observed as `error`, never as panic; stock-behaviour-unchanged check of GG-0003 (corpus identical with the package present) | 6–10 |
+| **TR-10** Instrumentation | §6.2–6.4: tags, wrappers, source sections, scopes, language views, goroutine thread naming, async stacks | TR-3, TR-0 | the five scripted tests of §6.8 | 5–8 |
+| **TR-11** pprof bridge | §6.7: sampler → `profile.proto`, allocation reporter, `runtime/pprof` intrinsics, HTTP endpoint | TR-10, toolexec M4 (`net/http`) | `go tool pprof` reads a CPU and a heap profile produced by a graalgo run and attributes the top function correctly | 5–8 |
+| **TR-12** Native image smoke (track T3 entry) | generic runtime image in interpreter-only and hybrid variants; blocklist/PE check as a gate; metadata; goroutine-thread behaviour measured | TR-5, T0.D, toolexec M1d | hello-world and the benchmark set run in both images with gc-identical output; image build has no PE-check violation; start-up, RSS and 10⁴-goroutine behaviour recorded | 8–14 |
+| **TR-13** Bytecode DSL bake-off | §8 item 3 | toolexec M1d, P-D | the comparison table filled in with measurements; go/no-go recorded | 5–8 |
+
+Total additional effort ≈ 60–100 agent-days, of which TR-0 … TR-2 (8–13 days)
+can start as soon as T0.A/T0.D land and decide everything that is currently
+open. Critical path for interop (GG-0005): TR-1 → TR-3/4 (with W4) → TR-5 →
+TR-8 → TR-9. Critical path for debugging (GG-0024): TR-1 → TR-3 → TR-10.
+
+### 10.3 What stays measurable throughout
+
+| Quantity | How | Gate |
+|---|---|---|
+| PE bailouts | `make pe-check` (TR-0) | 0 on the benchmark set and corpus subset, per push once TR-0 lands |
+| Compiled speed vs gc | `test/bench/run.sh` on the JIT lane's branch | reported per WP; thresholds set after the first full measurement, never asserted in advance |
+| Interpreter-only speed | same with `engine.Compilation=false` | tracked from P-D; feeds §8 |
+| Allocation per call | JFR allocation events on `fib`/`structs` | 0 in compiled code after TR-7 |
+| Interop conformance | Java suite (TR-8), Go suite (TR-9), TCK | all rows of §5.2/§5.3 |
+| Tooling | scripted CDP/DAP/sampler/coverage tests | §6.8 |
+| Image | TR-12 smoke | per pin bump at least |
+
+## 11. Truffle coding conventions (review checklist)
+
+Applies to every class under the node, value and runtime packages of §12. A
+reviewer checks each changed node against every rule; "n/a" is an answer,
+silence is not.
+
+**Boundaries**
+
+- **B1.** A method reachable from an `execute*` method is either PE-safe by
+  B4 or annotated `@TruffleBoundary`. Runtime-library entry points are
+  boundaries by default.
+- **B2.** No `VirtualFrame` parameter on a boundary method (it would force
+  materialization). Pass values.
+- **B3.** No `java.util` collection, `String` concatenation/formatting,
+  stream, lambda capture, lock, `synchronized`, park, I/O, reflection or
+  `System.*` call on a fast path. Node state is fields and
+  `@CompilationFinal(dimensions = 1)` arrays, never a `List` or `Map`.
+- **B4.** PE-safe allow-list for JDK calls on fast paths: `System.arraycopy`;
+  `Arrays.equals/mismatch/fill/copyOf/copyOfRange` on primitive arrays;
+  `Math.*`; `Integer/Long` bit and unsigned operations; raw-bits conversions
+  of `Float/Double`; `Objects.requireNonNull`. Anything else needs a boundary
+  or an entry added to this list by review.
+- **B5.** Exceptions are created behind a profile, in a boundary factory
+  method (`GoPanics.*`). No `throw new …("…" + x)` in an `execute` method.
+- **B6.** `CompilerDirectives.transferToInterpreterAndInvalidate()` precedes
+  every write to a `@CompilationFinal` field or `@Child` after construction;
+  `transferToInterpreter()` precedes unreachable-by-design paths
+  (`CompilerDirectives.shouldNotReachHere()`).
+
+**Node state and shape**
+
+- **N1.** Node fields are `final`, or `@Child`/`@Children`, or
+  `@CompilationFinal` with B6. No `volatile`, no mutable counters, no static
+  mutable state (**S1**: none anywhere outside `GoLanguage`/`GoContext`).
+- **N2.** No `switch` or `if` on a node's own constant configuration in
+  `execute*`: the factory chooses the class (§4.2). A node whose `execute`
+  would start with `switch (kind)` is several nodes.
+- **N3.** Child fields have the narrowest family type (§4.1). `executeGeneric`
+  on a child is allowed only at boxing boundaries (call arguments, interface
+  conversion, interop).
+- **N4.** Loops over `@Children` or `@CompilationFinal` arrays carry
+  `@ExplodeLoop`; loops over guest data never do.
+- **N5.** Guest loops are `Truffle.getRuntime().createLoopNode(...)`.
+- **N6.** Control-flow exceptions extend `ControlFlowException`, carry no
+  payload, and are preallocated.
+- **N7.** No context state in nodes; use `GoContext.get(this)` /
+  `GoLanguage.get(this)` (§2.4).
+
+**DSL**
+
+- **D1.** More than one `@Specialization`, or any `@Cached` inline cache,
+  appears only at the sites listed in §4.4 (pointer shapes), §4.6 and §5. A new
+  such site needs a sentence in the PR saying what is dynamic about it.
+- **D2.** Every inline cache has an explicit `limit` (≤ 3; 4 for type caches),
+  a `replaces` fallback that does not use a hash lookup on the fast path where
+  an index exists, and `@ReportPolymorphism` if it guards a call.
+- **D3.** Helper nodes are `@GenerateInline @GenerateCached(false)`, plus
+  `@GenerateUncached` if reachable from interop or slow paths. Profiles in DSL
+  nodes are the inlined variants.
+- **D4.** Guards are side-effect free, compare identities or primitives, and
+  bind PE constants on the cached side. No guard calls a boundary.
+- **D5.** The annotation processor's warnings are errors; a suppression
+  (`@SuppressWarnings("truffle-…")`) carries a comment with the reason.
+
+**Frames and values**
+
+- **F1.** Frame slots are read and written with the accessor of their static
+  kind; no `catch (FrameSlotTypeException)`.
+- **F2.** `frame.materialize()` and caller-frame access are forbidden in Go
+  nodes.
+- **F3.** Integer results are in canonical form for their Go type (§3.1); a
+  node that can leave canonical form is followed by a wrap node, and its unit
+  test covers the wrap.
+- **F4.** Exact classes are asserted with `CompilerDirectives.castExact` (or a
+  plain cast of a field with an exact static type), never tested with
+  `instanceof` on a path whose type is static.
+
+**Profiles and performance**
+
+- **P1.** Every branch to a panic or slow path is behind a branch profile;
+  `if`/loop conditions use counting profiles.
+- **P2.** No value profile on statically typed data.
+- **P3.** Allocation on a fast path is allowed only for Go-visible objects and
+  boundary tuples; each is listed in the node's comment.
+- **P4.** Allocation nodes call the `AllocationReporter` behind
+  `isActive()`.
+- **P5.** Slow-path helpers called from `execute` methods are
+  `@InliningCutoff`; `execute` methods stay small.
+
+**Interop and tooling**
+
+- **I1.** No `InteropLibrary` use in Go nodes outside the `java` intrinsics
+  and the boundary conversion nodes.
+- **I2.** Every class whose instances can reach an `any` or cross the boundary
+  exports `InteropLibrary` or is wrapped by `ToInteropNode`; the boundary
+  asserts `isValidValue`.
+- **I3.** Every node built from source has a position; statement and call
+  nodes declare their tags.
+
+**Tests (T-rules)**
+
+- **T1.** Each node class has a unit test that executes it in the interpreter
+  and a PE test that compiles a root containing it with
+  `engine.CompileImmediately=true`, `engine.BackgroundCompilation=false`,
+  `engine.CompilationFailureAction=Throw` and performance warnings fatal, then
+  executes the compiled code and compares results. Both must be able to fail:
+  the PE test is validated once against a seeded missing boundary.
+- **T2.** Tests use only the polyglot API (`Context`, `Value`) or the node
+  under a real `GoLanguage`; no hand-built frames, no `root.execute(frame)`.
+  Tests that require the optimizing runtime skip explicitly (and loudly) when
+  it is absent rather than passing vacuously — the role
+  `TruffleTestAssumptions` plays in Truffle's own suite.
+- **T3.** `CompilerAsserts.partialEvaluationConstant` on everything a node
+  assumes constant; `CompilerAsserts.neverPartOfCompilation()` at the top of
+  slow-path code that must stay behind a boundary.
+- **T4.** A dynamic site's test covers monomorphic, polymorphic (at the
+  limit), megamorphic, and the nil case, and asserts the specialization
+  reached through DSL introspection.
+
+## 12. Package layout for the new backend
+
+One module (after T0.D), one source root. Names are proposals for toolexec W4.
+
+```
+graalgo.language   GoLanguage, GoContext, GoOptions, G, M, GoProgramRootNode
+graalgo.loader     BundleLoader, PackageUnit, FunctionUnit, SymbolTable        (toolexec design §4.3)
+graalgo.build      NodeFactory (typed-IR visitor), OpSelect (pure (op, type) → node choice),
+                   FrameLayout, PositionTable
+graalgo.types      GoType and subclasses, TypeTable, GoItab, ItabCache, StructDesc
+graalgo.values     GoString, GoSlice, GoStruct, GoMap, GoChan, GoFunc, GoIface, GoEface,
+                   cells (I64Cell…RefCell), ElemPtr, FieldPtr, GoNil, GoUint64, GoBoxed
+graalgo.nodes      GoNode, ExprNode + typed families, StmtNode, wrappers
+  .root            GoFuncRootNode, GoDeferFuncRootNode, thunks, PrologueNode, ResultNode
+  .local           local / cell / global / argument nodes
+  .arith           arithmetic, compare, wrap, convert (per carrier)
+  .data            string, slice, array, struct, map, channel nodes
+  .call            CallNode, FuncCallNode, IfaceCallNode, GoStmt (go), defer nodes
+  .iface           ToIface/ToEface, type assert, type switch, ItabLookupNode
+  .control         block, if, loops and repeating nodes, switch, goto block, select, signals
+  .builtin         len/cap/append/copy/clear/delete/min/max/new/make/panic/recover/print
+graalgo.interop    ToInteropNode, ToGoNode, GoErrorException, module/package objects,
+                   scope objects (NodeLibrary), language views
+graalgo.java       intrinsics behind the graalgo/java package
+graalgo.intrinsics intrinsic registry and the runtime-facade intrinsic nodes (toolexec design §5.3)
+graalgo.runtime    scheduler, channels, timers, panics, GoPanics, static helper classes
+                   (GoStrings, GoSlices, GoMaps) — boundary or allow-listed methods only
+graalgo.tools      pprof bridge, test-only instruments
+graalgo.launcher   JVM/native launcher: builds Engine/Context, evals the bundle
+```
+
+Style guide for a node class (what "born idiomatic" means in review):
+
+1. Class comment: the Go construct, the static types it is built for, what it
+   allocates, which rules of §11 needed thought.
+2. Constructor or DSL factory takes children of family types and immutable
+   configuration; no setters.
+3. `execute*` is short enough to read at a glance; anything else is a static
+   helper with an explicit B1 status.
+4. A neighbouring test class per T1–T4.
+5. The existing class of the same purpose under
+   [frontend/](../../internal/backend/truffle/src/main/java/graalgo/frontend/)
+   is cited as the semantic reference (edge cases, gc-compatibility fixes are
+   in its comments and tests), and its tests are ported, not its structure.
+
+## 13. Prototypes
+
+### 13.1 Done in this lane
+
+A standalone language (five source files, ~450 lines) outside the repository,
+in the session scratchpad
+(`/tmp/claude-1000/-home-cafxx-dev-graalgo/695032aa-7918-4687-abb5-5d96a0af48b1/scratchpad/truffle/`,
+not durable). It was compiled with the pinned jars and
+`javac -proc:full -Xlint:deprecation -Werror`, and run with
+`java -Xmx1g -Xss32m` under `nice -n 19` on a loaded box. Results are single
+runs or three repetitions as stated; they establish feasibility and order of
+magnitude, not benchmarks.
+
+| Claim | Result |
+|---|---|
+| Registration with a byte MIME type, `parse()` over bytes, `Context.eval` on the class path with the optimizing runtime | works |
+| Statically typed DSL nodes without a type system | generate and compile; `engine.CompilationFailureAction=ExitVM` did not fire |
+| JIT and OSR | `fib(32)`: 6.5–6.7 ms steady state (12 ms in one run with more load); 3·10⁸-iteration loop entered once: 10–12 ms |
+| Struct in the SPEC §3.4 shape exported through `InteropLibrary` | `Value.getMember`, `putMember`, `getMemberKeys`, `hasMembers` work; cached member lookup compiles |
+| Function value executed from Java with a cached `DirectCallNode` | works |
+| Virtual threads through `newTruffleThreadBuilder(...).virtual(true)`, each reading a `ContextThreadLocal` | works with the "experimental" warning; 20–32 µs per spawn + join vs 1.8–2.7 µs bare |
+| `ThreadLocalAction` delivered to, and parking, a running thread | works for platform and virtual threads in loops with a memory barrier; **not delivered** in a host-compiled loop with only a racy plain-field read, identically on platform threads (§2.7) |
+| Context close with threads still alive | fails with `IllegalStateException: The language did not complete all polyglot threads`, i.e. `finalizeContext` really must stop goroutines (§2.3) |
+
+Because the scratchpad is not durable, TR-1 re-creates the relevant parts as
+real tests; nothing depends on the prototype's files.
+
+### 13.2 To run next (TR-2), cheapest first
+
+| # | Question | Method | Cost | Decides |
+|---|---|---|---|---|
+| P-D | How slow is interpreter-only execution? | benchmark set with `engine.Compilation=false`, on the JIT lane's branch as it is | 0.5 day | weight of §8; honesty of GG-0050 |
+| P-E | Depth and RSS versus stack size | recursion program at `-Xss` 32 MB/256 MB/1 GB, interpreted and compiled | 0.5 day | T12 |
+| P-A | Goroutine creation cost and what recycling recovers | TR-1 build, spawn microbenchmark and `chanpingpong`, with and without recycling | 1 day | T3 details |
+| P-B | Safepoint preemption equals the current poll | scheduler torture and fairness suites with the monitor + action implementation behind a switch; cancellation during a park | 1–2 days | T4 or its fallback; the calling convention |
+| P-C | Debugger on virtual-thread goroutines | inspector session: breakpoint in a goroutine, read and write a caller's local | 0.5 day | whether debugging forces platform threads |
+| P-F | Threads and runtime compilation in an image | minimal language image (the prototype of §13.1) with 10⁴ "virtual" threads; `native-image` is present in the pinned JDK | 1 day; one image build, heavy — schedule it alone | §7.4, finding 1 |
+
+### 13.3 Risky, not cheap
+
+- Splitting through GIR re-decode interacting with lazily decoded generic
+  instantiations (TR-4).
+- The embedded lifecycle: cancellation of blocked goroutines, foreign threads
+  holding Go locks when the context closes (TR-5).
+- `ToGoNode` for interface-typed parameters receiving foreign objects (TR-8).
+- Anything involving polyglot isolates for a third-party language (T3,
+  GG-0027).
+
+## 14. Items for the owner
+
+Proposed SPEC amendments (none is assumed by the work packages that precede
+its decision):
+
+| # | Section | Proposal | Needed by |
+|---|---|---|---|
+| A1 | §3.5 / §2.5 | State that in native-image modes goroutines are platform threads until Truffle supports Loom in images, with the resulting goroutine ceiling; add the re-test trigger (each GraalVM pin bump). Verify first (P-F). | TR-12 / T3 |
+| A2 | §3.9, GG-0050 | Define "performant without the runtime JIT" as a measured interpreter-speed target, or restrict it to the hybrid's eager compilation; the current wording cannot be met by construction in mode (b). Measure first (P-D). | T3 |
+| A3 | §4.3 table | Wording: the "Java" column's `ProxyArray`/`ProxyObject`/`ProxyExecutable` are replaced by "polyglot `Value` (`as(List)`, `as(Map)`, functional-interface coercion)"; semantics unchanged. | TR-8 |
+| A4 | §4.3 host access | Split default: embedded = the embedder's `HostAccess` (recommended `SCOPED`); standalone = host class lookup and public access restricted to an allow-list, only when the program imports `graalgo/java`. | TR-9 |
+| A5 | §3.3, GG-0014 | Only if TR-13 says so: allow function bodies to be Bytecode DSL roots; "one AST" read as "one executable representation for all modes". | after M1d |
+| A6 | §3.3 | Clarification, no change of intent: the megamorphic interface-call fallback is an itab method-table index, not a hash lookup; splitting is part of the devirtualization design. | TR-4 |
+
+Other decisions requested:
+
+1. Amend the toolexec design §4.3 so that W4 builds the new node package of
+   §12 instead of reusing the existing node classes (decision T13;
+   +6–10 agent-days on M1a, avoids a second rewrite).
+2. Approve adding the tool and TCK jars to the pinned set (TR-0).
+3. Whether foreign (host) threads calling into Go should hold a GOMAXPROCS
+   token; this design says no (§2.6, item 4).
