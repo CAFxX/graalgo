@@ -102,3 +102,30 @@ Chat: f7467b85-7da6-4da0-b9ec-94631a60dafe.
   20/22, TypeparamDifferential x2, SectionClamp x3). Run per-class via
   SingleTestLauncher with -Xmx768m; each differential test takes ~60-90s.
   If the session is killed, resume with the class batches below.
+
+## Update 2026-11-17 ~05:56 UTC — CI log re-fetched; batch running
+- Re-fetched authoritative full-suite job 133298085212 log via Actions API
+  (logs endpoint 302 -> blob URL fetched WITHOUT auth header; first attempt
+  401 because the surrogate was sent to Azure). Saved raw text:
+  /var/tmp/r62-ci-log.zip (91,654 B, plain text despite the name).
+  Confirms the 28 with exact messages (gv/bi all "exit code gc=0 graalgo=1";
+  gn09 "unsupported expression kind ifacemethod"; SectionClamp
+  "basiclit.pos: missing required key file"; Typeparam x2 =
+  testZeroUnexplainedDivergences NPE + testReadExclusionsEdgeCases
+  NoSuchFileException tools/diffharness/testdata/exclusions-edge.yaml).
+- ClearBuiltin mystery SOLVED: master a0df481b MainTest.java:301 HAS
+  testCheckRejectsClearBuiltin; the r54 stack renamed/refreshed it to
+  testClearMinMaxRun at this tip. Batch runs testClearMinMaxRun as its
+  successor. NOTE: batch does NOT run testReadExclusionsEdgeCases (the
+  second Typeparam failure) — successor must run it separately.
+- Batch /var/tmp/r62-batch.sh running since 05:53 (setsid nohup, sequential,
+  -Xmx768m, per-test logs /var/tmp/r62-<label>.log, summary
+  /var/tmp/r62-batch-summary.log). bi01-bi05 PASS so far (~30s/test).
+  Order: bi, gn09, gv, main x5, sectionclamp, typeparam x2.
+- Home quota FAILED again on registry write 05:53 (EDQUOT) — /tmp copy is
+  the fresh heartbeat (05:53:20Z); home registry stale at 05:37:30Z.
+  GitHub branch tip is the durable record (cf3908a8).
+
+## Push log (continued)
+- 2026-11-17 ~05:54 UTC: cf3908a8 (bi21 GREEN + unit-test verification)
+  pushed via push_repo.py; ls-remote confirms r62 = cf3908a8.
