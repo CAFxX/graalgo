@@ -194,16 +194,19 @@ public final class ReflectRefs {
     // ------------------------------------------------------------------
 
     /** Interns a referent object by identity (null → 0). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long intern(Object referent) {
         return UnsafeTable.current().intern(referent);
     }
 
     /** Interns a derived-reference key by value (null → 0). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long internRef(Ref ref) {
         return UnsafeTable.current().internEqual(ref);
     }
 
     /** Resolves a handle to its referent (unknown → UnsafeEscapeException). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object resolve(long handle) {
         return UnsafeTable.current().resolve(handle);
     }
@@ -214,6 +217,7 @@ public final class ReflectRefs {
      * scalar normalization) open to element 0. Everything else passes
      * through.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object deref(Object referent) {
         if (referent instanceof Cell c) {
             return c.value;
@@ -243,6 +247,7 @@ public final class ReflectRefs {
     }
 
     /** deref(resolve(handle)). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object load(long handle) {
         return deref(resolve(handle));
     }
@@ -259,6 +264,7 @@ public final class ReflectRefs {
      * object: a {@code Value} obtained via {@code Field} or {@code Index}
      * reads and writes through to the denoted field/element.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object denotedValue(long handle, GoKind kind) {
         Object ref = resolve(handle);
         if (ref instanceof Cell c) {
@@ -342,6 +348,7 @@ public final class ReflectRefs {
      * and offsets naming no field fail loudly — never a silent wrong
      * value.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object readStructFieldAt(GoStruct gs, long byteOffset, GoKind kind) {
         ReflectTypes.TypeInfo info = ReflectTypes.infoForName(gs.descriptor().typeName());
         if (info == null) {
@@ -373,6 +380,7 @@ public final class ReflectRefs {
                 "reflect: no field at byte offset " + byteOffset + " of struct " + info.name + " (D5)");
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object readScalarAt(Object root, long byteOffset, GoKind kind) {
         Object r = root;
         if (r instanceof Cell c) {
@@ -437,6 +445,7 @@ public final class ReflectRefs {
     }
 
     /** Reads the scalar of {@code kind} at a byte offset into a Java array. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object readScalarWalk(Object array, long byteOffset, GoKind kind) {
         Object cur = array;
         long off = byteOffset;
@@ -498,6 +507,7 @@ public final class ReflectRefs {
     }
 
     /** Reads the scalar of {@code kind} at element {@code index} of an array. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object readScalarAtElement(Object array, int index, GoKind kind) {
         if (array == null || !array.getClass().isArray()) {
             throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
@@ -519,6 +529,7 @@ public final class ReflectRefs {
     }
 
     /** A boxed scalar element (e.g. []any) read as the given kind. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object boxedScalar(Object elem, GoKind kind) {
         if (elem == null) {
             throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
@@ -547,6 +558,7 @@ public final class ReflectRefs {
      * a scalar walk can descend (rectangularity holds for every Go
      * array value).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long flatSize(Object array) {
         if (array == null || !array.getClass().isArray()) {
             return -1;
@@ -583,6 +595,7 @@ public final class ReflectRefs {
     }
 
     /** Scalar kinds whose value at an address is a single element read. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isScalarKind(GoKind kind) {
         return switch (kind) {
             case INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64,
@@ -593,6 +606,7 @@ public final class ReflectRefs {
     }
 
     /** Untyped kinds read with their default concrete carrier. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoKind normalizeKind(GoKind kind) {
         return switch (kind) {
             case UNTYPED_INT -> GoKind.INT64;
@@ -604,6 +618,7 @@ public final class ReflectRefs {
     }
 
     /** Byte size of one scalar of the given kind, or -1 when not scalar-sized. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long elemSize(GoKind kind) {
         return switch (normalizeKind(kind)) {
             case INT8, UINT8, BOOL -> 1;
@@ -619,6 +634,7 @@ public final class ReflectRefs {
      * True when the referent is a mutable cell (a {@link Cell} or a
      * mutable aggregate): stores through this handle are meaningful.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean isCellHandle(long handle) {
         return resolve(handle) instanceof Cell;
     }

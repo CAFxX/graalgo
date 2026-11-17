@@ -171,10 +171,12 @@ public final class UnsafeTable {
             return byteOffset;
         }
 
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
         private static boolean baseEquals(Object a, Object b) {
             return a == b || (a instanceof ArrayRef && a.equals(b));
         }
 
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
         private static int baseHash(Object a) {
             return a instanceof ArrayRef ? a.hashCode() : System.identityHashCode(a);
         }
@@ -204,11 +206,13 @@ public final class UnsafeTable {
     private static volatile UnsafeTable current;
 
     /** Installs a fresh per-run table (called once per P3SyncMain run). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void install() {
         current = new UnsafeTable();
     }
 
     /** The current run's table; fails fast when no run is installed. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static UnsafeTable current() {
         UnsafeTable t = current;
         if (t == null) {
@@ -236,6 +240,7 @@ public final class UnsafeTable {
     }
 
     /** Hook implementation: the referent for a handle, or null. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object resolveHandleStatic(long handle) {
         if (handle == 0) {
             return null;
@@ -288,6 +293,7 @@ public final class UnsafeTable {
      * Storage identity — never the dereferenced value — so distinct
      * allocations sharing a zero value keep distinct handles (P3-M10).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long handleForPointer(GoPointer gp) {
         if (gp == null || gp.isNil()) {
             return 0;
@@ -318,6 +324,7 @@ public final class UnsafeTable {
      *       0) → a plain {@code GoPointer} over the referent.</li>
      * </ul>
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoPointer pointerFor(Object referent) {
         if (referent instanceof GoCell cell) {
             return new GoPointer(cell);
@@ -440,6 +447,7 @@ public final class UnsafeTable {
         return referent;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object makeCarrier(Object referent) {
         if (referent instanceof Integer i) {
             return new int[]{i.intValue()};

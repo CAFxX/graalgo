@@ -261,6 +261,9 @@ public final class ReflectOpNode extends GoExprNode {
     // Dispatch.
     // ------------------------------------------------------------------
 
+    // T0.B: the reflect op table (string-keyed, recursive conversions,
+    // metadata walks) is host code, not a PE target.
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object dispatch(String op, Object[] argv) {
         return switch (op) {
             case "tKind" -> (long) ReflectTypes.kindOf(asTok(argv[0]));
@@ -529,6 +532,7 @@ public final class ReflectOpNode extends GoExprNode {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static graalgo.values.GoStructDescriptor structDescFor(TypeInfo t) {
         // The struct's GoStructDescriptor: built from the wire via layout.
         // (Captured per-type at install in a full implementation; here we
@@ -549,6 +553,7 @@ public final class ReflectOpNode extends GoExprNode {
      * arrays with struct elements zeroed. (The flat new-Object[] left
      * nested struct fields null, breaking Field() chains on New(T).)
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoStruct zeroStruct(TypeInfo t) {
         graalgo.values.GoStructDescriptor desc = structDescFor(t);
         GoStruct s = new GoStruct(desc, new long[desc.longsCount()],

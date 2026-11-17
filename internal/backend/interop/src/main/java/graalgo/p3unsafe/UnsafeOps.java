@@ -59,6 +59,7 @@ public final class UnsafeOps {
     private UnsafeOps() {}
 
     /** Array length via reflection (any component type). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static int arrayLength(Object array) {
         return java.lang.reflect.Array.getLength(array);
     }
@@ -69,6 +70,7 @@ public final class UnsafeOps {
      * stay in lockstep: a mismatch makes {@code unsafe.Slice} hand
      * downstream indexing an array of the wrong component type).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static Class<?> expectedArrayClass(GoKind elemKind) {
         return switch (elemKind) {
             case INT8, UINT8 -> byte[].class;
@@ -84,6 +86,7 @@ public final class UnsafeOps {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void checkCarrier(Object array, GoKind elemKind, String op, Node site) {
         if (array.getClass() != expectedArrayClass(elemKind)) {
             Panic.throwPanic("unsafe." + op + ": cannot view "
@@ -104,6 +107,7 @@ public final class UnsafeOps {
      * the cell itself, so views normalize here instead. Everything else
      * passes through unchanged.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object openScalar(Object referent) {
         return UnsafeTable.current().normalizeScalar(referent);
     }
@@ -113,6 +117,7 @@ public final class UnsafeOps {
      * a nil pointer). Returns the new {@code GoSlice}, or {@code null} for
      * the nil slice.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoSlice slice(Object referent, long len, GoKind elemKind, Node site) {
         if (len < 0) {
             Panic.throwPanic("runtime error: unsafe.Slice: len out of range", null, null, site);
@@ -158,6 +163,7 @@ public final class UnsafeOps {
      * {@code unsafe.SliceData(s)}: interns a view key for the slice's
      * backing array at its offset. {@code null} (nil slice) → handle 0.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long sliceData(GoSlice s) {
         if (s == null) {
             return 0;
@@ -170,6 +176,7 @@ public final class UnsafeOps {
      * {@code unsafe.String(ptr, len)} given the pointer's referent (null
      * for a nil pointer). Always copies (DIV-US-1).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoString stringOf(Object referent, long len, Node site) {
         if (len < 0) {
             Panic.throwPanic("runtime error: unsafe.String: len out of range", null, null, site);
@@ -241,6 +248,7 @@ public final class UnsafeOps {
      * {@code unsafe.StringData(s)}: interns the string's {@code GoString}.
      * Empty → handle 0 (gc: {@code StringData("") == nil}).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long stringData(GoString s) {
         if (s.length() == 0) {
             return 0;
@@ -255,6 +263,7 @@ public final class UnsafeOps {
      * method — they travel as the {@code "unsafederive"} node and resolve
      * through {@link UnsafeTable#derive} (fix-redmaster-r39).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void fromUintTrap() {
         throw new UnsafeHandles.UnsafeEscapeException(
                 "unsafe: uintptr -> unsafe.Pointer conversion traps "

@@ -452,6 +452,7 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * empty arrays, null first element): callers then keep the
      * pre-r43 flat arithmetic instead of guessing.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long goArrayElemSize(Object array) {
         Class<?> comp = array.getClass().getComponentType();
         if (comp == null) {
