@@ -88,3 +88,17 @@ Chat: f7467b85-7da6-4da0-b9ec-94631a60dafe.
 ## Push log (continued)
 - 2026-11-17 ~05:37 UTC: ca37837a (PROGRESS-r62.md) pushed via push_repo.py
   (state /var/tmp/r62-push-state.json); ls-remote confirms r62 = ca37837a.
+
+## Update 2026-11-17 ~05:53 UTC — build green, unit tests green, bi21 GREEN
+- `make build` rc=0 (GO111MODULE=off env; see toolchain note above).
+- Interop full IfaceTestRunner OOM-killed (Error 137) after 41 PASSes —
+  box memory pressure (another lane's 1GB JVM + go compiles running).
+  Ran the r61 unit tests standalone with -Xmx512m instead:
+  GoByteCellTest 5/5 PASS, MapGroupLayoutTest 6/6 PASS (r60's claim verified).
+- **bi21 (BuiltinsCorpusTest.testBi21NestedMaps) PASSES** on this tip
+  (SingleTestLauncher, -Xmx768m, 1 test, 0 failures, ~96s) — the F1
+  remediation's core signal is green locally. Log: /var/tmp/r62-bi21.log.
+- NEXT: remaining 27 of the 28 (MainTest x5, gn09, gv01-10, bi12/17/18/19/
+  20/22, TypeparamDifferential x2, SectionClamp x3). Run per-class via
+  SingleTestLauncher with -Xmx768m; each differential test takes ~60-90s.
+  If the session is killed, resume with the class batches below.
