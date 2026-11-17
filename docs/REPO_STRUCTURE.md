@@ -26,6 +26,17 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [internal/](../internal/) — private implementation. Nothing outside the
   module imports it (Go `internal` convention); everything user-facing flows
   through [cmd/graalgo/](../cmd/graalgo/).
+  - [toolexec/](../internal/toolexec/) — separate module (own `go.mod`):
+    the `-toolexec` wrapper of the recovery's per-package compile/link path
+    ([toolexec-design.md](arch/toolexec-design.md)), currently a walking
+    skeleton. [cmd/graalgo-tool/](../internal/toolexec/cmd/graalgo-tool/)
+    is the wrapper `go build -toolexec` runs (shadow gc compile + IR archive
+    member, link to stub + bundle, `-V=full` identity);
+    [cmd/graalgo-stub/](../internal/toolexec/cmd/graalgo-stub/) is the
+    launcher stub prepended to linked programs;
+    [archive/](../internal/toolexec/archive/) reads/extends gc package
+    archives; [bundle/](../internal/toolexec/bundle/) is the program-bundle
+    format. Tested by `make test-toolexec`.
   - [frontend/](../internal/frontend/) — Go source → IR. Moved here from
     `phases/phase1/frontend/` (code lane 2, 2026-10-13). The main Go module
     (own `go.mod`, `package main`) is the `gofrontend` tool:
