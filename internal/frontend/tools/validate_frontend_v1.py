@@ -638,9 +638,12 @@ def check_node(ctx, path, node, expr):
         expr_node("addr")
         str_field("cell", {"int32", "int64", "bool"})
     elif kind == "atomicptrop":
-        # atomic.SwapPointer/CompareAndSwapPointer: `op` is "swap"/"cas",
-        # `addr` the addressed word, `args` the remaining operands.
-        str_field("op", {"swap", "cas"})
+        # sync/atomic pointer ops: `op` is "swap"/"cas" (SwapPointer/
+        # CompareAndSwapPointer) or "load"/"store" (LoadPointer/
+        # StorePointer, P1-1 REVIEW-2026-11-03-09: all four share this
+        # node so a store is a release to a load's acquire); `addr`
+        # the addressed word, `args` the remaining operands.
+        str_field("op", {"swap", "cas", "load", "store"})
         expr_node("addr")
         node_list("args")
         type_ref("type")
