@@ -787,6 +787,7 @@ public final class GoOs {
         if (!(ch.ch instanceof ReadableByteChannel)) {
             return -EBADF;
         }
+        graalgo.sched.SchedulerCore io = ioBegin(ch, false);
         try {
             int n = ((ReadableByteChannel) ch.ch).read(bb);
             if (n < 0) {
@@ -796,6 +797,10 @@ public final class GoOs {
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
+        } finally {
+            if (io != null) {
+                io.ioExit();
+            }
         }
     }
 
@@ -813,8 +818,16 @@ public final class GoOs {
             return -EBADF;
         }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
+        graalgo.sched.SchedulerCore io = ioBegin(ch, true);
         try {
-            int n = wch.write(bb);
+            int n;
+            try {
+                n = wch.write(bb);
+            } finally {
+                if (io != null) {
+                    io.ioExit();
+                }
+            }
             return (long) n + 1;
         } catch (IOException e) {
             if (errno(e) == EPIPE) {
@@ -1690,10 +1703,49 @@ public final class GoOs {
         }
     }
 
-    /** graalgo.os.exit */
+    /**
+     * graalgo.os.exit. Under the scheduler, exit is a scheduler request
+     * (T0.A): admissions stop, every other goroutine freezes at its next
+     * safepoint, and the launcher flushes stdio and exits with the code
+     * — no deferred calls run (gc parity). The calling goroutine never
+     * returns. Without a scheduler (bare AST runs) the JVM exits directly.
+     */
     public static long exit(Object codeArg) {
-        System.exit(num32(codeArg));
+        int code = num32(codeArg);
+        graalgo.sched.SchedulerCore sc = graalgo.sched.SchedulerCore.installedOrNull();
+        if (sc != null && sc.onGoroutine()) {
+            sc.requestExit(code);
+            sc.freezeForExit();
+        }
+        System.out.flush();
+        System.exit(code);
         return 0; // unreachable
+    }
+
+    /**
+     * Scheduler-aware blocking (SPEC §3.5, GG-SCHED-0004): a read from
+     * stdio or a pipe — or a write to a pipe — can block indefinitely on
+     * another goroutine or process, so it runs inside
+     * {@code ioEnter}/{@code ioExit}: the goroutine's in-flight slot is
+     * released while it blocks, and a blocked goroutine also tells the
+     * deadlock detector that it can be woken from outside. Regular files
+     * never block indefinitely (and are the hot path), so they skip the
+     * two drainer hand-offs; sockets go through the netpoller; stdout/
+     * stderr writes are not wrapped (they block only on an external
+     * consumer, and every Print would pay the hand-offs).
+     *
+     * @return the scheduler to {@code ioExit} on, or null if not entered
+     */
+    private static graalgo.sched.SchedulerCore ioBegin(ChannelHandle ch, boolean write) {
+        if (ch.kind != KIND_PIPE && (ch.kind != KIND_STDIO || write)) {
+            return null;
+        }
+        graalgo.sched.SchedulerCore sc = graalgo.sched.SchedulerCore.installedOrNull();
+        if (sc == null || !sc.onGoroutine()) {
+            return null;
+        }
+        sc.ioEnter();
+        return sc;
     }
 
     /** graalgo.os.argc */

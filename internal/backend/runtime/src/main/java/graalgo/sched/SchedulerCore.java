@@ -375,13 +375,6 @@ public final class SchedulerCore {
         if (h == null) {
             return;
         }
-        if (exiting) {
-            // Process exit in progress (main returned, os.Exit, fatal
-            // panic/deadlock): freeze this goroutine at its safepoint so
-            // it produces no further output while the launcher exits
-            // (gc: exit/fatalpanic stop the world first).
-            freezeForExit();
-        }
         // fix-redmaster-r43: never yield inside a pin section. In gc,
         // pinning disables preemption, so a pinned goroutine is not
         // migrated mid-section; here a quantum park inside a section
@@ -392,6 +385,21 @@ public final class SchedulerCore {
         // deadline stays expired, so no quantum is lost.
         if (PinLock.isHeldByCurrentThread()) {
             return;
+        }
+        if (exiting) {
+            if (h == fatalOwner) {
+                // The fatal reporter runs Error()/String() with the world
+                // stopped: it must never quantum-park (no admission
+                // happens any more), so it runs to completion.
+                return;
+            }
+            // Process exit in progress (main returned, os.Exit, fatal
+            // panic/deadlock): freeze this goroutine at its safepoint so
+            // it produces no further output while the launcher exits
+            // (gc: exit/fatalpanic stop the world first). After the pin
+            // check, so a frozen goroutine never holds PinLock (the
+            // reporter's fmt calls pin sync.Pool).
+            freezeForExit();
         }
         if (System.nanoTime() >= h.quantumDeadlineNanos) {
             quantumPark(h);
@@ -514,6 +522,11 @@ public final class SchedulerCore {
                 }
             } catch (RuntimeException e) {
                 recordCrash("internal error", e);
+            } catch (Error e) {
+                // Any other JVM error (AssertionError, OutOfMemoryError,
+                // ...): the program can no longer be trusted — loud exit,
+                // never a silently dead goroutine and a hung process.
+                recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
@@ -614,6 +627,8 @@ public final class SchedulerCore {
     /** First fatal reporter wins the right to print (gc: one fatal trace). */
     private final java.util.concurrent.atomic.AtomicBoolean fatal =
             new java.util.concurrent.atomic.AtomicBoolean();
+    /** The goroutine printing the fatal report (exempt from the freeze). */
+    private volatile GoroutineHandle fatalOwner;
     /** Live non-system goroutines (gc checkdead's user goroutine count). */
     private final AtomicInteger liveUser = new AtomicInteger();
     /** Main goroutine called runtime.Goexit. */
@@ -638,6 +653,9 @@ public final class SchedulerCore {
         if (!fatal.compareAndSet(false, true)) {
             return false;
         }
+        // The reporting goroutine keeps running (it may call Go
+        // Error()/String() methods while rendering); everyone else freezes.
+        fatalOwner = currentHandle.get();
         exiting = true;
         return true;
     }
@@ -651,6 +669,11 @@ public final class SchedulerCore {
     public void requestExit(int code) {
         exiting = true;
         exitCode.complete(code);
+    }
+
+    /** True when the calling thread is a scheduler goroutine. */
+    public boolean onGoroutine() {
+        return currentHandle.get() != null;
     }
 
     /** True once process exit has been requested. */
