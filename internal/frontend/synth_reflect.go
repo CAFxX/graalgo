@@ -2858,9 +2858,7 @@ func Pull2[K, V any](seq Seq2[K, V]) (next func() (K, V, bool), stop func()) {
 `
 
 // reflectIntrinsicNames is the set of __reflect_* names intercepted at
-// call sites into the "reflectop" wire node, plus (red-master fix r53)
-// the two real reflect functions mapIterStart / mapIterNext (see the
-// note at the end of the map). Real-Go helpers
+// call sites into the "reflectop" wire node. Real-Go helpers
 // (__reflect_taglookup, __reflectSelect, __reflectTMethodByName,
 // __reflectTFieldByName, __reflectTFieldByNameFunc,
 // __reflectFieldByIndexErr, __reflectTryRecv, reflectItoa) are NOT here;
@@ -2903,27 +2901,17 @@ var reflectIntrinsicNames = map[string]bool{
 	"__reflect_mapiterinit": true, "__reflect_mapiternext": true,
 	"__reflect_mapiterkey": true, "__reflect_mapiterval": true,
 	"__reflect_mapiterreset": true,
-	// Real-reflect map iteration drivers (red-master fix r53,
-	// 2026-11-16): reflect.mapIterStart / mapIterNext are real reflect
-	// functions (reflect/map.go), NOT __reflect_* intrinsics, but they
-	// are intercepted through the same call-site mechanism
-	// (isReflectIntrinsicFunc / exportReflectIntrinsic): the guest
-	// maps.Iter implementation reads *maps.Map header fields that a
-	// GoMap does not carry (GoMap cannot be cast to GoStruct), so the
-	// calls lower to the "reflectop" wire node (ops "mapIterStart" /
-	// "mapIterNext", via TrimPrefix no-op) backed by the GoMap snapshot
-	// iterator (see ReflectOpNode). They live here — not in a second
-	// package-name predicate — because the no-bridges gate flags any
-	// NEW package-name conditional, and this reuses the one pre-existing
-	// predicate. Safe for isSyntheticIntrinsic: no synthetic package
-	// declares these names, so no declaration is ever skipped.
-	"mapIterStart": true, "mapIterNext": true,
+	// NOTE (fix-redmaster-r59): the two real map-iteration drivers
+	// (mapIterStart / mapIterNext, reflect/map.go) were intercepted
+	// here by r53 and REMOVED by r59 (REJECT review d5c6b40f F1: the
+	// interception reimplemented real stdlib functions in Java). They
+	// execute as real guest code now; the maps.Map header a GoMap
+	// lacks is served by the header view (see MapHeaderView), so the
+	// guest header-field reads land on a real struct.
 }
 
 // isReflectIntrinsicFunc reports whether fn is a synthetic reflect
-// intrinsic (package-level __reflect_* in the synthetic reflect package)
-// or one of the two real reflect functions mapIterStart / mapIterNext
-// (red-master fix r53; see reflectIntrinsicNames).
+// intrinsic (package-level __reflect_* in the synthetic reflect package).
 func isReflectIntrinsicFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "reflect" && reflectIntrinsicNames[fn.Name()]
 }

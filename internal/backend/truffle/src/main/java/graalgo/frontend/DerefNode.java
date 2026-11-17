@@ -163,7 +163,7 @@ public final class DerefNode extends GoExprNode {
         // object's address; here the address is the object's intern
         // handle. Without this, Boxing.toLong dies casting the object
         // to Number (bi21: reflect.copyVal's direct branch on a map
-        // value, reached via the r53 mapIterStart intercept — the
+        // value, reached via a map-iteration slot — the
         // Iter slot holds the value in a Cell, and copyVal reads it
         // back as a word). Only UNSAFE_POINTER reads translate:
         // object kinds return the object unchanged, and struct/array/
