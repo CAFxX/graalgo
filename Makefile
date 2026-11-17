@@ -30,6 +30,7 @@
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
+#               / dead-path (no phases/ or hidden_files/ in executable paths)
 #               grep gates + `internal/frontend/build.sh check`
 #               (gofrontend gofmt/vet/tests, vendoring diff gate, and the
 #               frontend/v1 wire-format validator over every golden doc
@@ -141,6 +142,11 @@ check:
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
+	# dead-path gate: no executable reference to the deleted per-phase
+	# tree or the banned scratch dir (a dead path makes a harness report
+	# ClassNotFoundException as a divergence). The gate's own test first.
+	python3 .github/scripts/test_check_no_dead_paths.py
+	python3 .github/scripts/check_no_dead_paths.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
 	# wire-format validation (internal/frontend/build.sh check).
