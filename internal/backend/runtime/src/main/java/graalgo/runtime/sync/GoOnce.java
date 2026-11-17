@@ -70,7 +70,7 @@ public final class GoOnce {
             }
             waiters.addLast(h);
         }
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, "sync.Mutex.Lock");
     }
 
     /** For tests. */

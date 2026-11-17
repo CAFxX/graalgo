@@ -50,6 +50,27 @@ public final class ResumeToken {
          * re-admission (gc exitsyscall parity).
          */
         IO_EXIT,
+        /**
+         * No goroutine: re-evaluate scheduler-global conditions (a
+         * GOMAXPROCS change may allow admissions; the last external waker
+         * — a timer — retired, so deadlock must be re-checked). Carries
+         * no handle and never touches the lanes.
+         */
+        POKE,
+    }
+
+    /** The handle-less POKE token (shared: it carries no state). */
+    private static final ResumeToken POKE_TOKEN = new ResumeToken();
+
+    private ResumeToken() {
+        this.kind = Kind.POKE;
+        this.handle = null;
+        this.generation = -1;
+    }
+
+    /** A {@link Kind#POKE} token. */
+    public static ResumeToken poke() {
+        return POKE_TOKEN;
     }
 
     public final Kind kind;
@@ -67,6 +88,6 @@ public final class ResumeToken {
 
     @Override
     public String toString() {
-        return "ResumeToken(" + kind + ", g" + handle.id + ", gen=" + generation + ")";
+        return "ResumeToken(" + kind + ", g" + (handle == null ? "-" : handle.id) + ", gen=" + generation + ")";
     }
 }

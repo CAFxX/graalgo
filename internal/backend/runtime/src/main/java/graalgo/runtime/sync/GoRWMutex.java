@@ -37,7 +37,7 @@ public final class GoRWMutex {
             h = sched.currentGoroutine();
             readWaiters.addLast(h);
         }
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, "sync.RWMutex.RLock");
         // On resume: unlock-side accounting already incremented readers.
     }
 
@@ -76,7 +76,7 @@ public final class GoRWMutex {
             writeWaiters.addLast(h);
             waitingWriters++;
         }
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, "sync.RWMutex.Lock");
         // On resume: writer=true was set by the handoff; ownership is ours.
     }
 

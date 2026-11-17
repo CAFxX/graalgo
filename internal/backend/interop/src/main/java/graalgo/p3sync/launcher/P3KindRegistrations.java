@@ -98,6 +98,7 @@ public final class P3KindRegistrations implements WireKindRegistrar {
     public void afterBuild(NodeFactory factory, NodeFactory.Program program) {
         graalgo.iface.IfaceMethodTable.install(
                 graalgo.iface.IfaceMethodTables.resolve(factory.document(), program.functions()));
+        graalgo.iface.RuntimeErrorMethods.install();
         graalgo.p3reflect.ReflectTypes.install(factory.document(), program.functions());
         graalgo.p3link.LinknameIntrinsics.install(factory.document(), program);
     }

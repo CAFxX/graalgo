@@ -50,6 +50,16 @@ public final class GoSemaphore {
      * @param cell the {@code *uint32} semaphore count
      */
     public static void acquire(IntCell cell) {
+        acquire(cell, "semacquire");
+    }
+
+    /**
+     * {@link #acquire(IntCell)} with gc's wait reason for a blocked
+     * acquire ({@code "sync.Mutex.Lock"}, {@code "sync.WaitGroup.Wait"},
+     * ... — runtime/sema.go's callers pass theirs), shown in deadlock
+     * dumps.
+     */
+    public static void acquire(IntCell cell, String waitReason) {
         SchedulerCore sched = SchedulerCore.current();
         GoroutineHandle h;
         synchronized (LOCK) {
@@ -84,7 +94,7 @@ public final class GoSemaphore {
         // handle even if it arrives before we park (stashed) — no lost wakeup.
         // On resume, ownership has transferred to us (releaser did not
         // increment the count; we own the wakeup ticket).
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, waitReason);
     }
 
     /**
@@ -126,6 +136,6 @@ public final class GoSemaphore {
      * @param cell the {@code *uint32} semaphore count
      */
     public static void acquireWaitGroup(IntCell cell) {
-        acquire(cell);
+        acquire(cell, "sync.WaitGroup.Wait");
     }
 }

@@ -45,6 +45,12 @@ public final class GoStatementNode extends GoStmtNode {
         if (!(f instanceof GoFunc gf)) {
             throw new FrontendException("go statement requires a function value, got " + f);
         }
+        // "created by" provenance: the go statement is the creator
+        // frame's current call site (as for an ordinary call).
+        graalgo.runtime.GoroutineState st = graalgo.runtime.GoroutineState.current();
+        if (st != null) {
+            st.updateTopFrameSection(getSourceSection());
+        }
         Scheduler.spawn(gf);
     }
 

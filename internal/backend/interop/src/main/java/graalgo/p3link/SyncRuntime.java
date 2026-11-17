@@ -362,7 +362,7 @@ public final class SyncRuntime {
         }
         // Park outside the lock; the drainer stashes an UNPARK that wins
         // the race (no lost wakeup), same discipline as GoSemaphore.
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, "sync.Cond.Wait");
     }
 
     /**

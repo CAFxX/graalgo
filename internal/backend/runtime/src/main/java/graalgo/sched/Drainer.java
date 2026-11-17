@@ -47,6 +47,18 @@ public final class Drainer {
     // released, vthread blocked in the syscall (not parked). IO_EXIT
     // re-admits through the WAKE lane.
     private final java.util.Set<Long> inIo = new java.util.HashSet<>();
+    // handle id -> handle, for every entry in `parked` (deadlock dump).
+    private final java.util.Map<Long, GoroutineHandle> parkedHandles = new java.util.HashMap<>();
+    // parked handle ids woken from outside the scheduler (netpoller).
+    private final java.util.Set<Long> externalParked = new java.util.HashSet<>();
+    /**
+     * Upper bound the in-flight count may legitimately reach: the cap,
+     * except right after runtime.GOMAXPROCS lowered it while more
+     * goroutines were in flight — then the ceiling is the in-flight count
+     * at the change and shrinks to the cap as they park (no admission
+     * happens above the cap; the assert still catches any over-admission).
+     */
+    private int capCeiling;
 
     /**
      * Admission provenance counters (P2-M8, M6 watch-item investigation):
@@ -112,6 +124,7 @@ public final class Drainer {
                     route(token);
                     admit();
                     checkInvariants();
+                    detectDeadlock();
                 }
             } catch (Throwable t) {
                 // Fail LOUD, never silent: a violated invariant (or any
@@ -130,6 +143,10 @@ public final class Drainer {
 
     private void route(ResumeToken token) {
         switch (token.kind) {
+            case POKE -> {
+                // Global re-evaluation only (cap change, timer retired):
+                // admit() and detectDeadlock() run after every token.
+            }
             case INIT -> initFifo.addLast(token);
             case RESUME -> {
                 inflight--;
@@ -164,11 +181,17 @@ public final class Drainer {
                             ResumeToken.Kind.WAKE, token.handle, token.generation));
                 } else {
                     parked.put(token.handle.id, token.generation);
+                    parkedHandles.put(token.handle.id, token.handle);
+                    if (token.handle.externalWake) {
+                        externalParked.add(token.handle.id);
+                    }
                 }
             }
             case UNPARK -> {
                 Long gen = parked.remove(token.handle.id);
                 if (gen != null) {
+                    parkedHandles.remove(token.handle.id);
+                    externalParked.remove(token.handle.id);
                     wakeUnparkDirect.incrementAndGet();
                     wakeFifo.addLast(new ResumeToken(
                             ResumeToken.Kind.WAKE, token.handle, gen));
@@ -211,6 +234,9 @@ public final class Drainer {
     }
 
     private void admit() {
+        if (sched.isExiting()) {
+            return; // process exit: the world is stopped, nothing runs again
+        }
         while (inflight < sched.cap()) {
             ResumeToken token = pollLane();
             if (token == null) {
@@ -250,13 +276,49 @@ public final class Drainer {
      * {@link AssertionError}, never silent corruption.
      */
     void checkInvariants() {
-        if (inflight > sched.cap()) {
+        int cap = sched.cap();
+        if (capCeiling < cap) {
+            capCeiling = cap; // cap raised (or first check)
+        } else if (capCeiling > cap) {
+            // cap lowered: the excess in flight drains, never refills
+            capCeiling = Math.max(cap, Math.min(capCeiling, inflight));
+        }
+        if (inflight > capCeiling) {
             throw new AssertionError(
-                    "inflight=" + inflight + " > cap=" + sched.cap());
+                    "inflight=" + inflight + " > cap=" + cap);
         }
         if (inflight < 0) {
             throw new AssertionError("inflight negative: " + inflight);
         }
+    }
+
+    /**
+     * gc {@code checkdead}: when no goroutine is in flight or queued for
+     * admission, none is in blocking I/O, none waits on the netpoller,
+     * and no token is pending, every goroutine is parked on another
+     * goroutine — and if no timer can fire either, none will ever run
+     * again. The scheduler then reports the deadlock (or, after main's
+     * Goexit, "no goroutines") and exits. Called after every token with
+     * the lock held; the cheap conditions short-circuit first.
+     *
+     * <p>Race-freedom: every waker that is a goroutine offers its UNPARK
+     * before it parks or exits itself (one FIFO inbox), so its wakee is
+     * never seen parked while it is not; the timer heap offers its wakeups
+     * before retiring the entry ({@code TimerHeap.hasPending} counts
+     * entries being fired), so the inbox is re-checked after the timer
+     * probe.
+     */
+    private void detectDeadlock() {
+        if (inflight != 0 || !wakeFifo.isEmpty() || !initFifo.isEmpty()
+                || !runFifo.isEmpty() || !inIo.isEmpty() || !externalParked.isEmpty()
+                || !unparkPending.isEmpty() || !inbox.isEmpty() || sched.isExiting()) {
+            return;
+        }
+        boolean timers = sched.timerHeap().hasPending();
+        if (!inbox.isEmpty() || (timers && !sched.mainGoexited())) {
+            return;
+        }
+        sched.onAllParked(new java.util.ArrayList<>(parkedHandles.values()), timers);
     }
 
     // ---- test hooks (package-visible; production never calls these) ----

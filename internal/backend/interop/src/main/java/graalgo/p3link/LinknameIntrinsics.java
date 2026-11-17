@@ -323,11 +323,13 @@ public final class LinknameIntrinsics {
         // Functionally identical to Semacquire; lifo/skipframes affect
         // queueing order and profiling only.
         Linknames.register("sync.runtime_SemacquireRWMutexR", args -> {
-            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_SemacquireRWMutexR"));
+            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_SemacquireRWMutexR"),
+                    "sync.RWMutex.RLock");
             return null;
         }, 3);
         Linknames.register("sync.runtime_SemacquireRWMutex", args -> {
-            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_SemacquireRWMutex"));
+            GoSemaphore.acquire(semaCell(args[0], "sync.runtime_SemacquireRWMutex"),
+                    "sync.RWMutex.Lock");
             return null;
         }, 3);
         // sync.runtime_SemacquireWaitGroup(s *uint32, synctestDurable bool):
@@ -454,7 +456,8 @@ public final class LinknameIntrinsics {
         // gc: under contention a mutex waiter can wait longer than it would
         // under gc. Documented, not denied.
         Linknames.register("internal/sync.runtime_SemacquireMutex", args -> {
-            GoSemaphore.acquire(semaCell(args[0], "internal/sync.runtime_SemacquireMutex"));
+            GoSemaphore.acquire(semaCell(args[0], "internal/sync.runtime_SemacquireMutex"),
+                    "sync.Mutex.Lock");
             return null;
         }, 3);
         Linknames.register("internal/sync.runtime_Semrelease", args -> {

@@ -304,7 +304,7 @@ public final class SelectOp {
                 // P2-M6: it genuinely blocks — record with channelId -1
                 // (multi-channel select has no single channel).
                 JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);
-                sched.parkCurrent(null, ParkReason.SELECT);
+                sched.parkCurrent(null, ParkReason.SELECT, "select (no cases)");
                 throw new IllegalStateException("unreachable: empty select woke");
             }
             // Scheduler-aware park. A waker that claimed us before we park

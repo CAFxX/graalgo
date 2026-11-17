@@ -100,6 +100,51 @@ public final class GoroutineHandle {
      */
     final java.util.concurrent.atomic.AtomicBoolean inIo = new java.util.concurrent.atomic.AtomicBoolean();
 
+    /**
+     * gc's wait reason for the current scheduler park (e.g.
+     * {@code "chan receive"}, {@code "sync.Mutex.Lock"}), rendered in the
+     * {@code goroutine N [reason]:} header of a deadlock dump. Written by
+     * the goroutine itself before it offers its PARKED token, so the
+     * drainer (which reads it only for parked goroutines) observes it via
+     * the inbox's happens-before edge.
+     */
+    volatile String waitReason;
+
+    /**
+     * True while the goroutine is parked waiting on a waker that is not a
+     * goroutine and not the timer heap (the netpoller's selector thread):
+     * such a park can be ended from outside the scheduler, so it never
+     * counts toward deadlock (gc: a goroutine in netpoll keeps an M
+     * blocked in the poller, so checkdead never fires).
+     */
+    volatile boolean externalWake;
+
+    /**
+     * Runtime-internal goroutine (gc's {@code isSystemGoroutine}): e.g.
+     * the time package's timer translators. Excluded from deadlock dumps
+     * and from the user-goroutine count that decides deadlock.
+     */
+    volatile boolean system;
+
+    /** True for the program's main goroutine (exit on return). */
+    volatile boolean isMain;
+
+    /**
+     * The goroutine's {@link graalgo.runtime.GoroutineState} (set on its
+     * own vthread at start): the deadlock dump reads the Go stack of
+     * parked goroutines through it.
+     */
+    volatile graalgo.runtime.GoroutineState state;
+
+    /** Creator goroutine id (0 when spawned from outside a goroutine). */
+    volatile long creatorId;
+
+    /** Creator's innermost Go frame name at the {@code go} statement, or null. */
+    volatile String creatorFunc;
+
+    /** Creator frame's call-site section, captured at spawn time. */
+    volatile com.oracle.truffle.api.source.SourceSection creatorSection;
+
     /** Body executed by the vthread. */
     final Runnable body;
 

@@ -44,6 +44,21 @@ public final class PanicException extends AbstractTruffleException {
         this.throwSite = throwSite;
         GoroutineState s = GoroutineState.current();
         this.stackTop = s == null ? new GoStackFrame() : s.goStack();
+        // gc gopanic: p.link = gp._panic — a panic raised while another
+        // is being unwound (inside its deferred calls) chains to it, so
+        // the crash report prints the whole chain ("panic: first
+        // [recovered]\n\tpanic: second"). DeferChain keeps the in-flight
+        // panic in the goroutine state exactly while its defers run, and
+        // clears it once recovered-and-returned, matching gc's removal of
+        // finished panics from the chain.
+        this.link = s == null ? null : s.panicking();
+    }
+
+    private final PanicException link;
+
+    /** The panic this one was raised during (gc {@code _panic.link}), or null. */
+    public PanicException link() {
+        return link;
     }
 
     /** The panicked Go value (D5 mapping). */

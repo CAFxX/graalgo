@@ -63,7 +63,6 @@ import graalgo.p3math.nodes.MathF64BitsNode;
 import graalgo.p3math.nodes.MathF64FromBitsNode;
 import graalgo.p3math.nodes.MathFmaNode;
 import graalgo.p3math.nodes.MathSqrtNode;
-import graalgo.p3time.P3TimeRuntime;
 import graalgo.p3time.nodes.TimeAfterFuncNode;
 import graalgo.p3time.nodes.TimeAfterNode;
 import graalgo.p3time.nodes.TimeCNode;
@@ -241,7 +240,10 @@ public final class P3SyncMain {
             }
         }
         if (gmp == 0) {
-            gmp = Runtime.getRuntime().availableProcessors();
+            // gc (runtime/proc.go schedinit): a positive GOMAXPROCS
+            // environment value sets the initial P count; anything else
+            // (unset, zero, negative, unparsable) leaves the default.
+            gmp = gomaxprocsFromEnv(System.getenv("GOMAXPROCS"));
         }
         java.util.List<Path> paths = new java.util.ArrayList<>();
         for (String f : files) {
@@ -502,6 +504,10 @@ public final class P3SyncMain {
             // objID fails fast here. Installed on every build (even empty)
             // so a previous program's tables can never leak into this run.
             IfaceMethodTable.install(IfaceMethodTables.resolve(doc, program.functions()));
+            // T0.A: the runtime's panic types implement error and
+            // runtime.Error (Java-bodied methods), and uncaught panics
+            // print Error()/String() text (gc preprintpanics).
+            graalgo.iface.RuntimeErrorMethods.install();
             // P3-M8 (wave 2, reflect): install the GoRType table (canonical
             // per structural identity) and the unsafe handle table. Installed
             // on every build (even empty) so a previous program's tables can
@@ -560,53 +566,36 @@ public final class P3SyncMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
-        final int[] exitCode = {EXIT_OK};
+        final int exitCode;
         try {
-            sched.spawn(() -> {
+            sched.spawnMain(() -> {
                 VirtualFrame frame = Truffle.getRuntime()
                         .createVirtualFrame(new Object[0], program.descriptor());
-                try {
-                    program.root().execute(frame);
-                } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
-                    // goroutine is live; otherwise main just dies.
-                    if (sched.runnableCount() > 1) {
-                        return;
-                    }
-                    System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
-                    exitCode[0] = EXIT_PANIC;
-                }
+                program.root().execute(frame);
             });
-            // P3-M5 (WS E, ADR-0005): timer translators are background
-            // goroutines that may outlive the Go program's own goroutines
-            // (gc: process exit abandons pending timers; time.Tick's ticker
-            // leaks by design). awaitQuiescence waits for EVERY goroutine,
-            // so first wait until only translators remain, shut them down,
-            // then await full quiescence. With no timers this is just the
-            // ordinary quiescence wait at 1ms poll granularity.
-            P3TimeRuntime.awaitBackgroundDrain(sched);
-            sched.awaitQuiescence();
+            // T0.A (gc runtime.main): the process lives exactly as long as
+            // the program has not requested exit — main returning (0), an
+            // uncaught panic in ANY goroutine (2), a detected deadlock (2),
+            // os.Exit(n), or an internal crash (1). Other goroutines are
+            // never awaited: gc's exit abandons them, blocked or spinning,
+            // along with pending timers.
+            exitCode = sched.awaitExit();
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            System.err.println("graalgo-sync-run: interrupted while awaiting quiescence");
+            System.err.println("graalgo-sync-run: interrupted while awaiting program exit");
             return EXIT_INPUT_ERROR;
         } finally {
             SchedulerCore.install(prev);
         }
+        System.out.flush();
+        System.err.flush();
         // M9: dump even on panic (partial traces are marked as such by
         // the harness); the dump goes to stderr, never to the program's
         // stdout.
         if (dumpPolymorphism) {
             dumpPolymorphism();
         }
-        if (sched.panicked()) {
-            return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
-        }
-        if (sched.crashed()) {
-            return EXIT_INPUT_ERROR; // internal error, already reported on stderr
-        }
-        return exitCode[0];
+        return exitCode;
     }
 
     /**
@@ -647,6 +636,25 @@ public final class P3SyncMain {
                     + "on the classpath",
                     e);
         }
+    }
+
+    /**
+     * The startup GOMAXPROCS: gc's {@code schedinit} uses the environment
+     * value when it parses as a positive integer ({@code atoi32}), else the
+     * CPU count.
+     */
+    static int gomaxprocsFromEnv(String env) {
+        if (env != null) {
+            try {
+                int n = Integer.parseInt(env);
+                if (n > 0) {
+                    return n;
+                }
+            } catch (NumberFormatException ignored) {
+                // gc ignores an unparsable value
+            }
+        }
+        return Runtime.getRuntime().availableProcessors();
     }
 
     private static int usageError(String msg) {

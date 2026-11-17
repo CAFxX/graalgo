@@ -109,8 +109,8 @@ public final class TypeAssertNode extends GoExprNode {
             return false;
         }
         if (assertedIfaceMethods != null && dynamicMethodSets != null) {
-            Set<String> dynMethods = dynamicMethodSets.getOrDefault(
-                    ((GoTypeDescriptor) gi.descriptor()).name(), Set.of());
+            Set<String> dynMethods = dynamicMethodSetOf(dynamicMethodSets,
+                    ((GoTypeDescriptor) gi.descriptor()).name());
             if (dynMethods.contains(NodeFactory.TEMPLATE_METHODS_SKIPPED)) {
                 throw new FrontendException("cannot assert generic instantiation "
                         + ((GoTypeDescriptor) gi.descriptor()).name() + " to interface "
@@ -120,6 +120,22 @@ public final class TypeAssertNode extends GoExprNode {
             return dynMethods.containsAll(assertedIfaceMethods);
         }
         return gi.descriptor() == asserted;
+    }
+
+    /**
+     * The dynamic type's method implkey set: the program document's entry,
+     * else the runtime's own panic types ({@code runtime.errorString},
+     * {@code *runtime.PanicNilError}, ... — never compiled from source, so
+     * absent from the document, yet they implement {@code error} and
+     * {@code runtime.Error} exactly like gc's), else empty.
+     */
+    static Set<String> dynamicMethodSetOf(Map<String, Set<String>> dynamicMethodSets, String name) {
+        Set<String> s = dynamicMethodSets.get(name);
+        if (s != null) {
+            return s;
+        }
+        Set<String> rt = graalgo.runtime.RuntimeErrorTypes.methodSet(name);
+        return rt != null ? rt : Set.of();
     }
 
     private Object read(VirtualFrame frame) {

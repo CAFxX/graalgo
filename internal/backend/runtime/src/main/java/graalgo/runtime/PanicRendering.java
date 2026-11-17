@@ -37,6 +37,109 @@ public final class PanicRendering {
      * gc-identical headers (previously the scheduler printed the raw
      * {@code toString}, diverging on error values).
      */
+    /**
+     * Resolves a panic value's {@code Error()} (else {@code String()})
+     * text for gc's {@code preprintpanics}: {@code (descriptor, value)}
+     * &rarr; the method's result, or null when the dynamic type has no such
+     * method. Installed by the interop launcher (the method tables live
+     * there); unset, values render structurally.
+     */
+    private static volatile java.util.function.BiFunction<Object, Object, String> methodText;
+
+    /** Installs the {@link #methodText} resolver (launcher-wide). */
+    public static void setMethodTextResolver(java.util.function.BiFunction<Object, Object, String> r) {
+        methodText = r;
+    }
+
+    /**
+     * Renders the crash header for an uncaught panic chain, exactly like
+     * gc's {@code preprintpanics} + {@code printpanics}
+     * (runtime/panic.go): the oldest panic first, each later one on its
+     * own line indented by a tab; recovered panics marked
+     * {@code [recovered]}; a panic re-raised with the identical value
+     * printed once, as {@code [recovered, repanicked]}. Error and Stringer
+     * values print their {@code Error()}/{@code String()} text. Must run
+     * on the panicking goroutine (the methods are Go code). Ends with a
+     * newline.
+     */
+    public static String renderPanicChain(PanicException top) {
+        java.util.List<PanicException> chain = new java.util.ArrayList<>();
+        for (PanicException p = top; p != null; p = p.link()) {
+            chain.add(p); // newest first
+        }
+        int n = chain.size();
+        boolean[] repanicked = new boolean[n];
+        String[] text = new String[n];
+        for (int i = 0; i < n; i++) {
+            if (i + 1 < n && sameValue(chain.get(i + 1), chain.get(i))) {
+                repanicked[i + 1] = true;
+                continue;
+            }
+            text[i] = renderPanicValue(chain.get(i));
+        }
+        StringBuilder sb = new StringBuilder();
+        // printpanics recursion, unrolled from the oldest panic.
+        for (int i = n - 1; i >= 0; i--) {
+            if (i < n - 1) {
+                if (repanicked[i + 1]) {
+                    break; // gc: the re-raise of a repanicked value is not printed
+                }
+                sb.append('\t');
+            }
+            PanicException p = chain.get(i);
+            sb.append("panic: ").append(text[i]);
+            if (p.isRecovered() && repanicked[i]) {
+                sb.append(" [recovered, repanicked]");
+            } else if (p.isRecovered()) {
+                sb.append(" [recovered]");
+            }
+            sb.append('\n');
+        }
+        return sb.toString();
+    }
+
+    /**
+     * gc compares the two panics' interface words ({@code eface ==}):
+     * same dynamic type, same data pointer. A recovered string-kind
+     * runtime error re-boxes its message (see {@link Panic#recover}), so
+     * that pair compares by message.
+     */
+    private static boolean sameValue(PanicException older, PanicException newer) {
+        if (older.descriptor() != newer.descriptor()) {
+            return false;
+        }
+        Object a = older.goValue();
+        Object b = newer.goValue();
+        if (a == b) {
+            return true;
+        }
+        if (a instanceof GoErrorValue ea && b instanceof GoString sb) {
+            return ea.errorString().equals(utf8(sb));
+        }
+        return false;
+    }
+
+    /** One chain entry's value text (preprintpanics + printpanicval). */
+    private static String renderPanicValue(PanicException p) {
+        Object v = p.goValue();
+        if (v == null && Panic.isPanicNilOldBehavior()) {
+            return "nil";
+        }
+        if (!(v instanceof GoErrorValue)) {
+            java.util.function.BiFunction<Object, Object, String> r = methodText;
+            if (r != null && p.descriptor() != null) {
+                String t = r.apply(p.descriptor(), v);
+                if (t != null) {
+                    return printIndented(t);
+                }
+            }
+        }
+        RenderInfo info = infoFor(p.descriptor(), p.goTypeName());
+        GoKind kind = info != null ? info.kind() : null;
+        String typeName = info != null ? info.typeName() : p.goTypeName();
+        return renderValue(v, kind, typeName);
+    }
+
     public static String renderPanicLine(PanicException p) {
         Object v = p.goValue();
         RenderInfo info = infoFor(p.descriptor(), p.goTypeName());
@@ -91,7 +194,9 @@ public final class PanicRendering {
             case STRING -> {
                 String s = utf8((GoString) value);
                 yield named
-                        ? typeName + "(\"" + printIndented(GoQuote.quote(((GoString) value).bytes())) + "\")"
+                        // gc printanycustomtype: raw bytes between the
+                        // quotes (printindented, no escaping).
+                        ? typeName + "(\"" + printIndented(s) + "\")"
                         : printIndented(s);
             }
             default -> "(" + (typeName != null ? typeName : kind.name().toLowerCase()) + ") 0xADDR";

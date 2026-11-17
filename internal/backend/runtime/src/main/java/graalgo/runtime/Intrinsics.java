@@ -728,26 +728,42 @@ public final class Intrinsics {
      * @param throwSiteOverride source section for the innermost frame
      *        (the panic throw site), or null to use the frame's own
      */
+    /** A frame's traceback name (gc qualifies main as {@code main.main}). */
+    public static String goFrameName(String funcName) {
+        return "main".equals(funcName) ? "main.main" : funcName;
+    }
+
+    /** The file a traceback line names for {@code sec}. */
+    public static String sourcePath(SourceSection sec) {
+        return sec.getSource().getName();
+    }
+
     public static String renderGoStack(long goroutineId, GoStackFrame top,
             SourceSection throwSiteOverride) {
+        return renderGoStack(goroutineId, "running", top, throwSiteOverride);
+    }
+
+    /**
+     * {@link #renderGoStack(long, GoStackFrame, SourceSection)} with gc's
+     * goroutine status in the header ({@code running} for the panicking
+     * goroutine; a wait reason such as {@code chan receive} for a parked
+     * one in a deadlock dump).
+     */
+    public static String renderGoStack(long goroutineId, String status, GoStackFrame top,
+            SourceSection throwSiteOverride) {
         StringBuilder sb = new StringBuilder();
-        sb.append("goroutine ").append(goroutineId).append(" [running]:\n");
+        sb.append("goroutine ").append(goroutineId).append(" [").append(status).append("]:\n");
         GoStackFrame f = top;
         boolean first = true;
         while (f != null && !f.isEmpty()) {
-            String name = f.funcName();
-            // gc qualifies main as main.main; funclits as main.main.funcN.
-            if ("main".equals(name)) {
-                name = "main.main";
-            }
-            sb.append(name).append("()\n");
+            sb.append(goFrameName(f.funcName())).append("()\n");
             SourceSection sec = f.section();
             if (first && throwSiteOverride != null) {
                 sec = throwSiteOverride;
             }
             first = false;
             if (sec != null) {
-                sb.append('\t').append(sec.getSource().getName()).append(':')
+                sb.append('\t').append(sourcePath(sec)).append(':')
                         .append(sec.getStartLine()).append('\n');
             }
             f = f.parent();

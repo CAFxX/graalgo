@@ -427,7 +427,7 @@ public class GoChan implements ChanOps.Chan {
         // UNPARK stashed by the drainer — no wakeup lost.
         // P2-M6: the send genuinely blocks — record it before parking.
         JfrEvents.channelBlock(w.handle, channelId, ChannelOp.SEND);
-        sched.parkCurrent(null, ParkReason.CHANNEL);
+        sched.parkCurrent(null, ParkReason.CHANNEL, "chan send");
         synchronized (this) {
             if (w.panicOnWake) {
                 Panic.throwPanic(GoStrings.of("send on closed channel"));
@@ -467,7 +467,7 @@ public class GoChan implements ChanOps.Chan {
         }
         // P2-M6: the receive genuinely blocks — record it before parking.
         JfrEvents.channelBlock(w.handle, channelId, ChannelOp.RECV);
-        sched.parkCurrent(null, ParkReason.CHANNEL);
+        sched.parkCurrent(null, ParkReason.CHANNEL, "chan receive");
         synchronized (this) {
             return new RecvResult(w.value, w.ok);
         }
