@@ -6,12 +6,15 @@
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
 # (generate/build/check/test-ci) plus the testing-strategy layers at their
-# cadence (phases/phase3/PLAN.md §5):
-#   layer 1 (smoke):            per-commit  — diffharness smoke corpus,
-#                               mutation-validated oracle (this job)
-#   layer 2 (conformance):      per-commit on frontend changes —
-#                               GOROOT/test language suite (`conformance` job,
-#                               paths-filtered)
+# cadence (SPEC §5):
+#   layer 1 (smoke):            per-commit  — `make all` -> snapshot-check:
+#                               the differential corpus under graalgo vs
+#                               gc's committed snapshot (this job); oracle
+#                               validated nightly by mutating graalgo
+#                               (`mutation.yml`)
+#   layer 2 (conformance):      per-commit on frontend/backend/driver
+#                               changes — GOROOT/test language suite
+#                               (`conformance.yml`, paths-filtered)
 #   layer 3 (stdlib+scripts):   per-release gate — wave corpora differential
 #                               (`stdlib-gate.yml`: weekly + manual dispatch)
 #   layer 4 (fuzz soak):        overnight per release — generative
@@ -81,13 +84,12 @@ jobs:
       - name: Fail on drift (generated files differ from committed)
         run: git diff --exit-code
 
-      - name: Layer 1 — smoke (diffharness, per-commit)
-        # Curated differential smoke corpus (46 programs, gc-a vs gc-b vs
-        # graalgo-P3SyncMain) with mutation-validated oracles. PHASE3_DIR
-        # defaults to this repo's internal/backend (the graalgo-sync-run
-        # product launcher); DH_GO falls back to PATH (setup-go).
-        # DH_TIMEOUT=90 gives the JVM backend headroom on shared runners.
-        # `make all` above built truffle+runtime+interop (required by the backend).
+      - name: Harness self-test (diffharness comparator, gc-vs-gc)
+        # Builds/vets/unit-tests the harness and checks the comparator on
+        # gc-vs-gc: no false positives on the unmutated corpus, rerun
+        # stability, sensitivity to mutated corpus programs. graalgo-vs-gc
+        # is `make all` -> snapshot-check above; mutating graalgo itself is
+        # the nightly mutation.yml.
         env:
           DH_TIMEOUT: "90"
         run: ./test/differential/run.sh
@@ -124,3 +126,6 @@ jobs:
 
       - name: make test (full differential suite)
         run: make test
+
+      - name: Slow Java unit tests (corpus differentials, stress)
+        run: make test-java-slow

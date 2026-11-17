@@ -87,10 +87,11 @@ func usage() {
 }
 
 type runFlags struct {
-	config  string
-	corpus  string
-	out     string
-	timeout int
+	config   string
+	corpus   string
+	out      string
+	timeout  int
+	backends string
 }
 
 func baseFlags(fs *flag.FlagSet) *runFlags {
@@ -99,6 +100,7 @@ func baseFlags(fs *flag.FlagSet) *runFlags {
 	fs.StringVar(&rf.corpus, "corpus", "corpus", "corpus directory")
 	fs.StringVar(&rf.out, "out", "results.json", "JSON report output path")
 	fs.IntVar(&rf.timeout, "timeout", 0, "per-program timeout seconds (0 = config default)")
+	fs.StringVar(&rf.backends, "backends", "", "comma-separated backend names to use, in order (default: all in the config)")
 	return rf
 }
 
@@ -109,6 +111,17 @@ func loadCfg(rf *runFlags) (*harness.Config, error) {
 	}
 	if rf.timeout > 0 {
 		cfg.TimeoutSec = rf.timeout
+	}
+	if rf.backends != "" {
+		var sel []harness.Backend
+		for _, name := range strings.Split(rf.backends, ",") {
+			b, err := findBackend(cfg, strings.TrimSpace(name))
+			if err != nil {
+				return nil, err
+			}
+			sel = append(sel, *b)
+		}
+		cfg.Backends = sel
 	}
 	return cfg, nil
 }

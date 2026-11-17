@@ -55,9 +55,9 @@ const (
 
 // TFile is one classified test/typeparam file.
 type TFile struct {
-	Name   string   `json:"file"`
-	Class  string   `json:"class"`
-	Detail string   `json:"detail"`
+	Name   string `json:"file"`
+	Class  string `json:"class"`
+	Detail string `json:"detail"`
 	// Expected is the reason code of a reviewed expected-divergence entry
 	// (srctest): the file still RUNS, and matching gc makes it STALE.
 	Expected string   `json:"expected,omitempty"`
