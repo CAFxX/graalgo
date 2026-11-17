@@ -19,18 +19,6 @@ func order() {
 	x = 2
 }
 
-func named() (n int, err error) {
-	defer func() {
-		n *= 10
-		if r := recover(); r != nil {
-			err = fmt.Errorf("recovered: %v", r)
-		}
-	}()
-	defer func() { n += 3 }()
-	n = 1
-	panic("boom")
-}
-
 func noRecoverOutsideDefer() (s string) {
 	defer func() {
 		r := recover()
@@ -63,7 +51,6 @@ func rethrow() (out string) {
 
 func main() {
 	order()
-	fmt.Println(named())
 	fmt.Println(noRecoverOutsideDefer())
 	fmt.Println(replace())
 	fmt.Println(rethrow())

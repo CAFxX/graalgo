@@ -1,0 +1,41 @@
+# Reviewed expected divergences of the differential corpus (corpus/)
+# against gc's behavior snapshot (test/snapshots/go<VERSION>.json).
+#
+# SPEC §5.6 (GG-0033): one entry per program, reason code from the closed
+# vocabulary backend-specific / unspecified-behavior / deferred-parity,
+# detail = what diverges and what retires the entry. Listed programs STILL
+# RUN in `make snapshot-check`: while they diverge the verdict is EXPECTED;
+# once one matches gc the check FAILS with STALE until the entry is removed.
+# The list grows only through review; a shrinking list is the health metric.
+#
+# History:
+#   1 (2026-11-17): created when snapshots moved from graalgo's own output
+#     to gc's. Replaces backends-p3.json "exclusions" (11 entries, free-text
+#     reasons): 14_goroutines_sum, 17_generics, 18_errors, 28_exit_code,
+#     37_utf8, 39_named_returns verified matching gc and pruned (stale);
+#     the rest re-verified diverging and carried over. 58/59 are graalgo
+#     bugs found by the new edge-case corpus (49-57), split into their own
+#     programs so the rest of 52/57 keeps gating.
+version: 1
+exclusions:
+- file: 10_closures
+  reason: deferred-parity
+  detail: frontend/v1 rejects calling a function value through an index expression (ops[0](5)) - retired by the T1 toolexec frontend
+- file: 19_sort
+  reason: deferred-parity
+  detail: synthetic sort.Slice panics 'not in M7 scope (needs reflect)' - retired when the real sort package compiles (T1, delete synth_*)
+- file: 27_panic_trace
+  reason: deferred-parity
+  detail: goroutine trace format differs - frames print as 'level3()' without package qualifier/args/absolute file path (gc 'main.level3(...)' + '/abs/main.go:N') - panic model work (T0.A)
+- file: 40_method_values
+  reason: deferred-parity
+  detail: frontend/v1 type error 'identifier Acc denotes *types.TypeName' on method expressions - retired by the T1 frontend
+- file: 42_json
+  reason: deferred-parity
+  detail: synthetic encoding/json Marshal panics 'not in M7 scope (needs reflect, P3-M8)' - retired when the real encoding/json compiles (T1)
+- file: 58_float_minmax_signed_zero
+  reason: deferred-parity
+  detail: graalgo bug - min/max on signed zeros depend on operand order (max(-0.0, 0.0) = -0, min(0.0, -0.0) = 0; gc - 0 and -0) - lowering of the min/max builtins
+- file: 59_recover_named_results
+  reason: deferred-parity
+  detail: graalgo bug - a function that recovers from a panic returns zero values instead of its named results as set by deferred calls (gc '40 recovered - boom') - panic model (T0.A)

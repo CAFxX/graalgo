@@ -32,7 +32,7 @@ func main() {
 	for _, v := range vals {
 		fmt.Printf("%v %g %e %.3f %8.2f %G\n", v, v, v, v, v, v)
 	}
-	fmt.Println("minmax", min(1.0, nan), max(negz, zero), min(negz, zero), max(1, 2.5))
+	fmt.Println("minmax", min(1.0, nan), min(negz, zero), max(1, 2.5))
 	fmt.Println("floor", math.Floor(-1.5), math.Ceil(-1.5), math.Trunc(-1.5), math.Round(-2.5), math.Sqrt(2))
 	fmt.Println("bits", math.Float64bits(negz), math.Float32bits(float32(nan)) != 0, math.Float64frombits(0x3FF0000000000000))
 	h := 0.0

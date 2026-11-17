@@ -22,11 +22,11 @@
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
-#               behavior snapshots (M10 WS I): re-runs the differential
-#               corpus under graalgo and fails on drift from the committed
-#               baseline in [test/snapshots/](test/snapshots/) (~1 min,
-#               parallel). Per-push: a refactor that changes observable
-#               behavior must fail loudly at the commit that caused it.
+#               behavior snapshots (SPEC 5.9): runs the differential
+#               corpus under graalgo and fails on any divergence from gc's
+#               committed snapshot in [test/snapshots/](test/snapshots/)
+#               that is not a reviewed, reason-coded expected divergence,
+#               and on stale expected-divergence entries.
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
@@ -102,9 +102,10 @@ GENERATED_SYNTH := \
 	internal/frontend/synth_textscanner.go
 GENERATED += $(GENERATED_SYNTH)
 # NOTE: [test/snapshots/](test/snapshots/)/go<VERSION>.json are also generated
-# and committed, but their generator is `make snapshot` (deliberate
-# re-baseline: toolchain upgrade or reviewed behavior change), NOT `make all`
-# — `make all` *verifies* them via snapshot-check instead of regenerating.
+# and committed, but their generator is `make snapshot` (gc's behavior on
+# the corpus: re-record when a corpus program changes or on a toolchain
+# upgrade), NOT `make all` — `make all` *verifies* graalgo against them via
+# snapshot-check.
 
 GO ?= $(HOME)/tools/go/bin/go
 
@@ -243,66 +244,55 @@ test: build
 	$(MAKE) -C internal/backend/runtime test
 	$(MAKE) -C internal/backend/interop test
 
-# Behavior snapshots (M10 WS I): graalgo's observable behavior on the
-# differential corpus ([test/differential/corpus/](test/differential/corpus/)),
-# recorded against the pinned Go toolchain — the upgrade baseline. See
-# [test/snapshots/README.md](test/snapshots/README.md) for the format.
+# Behavior snapshots (SPEC §5.9, GG-0036). The committed snapshot
+# [test/snapshots/](test/snapshots/)go<VERSION>.json records gc's (the
+# REFERENCE toolchain's) observable behavior on the differential corpus
+# ([test/differential/corpus/](test/differential/corpus/)), content-addressed
+# by program source hash. graalgo is checked against gc's snapshot; its own
+# output is never the baseline. See
+# [test/snapshots/README.md](test/snapshots/README.md).
 #
-# Backend: the product launcher P3SyncMain via
-# [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
-# (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
-# channel/scheduler support, so recording against it enshrines build
-# failures as the baseline and leaves P3SyncMain regressions invisible to
-# the per-push gate). The phase-1 config is retained for the typeparam and
-# srctest adapters (layer 2), which test the frontend.
+# `make snapshot` RE-RECORDS gc's behavior: run when a corpus program is
+# added/edited or for a toolchain upgrade (then triage any gc drift), and
+# commit the result. It never needs graalgo.
 #
-# `make snapshot` RE-RECORDS the baseline: run only for a toolchain upgrade
-# or a deliberately re-baselined behavior change, then commit the result.
-# `make snapshot-check` verifies the current tree against the committed
-# baseline and fails on drift (this is what per-push CI runs via `make all`).
+# `make snapshot-check` (per-push, via `make all`) runs every corpus program
+# under the product launcher (P3SyncMain, backends-p3.json) and compares
+# with the gc snapshot. Expected divergences are explicit, reviewed entries
+# with a SPEC §5.6 reason code in
+# [test/differential/corpus-exclusions.yaml](test/differential/corpus-exclusions.yaml);
+# an expected divergence that now matches gc FAILS (stale entry: prune it).
+# `-verify-ref gc-a` also re-runs gc and fails if gc no longer matches its
+# own snapshot. Exit 3 = infrastructure failure (no verdict).
+# Slice: `make snapshot-check SNAPSHOT_PROGRAMS=49_int_arith,50_shifts`.
 DH := test/differential
 SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
-# /tmp is a 512M tmpfs shared with other work and routinely full: keep go
-# build temps and harness scratch dirs on the persistent disk (same pattern
-# as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
+# /tmp may be a small shared tmpfs: keep go build temps and harness scratch
+# dirs on the persistent disk. $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
-# Snapshot harness parallelism: one JVM per job, each ~1.2GB RSS, with a
-# ~13s standalone run for a trivial program. A hardcoded -jobs 4 oversubscribes
-# small machines (2 CPUs: 4 JVMs push runs past the 60s timeout — 11/38
-# timedOut locally on this VM while jobs=1 is 0 drift), so size jobs to the
-# machine, capped at 4: CI runners have 4 vCPUs, so CI behavior is unchanged.
-# Jobs sizing alone leaves too little timeout margin: at jobs=2 on this 2-CPU
-# VM, contended runs measure ~42s (vs ~14s standalone), leaving only 1.4x
-# headroom under a 60s per-run timeout — ordinary third-party load trips
-# false timeouts (2/38 in the r50 run, both programs correct standalone).
-# The per-run timeout is therefore 120s (same as the harness build-step
-# timeout): a hang detector needs headroom well above contended latency,
-# and a true hang still fails fast relative to the ~20min suite.
-# Override with `make snapshot-check SNAPSHOT_JOBS=N`.
+# One JVM per job (~1.2GB RSS, ~7-13s per trivial program). Sized to the
+# machine, capped at 4 (CI runners have 4 vCPUs). The per-run timeout is
+# 120s: contended runs measure ~42s on a 2-CPU box. Shared hosts: run with
+# SNAPSHOT_JOBS=1 GRAALGO_JAVA_OPTS="-Xmx2g -XX:ActiveProcessorCount=4".
 SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
-# The diffharness resolves the graalgo backend launcher as
-# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
-# product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
-# Both wrappers now live in internal/backend/.
-snapshot: build
-	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
+SNAPSHOT_PROGRAMS ?=
+SNAPSHOT_ENV := TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" \
+	PHASE3_DIR="$(CURDIR)/internal/backend" PHASE1_DIR="$(CURDIR)/internal/backend"
+snapshot:
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) \
 	  $(GO) run ./cmd/diffharness snapshot record \
-	  -config backends-p3.json -corpus corpus -backend graalgo \
+	  -config backends-p3.json -corpus corpus -backend gc-a \
 	  -corpus-label test/differential/corpus \
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
-	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
-	  -graalgo-commit $(shell git rev-parse HEAD) \
-	  -jobs $(SNAPSHOT_JOBS) -timeout 120
+	  -toolchain $(SNAPSHOT_TOOLCHAIN) -runs 3 -jobs $(SNAPSHOT_JOBS) -timeout 120
 
 snapshot-check: build
-	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) \
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
+	  -expected corpus-exclusions.yaml -verify-ref gc-a \
+	  $(if $(SNAPSHOT_PROGRAMS),-programs $(SNAPSHOT_PROGRAMS)) \
 	  -jobs $(SNAPSHOT_JOBS) -timeout 120
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
