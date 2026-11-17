@@ -1,17 +1,32 @@
 #!/bin/bash
-# P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path.
+# P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path
+# (graalgo.sched.torture.TortureBattery in the runtime module's tests).
 #
-# Runs every leg, archives logs to hidden_files/torture/logs/, prints a
-# summary. Exit 0 iff every leg passes. A single failing leg is a bug to
-# fix; systematic divergence across legs is the kill trigger (PLAN.md §7).
+# Runs every leg, keeps logs in a scratch dir under the gitignored
+# <repo>/.tmp/ (override with TORTURE_LOG_DIR), prints a summary.
+# Exit status: 0 every leg passes; 1 a leg failed (a bug to fix; systematic
+# divergence across legs is the kill trigger); 3 infrastructure error
+# (java missing, runtime test classes not built, TortureBattery class not
+# loadable) — never reported as a leg failure.
+# Needs: make -C internal/backend/runtime out/test-classes/.built
 set -u
-cd "$(dirname "$0")/../.." || exit 1
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+RT="$ROOT/internal/backend/runtime"
+cd "$RT" || exit 3
 
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
-OUTDIR="hidden_files/torture/logs"
-mkdir -p "$OUTDIR"
 JAVA="$GRAALVM_HOME/bin/java"
+[ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; exit 3; }
+[ -f out/test-classes/graalgo/sched/torture/TortureBattery.class ] \
+  || { echo "INFRA: runtime test classes not built (make -C internal/backend/runtime out/test-classes/.built)" >&2; exit 3; }
+# Same classpath order as the runtime module's TEST_CP (runtime classes
+# shadow the truffle module's frozen stubs).
+CP="out/test-classes:out/classes:../truffle/out/classes:../interop/out/classes"
+for jar in ../truffle/lib/*.jar; do CP="$CP:$jar"; done
+mkdir -p "$ROOT/.tmp"
+OUTDIR="${TORTURE_LOG_DIR:-$(mktemp -d "$ROOT/.tmp/torture.XXXXXX")}"
+mkdir -p "$OUTDIR"
+echo "torture logs: $OUTDIR"
 
 # leg <logname> <JFLAGS> -- <LEG> [leg args...]
 leg() {
@@ -28,6 +43,10 @@ leg() {
     graalgo.sched.torture.TortureBattery "$legname" "$@" \
     > "$log" 2>&1
   local rc=$?
+  if grep -qE 'ClassNotFoundException|NoClassDefFoundError|Could not find or load main class' "$log"; then
+    echo "INFRA: leg $logname could not load its classes; log: $log" >&2
+    exit 3
+  fi
   grep -E "^(F[0-9]|RESULT)" "$log" | tail -4
   if [ $rc -ne 0 ]; then
     echo "LEG $logname FAILED (exit $rc); log: $log"
@@ -77,4 +96,4 @@ echo "==="
 echo "torture battery: $PASS pass, $FAIL fail"
 [ -n "$FAILED" ] && echo "failed legs:$FAILED"
 echo "RESULT=$([ $FAIL -eq 0 ] && echo PASS || echo FAIL)"
-exit $([ $FAIL -eq 0 ] && echo 0 || echo 2)
+exit $([ $FAIL -eq 0 ] && echo 0 || echo 1)
