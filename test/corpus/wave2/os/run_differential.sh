@@ -17,21 +17,18 @@
 #     the pinned "not in M8 scope" message on stderr (checked).
 set -u
 
-PIPE="$HOME/workspace/graalgo-m8-pipe"
-OSDIR="$PIPE/phases/phase3/corpus/wave2/os"
-export TMPDIR="$PIPE/phases/phase3/hidden_files/m8-tmp/os"
-export GOCACHE="$HOME/workspace/.gocache-m8-os"
-mkdir -p "$TMPDIR" "$GOCACHE"
-GO="$HOME/tools/go/bin/go"
-RUN="${GRAALGO_RUN:-$PIPE/phases/phase3/out/graalgo-sync-run}"
+# Exit status: 0 pass, 1 divergence, 3 infrastructure error (see
+# test/lib/infra.sh). Needs `make build` + `make generate` first.
+OSDIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=../../../lib/infra.sh
+. "$OSDIR/../../../lib/infra.sh"
+infra_setup_go
+infra_setup_graalgo
+infra_mktemp corpus-os
+export TMPDIR
+RUN="${GRAALGO_RUN[0]}"
 
 pass=0; fail=0; failed_cases=()
-
-if [[ ! -x "$RUN" ]]; then
-    echo "FAIL: graalgo launcher not found: $RUN"
-    echo "  build phase3 first (make main), or set GRAALGO_RUN"
-    exit 1
-fi
 
 # normalize <file>: expected divergences for 04.
 normalize() {
@@ -70,6 +67,7 @@ run_case() { # <name> <go-file> <expected-exit> [extra graalgo args...]
         (cd "$TMPDIR" && "$RUN" "$OSDIR/$gofile" >"$gr_out" 2>"$TMPDIR/$name.gr.err")
     fi
     gr_exit=$?
+    infra_check_run "$name" "$gr_exit" "$TMPDIR/$name.gr.err"
 
     local ok=1
     [[ $gc_exit -eq "$want_exit" ]] || { ok=0; echo "  gc exit=$gc_exit, want $want_exit"; }

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Layer-4 fuzz soak runner (phases/phase3/PLAN.md §5 layer 4, GG-0037):
+# Layer-4 fuzz soak runner (SPEC §5.4, GG-0037):
 # generative differential fuzzing, overnight per release.
 #
 # Runs the seeded program generator + differential harness
 # (harness/run_batch.py) in time-bounded batches until HOURS elapse, then
 # minimizes any divergences (harness/triage.py) and archives the findings.
 # Minimized divergences become permanent regressions per SPEC §5.4 (filed
-# under phases/phase3/fuzzing/findings/ with a minimized reproducer).
+# under tools/fuzz-soak/findings/ with a minimized reproducer).
 #
 # This is the OVERNIGHT slot. The CONTINUOUS adversarial track reserves the
 # same interface: `run_soak.sh --seeds A:B` runs one bounded batch (used by
@@ -26,7 +26,7 @@
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-# Repo root: fuzzing/run_soak.sh -> phase3 -> phases -> repo.
+# Repo root: tools/fuzz-soak/run_soak.sh -> tools -> repo.
 REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 export GR="${GR:-$REPO_ROOT}"
 export GO_BIN_DIR="${GO_BIN_DIR:-$HOME/tools/go/bin}"
@@ -76,7 +76,7 @@ if not os.path.exists(res):
 diverged = []
 for line in open(res):
     r = json.loads(line)
-    if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
+    if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL", "INFRA", "HARNESS_ERROR"):
         diverged.append(r)
 print(f"{len(diverged)} diverged programs to minimize")
 out = os.path.join(batchdir, "minimized")
@@ -109,10 +109,16 @@ fi
 # Overnight soak: batches of BATCH seeds until the deadline.
 seed=0
 batch=0
+infra_batches=0
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   echo "== soak batch $batch: seeds $seed:$((seed + BATCH)) =="
-  if ! run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch"; then
-    echo "batch $batch failed; continuing with next batch"
+  rc=0
+  run_batch "$seed:$((seed + BATCH))" "$OUT/batch-$batch" || rc=$?
+  if [ "$rc" = 3 ]; then
+    infra_batches=$((infra_batches + 1))
+    echo "batch $batch: INFRASTRUCTURE failure (no verdict for some programs)"
+  elif [ "$rc" != 0 ]; then
+    echo "batch $batch failed (rc=$rc); continuing with next batch"
   fi
   minimize_findings "$OUT/batch-$batch" || true
   seed=$((seed + BATCH))
@@ -127,10 +133,15 @@ total_div = 0
 for res in glob.glob(os.path.join(out, "batch-*", "results.jsonl")):
     for line in open(res):
         r = json.loads(line)
-        if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL"):
+        if r.get("result") not in ("PASS", "SCOPE", "GC_BUILD_FAIL", "INFRA", "HARNESS_ERROR"):
             total_div += 1
 rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
        "diverged_total": total_div}
 json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
 print(f"soak report: {rep}")
 EOF
+
+if [ "$infra_batches" != 0 ]; then
+  echo "soak: $infra_batches batch(es) had infrastructure failures (exit 3)" >&2
+  exit 3
+fi
