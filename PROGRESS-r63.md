@@ -180,3 +180,18 @@ re-established at tip 266bb9d0 (clean checkout, verified).
   this lane never ran git commit/push, no second r63 spawn exists in
   muse.db, and none is visible in subagent.list. No live duplicate found;
   this lane proceeds as the live r63.
+
+## Branch CI — full suite GREEN on 266bb9d0 (verified from the job log)
+
+- Run 44034075053 (workflow_dispatch on 266bb9d0, created 06:49:33Z by the
+  same unidentified committer): run-level SUCCESS. Job level:
+  full-suite job 133872624461 SUCCESS; build-and-check 133872624745 SUCCESS.
+- Job log /var/tmp/r63-ci-266bb9d0.zip (130,318 B, 1155 lines, downloaded
+  via the 302-without-Auth fetch): `make test` ran to completion —
+  **truffle 269 tests, 0 failures; runtime 234 tests, 0 failures;
+  interop 202 tests, 0 failures**; ZERO "FAIL " lines. The bi22 fix is
+  confirmed by CI on the exact SHA, all three stages green.
+- The code in tip caf15fac is byte-identical to 266bb9d0 except this
+  PROGRESS file; CI on caf15fac (dispatch run 44042123074, plus push run
+  44042064359 which skips the full-suite job by design) is the
+  authoritative check on the reported tip and was triggered 07:53Z.
