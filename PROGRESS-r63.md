@@ -143,3 +143,40 @@ last). Needs a design decision of its own; flagging, not fixing here.
   graalgo.frontend.GenericsCorpusTest, not a regression)
 - Branch: wt/f7467b85-7da6-4da0-b9ec-94631a60dafe/fix-redmaster-fullsuite-a0df481b-r63
   created locally from e2a2b394. Fix commit + this PROGRESS to be pushed next.
+
+## Re-verification of tip 266bb9d0 from disk (2026-11-17 ~07:30–07:40 UTC, post-reboot-210)
+
+Reboot #210 (boot 3978a52b, PID 1 start 07:20:21Z) wiped /var/tmp + /tmp,
+killing this lane's pre-reboot full-class run and all its logs. The fix
+survived ONLY as the pushed commits 64525712 + 266bb9d0. Worktree
+re-established at tip 266bb9d0 (clean checkout, verified).
+- `make build` rc=0 on the tip; test-classes built for truffle/runtime/
+  interop (all rc=0).
+- Full BuiltinsCorpusTest in ONE JVM (the CI-shape cross-run pollution
+  test): **22 tests, 0 failures** (bi01–bi22 incl. bi22), rc=0, ~441s
+  under load. Log /var/tmp/r63-bi-full.log. The tip's 22/0 claim is now
+  RE-VERIFIED by this lane, not taken on trust.
+- GoByteCellTest 5/5 PASS; MapGroupLayoutTest 6/6 PASS
+  (logs /var/tmp/r63-gobytecell.log, /var/tmp/r63-mapgrouplayout.log).
+- check_no_bridges.py over the FULL branch delta (origin/master
+  a0df481b...HEAD 266bb9d0): PASSED, rc=0.
+- GenericsCorpusTest testGn09FmtOverlay: two attempts FAILED with an
+  ENVIRONMENTAL cause only — the gc oracle's stderr carries
+  "error acquiring upload token: ... /home/hatch/.config/go/telemetry/
+  local/upload.token: disk quota exceeded" (home quota closed) and the
+  harness rejects the polluted oracle output. GOTELEMETRY=off does NOT
+  suppress it in go1.27.1. Workaround PROVEN directly: XDG_CONFIG_HOME=
+  /dev/shm/r63-config makes `go run` print a clean "hello 42" with empty
+  stderr. Re-run in the harness with that set: **PASS** (log
+  /var/tmp/r63-gn09-fixed.log, rc=0, 1 test 0 failures — took ~365s under
+  load 17+). gn09 was also GREEN in the r62 batches and on branch CI.
+  The fix cannot regress it (single-program behavior identical: the
+  table never changes within one run, so the added clear never fires).
+- Home quota still CLOSED (registry write failed EDQUOT 07:27Z; /tmp
+  fallback current). The gn09 telemetry failure is the same quota.
+- Provenance anomaly (for coordinator adjudication): commits 64525712 +
+  266bb9d0 were pushed 06:45:26Z under the "r63 lane" identity with
+  content byte-identical to this lane's uncommitted fix + analysis, but
+  this lane never ran git commit/push, no second r63 spawn exists in
+  muse.db, and none is visible in subagent.list. No live duplicate found;
+  this lane proceeds as the live r63.
