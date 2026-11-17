@@ -29,22 +29,20 @@
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
 # only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m7-int run_wave.sh strings
+# The repo root is the repository containing this script; override with
+# GRAALGO_ROOT=<checkout>. Toolchains: GO= (gc), GRAALVM_HOME=, and
+# GRAALGO_SYNC_RUN= (launcher) — see test/lib/infra.sh.
+#
+# Exit status: 0 pass, 1 divergence, 2 usage (unknown package dir),
+# 3 infrastructure error (launcher, java, backend build or gc toolchain
+# missing; JVM class-load failure). Needs `make build` + `make generate`.
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
-export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-
-# Tmp discipline (corpus/wave1/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
-export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
-mkdir -p "$TMPDIR"
+WAVE_DIR="$(pwd)"
+# shellcheck source=../../lib/infra.sh
+. "$WAVE_DIR/../../lib/infra.sh"
+infra_setup_go
 
 case "${1-all}" in
     all)
@@ -60,20 +58,13 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+infra_setup_graalgo
+# infra_mktemp exports TMPDIR, so the launcher's -Djava.io.tmpdir and
+# go build both stay off /tmp (a full /tmp tmpfs silently yields empty
+# output with exit 0 — methodology review finding).
+infra_mktemp corpus-wave1
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
-
-pass=0; fail=0; scopelimited=0
+pass=0; fail=0; scopelimited=0; infra=0
 # filter_stderr: drop the known JVM Unsafe warning lines.
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
@@ -85,12 +76,12 @@ build_gc() {
     if [ -f "$base.synthetic" ]; then
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
-        gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
-            || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
+        gopath="$(python3 "$WAVE_DIR/extract_synth_ref.py" \
+            "$GRAALGO_ROOT/internal/frontend" "$go" "$refdir")" \
+            || { echo "INFRA $base: synthetic-ref extraction failed"; infra=$((infra+1)); return 2; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
-            || { echo "FAIL $base: gc build failed (synthetic ref)"; return 1; }
+            || { echo "INFRA $base: gc build of the synthetic reference failed (no reference leg)"; infra=$((infra+1)); return 2; }
     else
         go build -o "$gcbin" "$go" \
             || { echo "FAIL $base: gc build failed"; return 1; }
@@ -111,7 +102,7 @@ run_scope_limited() { # $1 = go file
         # The program must still be valid runnable Go; otherwise it is a
         # corpus bug, not a scope limitation.
         local gcbin="$TMP/$base.gc"
-        build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
+        build_gc "$go" "$gcbin" || { [ $? = 2 ] || fail=$((fail+1)); return; }
         "$gcbin" > /dev/null 2>&1
         local gc_exit=$?
         if [ "$gc_exit" != 0 ]; then
@@ -127,9 +118,10 @@ run_one() { # $1 = go file, $2 = gmp
     local go="$1" gmp="$2" base="${1%.go}"
     local gcbin="$TMP/$base.gc"
 
-    build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
+    build_gc "$go" "$gcbin" || { [ $? = 2 ] || fail=$((fail+1)); return; }
     "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
     "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    infra_check_run "$base" "$gr_exit" "$TMP/gr.err"
 
     local ok=1
     cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base (gmp=$gmp): stdout differs"; }
@@ -175,5 +167,8 @@ for dir in "${dirs[@]}"; do
     done
 done
 
-echo "== differential: $pass passed, $scopelimited scope-limited, $fail failed =="
+echo "== differential: $pass passed, $scopelimited scope-limited, $fail failed, $infra infra-error =="
+# An infra error means part of the corpus produced no verdict: exit 3
+# (never a pass, never a divergence) — the counts above say what ran.
+[ "$infra" = 0 ] || exit "$INFRA_EXIT"
 [ "$fail" = 0 ]

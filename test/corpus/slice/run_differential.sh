@@ -2,25 +2,18 @@
 # Differential runner for the P3-M4 slice corpus (GG-0020): each program
 # runs under stock gc 1.27.1 (built binary) and under graalgo-sync-run.
 # Compares stdout bytes and exit codes. JVM Unsafe warnings filtered.
+#
+# Exit status: 0 pass, 1 divergence, 3 infrastructure error (launcher,
+# java, backend build or gc toolchain missing; JVM class-load failure) —
+# see test/lib/infra.sh. Needs `make build` + `make generate` first.
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P1="$GR/phases/phase1"
-P2="$GR/phases/phase2"
-export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
-
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# shellcheck source=../../lib/infra.sh
+. "../../lib/infra.sh"
+infra_setup_go
+infra_setup_graalgo
+infra_mktemp corpus-slice
 
 pass=0; fail=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
@@ -31,6 +24,7 @@ run_one() {
     go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
     "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
     "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    infra_check_run "$base" "$gr_exit" "$TMP/gr.err"
     local ok=1
     cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base (gmp=$gmp): stdout differs"; }
     if [ "$gc_exit" != "$gr_exit" ]; then
