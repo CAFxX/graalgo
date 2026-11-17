@@ -17,9 +17,7 @@ import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * The {@code "reflectop"} wire node (P3-M8, wave 2, reflect package).

@@ -138,11 +138,13 @@ public final class GoMap {
     }
 
     /**
-     * Snapshot of the present keys, in table order. Used by range-over-map:
-     * entries deleted mid-iteration are skipped by re-checking
-     * {@link #containsKey} at production time (Go spec: a not-yet-reached
-     * entry removed during iteration is not produced); entries created
-     * mid-iteration are never produced (the spec permits skipping them).
+     * Snapshot of the keys present at call time, in table order: exactly
+     * the keys in OCCUPIED slots when this method runs. Callers iterate
+     * the snapshot directly; nothing re-checks {@link #containsKey} at
+     * production time, so an entry deleted mid-iteration may still be
+     * produced (the Go spec permits producing or skipping it), and
+     * entries created mid-iteration are never produced (the spec permits
+     * skipping them).
      */
     public Object[] keysSnapshot() {
         Object[] out = new Object[size];
@@ -156,10 +158,12 @@ public final class GoMap {
     }
 
     /**
-     * Snapshot of the present entries, in table order (fix-redmaster-r59:
-     * the header-view image builder distributes entries across groups).
-     * Entries deleted mid-iteration are skipped by re-checking
-     * {@link #containsKey} at production time (see {@link #keysSnapshot}).
+     * Snapshot of the entries present at call time, in table order
+     * (fix-redmaster-r59: the header-view image builder distributes
+     * entries across groups): exactly the entries in OCCUPIED slots
+     * when this method runs. As with {@link #keysSnapshot}, nothing
+     * re-checks {@link #containsKey} at production time; the snapshot
+     * is fixed at build time.
      */
     public Entry[] entriesSnapshot() {
         Entry[] out = new Entry[size];
