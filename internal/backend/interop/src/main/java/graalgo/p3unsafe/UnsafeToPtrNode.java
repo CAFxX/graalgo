@@ -1712,9 +1712,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * existing loud derivation failure), the target is wider than one
      * byte (sub-word multi-byte reads are not minted), or the offset
      * lies outside the storage: offsets at/above the width are NOT
-     * minted, so cross-element reads stay with derivedPointer (which
-     * indexes the backing array correctly) and out-of-variable reads
-     * keep trapping instead of reading extension bytes.
+     * minted here, and out-of-variable reads keep trapping instead of
+     * reading extension bytes. (Array-element boundaries of multi-byte
+     * elements are minted by arrayElementBytePointer below: derivedPointer
+     * returns the whole element for a boundary offset, which is wrong for
+     * a byte target. Single-byte elements are NOT minted there: every
+     * offset of a byte array is a boundary and derivedPointer already
+     * indexes it correctly — and minting would change the pointer's
+     * referent shape from ArrayRef to GoByteCell, which bulk consumers
+     * such as unsafe.String reject; see arrayElementBytePointer.)
      */
     private Object byteCellPointer(Object referent, long byteOffset) {
         if (elemSize != 1 || byteOffset <= 0 || byteOffset >= 8) {
@@ -1757,13 +1763,25 @@ public final class UnsafeToPtrNode extends GoExprNode {
      * A byte pointer into one element of a primitive Java array (r69
      * C1/F1): {@code byteOffset} is relative to element {@code baseIndex};
      * decompose it into whole elements plus a within-element byte. A zero
-     * remainder is an element boundary — derivedPointer owns it (null).
-     * A nonzero remainder inside a primitive integral element mints a
+     * remainder is an element boundary — byte 0 of the element at
+     * {@code baseIndex + skip}. For multi-byte elements it is minted here,
+     * NOT left to derivedPointer: derivedPointer returns the whole element
+     * as an ArrayRef for a boundary offset, and dereferencing that as a
+     * byte yields the full element word (e.g. 0x55667788 for byte 0 of
+     * arr[1]) instead of its first byte. For single-byte elements the
+     * boundary is NOT minted: every offset of a byte array is a boundary
+     * and derivedPointer already indexes it correctly — minting would
+     * change the pointer's referent shape from ArrayRef to GoByteCell,
+     * which bulk consumers reject (UnsafeOps.stringOf only accepts
+     * ArrayRef/GoSlice/array/GoString referents, so unsafe.String and
+     * reflect Name/String over a minted pointer panic; r69 bisected
+     * %#v of a map and unsafe.String at a nonzero offset to this).
+     * A byte target inside a primitive integral element mints a
      * {@link GoByteCell} over that element's {@link GoArrayCell}, so
-     * in-element bytes read exactly and writes alias the element.
-     * Anything else returns null so derivedPointer keeps its existing
-     * behavior: non-integral elements (float/bool/object/nested arrays),
-     * and out-of-range elements (which derivedPointer reports loudly).
+     * bytes read exactly and writes alias the element. Anything else
+     * returns null so derivedPointer keeps its existing behavior:
+     * non-integral elements (float/bool/object/nested arrays), and
+     * out-of-range elements (which derivedPointer reports loudly).
      * Signedness of the element kind is immaterial here: byte reads are
      * masked to the element width and writes narrow to the low bits, so
      * the signed kinds are used throughout.
@@ -1775,7 +1793,10 @@ public final class UnsafeToPtrNode extends GoExprNode {
         }
         long skip = byteOffset / es;
         long within = byteOffset % es;
-        if (within == 0) {
+        if (within == 0 && es == 1) {
+            // Single-byte element boundary: derivedPointer owns it.
+            // (See javadoc above: minting here would break unsafe.String
+            // and reflect Name/String, which need the ArrayRef shape.)
             return null;
         }
         GoKind ek = integralArrayElemKind(array);
