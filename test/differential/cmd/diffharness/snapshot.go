@@ -37,6 +37,7 @@ package main
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -50,6 +51,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"diffharness/internal/harness"
 )
@@ -73,6 +75,37 @@ type SnapshotEntry struct {
 	TimedOut     bool   `json:"timedOut"`
 	Stdout       string `json:"stdout"`
 	Stderr       string `json:"stderr"`
+	// Output that is not valid UTF-8 cannot round-trip through a JSON
+	// string (encoding/json substitutes U+FFFD, silently changing the
+	// recorded bytes); it is stored base64-encoded here instead and the
+	// text field is left empty. See encodeBytes/decodeBytes.
+	StdoutBase64 string `json:"stdoutBase64,omitempty"`
+	StderrBase64 string `json:"stderrBase64,omitempty"`
+}
+
+// encodeBytes moves non-UTF-8 output into the base64 fields (on write).
+func (e *SnapshotEntry) encodeBytes() {
+	if !utf8.ValidString(e.Stdout) {
+		e.StdoutBase64, e.Stdout = base64.StdEncoding.EncodeToString([]byte(e.Stdout)), ""
+	}
+	if !utf8.ValidString(e.Stderr) {
+		e.StderrBase64, e.Stderr = base64.StdEncoding.EncodeToString([]byte(e.Stderr)), ""
+	}
+}
+
+// decodeBytes restores base64-stored output (on read).
+func (e *SnapshotEntry) decodeBytes() error {
+	for _, p := range []struct{ b64, dst *string }{{&e.StdoutBase64, &e.Stdout}, {&e.StderrBase64, &e.Stderr}} {
+		if *p.b64 == "" {
+			continue
+		}
+		raw, err := base64.StdEncoding.DecodeString(*p.b64)
+		if err != nil {
+			return fmt.Errorf("program %s: bad base64 output: %w", e.Name, err)
+		}
+		*p.dst, *p.b64 = string(raw), ""
+	}
+	return nil
 }
 
 // SnapshotFile is the on-disk behavior snapshot.
@@ -376,6 +409,9 @@ func cmdSnapshotRecord(args []string) error {
 	if err := os.MkdirAll(filepath.Dir(sf.out), 0o755); err != nil {
 		return err
 	}
+	for i := range snap.Programs {
+		snap.Programs[i].encodeBytes()
+	}
 	if err := writeJSON(sf.out, snap); err != nil {
 		return err
 	}
@@ -504,6 +540,11 @@ func readSnapshot(path string) (*SnapshotFile, error) {
 	}
 	if snap.Normalizer != snapshotNormalizer {
 		return nil, fmt.Errorf("snapshot normalizer %q != this tool's %q: re-record with `make snapshot`", snap.Normalizer, snapshotNormalizer)
+	}
+	for i := range snap.Programs {
+		if err := snap.Programs[i].decodeBytes(); err != nil {
+			return nil, err
+		}
 	}
 	return &snap, nil
 }

@@ -172,10 +172,16 @@ func cmdRun(args []string) error {
 		Skipped:     skipped,
 		Summary:     map[string]int{},
 	}
-	diverged := 0
+	diverged, infra := 0, 0
 	for _, p := range progs {
 		outs := runOne(cfg, p, workRoot)
 		for i := 1; i < len(outs); i++ {
+			if reInfra.MatchString(outs[i].BuildLog) || reInfra.MatchString(outs[i].Stderr) {
+				infra++
+				fmt.Printf("INFRA    %-28s %s: no verdict (launcher/frontend failure): %s\n", p.Name, outs[i].Backend,
+					trunc(strings.ReplaceAll(outs[i].BuildLog+outs[i].Stderr, "\n", "\\n"), 200))
+				continue
+			}
 			c := harness.Compare(outs[0], outs[i])
 			rep.Comparisons = append(rep.Comparisons, c)
 			status := "SAME    "
@@ -194,10 +200,14 @@ func cmdRun(args []string) error {
 	rep.Summary["same"] = len(rep.Comparisons) - diverged
 	rep.Summary["diverged"] = diverged
 	rep.Summary["skipped"] = len(skipped)
+	rep.Summary["infra"] = infra
 	if err := writeJSON(rf.out, rep); err != nil {
 		return err
 	}
-	fmt.Printf("run: %d comparisons, %d diverged, report %s\n", len(rep.Comparisons), diverged, rf.out)
+	fmt.Printf("run: %d comparisons, %d diverged, %d infra, report %s\n", len(rep.Comparisons), diverged, infra, rf.out)
+	if infra > 0 {
+		return fmt.Errorf("%w: %d comparisons without a verdict", errInfra, infra)
+	}
 	if diverged > 0 {
 		return fmt.Errorf("%d divergences", diverged)
 	}

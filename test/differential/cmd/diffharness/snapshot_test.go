@@ -147,3 +147,24 @@ func TestSelectChecked_ContentAddressed(t *testing.T) {
 		t.Errorf("edited source not detected: %v", err)
 	}
 }
+
+func TestSnapshotRoundTripsInvalidUTF8(t *testing.T) {
+	// encoding/json replaces invalid UTF-8 with U+FFFD: without the base64
+	// fallback a gc snapshot of a program printing raw bytes would be
+	// silently wrong (found by corpus 51_int_conversions).
+	raw := "copy h\xff\xc3\xa9\xe2\x82\n"
+	path := filepath.Join(t.TempDir(), "s.json")
+	e := SnapshotEntry{Name: "p", Stdout: raw, Stderr: "ok"}
+	e.encodeBytes()
+	snap := SnapshotFile{Format: snapshotFormat, Normalizer: snapshotNormalizer, Programs: []SnapshotEntry{e}}
+	if err := writeJSON(path, snap); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSnapshot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Programs[0].Stdout != raw || got.Programs[0].Stderr != "ok" {
+		t.Fatalf("output did not round-trip: %q / %q", got.Programs[0].Stdout, got.Programs[0].Stderr)
+	}
+}
