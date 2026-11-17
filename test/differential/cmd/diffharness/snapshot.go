@@ -1,41 +1,45 @@
-// Command diffharness snapshot — behavior snapshots (M10 WS I).
+// Command diffharness snapshot — behavior snapshots (SPEC §5.9, GG-0036).
 //
-// A behavior snapshot records graalgo's observable behavior on the
-// differential corpus against a pinned Go toolchain (the upgrade baseline):
-// per program, the normalized stdout/stderr bytes, exit code, build outcome
-// and timeout flag. Future toolchain upgrades or refactors diff against the
-// recorded file to detect behavior drift.
+// A behavior snapshot records the REFERENCE toolchain's (gc's) observable
+// behavior on the differential corpus: per program, the normalized
+// stdout/stderr, exit code, build outcome, timeout flag, plus the SHA-256
+// of the program source (content addressing: an edited program without a
+// re-record fails loudly). graalgo is then checked against gc's snapshot —
+// graalgo's own output is never the baseline.
 //
 // Modes:
 //
-//	snapshot record -config PATH -corpus DIR -backend NAME -out FILE
-//	    Run every corpus program under the named backend, normalize the
-//	    observables with the same rules the differential comparator uses,
-//	    self-consistency-gate them (each program runs -runs times; any
-//	    nondeterminism fails the recording instead of entering the
-//	    baseline), and write the snapshot JSON to -out.
+//	snapshot record -config PATH -corpus DIR -backend gc-a -out FILE
+//	    Run every corpus program under the reference backend -runs times
+//	    (self-consistency gate: any nondeterminism fails the recording)
+//	    and write the snapshot JSON.
 //
-//	snapshot check -config PATH -corpus DIR -backend NAME -snapshot FILE
-//	    Re-run every recorded program once and fail on any drift from the
-//	    snapshot file. Also fails if the config's exclusion list no longer
-//	    matches the snapshot's (coverage changed: re-record deliberately).
+//	snapshot check -config PATH -corpus DIR -backend graalgo -snapshot FILE
+//	              -expected corpus-exclusions.yaml [-programs a,b] [-verify-ref gc-a]
+//	    Run the corpus (or the -programs slice) under the backend and
+//	    compare against the gc snapshot. Verdicts per program:
+//	      MATCH     same as gc
+//	      DRIFT     differs from gc, not listed as an expected divergence  -> fail
+//	      EXPECTED  differs from gc, listed (reason-coded, reviewed)       -> ok
+//	      STALE     listed as expected divergence but now matches gc       -> fail
+//	                (prune the entry: a shrinking list is the health metric)
+//	      INFRA     the run failed for an infrastructure reason (e.g. a
+//	                corrupted frontend export) on every retry               -> fail, exit 3
+//	    With -verify-ref, the reference backend is re-run too and any
+//	    difference from the snapshot is REF-DRIFT (upstream behavior
+//	    change or an unrecorded corpus edit) -> fail.
 //
-// Normalization (what is NOT recorded):
-//   - run durations (timings are not semantic observables);
-//   - machine-specific paths: the corpus root and the launcher path are
-//     scrubbed to {CORPUS}/{GRAALGO_RUN}; the harness already scrubs its
-//     work root to {WORK};
-//   - code addresses, goroutine ids, .go line numbers (harness.Normalize),
-//     backend stderr noise (backend stderrFilters, e.g. the Truffle Unsafe
-//     warnings).
-//
-// Deliberately recorded exactly: message text, exit codes, timeout flags,
-// build-failure logs (a program that fails to build under graalgo has
-// observable behavior too — the failure is the baseline).
+// Normalization: harness.Normalize (goroutine ids, trace addresses) and
+// per-program opt-in stdout rules, plus backend noise filters; on top of
+// that machine-specific paths (the corpus root, launcher path) are
+// scrubbed to {CORPUS}/{GRAALGO_RUN}.
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -50,42 +54,40 @@ import (
 	"diffharness/internal/harness"
 )
 
-// snapshotFormatV1 identifies the on-disk format. Bump when the recorded
-// fields or the normalization rules change; old snapshots then fail the
-// check loudly instead of drifting silently.
-const snapshotFormatV1 = "graalgo-behavior-snapshot/v1"
+// snapshotFormat identifies the on-disk format. v2: recorded under the
+// reference toolchain, content-addressed by source hash, no baked-in
+// exclusions (those live in the reviewed expected-divergence file).
+const snapshotFormat = "graalgo-behavior-snapshot/v2"
 
-// snapshotNormalizerV1 identifies the normalization rule set applied at
-// record time: harness.Normalize plus the backend's stderrFilters from the
-// config used for the recording. If either changes, re-record under a new
-// normalizer id.
-const snapshotNormalizerV1 = "harness.Normalize+backend.stderrFilters/v1"
+// snapshotNormalizer identifies the normalization rule set applied at
+// record time. Bump on any rule change: an old snapshot then fails loudly.
+const snapshotNormalizer = "harness.Normalize/v2(trace-addresses-only)+NORMALIZE-opt-in+noiseSets"
 
 // SnapshotEntry is the recorded observable behavior of one program.
 type SnapshotEntry struct {
-	Name     string   `json:"name"`
-	Args     []string `json:"args"`
-	Stdin    string   `json:"stdin"`
-	BuildOK  bool     `json:"buildOk"`
-	BuildLog string   `json:"buildLog"`
-	ExitCode int      `json:"exitCode"`
-	TimedOut bool     `json:"timedOut"`
-	Stdout   string   `json:"stdout"`
-	Stderr   string   `json:"stderr"`
+	Name         string `json:"name"`
+	SourceSHA256 string `json:"sourceSha256"`
+	BuildOK      bool   `json:"buildOk"`
+	BuildLog     string `json:"buildLog"`
+	ExitCode     int    `json:"exitCode"`
+	TimedOut     bool   `json:"timedOut"`
+	Stdout       string `json:"stdout"`
+	Stderr       string `json:"stderr"`
 }
 
 // SnapshotFile is the on-disk behavior snapshot.
 type SnapshotFile struct {
-	Format        string              `json:"format"`
-	Toolchain     string              `json:"toolchain"`
-	Backend       string              `json:"backend"`
-	GraalgoCommit string              `json:"graalgoCommit"`
-	RecordedAt    string              `json:"recordedAt"`
-	Corpus        string              `json:"corpus"`
-	Normalizer    string              `json:"normalizer"`
-	Excluded      []harness.Exclusion `json:"excluded"`
-	Programs      []SnapshotEntry     `json:"programs"`
+	Format     string          `json:"format"`
+	Toolchain  string          `json:"toolchain"`
+	Reference  string          `json:"reference"`
+	RecordedAt string          `json:"recordedAt"`
+	Corpus     string          `json:"corpus"`
+	Normalizer string          `json:"normalizer"`
+	Programs   []SnapshotEntry `json:"programs"`
 }
+
+// errInfra marks an infrastructure failure (exit status 3 from main).
+var errInfra = errors.New("infrastructure failure")
 
 func cmdSnapshot(args []string) error {
 	if len(args) < 1 {
@@ -107,36 +109,43 @@ type snapshotFlags struct {
 	corpusLabel  string
 	backend      string
 	toolchain    string
-	commit       string
 	out          string
 	snapshotPath string
+	expected     string
+	programs     string
+	verifyRef    string
 	runs         int
 	jobs         int
 	timeout      int
+	retries      int
 }
 
 func baseSnapshotFlags(fs *flag.FlagSet, mode string) *snapshotFlags {
 	sf := &snapshotFlags{}
 	fs.StringVar(&sf.config, "config", "backends.json", "backend config JSON")
 	fs.StringVar(&sf.corpus, "corpus", "corpus", "corpus directory")
-	fs.StringVar(&sf.corpusLabel, "corpus-label", "", "repo-relative corpus label recorded in the snapshot (default: -corpus value)")
-	fs.StringVar(&sf.backend, "backend", "graalgo", "backend name to snapshot")
-	fs.IntVar(&sf.jobs, "jobs", 4, "parallel program runs")
+	fs.IntVar(&sf.jobs, "jobs", 1, "parallel program runs")
 	fs.IntVar(&sf.timeout, "timeout", 0, "per-program timeout seconds (0 = config default)")
 	if mode == "record" {
+		fs.StringVar(&sf.backend, "backend", "gc-a", "REFERENCE backend to record (gc)")
+		fs.StringVar(&sf.corpusLabel, "corpus-label", "", "repo-relative corpus label recorded in the snapshot (default: -corpus value)")
 		fs.StringVar(&sf.out, "out", "", "snapshot JSON output path (required)")
 		fs.StringVar(&sf.toolchain, "toolchain", "", "toolchain label, e.g. go1.27.1 (default: from `go version`)")
-		fs.StringVar(&sf.commit, "graalgo-commit", "unknown", "graalgo git commit the snapshot was recorded from")
-		fs.IntVar(&sf.runs, "runs", 2, "runs per program; all must agree (self-consistency gate)")
+		fs.IntVar(&sf.runs, "runs", 3, "runs per program; all must agree (self-consistency gate)")
 	} else {
-		fs.StringVar(&sf.snapshotPath, "snapshot", "", "snapshot JSON to check against (required)")
+		fs.StringVar(&sf.backend, "backend", "graalgo", "backend to check against the gc snapshot")
+		fs.StringVar(&sf.snapshotPath, "snapshot", "", "gc snapshot JSON to check against (required)")
+		fs.StringVar(&sf.expected, "expected", "", "reviewed expected-divergence file (reason-coded); empty = none")
+		fs.StringVar(&sf.programs, "programs", "", "comma-separated program names to check (default: whole corpus)")
+		fs.StringVar(&sf.verifyRef, "verify-ref", "", "also re-run this reference backend and fail on drift from the snapshot")
+		fs.IntVar(&sf.retries, "infra-retries", 2, "re-runs of a program whose failure has an infrastructure signature")
 	}
 	return sf
 }
 
 // reGraalgoRun scrubs the launcher path out of recorded text: the absolute
 // checkout path is environmental, not behavioral.
-var reGraalgoRun = regexp.MustCompile(`\S*/graalgo-run`)
+var reGraalgoRun = regexp.MustCompile(`\S*/graalgo(-sync)?-run`)
 
 // scrubEnvPaths replaces machine-specific paths with stable tokens so a
 // snapshot recorded on one checkout verifies on another.
@@ -146,6 +155,16 @@ func scrubEnvPaths(s, corpusRoot string) string {
 	}
 	s = reGraalgoRun.ReplaceAllString(s, "{GRAALGO_RUN}")
 	return s
+}
+
+// reInfra matches failures that are about the test infrastructure, not the
+// program: JVM class-loading/launch failures and a corrupted frontend
+// export (observed: gofrontend emitting a stray NUL byte under heavy host
+// load, then the launcher's JSON parse fails).
+var reInfra = regexp.MustCompile(`JSON parse error|JSON encoding failed|ClassNotFoundException|NoClassDefFoundError|Could not find or load main class|Could not create the Java Virtual Machine|Could not reserve enough space|insufficient memory for the Java Runtime`)
+
+func isInfra(e SnapshotEntry) bool {
+	return reInfra.MatchString(e.BuildLog) || reInfra.MatchString(e.Stderr)
 }
 
 func findBackend(cfg *harness.Config, name string) (*harness.Backend, error) {
@@ -161,13 +180,20 @@ func findBackend(cfg *harness.Config, name string) (*harness.Backend, error) {
 	return nil, fmt.Errorf("backend %q not in config (have: %s)", name, strings.Join(names, ", "))
 }
 
+func sourceHash(p harness.Program) (string, error) {
+	data, err := os.ReadFile(p.Main)
+	if err != nil {
+		return "", err
+	}
+	h := sha256.Sum256(data)
+	return hex.EncodeToString(h[:]), nil
+}
+
 // entryFromOutcome converts a harness outcome into a snapshot entry,
 // applying the machine-path scrubbing on top of the harness normalization.
 func entryFromOutcome(prog harness.Program, oc harness.Outcome, corpusRoot string) SnapshotEntry {
 	return SnapshotEntry{
 		Name:     prog.Name,
-		Args:     []string{},
-		Stdin:    "",
 		BuildOK:  oc.BuildOK,
 		BuildLog: scrubEnvPaths(oc.BuildLog, corpusRoot),
 		ExitCode: oc.ExitCode,
@@ -177,28 +203,34 @@ func entryFromOutcome(prog harness.Program, oc harness.Outcome, corpusRoot strin
 	}
 }
 
-// diffEntries compares two entries field by field, returning a compact
-// human-readable description of the first difference ("" when equal).
+// diffEntries compares two recordings of the SAME backend field by field
+// (build logs included), returning the first difference ("" when equal).
 func diffEntries(want, got SnapshotEntry) string {
+	if d := diffBehavior(want, got); d != "" {
+		return d
+	}
+	return diffText("buildLog", want.BuildLog, got.BuildLog)
+}
+
+// diffBehavior compares the observable behavior of two entries that may
+// come from different toolchains: build outcome, timeout, exit code,
+// stdout, stderr. Build logs are compiler-specific and are not compared.
+func diffBehavior(want, got SnapshotEntry) string {
 	if want.BuildOK != got.BuildOK {
-		return fmt.Sprintf("buildOk: want=%v got=%v", want.BuildOK, got.BuildOK)
+		return fmt.Sprintf("buildOk: want=%v got=%v %s", want.BuildOK, got.BuildOK,
+			trunc(strings.ReplaceAll(strings.TrimSpace(got.BuildLog+want.BuildLog), "\n", "\\n"), 300))
 	}
 	if want.TimedOut != got.TimedOut {
 		return fmt.Sprintf("timedOut: want=%v got=%v", want.TimedOut, got.TimedOut)
 	}
 	if want.ExitCode != got.ExitCode {
-		return fmt.Sprintf("exitCode: want=%d got=%d", want.ExitCode, got.ExitCode)
+		return fmt.Sprintf("exitCode: want=%d got=%d (stderr: %s)", want.ExitCode, got.ExitCode,
+			trunc(strings.ReplaceAll(strings.TrimSpace(got.Stderr), "\n", "\\n"), 300))
 	}
 	if d := diffText("stdout", want.Stdout, got.Stdout); d != "" {
 		return d
 	}
-	if d := diffText("stderr", want.Stderr, got.Stderr); d != "" {
-		return d
-	}
-	if d := diffText("buildLog", want.BuildLog, got.BuildLog); d != "" {
-		return d
-	}
-	return ""
+	return diffText("stderr", want.Stderr, got.Stderr)
 }
 
 func diffText(field, a, b string) string {
@@ -256,7 +288,6 @@ func goToolchainVersion() string {
 	if err != nil {
 		return "unknown"
 	}
-	// "go version go1.27.1 linux/amd64" -> "go1.27.1"
 	f := strings.Fields(string(out))
 	if len(f) >= 3 {
 		return f[2]
@@ -264,24 +295,27 @@ func goToolchainVersion() string {
 	return "unknown"
 }
 
-func loadSnapshotDeps(sf *snapshotFlags) (*harness.Config, *harness.Backend, []harness.Program, []harness.Exclusion, error) {
+func loadSnapshotDeps(sf *snapshotFlags) (*harness.Config, *harness.Backend, []harness.Program, string, error) {
 	cfg, err := harness.LoadConfig(sf.config)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	if sf.timeout > 0 {
 		cfg.TimeoutSec = sf.timeout
 	}
 	b, err := findBackend(cfg, sf.backend)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
 	progs, err := harness.DiscoverCorpus(sf.corpus)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, "", err
 	}
-	kept, skipped := harness.ApplyExclusions(progs, cfg)
-	return cfg, b, kept, skipped, nil
+	corpusRoot, err := filepath.Abs(sf.corpus)
+	if err != nil {
+		return nil, nil, nil, "", fmt.Errorf("resolve corpus dir: %w", err)
+	}
+	return cfg, b, progs, corpusRoot, nil
 }
 
 func cmdSnapshotRecord(args []string) error {
@@ -303,13 +337,9 @@ func cmdSnapshotRecord(args []string) error {
 	if label == "" {
 		label = sf.corpus
 	}
-	cfg, b, progs, skipped, err := loadSnapshotDeps(sf)
+	cfg, b, progs, corpusRoot, err := loadSnapshotDeps(sf)
 	if err != nil {
 		return err
-	}
-	corpusRoot, err := filepath.Abs(sf.corpus)
-	if err != nil {
-		return fmt.Errorf("resolve corpus dir: %w", err)
 	}
 	workRoot, err := os.MkdirTemp("", "diffharness-snapshot-*")
 	if err != nil {
@@ -318,31 +348,27 @@ func cmdSnapshotRecord(args []string) error {
 	defer os.RemoveAll(workRoot)
 
 	snap := SnapshotFile{
-		Format:        snapshotFormatV1,
-		Toolchain:     sf.toolchain,
-		Backend:       b.Name,
-		GraalgoCommit: sf.commit,
-		RecordedAt:    time.Now().UTC().Format(time.RFC3339),
-		Corpus:        label,
-		Normalizer:    snapshotNormalizerV1,
-		Excluded:      skipped,
+		Format:     snapshotFormat,
+		Toolchain:  sf.toolchain,
+		Reference:  b.Name,
+		RecordedAt: time.Now().UTC().Format(time.RFC3339),
+		Corpus:     label,
+		Normalizer: snapshotNormalizer,
 	}
-	if snap.Excluded == nil {
-		snap.Excluded = []harness.Exclusion{}
-	}
-	// Self-consistency gate: run every program -runs times; any
-	// nondeterminism fails the recording instead of entering the baseline.
 	for r := 0; r < sf.runs; r++ {
 		outs := runAll(cfg, b, progs, workRoot, sf.jobs)
 		for i, p := range progs {
 			e := entryFromOutcome(p, outs[i], corpusRoot)
+			if e.SourceSHA256, err = sourceHash(p); err != nil {
+				return err
+			}
 			if r == 0 {
 				snap.Programs = append(snap.Programs, e)
 				continue
 			}
 			if d := diffEntries(snap.Programs[i], e); d != "" {
-				return fmt.Errorf("self-consistency gate: program %s nondeterministic between run 1 and run %d: %s",
-					p.Name, r+1, d)
+				return fmt.Errorf("self-consistency gate: program %s nondeterministic under %s between run 1 and run %d: %s",
+					p.Name, b.Name, r+1, d)
 			}
 		}
 		fmt.Printf("record: run %d/%d complete (%d programs)\n", r+1, sf.runs, len(progs))
@@ -353,9 +379,14 @@ func cmdSnapshotRecord(args []string) error {
 	if err := writeJSON(sf.out, snap); err != nil {
 		return err
 	}
-	fmt.Printf("record: wrote %d programs (+%d excluded) to %s [toolchain=%s backend=%s commit=%s]\n",
-		len(snap.Programs), len(snap.Excluded), sf.out, snap.Toolchain, snap.Backend, snap.GraalgoCommit)
+	fmt.Printf("record: wrote %d programs to %s [toolchain=%s reference=%s]\n",
+		len(snap.Programs), sf.out, snap.Toolchain, snap.Reference)
 	return nil
+}
+
+// verdict is one program's check result.
+type verdict struct {
+	name, kind, detail string
 }
 
 func cmdSnapshotCheck(args []string) error {
@@ -367,47 +398,27 @@ func cmdSnapshotCheck(args []string) error {
 	if sf.snapshotPath == "" {
 		return fmt.Errorf("-snapshot is required")
 	}
-	data, err := os.ReadFile(sf.snapshotPath)
-	if err != nil {
-		return fmt.Errorf("read snapshot: %w", err)
-	}
-	var snap SnapshotFile
-	if err := json.Unmarshal(data, &snap); err != nil {
-		return fmt.Errorf("parse snapshot: %w", err)
-	}
-	if snap.Format != snapshotFormatV1 {
-		return fmt.Errorf("snapshot format %q != this tool's %q: re-record the snapshot",
-			snap.Format, snapshotFormatV1)
-	}
-	cfg, b, progs, skipped, err := loadSnapshotDeps(sf)
+	snap, err := readSnapshot(sf.snapshotPath)
 	if err != nil {
 		return err
 	}
-	// Coverage gate: the exclusion list is part of the baseline. A program
-	// silently leaving (or joining) the snapshot is drift.
-	if d := diffExclusions(snap.Excluded, skipped); d != "" {
-		return fmt.Errorf("exclusion list drift: %s (re-record the snapshot if deliberate)", d)
+	cfg, b, progs, corpusRoot, err := loadSnapshotDeps(sf)
+	if err != nil {
+		return err
+	}
+	expected := map[string]harness.ReviewedExclusion{}
+	if sf.expected != "" {
+		if _, expected, err = harness.LoadReviewedExclusions(sf.expected); err != nil {
+			return err
+		}
+	}
+	live, err := selectChecked(snap, progs, expected, sf.programs)
+	if err != nil {
+		return err
 	}
 	want := map[string]SnapshotEntry{}
 	for _, e := range snap.Programs {
 		want[e.Name] = e
-	}
-	var missing []string
-	var live []harness.Program
-	for _, p := range progs {
-		if _, ok := want[p.Name]; !ok {
-			missing = append(missing, p.Name)
-			continue
-		}
-		live = append(live, p)
-	}
-	if len(missing) > 0 {
-		sort.Strings(missing)
-		return fmt.Errorf("corpus programs with no recorded snapshot: %s", strings.Join(missing, ", "))
-	}
-	corpusRoot, err := filepath.Abs(sf.corpus)
-	if err != nil {
-		return fmt.Errorf("resolve corpus dir: %w", err)
 	}
 	workRoot, err := os.MkdirTemp("", "diffharness-snapshot-*")
 	if err != nil {
@@ -415,63 +426,147 @@ func cmdSnapshotCheck(args []string) error {
 	}
 	defer os.RemoveAll(workRoot)
 
-	outs := runAll(cfg, b, live, workRoot, sf.jobs)
-	drifted := 0
-	for i, p := range live {
-		got := entryFromOutcome(p, outs[i], corpusRoot)
-		if d := diffEntries(want[p.Name], got); d != "" {
-			drifted++
-			fmt.Printf("DRIFT %-28s %s\n", p.Name, d)
+	var verdicts []verdict
+	if sf.verifyRef != "" {
+		rb, err := findBackend(cfg, sf.verifyRef)
+		if err != nil {
+			return err
 		}
-	}
-	// Programs recorded but no longer in the corpus are drift too.
-	for _, e := range snap.Programs {
-		found := false
-		for _, p := range progs {
-			if p.Name == e.Name {
-				found = true
-				break
+		outs := runAll(cfg, rb, live, workRoot, sf.jobs)
+		for i, p := range live {
+			if d := diffEntries(want[p.Name], entryFromOutcome(p, outs[i], corpusRoot)); d != "" {
+				verdicts = append(verdicts, verdict{p.Name, "REF-DRIFT", rb.Name + ": " + d})
 			}
 		}
-		if !found {
-			drifted++
-			fmt.Printf("DRIFT %-28s recorded program missing from corpus\n", e.Name)
+	}
+	outs := runAll(cfg, b, live, workRoot, sf.jobs)
+	for i, p := range live {
+		got := entryFromOutcome(p, outs[i], corpusRoot)
+		d := diffBehavior(want[p.Name], got)
+		for try := 0; d != "" && isInfra(got) && try < sf.retries; try++ {
+			fmt.Printf("RETRY %-28s infrastructure signature: %s\n", p.Name, d)
+			got = entryFromOutcome(p, harness.RunProgram(cfg, b, p, workRoot), corpusRoot)
+			d = diffBehavior(want[p.Name], got)
+		}
+		verdicts = append(verdicts, classify(p.Name, d, isInfra(got), expected))
+	}
+	return report(verdicts, len(live), snap, b.Name)
+}
+
+// classify turns one comparison into a verdict.
+func classify(name, diff string, infra bool, expected map[string]harness.ReviewedExclusion) verdict {
+	x, isExpected := expected[name]
+	switch {
+	case diff != "" && infra:
+		return verdict{name, "INFRA", diff}
+	case diff == "" && isExpected:
+		return verdict{name, "STALE", fmt.Sprintf("listed as expected divergence (%s: %s) but matches gc — prune the entry", x.Reason, x.Detail)}
+	case diff == "":
+		return verdict{name, "MATCH", ""}
+	case isExpected:
+		return verdict{name, "EXPECTED", x.Reason + ": " + diff}
+	default:
+		return verdict{name, "DRIFT", diff}
+	}
+}
+
+func report(vs []verdict, n int, snap *SnapshotFile, backend string) error {
+	counts := map[string]int{}
+	for _, v := range vs {
+		counts[v.kind]++
+		if v.kind != "MATCH" {
+			fmt.Printf("%-9s %-28s %s\n", v.kind, v.name, v.detail)
 		}
 	}
-	fmt.Printf("check: %d programs, %d drifted [snapshot toolchain=%s backend=%s commit=%s recorded=%s]\n",
-		len(live), drifted, snap.Toolchain, snap.Backend, snap.GraalgoCommit, snap.RecordedAt)
-	if drifted > 0 {
-		return fmt.Errorf("%d programs drifted from the snapshot", drifted)
+	fmt.Printf("check: %d programs under %s vs %s snapshot (%s): match=%d expected=%d drift=%d stale=%d infra=%d ref-drift=%d\n",
+		n, backend, snap.Reference, snap.Toolchain, counts["MATCH"], counts["EXPECTED"],
+		counts["DRIFT"], counts["STALE"], counts["INFRA"], counts["REF-DRIFT"])
+	if bad := counts["DRIFT"] + counts["STALE"] + counts["REF-DRIFT"]; bad > 0 {
+		return fmt.Errorf("%d unexpected results (drift/stale/ref-drift)", bad)
+	}
+	if counts["INFRA"] > 0 {
+		return fmt.Errorf("%w: %d programs could not be checked", errInfra, counts["INFRA"])
 	}
 	return nil
 }
 
-// diffExclusions reports a difference between the snapshot's recorded
-// exclusion list and the config's current one, order-insensitively.
-func diffExclusions(want, got []harness.Exclusion) string {
-	key := func(e harness.Exclusion) string { return e.Program + "\x00" + e.Reason }
-	wm, gm := map[string]bool{}, map[string]bool{}
-	for _, e := range want {
-		wm[key(e)] = true
+func readSnapshot(path string) (*SnapshotFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot: %w", err)
 	}
-	for _, e := range got {
-		gm[key(e)] = true
+	var snap SnapshotFile
+	if err := json.Unmarshal(data, &snap); err != nil {
+		return nil, fmt.Errorf("parse snapshot: %w", err)
 	}
-	var onlyWant, onlyGot []string
-	for k := range wm {
-		if !gm[k] {
-			onlyWant = append(onlyWant, k)
+	if snap.Format != snapshotFormat {
+		return nil, fmt.Errorf("snapshot format %q != this tool's %q: re-record with `make snapshot`", snap.Format, snapshotFormat)
+	}
+	if snap.Normalizer != snapshotNormalizer {
+		return nil, fmt.Errorf("snapshot normalizer %q != this tool's %q: re-record with `make snapshot`", snap.Normalizer, snapshotNormalizer)
+	}
+	return &snap, nil
+}
+
+// selectChecked validates corpus/snapshot/expected-list consistency and
+// returns the programs to run. Every inconsistency is an error: a corpus
+// program edited, added or removed without a re-record; an expected
+// divergence naming no corpus program; an unknown -programs name.
+func selectChecked(snap *SnapshotFile, progs []harness.Program, expected map[string]harness.ReviewedExclusion, only string) ([]harness.Program, error) {
+	want := map[string]SnapshotEntry{}
+	for _, e := range snap.Programs {
+		want[e.Name] = e
+	}
+	inCorpus := map[string]bool{}
+	var problems []string
+	for _, p := range progs {
+		inCorpus[p.Name] = true
+		e, ok := want[p.Name]
+		if !ok {
+			problems = append(problems, p.Name+": not in the snapshot (new program: run `make snapshot`)")
+			continue
+		}
+		h, err := sourceHash(p)
+		if err != nil {
+			return nil, err
+		}
+		if h != e.SourceSHA256 {
+			problems = append(problems, p.Name+": source changed since recording (run `make snapshot`)")
 		}
 	}
-	for k := range gm {
-		if !wm[k] {
-			onlyGot = append(onlyGot, k)
+	for _, e := range snap.Programs {
+		if !inCorpus[e.Name] {
+			problems = append(problems, e.Name+": recorded but missing from the corpus")
 		}
 	}
-	if len(onlyWant) == 0 && len(onlyGot) == 0 {
-		return ""
+	for _, name := range harness.SortedExclusionNames(expected) {
+		if !inCorpus[name] {
+			problems = append(problems, name+": expected-divergence entry names no corpus program")
+		}
 	}
-	sort.Strings(onlyWant)
-	sort.Strings(onlyGot)
-	return fmt.Sprintf("snapshot-only=%v current-only=%v", onlyWant, onlyGot)
+	var sel map[string]bool
+	if only != "" {
+		sel = map[string]bool{}
+		for _, n := range strings.Split(only, ",") {
+			n = strings.TrimSpace(n)
+			if n == "" {
+				continue
+			}
+			if !inCorpus[n] {
+				problems = append(problems, n+": -programs names no corpus program")
+			}
+			sel[n] = true
+		}
+	}
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		return nil, fmt.Errorf("snapshot/corpus inconsistency:\n  %s", strings.Join(problems, "\n  "))
+	}
+	var live []harness.Program
+	for _, p := range progs {
+		if sel == nil || sel[p.Name] {
+			live = append(live, p)
+		}
+	}
+	return live, nil
 }

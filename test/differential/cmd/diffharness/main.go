@@ -17,13 +17,15 @@
 //	          every mutation class). Exit status is non-zero on any violated
 //	          expectation. This is the red-green evidence for the oracles.
 //
-//	snapshot  behavior snapshots (M10 WS I): record graalgo's observable
-//	          behavior on the corpus as the upgrade baseline, or check the
-//	          current behavior against a recorded snapshot (fails on drift).
+//	snapshot  behavior snapshots (SPEC 5.9): record gc's observable
+//	          behavior on the corpus, or check a backend (graalgo) against
+//	          the recorded gc snapshot (fails on unexpected divergence, on a
+//	          stale expected-divergence entry, exits 3 on infra failure).
 package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -62,6 +64,9 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diffharness %s: error: %v\n", os.Args[1], err)
+		if errors.Is(err, errInfra) {
+			os.Exit(3) // infrastructure failure: no verdict
+		}
 		os.Exit(1)
 	}
 }
@@ -74,8 +79,8 @@ func usage() {
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
   typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
-  snapshot record -config PATH -corpus DIR -backend NAME -out FILE [-toolchain V] [-graalgo-commit SHA] [-runs N] [-jobs N]
-  snapshot check  -config PATH -corpus DIR -backend NAME -snapshot FILE [-jobs N]
+  snapshot record -config PATH -corpus DIR -backend gc-a -out FILE [-toolchain V] [-runs N] [-jobs N]
+  snapshot check  -config PATH -corpus DIR -backend graalgo -snapshot FILE [-expected FILE] [-programs a,b] [-verify-ref gc-a] [-jobs N]
   srctest scan -dir DIR -exclusions FILE -out PATH
   srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
 `)
