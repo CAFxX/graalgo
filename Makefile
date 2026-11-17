@@ -250,6 +250,70 @@ test: build
 	$(MAKE) -C internal/backend/runtime test
 	$(MAKE) -C internal/backend/interop test
 
+# Backend Java unit tests, split by measured cost (SPEC §5.10: fast→slow).
+# The module runners (graalgo.test.Runner, SchedTestRunner, IfaceTestRunner)
+# run everything in `make test` (weekly). Here
+# [test/java/ClassListRunner.java](test/java/ClassListRunner.java) runs named
+# classes with each module's own classpath and per-test timing:
+#   test-java-fast  per-push (in `make all`): classes measured fast
+#   test-java-slow  nightly/weekly: the corpus differentials and stress tests
+# Re-measure with `make test-java-timing` (all classes, timings printed)
+# before moving a class between lists. A class missing from both lists is
+# caught by `java-test-lists-check` (every class registered in a module
+# runner must be in exactly one list).
+JT_BK := $(CURDIR)/internal/backend
+JT_JARS := $(subst $(eval) ,:,$(strip $(wildcard $(JT_BK)/truffle/lib/*.jar)))
+JT_RUNNER := $(CURDIR)/test/java/out
+JT_TRUFFLE_CP := $(JT_RUNNER):$(JT_BK)/truffle/out/test-classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
+JT_RUNTIME_CP := $(JT_RUNNER):$(JT_BK)/runtime/out/test-classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_BK)/interop/out/classes:$(JT_JARS)
+JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop/out/classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
+JT_JAVA := $(or $(GRAALVM_HOME),$(HOME)/tools/graalvm-jdk-25)/bin/java
+JT_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
+JAVA_TEST_OPTS ?=
+# run_java_tests <module> <classpath> <classes> <extra -D props>
+define run_java_tests
+	cd $(JT_BK)/$(1) && mkdir -p out/test-tmp && \
+	  TMPDIR="$(JT_BK)/$(1)/out/test-tmp" GOTMPDIR="$(JT_BK)/$(1)/out/test-tmp" \
+	  GRAALGO_GOFRONTEND="$(CURDIR)/internal/frontend/gofrontend" \
+	  $(JT_JAVA) -Djava.io.tmpdir="$(JT_BK)/$(1)/out/test-tmp" $(4) $(JT_FLAGS) \
+	  -cp "$(2)" ClassListRunner $(3)
+endef
+JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
+JAVA_FAST_TRUFFLE := graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.SectionClampTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest
+JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
+JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.IoSlotsTest graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOverlayTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.PanicOverlayDriftTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest
+JAVA_SLOW_RUNTIME := graalgo.sched.ChannelDifferentialTest graalgo.sched.TimerDifferentialTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest graalgo.runtime.sync.SyncStressTest graalgo.sched.JfrParkCostTest
+JAVA_FAST_INTEROP := graalgo.iface.IfaceDispatchNodeTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.p3time.TimeChanLenCapTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3reflect.ReflectTypesTest graalgo.p3net.GoNetpollTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
+JAVA_SLOW_INTEROP := graalgo.iface.AtomicContentionTest graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
+
+java-test-classes: build
+	$(MAKE) -C internal/backend/truffle out/test-classes/.built
+	$(MAKE) -C internal/backend/runtime out/test-classes/.built
+	$(MAKE) -C internal/backend/interop out/test-classes/.built
+	mkdir -p $(JT_RUNNER) && $(dir $(JT_JAVA))javac -Werror -d $(JT_RUNNER) test/java/ClassListRunner.java
+
+# Every class a module runner registers must be in exactly one list.
+java-test-lists-check:
+	python3 test/java/check_lists.py \
+	  internal/backend/truffle/src/test/java/graalgo/test/Runner.java "$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE)" \
+	  internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java "$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME)" \
+	  internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java "$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP)"
+
+test-java-fast: java-test-classes java-test-lists-check
+	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
+	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
+
+test-java-slow: java-test-classes java-test-lists-check
+	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),)
+	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),)
+
+test-java-timing: java-test-classes
+	-$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	-$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME),)
+	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP),)
+
 # Behavior snapshots (SPEC §5.9, GG-0036). The committed snapshot
 # [test/snapshots/](test/snapshots/)go<VERSION>.json records gc's (the
 # REFERENCE toolchain's) observable behavior on the differential corpus
