@@ -164,4 +164,128 @@ public final class GoByteCellTest {
             // expected
         }
     }
+
+    // ---- r69 (C1/F1): width-aware cells over sub-word integral storage ----
+
+    /** A uint32 0x11223344 in an Integer box: bytes 0-3 are 44/33/22/11. */
+    public void testIntegerStorageReadsBytes() {
+        GoBox box = new GoBox(Integer.valueOf(0x11223344));
+        assertEquals(0x44, ((Long) new GoByteCell(box, 0, 4).get()).longValue(), "byte 0");
+        assertEquals(0x33, ((Long) new GoByteCell(box, 1, 4).get()).longValue(), "byte 1");
+        assertEquals(0x22, ((Long) new GoByteCell(box, 2, 4).get()).longValue(), "byte 2");
+        assertEquals(0x11, ((Long) new GoByteCell(box, 3, 4).get()).longValue(), "byte 3");
+        // Byte 4 is past the 4-byte storage: the constructor refuses it.
+        try {
+            new GoByteCell(box, 4, 4);
+            throw new AssertionError("byte index 4 of a width-4 cell must fail");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            new GoByteCell(box, 0, 0);
+            throw new AssertionError("width 0 must fail");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+        try {
+            new GoByteCell(box, 0, 9);
+            throw new AssertionError("width 9 must fail");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
+    /** Writes merge one byte and store back an Integer (box type preserved). */
+    public void testIntegerStorageWritesMerge() {
+        GoBox box = new GoBox(Integer.valueOf(0x11223344));
+        new GoByteCell(box, 1, 4).set(Long.valueOf(0x99));
+        assertTrue(box.get() instanceof Integer, "write-back stays Integer-boxed");
+        assertEquals(0x11229944L, ((Integer) box.get()).longValue(), "byte 1 merged");
+        new GoByteCell(box, 3, 4).set(Integer.valueOf(0xAA));
+        assertTrue(box.get() instanceof Integer, "write-back stays Integer-boxed");
+        // 0xAA229944 is negative as a signed int; compare int bits, not longValue().
+        assertTrue(((Integer) box.get()).intValue() == (int) 0xAA229944, "byte 3 merged");
+        // The other bytes still read back through their cells.
+        assertEquals(0x99, ((Long) new GoByteCell(box, 1, 4).get()).longValue(), "byte 1 intact");
+    }
+
+    /** A Short box (width 2): bytes 0-1 exact, write-back stays Short. */
+    public void testShortStorageReadsWrites() {
+        GoBox box = new GoBox(Short.valueOf((short) 0x1122));
+        assertEquals(0x22, ((Long) new GoByteCell(box, 0, 2).get()).longValue(), "byte 0");
+        assertEquals(0x11, ((Long) new GoByteCell(box, 1, 2).get()).longValue(), "byte 1");
+        new GoByteCell(box, 0, 2).set(Long.valueOf(0x33));
+        assertTrue(box.get() instanceof Short, "write-back stays Short-boxed");
+        assertEquals(0x1133L, ((Short) box.get()).longValue(), "byte 0 merged");
+    }
+
+    /** A Byte box (width 1): byte 0 exact; byte 1 is past the storage. */
+    public void testByteStorageReadsWrites() {
+        GoBox box = new GoBox(Byte.valueOf((byte) 0xAB));
+        assertEquals(0xAB, ((Long) new GoByteCell(box, 0, 1).get()).longValue(), "byte 0");
+        new GoByteCell(box, 0, 1).set(Long.valueOf(0x7F));
+        assertTrue(box.get() instanceof Byte, "write-back stays Byte-boxed");
+        assertEquals(0x7F, ((Byte) box.get()).longValue(), "byte 0 merged");
+        try {
+            new GoByteCell(box, 1, 1);
+            throw new AssertionError("byte index 1 of a width-1 cell must fail");
+        } catch (IllegalArgumentException expected) {
+            // expected
+        }
+    }
+
+    /** A box narrower than the declared width fails loudly (no extension bytes). */
+    public void testNarrowerBoxFailsLoud() {
+        GoBox intBox = new GoBox(Integer.valueOf(0x11223344));
+        try {
+            new GoByteCell(intBox, 0, 8).get();
+            throw new AssertionError("width-8 cell over an Integer must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+        try {
+            new GoByteCell(intBox, 0, 8).set(Long.valueOf(1));
+            throw new AssertionError("width-8 cell over an Integer must fail on write");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+        GoBox shortBox = new GoBox(Short.valueOf((short) 0x1122));
+        try {
+            new GoByteCell(shortBox, 0, 4).get();
+            throw new AssertionError("width-4 cell over a Short must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+    }
+
+    /** Non-integral storage fails loudly under the width-aware cell too. */
+    public void testWidthAwareNonIntegralFailsLoud() {
+        GoBox doubleBox = new GoBox(Double.valueOf(1.5));
+        try {
+            new GoByteCell(doubleBox, 0, 4).get();
+            throw new AssertionError("width-4 cell over a Double must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+        GoBox stringBox = new GoBox("not a number");
+        try {
+            new GoByteCell(stringBox, 0, 4).set(Long.valueOf(1));
+            throw new AssertionError("width-4 cell over a String must fail on write");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+    }
+
+    /** A negative int32 reads its low bytes exactly (sign extension is masked out). */
+    public void testNegativeIntegerReadsLowBytes() {
+        GoBox box = new GoBox(Integer.valueOf(-1));
+        for (int k = 0; k < 4; k++) {
+            assertEquals(0xFF, ((Long) new GoByteCell(box, k, 4).get()).longValue(), "byte " + k);
+        }
+        GoBox box2 = new GoBox(Integer.valueOf(0x80000000));
+        assertEquals(0x00, ((Long) new GoByteCell(box2, 0, 4).get()).longValue(), "byte 0");
+        assertEquals(0x00, ((Long) new GoByteCell(box2, 1, 4).get()).longValue(), "byte 1");
+        assertEquals(0x00, ((Long) new GoByteCell(box2, 2, 4).get()).longValue(), "byte 2");
+        assertEquals(0x80, ((Long) new GoByteCell(box2, 3, 4).get()).longValue(), "byte 3");
+    }
 }

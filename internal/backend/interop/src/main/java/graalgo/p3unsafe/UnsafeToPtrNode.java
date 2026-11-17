@@ -1,6 +1,7 @@
 package graalgo.p3unsafe;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.frontend.GoArrayCell;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.GoFieldCell;
 import graalgo.frontend.Json;
@@ -1697,14 +1698,23 @@ public final class UnsafeToPtrNode extends GoExprNode {
     }
 
     /**
-     * A byte pointer into a Long-carried scalar field cell
-     * (fix-redmaster-r59): when the resolved referent (after unwrapping
-     * storage cells) is a {@link GoCell} holding a Long and the target
-     * element is one byte, byte {@code byteOffset} of that long is the
-     * addressed storage — return a {@link GoByteCell} pointer over it.
+     * A byte pointer into a scalar field cell (fix-redmaster-r59, r69
+     * C1/F1): when the resolved referent (after unwrapping storage
+     * cells) is a {@link GoCell} holding an integral value and the
+     * target element is one byte, byte {@code byteOffset} of that
+     * storage is the addressed storage — return a {@link GoByteCell}
+     * pointer over it. Long-carried storage takes the Long-only cell;
+     * sub-word integral storage (an Integer-boxed uint32/int32 local,
+     * an int[]/short[] array element) takes the width-aware cell, so
+     * {@code *(*byte)(unsafe.Add(unsafe.Pointer(&x), k))} reads the
+     * variable's own byte k instead of trapping in derivedPointer.
      * Returns null when the shape does not match (the caller keeps its
-     * existing loud derivation failure) or the target is wider than one
-     * byte (sub-word multi-byte reads are not minted).
+     * existing loud derivation failure), the target is wider than one
+     * byte (sub-word multi-byte reads are not minted), or the offset
+     * lies outside the storage: offsets at/above the width are NOT
+     * minted, so cross-element reads stay with derivedPointer (which
+     * indexes the backing array correctly) and out-of-variable reads
+     * keep trapping instead of reading extension bytes.
      */
     private Object byteCellPointer(Object referent, long byteOffset) {
         if (elemSize != 1 || byteOffset <= 0 || byteOffset >= 8) {
@@ -1714,20 +1724,112 @@ public final class UnsafeToPtrNode extends GoExprNode {
         while (true) {
             if (root instanceof GoCell cell) {
                 Object v = cell.get();
-                // r64 (C1): mint only over a Long-carrying cell. Any
-                // other Number would make GoByteCell read truncated or
-                // sign-extended bytes; returning null keeps the caller's
-                // loud derivation failure instead.
-                if (!(v instanceof Long)) {
-                    return null;
+                // r64 (C1): the Long-only cell over Long-carrying storage.
+                if (v instanceof Long) {
+                    return new GoPointer(new GoByteCell(cell, (int) byteOffset));
                 }
-                return new GoPointer(new GoByteCell(cell, (int) byteOffset));
+                // r69 (C1/F1): sub-word integral storage takes the
+                // width-aware cell, minted only inside the storage.
+                int width = byteStorageWidth(cell, v);
+                if (width > 0 && byteOffset < width) {
+                    return new GoPointer(new GoByteCell(cell, (int) byteOffset, width));
+                }
+                return null;
+            } else if (root instanceof UnsafeTable.ArrayRef ref) {
+                // r69 (C1/F1): a byte offset into a primitive array
+                // element. &arr[i] handles resolve to ArrayRef (not a
+                // GoArrayCell), so the GoCell branch above never sees
+                // them; without this, every in-element byte offset fell
+                // through to derivedPointer, which cannot descend into
+                // a primitive element and traps.
+                return arrayElementBytePointer(ref.array(), ref.offset(), byteOffset);
+            } else if (root != null && root.getClass().isArray()) {
+                return arrayElementBytePointer(root, 0, byteOffset);
             } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
                 root = rc.value;
             } else {
                 return null;
             }
         }
+    }
+
+    /**
+     * A byte pointer into one element of a primitive Java array (r69
+     * C1/F1): {@code byteOffset} is relative to element {@code baseIndex};
+     * decompose it into whole elements plus a within-element byte. A zero
+     * remainder is an element boundary — derivedPointer owns it (null).
+     * A nonzero remainder inside a primitive integral element mints a
+     * {@link GoByteCell} over that element's {@link GoArrayCell}, so
+     * in-element bytes read exactly and writes alias the element.
+     * Anything else returns null so derivedPointer keeps its existing
+     * behavior: non-integral elements (float/bool/object/nested arrays),
+     * and out-of-range elements (which derivedPointer reports loudly).
+     * Signedness of the element kind is immaterial here: byte reads are
+     * masked to the element width and writes narrow to the low bits, so
+     * the signed kinds are used throughout.
+     */
+    private static Object arrayElementBytePointer(Object array, int baseIndex, long byteOffset) {
+        long es = goArrayElemSize(array);
+        if (es <= 0 || es > 8) {
+            return null;
+        }
+        long skip = byteOffset / es;
+        long within = byteOffset % es;
+        if (within == 0) {
+            return null;
+        }
+        GoKind ek = integralArrayElemKind(array);
+        if (ek == null) {
+            return null;
+        }
+        long index = (long) baseIndex + skip;
+        if (index < 0 || index >= java.lang.reflect.Array.getLength(array)) {
+            return null;
+        }
+        return new GoPointer(new GoByteCell(
+                new GoArrayCell(array, ek, (int) index), (int) within, (int) es));
+    }
+
+    /** The signed integral {@link GoKind} for a primitive array's component type, or null. */
+    private static GoKind integralArrayElemKind(Object array) {
+        Class<?> comp = array.getClass().getComponentType();
+        if (comp == byte.class) {
+            return GoKind.INT8;
+        }
+        if (comp == short.class) {
+            return GoKind.INT16;
+        }
+        if (comp == int.class) {
+            return GoKind.INT32;
+        }
+        if (comp == long.class) {
+            return GoKind.INT64;
+        }
+        return null;
+    }
+
+    /**
+     * Storage width in bytes of the integral value a byte-cell mint
+     * would address (r69 C1/F1), or -1 when no byte cell may be minted
+     * over this cell: the value is not an integral {@link Number}
+     * (floating-point, boolean, String, ...), or the width is not
+     * derivable. Array elements use the backing array's element size —
+     * the element's true storage width (byte[] 1, short[] 2, int[] 4,
+     * long[] 8), which is narrower than the Integer box narrow elements
+     * arrive in; other cells use the boxed value's width
+     * ({@link GoByteCell#boxedWidth}). The mint site additionally
+     * requires the offset to lie inside the width, so a byte cell
+     * never addresses past its storage.
+     */
+    private static int byteStorageWidth(GoCell cell, Object v) {
+        if (GoByteCell.boxedWidth(v) <= 0) {
+            return -1;
+        }
+        if (cell instanceof GoArrayCell a) {
+            long es = goArrayElemSize(a.array());
+            return es > 0 && es <= 8 ? (int) es : -1;
+        }
+        return GoByteCell.boxedWidth(v);
     }
 
     /**
