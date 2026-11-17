@@ -109,6 +109,10 @@
     {
       "program": "42_json",
       "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+    },
+    {
+      "program": "49_reflect_structof_embedded",
+      "reason": "known-divergence: 7 gc divergences (K/L/M/V3/V4/V8 panics + IMP) share one root cause - abi shells carry no uncommon-type data (TFlagUncommon never set, interface Methods empty); tracked as the EVIDENCE.md section 4.2 uncommon-type follow-up"
     }
   ],
   "timeoutSec": 30

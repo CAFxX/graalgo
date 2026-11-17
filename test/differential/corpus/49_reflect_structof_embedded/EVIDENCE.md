@@ -239,3 +239,27 @@ the heap comes from `JAVA_TOOL_OPTIONS`.
   differential corpus vs the gc oracle, not by the snapshot. When the §4.2
   feature lands, the snapshot record must be updated (K/L/M/V3/V4/V8 and
   IMP will change).
+
+## 10. Green-run exclusion (fixup for re-review B2, 2026-11-17)
+
+Independent re-review of `c37d74ca` REJECTed on B2: the green run
+(`run.sh` stage [4/5], CI run 43998294054) compares gc vs graalgo live and
+fails on corpus 49 line 16 (K: gc panics, graalgo `NO PANIC`). Option (a) --
+landing the section 4.2 uncommon-type follow-up in this fixup lane -- was
+assessed and NOT taken: it needs a design decision (section 4.2 options
+(a)/(b) are both open), wider synthetic descriptors with a real
+`u UncommonType` tail and a materialized method array, interface `Methods`
+population, and both sides together (section 4.3); it touches every abi
+shell, and this lane has no local build capacity to verify it (home quota
+EDQUOT, /var/tmp 95% full). A narrow backend-side panic check was also
+ruled out: the corpus exercises real gc `StructOf` (the `tStructOf`
+reflectop is reachable only from the retired synthetic reflect), so such a
+check would be dead code on this path. Corpus 49 is therefore excluded
+from the green run via the established mechanism (`backends-p3.json`
+`exclusions` + snapshot `excluded` mirror, identical reason; the 49
+snapshot record is removed, as excluded programs carry no record -- see
+`snapshot.go`, which would otherwise report the record as drift). The
+corpus program itself is unchanged and still documents the 7 divergences;
+when the section 4.2 feature lands, remove the exclusion and re-record
+the snapshot (K/L/M/V3/V4/V8 will panic, IMP will read
+`Get: true Nope: false`).
