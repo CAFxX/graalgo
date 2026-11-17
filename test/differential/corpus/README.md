@@ -68,6 +68,9 @@ Coverage map:
 | 48  | range_over_func_edge | range-over-func exits: return/goto/labels,       |
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
+| 49  | map_large            | large maps (9 + 20 entries) via native range,    |
+|     |                      | reflect MapRange, maps.Keys/Values/Clone/Equal —  |
+|     |                      | directory-path header view (r64 C2)              |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,
