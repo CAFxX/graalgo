@@ -156,7 +156,7 @@ test-ci: build
 	$(MAKE) -C internal/backend/truffle smoke-test
 	$(MAKE) test-jit
 
-# JIT regression guard (~20 s): runs test/jit/peguard under graalgo with
+# JIT regression guard (~30 s): runs test/jit/peguard under graalgo with
 # synchronous, traced Truffle compilation and fails if any compilation
 # fails (e.g. a PermanentBailoutException from partial evaluation entering
 # JDK code), if a guarded hot function or an OSR loop is never compiled,
