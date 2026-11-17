@@ -129,3 +129,28 @@ Chat: f7467b85-7da6-4da0-b9ec-94631a60dafe.
 ## Push log (continued)
 - 2026-11-17 ~05:54 UTC: cf3908a8 (bi21 GREEN + unit-test verification)
   pushed via push_repo.py; ls-remote confirms r62 = cf3908a8.
+
+## Update 2026-11-17 ~06:04 UTC — batch partial results (in progress)
+- bi01-bi11 ALL PASS (batch1, /var/tmp/r62-bi.log). bi12+ pending.
+- Batch2 (parallel, own tmpdir /var/tmp/r62-test-tmp2) running gn09 since
+  05:59 — slow under contention: the box has several lanes' JVMs + go
+  compiles running concurrently (review-1115-14, review-1116-01,
+  batch-net, another lane's JVM PID 7044 at ~47% CPU since 05:26).
+  My cell has 1.5 shared CPUs. Both r62 JVMs are alive (S state, NOT
+  frozen — shedder frozen:{}; load 1.64), in gc-oracle `go build` phases.
+  NOT stuck; just slow. Do NOT kill them.
+- Two batches run in parallel (batch1 /var/tmp/r62-batch.sh,
+  batch2 /var/tmp/r62-batch2.sh, both setsid nohup). Their test lists
+  OVERLAP (gn09/gv/main/sectionclamp/typeparam run twice) — harmless:
+  separate tmpdirs, separate logs (r62-*.log vs r62b-*.log). If resuming,
+  read BOTH summaries (/var/tmp/r62-batch-summary.log,
+  /var/tmp/r62-batch2-summary.log) and deduplicate.
+- Reminder: batch does NOT cover TypeparamDifferentialTest.
+  testReadExclusionsEdgeCases in batch1 — batch2 DOES (r62b-typeparam-
+  readexcl.log). Successor: check that log first.
+- Home quota still flapping (registry write EDQUOT 05:53); /tmp heartbeat
+  fresh. GitHub tip is the durable record.
+
+## Push log (continued)
+- 2026-11-17 ~05:57 UTC: b993d5c1 (CI-log + ClearBuiltin findings, batch
+  running) pushed via push_repo.py; ls-remote confirms r62 = b993d5c1.
