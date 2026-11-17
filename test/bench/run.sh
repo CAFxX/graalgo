@@ -44,7 +44,7 @@ for name in "$@"; do
   "$GO" build -o "$WORK/$name.gc" "$src"
   "$WORK/$name.gc" >"$WORK/$name.gc.out" 2>"$WORK/$name.gc.err"
   gs=0
-  JAVA_TOOL_OPTIONS="${BENCH_JAVA_OPTS:-}" nice -n 10 timeout "$BENCH_TIMEOUT" \
+  JAVA_TOOL_OPTIONS="${BENCH_JAVA_OPTS:-}" nice -n 19 timeout "$BENCH_TIMEOUT" \
     "$GRAALGO_RUN" "$src" >"$WORK/$name.gg.out" 2>"$WORK/$name.gg.err" || gs=$?
   gcns="$(bench_ns "$WORK/$name.gc.err" "$name")"
   ggns="$(bench_ns "$WORK/$name.gg.err" "$name")"

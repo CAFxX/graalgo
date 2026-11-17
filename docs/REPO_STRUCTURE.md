@@ -173,6 +173,17 @@ Related: [Makefile](../Makefile) (root build entry point),
     package-level bugs (`pkg031/` covers the PKG-031 strings.Repeat hang);
     run through the graalgo driver + backend via `make test-regression`
     (in `make all`, hence per-push CI).
+  - [jit/](../test/jit/) — JIT regression guard:
+    [run_pe_guard.sh](../test/jit/run_pe_guard.sh) runs
+    [peguard/main.go](../test/jit/peguard/main.go) with traced, synchronous
+    Truffle compilation and fails on any compilation failure (e.g. a partial
+    evaluation bailout), on a hot function or OSR loop that never compiles,
+    or on output that differs from gc's. `make test-jit` (part of
+    `make test-ci`).
+  - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
+    (fib, loops, slices, maps, structs, interface dispatch, string builder,
+    channel ping-pong); [run.sh](../test/bench/run.sh) checks output
+    equality with gc and prints best-round times (`make bench`; not a gate).
 - [docs/](../docs/)
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
   - [arch/](../docs/arch/) — architecture documentation, consolidated from
