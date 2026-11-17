@@ -248,6 +248,18 @@ public final class UnsafeToPtrNode extends GoExprNode {
             strictField = hit.fieldTok() != hit.targetTok();
             resolved = hit.cell();
         } else {
+            // fix-redmaster-r64 (C2): an offset-0 conversion whose
+            // referent is a Java array holding a struct at element 0
+            // (the maps header view's groups data: Object[]{group})
+            // addresses the element, not the array — in gc flat memory
+            // an array and its element 0 share an address, and a
+            // pointer to the array IS a pointer to its first element.
+            // Without this, (*ctrlGroup)(g.data) returned a pointer to
+            // the Object[] itself, and every ctrl read died casting
+            // the group struct (or the array) to a scalar. The descent
+            // fires only for a struct element and a known non-array
+            // target; anything else keeps the pre-existing behavior.
+            resolved = arrayElementZero(resolved);
             // Offset 0: a conversion whose target is a direct field's
             // type (not the referent struct's own type) addresses that
             // field's storage — gc's prefix identity for field 0.
@@ -312,6 +324,23 @@ public final class UnsafeToPtrNode extends GoExprNode {
                     "unsafe: byte-offset derivation from a non-array referent traps "
                             + "(D5: the handle model cannot reinterpret memory)");
         }
+        // fix-redmaster-r64 (C2, directory): an offset-0 conversion
+        // whose referent is a Java array addresses element 0, not the
+        // array as a whole — in gc flat memory an array and its element
+        // 0 share an address (the same rule derivedPointer applies for
+        // nonzero offsets). Without this, directoryAt(dirIdx == 0)
+        // returned a pointer to the directory array itself, and the
+        // first newTab.index read died casting it to a struct. The
+        // struct-element case is already normalized above (a pointer
+        // to the element's field-0 cell); this covers the remaining
+        // shapes (e.g. an array of pointers). Array targets keep the
+        // pre-existing behavior (the pointer addresses the array).
+        if (resolved != null && resolved.getClass().isArray()
+                && java.lang.reflect.Array.getLength(resolved) > 0
+                && !isArrayTarget()) {
+            return UnsafeTable.pointerFor(
+                    new UnsafeTable.ArrayRef(resolved, 0));
+        }
         if (ptrToPtr && storedValue(resolved) instanceof GoInterface gi) {
             // Interface type-word pointer (fix-redmaster-r42): in gc
             // an interface value in memory is (type word, data word),
@@ -370,6 +399,81 @@ public final class UnsafeToPtrNode extends GoExprNode {
             return UnsafeTable.pointerFor(new graalgo.values.GoBox(typePtr));
         }
         return UnsafeTable.pointerFor(resolved);
+    }
+
+    /**
+     * Whether the conversion target's element type is itself an array
+     * type (fix-redmaster-r64, C2): a (*[N]T) conversion addresses the
+     * array as a whole, so the element-0 rules do not apply. Unresolvable
+     * targets report true (fail closed: keep the pre-existing behavior).
+     */
+    private boolean isArrayTarget() {
+        if (targetElemWireId < 0) {
+            return true;
+        }
+        try {
+            long targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+            if (targetTok < 0) {
+                return true;
+            }
+            ReflectTypes.TypeInfo targetInfo = ReflectTypes.table().info(targetTok);
+            return targetInfo == null || targetInfo.kind == null
+                    || targetInfo.kind == GoKind.ARRAY;
+        } catch (RuntimeException e) {
+            return true;
+        }
+    }
+
+    /**
+     * The element-0 referent for an offset-0 conversion over a Java
+     * array (fix-redmaster-r64, C2): when the resolved referent is a
+     * non-empty Java array whose element 0 is a struct, the conversion
+     * addresses that element (gc flat memory: an array and its element
+     * 0 share an address). Returns the original referent when the
+     * shape does not match (non-array root, empty array, non-struct
+     * element), when the conversion target is itself an array type (a
+     * (*[N]T) conversion addresses the array as a whole), or when the
+     * target type does not resolve — the caller keeps its pre-existing
+     * behavior in all of those cases.
+     */
+    private Object arrayElementZero(Object referent) {
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
+        }
+        if (root == null || !root.getClass().isArray()) {
+            return referent;
+        }
+        if (java.lang.reflect.Array.getLength(root) == 0) {
+            return referent;
+        }
+        Object first = java.lang.reflect.Array.get(root, 0);
+        if (!(first instanceof GoStruct)) {
+            return referent;
+        }
+        if (targetElemWireId < 0) {
+            return referent;
+        }
+        try {
+            long targetTok = ReflectTypes.tokForWireId(targetElemWireId);
+            if (targetTok < 0) {
+                return referent;
+            }
+            ReflectTypes.TypeInfo targetInfo = ReflectTypes.table().info(targetTok);
+            if (targetInfo == null || targetInfo.kind == null
+                    || targetInfo.kind == GoKind.ARRAY) {
+                return referent;
+            }
+        } catch (RuntimeException e) {
+            return referent;
+        }
+        return first;
     }
 
     /**
@@ -1610,7 +1714,11 @@ public final class UnsafeToPtrNode extends GoExprNode {
         while (true) {
             if (root instanceof GoCell cell) {
                 Object v = cell.get();
-                if (!(v instanceof Number)) {
+                // r64 (C1): mint only over a Long-carrying cell. Any
+                // other Number would make GoByteCell read truncated or
+                // sign-extended bytes; returning null keeps the caller's
+                // loud derivation failure instead.
+                if (!(v instanceof Long)) {
                     return null;
                 }
                 return new GoPointer(new GoByteCell(cell, (int) byteOffset));

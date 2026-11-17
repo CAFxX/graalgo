@@ -301,6 +301,31 @@ public final class ReflectRefs {
                 // 11/20: main.Point + 8 = field Y).
                 return readStructFieldAt(gs, view.byteOffset(), kind);
             }
+            // fix-redmaster-r64 (C2): a ByteRef into an array holding
+            // a struct at element 0 (the maps header view's groups
+            // data: Object[]{group}) — the byte offset is a struct
+            // byte offset into the addressed element, not an array
+            // element index (gc flat memory: the array and its
+            // element share an address). Without this, group.key(i) /
+            // group.elem(i) pointers loaded through typedmemmove took
+            // the array-element path and died casting Object[] to
+            // long[]. Unresolvable shapes fall through to the scalar
+            // walk below, which traps loudly.
+            if (root != null && root.getClass().isArray()
+                    && java.lang.reflect.Array.getLength(root) > 0
+                    && java.lang.reflect.Array.get(root, 0) instanceof GoStruct firstStruct) {
+                long structSize = structSizeBytes(firstStruct);
+                if (structSize > 0 && view.byteOffset() >= 0) {
+                    long index = view.byteOffset() / structSize;
+                    long rem = view.byteOffset() % structSize;
+                    if (index < java.lang.reflect.Array.getLength(root)) {
+                        Object elem = java.lang.reflect.Array.get(root, (int) index);
+                        if (elem instanceof GoStruct elemStruct) {
+                            return readStructFieldAt(elemStruct, rem, kind);
+                        }
+                    }
+                }
+            }
             if (isScalarKind(kind)) {
                 return readScalarAt(view.root(), view.byteOffset(), kind);
             }
@@ -343,6 +368,30 @@ public final class ReflectRefs {
      * view that names no element traps rather than returning its
      * root).
      */
+    /**
+     * The Go byte size of a struct value (fix-redmaster-r64, C2):
+     * the TypeInfo size when the descriptor resolves to one, else
+     * the descriptor walk. Returns -1 when neither yields a size.
+     */
+    private static long structSizeBytes(GoStruct gs) {
+        try {
+            ReflectTypes.TypeInfo info = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (info == null) {
+                info = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+            if (info != null && info.size > 0) {
+                return info.size;
+            }
+        } catch (RuntimeException e) {
+            // Fall through to the descriptor walk.
+        }
+        try {
+            return graalgo.runtime.Intrinsics.structSizeBytes(gs.descriptor());
+        } catch (RuntimeException e) {
+            return -1;
+        }
+    }
+
     /**
      * Reads the scalar of {@code kind} at {@code byteOffset} into a struct
      * value (gc flat memory: a pointer into a struct at a field offset

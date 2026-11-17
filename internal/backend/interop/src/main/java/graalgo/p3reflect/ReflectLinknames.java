@@ -946,7 +946,16 @@ public final class ReflectLinknames {
             } else if (root instanceof ReflectRefs.Cell rc) {
                 root = rc.value;
             }
-            if (root instanceof GoStruct) {
+            // fix-redmaster-r64 (C2): a ByteRef into an array holding
+            // a struct at element 0 (the maps header view's groups data)
+            // denotes the struct field at that byte offset — route it
+            // through denotedValue like a struct root; the array-element
+            // path below would index it as a flat carrier array and die
+            // casting Object[] to long[].
+            boolean structArrayRoot = root != null && root.getClass().isArray()
+                    && java.lang.reflect.Array.getLength(root) > 0
+                    && java.lang.reflect.Array.get(root, 0) instanceof GoStruct;
+            if (root instanceof GoStruct || structArrayRoot) {
                 return ReflectRefs.denotedValue(h, t.kind);
             }
             return ReflectValues.arrayGet(arrayRoot(view, symbol), t.kind,
