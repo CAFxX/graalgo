@@ -152,6 +152,28 @@ public final class TypeAssertNode extends GoExprNode {
             // The dynamic name comes from the descriptor; the int/int64 and
             // uint/uint64/uintptr conflation is an M4 kind-system limitation
             // (GoKind has a single INT64/UINT64 slot; not part of GG-0045).
+            if (assertedIfaceMethods != null) {
+                // Assertion to a non-empty interface: gc reports the
+                // first missing method in the interface's (name-sorted)
+                // method order, or a nil operand.
+                String dyn = gi.isNil() ? null : ((GoTypeDescriptor) gi.descriptor()).name();
+                String missing = null;
+                if (dyn != null) {
+                    Set<String> have = dynamicMethodSetOf(dynamicMethodSets, dyn);
+                    for (String k : assertedIfaceMethods) {
+                        if (!have.contains(k)) {
+                            int nul = k.indexOf('\u0000');
+                            String name = nul >= 0 ? k.substring(0, nul) : k;
+                            name = name.substring(name.lastIndexOf('.') + 1);
+                            if (missing == null || name.compareTo(missing) < 0) {
+                                missing = name;
+                            }
+                        }
+                    }
+                }
+                Panic.throwPanic(GoErrors.interfaceConversionMissing(dyn, assertedName, missing),
+                        null, null, this);
+            }
             String dynamicName = gi.isNil() ? "nil"
                     : ((GoTypeDescriptor) gi.descriptor()).name();
             Panic.throwPanic(GoErrors.interfaceConversion(ifaceName, dynamicName, assertedName), null, null, this);

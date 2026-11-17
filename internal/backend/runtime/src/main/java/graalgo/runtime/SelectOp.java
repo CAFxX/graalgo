@@ -190,7 +190,7 @@ public final class SelectOp {
             // A ready case above already won, so poison is only reached
             // when nothing is ready.
             if (poison) {
-                Panic.throwPanic(GoStrings.of("send on closed channel"));
+                Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
             }
             if (defaultIndex >= 0) {
                 return defaultIndex;
@@ -287,7 +287,7 @@ public final class SelectOp {
                 sched.parkCurrent(null, ParkReason.SELECT);
                 try {
                     if (resultPoison) {
-                        Panic.throwPanic(GoStrings.of("send on closed channel"));
+                        Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                     }
                     return resultIndex;
                 } finally {
@@ -297,7 +297,7 @@ public final class SelectOp {
             if (mine.isEmpty()) {
                 if (poison) {
                     // Every case was a send on a closed channel.
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                    Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                 }
                 // Zero cases: `select {}` blocks forever (gc deadlock).
                 // Park indefinitely; the deadlock detector (P2-M10) owns it.
@@ -315,7 +315,7 @@ public final class SelectOp {
             sched.parkCurrent(null, ParkReason.SELECT);
             try {
                 if (resultPoison) {
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                    Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                 }
                 return resultIndex;
             } finally {

@@ -39,7 +39,7 @@ public final class ChanCloseNode extends GoStmtNode {
     public void executeVoid(VirtualFrame frame) {
         Object ch = chanNode.executeObject(frame);
         if (ch == null) {
-            Panic.throwPanic(GoString.fromUtf8("close of nil channel"));
+            Panic.throwPanic(graalgo.runtime.GoErrors.plain("close of nil channel"));
         }
         ChanOps.close(ChanWire.asChan(ch, "close"));
     }
