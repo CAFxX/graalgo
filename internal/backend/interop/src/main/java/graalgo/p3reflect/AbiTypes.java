@@ -574,6 +574,32 @@ public final class AbiTypes {
                 // flags remain runtime map internals, unused by the
                 // reflect surface; left zero (V1).
                 setObjectByName(desc, shell, "Hasher", MapKeyHash.func());
+                // fix-redmaster-r59: fill the group geometry from the
+                // shared layout helper (MapGroupLayout.of): the guest's
+                // maps.Iter reads GroupSize/KeysOff/KeyStride/ElemsOff/
+                // ElemStride/ElemOff/Flags from this shell on every
+                // iteration, and the header-view image is built from the
+                // same layout, so the two can never disagree. Group is
+                // the synthesized group type's shell pointer. Layouts
+                // with an unknown key/elem size keep the V1 zero fill
+                // (the view builder then fails loudly if such a map is
+                // iterated). NeedKeyUpdate/HashMightPanic are left zero:
+                // they are read only by clone/rehash/insert paths, which
+                // never run on an image (PutSlot runs on live GoMaps via
+                // GoMap.put, not via maps.PutSlot).
+                MapGroupLayout.Layout layout =
+                        MapGroupLayout.of(info.key, info.elem);
+                if (layout != null) {
+                    setLongByName(desc, shell, "GroupSize", layout.groupSize());
+                    setLongByName(desc, shell, "KeysOff", layout.keysOff());
+                    setLongByName(desc, shell, "KeyStride", layout.keyStride());
+                    setLongByName(desc, shell, "ElemsOff", layout.elemsOff());
+                    setLongByName(desc, shell, "ElemStride", layout.elemStride());
+                    setLongByName(desc, shell, "ElemOff", layout.elemOff());
+                    setLongByName(desc, shell, "Flags", layout.flags());
+                    setObjectByName(desc, shell, "Group", abiPointerForTok(
+                            MapGroupLayout.groupTokFor(info.key, info.elem)));
+                }
             }
             case SLICE -> {
                 requireNonNull(info.elem, info, "Elem");

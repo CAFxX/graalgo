@@ -1474,6 +1474,10 @@ public final class ReflectOpNode extends GoExprNode {
 
     private static GoStruct makeMap(long tok) {
         GoMap m = new GoMap();
+        // fix-redmaster-r59: stamp the wire type-table id so the reflect
+        // runtime can recover the map's key/elem types for the maps.Map
+        // header view.
+        m.setWireTypeId(ReflectTypes.wireIdForTok(tok));
         long h = ReflectRefs.intern(m);
         return ReflectValues.pack(ReflectTypes.valueDescriptor(), tok, h, 0);
     }

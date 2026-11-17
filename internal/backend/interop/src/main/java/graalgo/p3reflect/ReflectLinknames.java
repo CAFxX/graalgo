@@ -149,8 +149,13 @@ public final class ReflectLinknames {
             Linknames.register("reflect.makechan", args -> makeChan(
                     tokForTypeArg(args[0], "reflect.makechan"), (int) num(args[1])), 1);
             Linknames.register("reflect.makemap", args -> {
-                tokForTypeArg(args[0], "reflect.makemap");
-                return ReflectRefs.intern(new GoMap());
+                long tok = tokForTypeArg(args[0], "reflect.makemap");
+                // fix-redmaster-r59: stamp the wire type-table id so the
+                // reflect runtime can recover the map's key/elem types
+                // for the maps.Map header view.
+                GoMap m = new GoMap();
+                m.setWireTypeId(ReflectTypes.wireIdForTok(tok));
+                return ReflectRefs.intern(m);
             }, 1);
         }
     }

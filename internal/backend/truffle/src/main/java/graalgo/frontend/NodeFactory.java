@@ -3784,8 +3784,13 @@ public final class NodeFactory {
             }
             case "map" -> {
                 // The size hint is semantically invisible (GoMap grows
-                // dynamically), so it is not threaded through.
-                return new MakeNode(-1);
+                // dynamically), so it is not threaded through. The wire
+                // type id IS threaded through (fix-redmaster-r59): the
+                // header view needs the map's key/elem types, and the
+                // make node is the only site that knows them.
+                MakeNode n = new MakeNode(-1);
+                n.setTypeId(typeId);
+                return n;
             }
             default -> throw new FrontendException(path + ": make of " + k
                     + " is not supported in frontend/v1 scope (Phase 2: channels)");

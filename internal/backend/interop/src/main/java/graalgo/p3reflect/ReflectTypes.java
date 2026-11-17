@@ -243,6 +243,21 @@ public final class ReflectTypes {
         return tok == null ? -1 : tok;
     }
 
+    /**
+     * The wire type-table id for a runtime token, or -1 when the token
+     * has no wire id (fix-redmaster-r59: interop creation sites hold the
+     * tok and must stamp the GoMap with the wire id the frontend sites
+     * use). O(n) scan; called only at map creation.
+     */
+    public static int wireIdForTok(long tok) {
+        for (java.util.Map.Entry<Integer, Long> e : table().wireIdToTok.entrySet()) {
+            if (e.getValue() != null && e.getValue() == tok) {
+                return e.getKey();
+            }
+        }
+        return -1;
+    }
+
     /** The TypeInfo for a qualified type name, or null. */
     public static TypeInfo infoForName(String qname) {
         Table t = table();

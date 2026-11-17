@@ -90,6 +90,15 @@ public final class LinknameIntrinsics {
         // per-m chacha8 state, so a host PRNG draw is semantically
         // faithful — the seed is only ever hashed with, never observed.
         Linknames.register("runtime.rand", args -> Intrinsics.fastrand64(), 0);
+        // fix-redmaster-r59: internal/runtime/maps.rand — maps.Iter.Init
+        // draws two random offsets (entryOffset, dirOffset) from it on
+        // every iteration. gc draws from the per-m fastrand state, so a
+        // host PRNG draw is semantically faithful — the values only
+        // rotate the iteration start, never observed. Without this
+        // binding the first MapKeys/MapRange call dies at the Linknames
+        // fail-fast (a different symbol from "runtime.rand").
+        Linknames.register("internal/runtime/maps.rand",
+                args -> Intrinsics.fastrand64(), 0);
         // runtime.getStaticuint64s: reflect's structType.Field(i)
         // optimization for i < 256: a *[256]uint64 with element i == i
         // that Field slices into the StructField.Index. gc's array is

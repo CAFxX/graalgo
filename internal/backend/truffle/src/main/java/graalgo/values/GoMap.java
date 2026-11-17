@@ -23,6 +23,30 @@ public final class GoMap {
     private int size;
     private int tombstones;
 
+    /**
+     * The wire type-table id of this map's static type (fix-redmaster-r59):
+     * stamped by every creation site that knows it (make, composite
+     * literal, reflect.MakeMap, reflect.makemap) so the reflect runtime
+     * can recover the map's key/elem types when guest code converts the
+     * map to its {@code internal/runtime/maps.Map} header view. -1 means
+     * untyped (sync.Map internals, test scaffolding): a header view over
+     * an untyped map fails loudly at view-build time, never silently.
+     */
+    private int wireTypeId = -1;
+
+    /** The wire type-table id stamped at creation, or -1 when untyped. */
+    public int wireTypeId() {
+        return wireTypeId;
+    }
+
+    /** Stamps the wire type-table id (creation sites only). */
+    public void setWireTypeId(int wireTypeId) {
+        this.wireTypeId = wireTypeId;
+    }
+
+    /** One map entry, in table order (fix-redmaster-r59: header-view image builder). */
+    public record Entry(Object key, Object value) {}
+
     public GoMap() {
         this(8);
     }
@@ -126,6 +150,23 @@ public final class GoMap {
         for (int i = 0; i < keys.length; i++) {
             if (states[i] == OCCUPIED) {
                 out[j++] = keys[i];
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Snapshot of the present entries, in table order (fix-redmaster-r59:
+     * the header-view image builder distributes entries across groups).
+     * Entries deleted mid-iteration are skipped by re-checking
+     * {@link #containsKey} at production time (see {@link #keysSnapshot}).
+     */
+    public Entry[] entriesSnapshot() {
+        Entry[] out = new Entry[size];
+        int j = 0;
+        for (int i = 0; i < keys.length; i++) {
+            if (states[i] == OCCUPIED) {
+                out[j++] = new Entry(keys[i], values[i]);
             }
         }
         return out;

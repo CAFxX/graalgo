@@ -62,7 +62,16 @@ public final class MakeNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         if (isMap) {
-            return mapHint < 0 ? new GoMap() : new GoMap(mapHint);
+            // fix-redmaster-r59: stamp the wire type-table id (set by
+            // NodeFactory.buildMakeBuiltin from the wire "type") so the
+            // reflect runtime can recover the map's key/elem types for
+            // the maps.Map header view. typeId() is -1 only when the
+            // factory did not know the type (never for make, which
+            // requires a result type id); the view builder fails loudly
+            // on an untyped map rather than serving a wrong header.
+            GoMap m = mapHint < 0 ? new GoMap() : new GoMap(mapHint);
+            m.setWireTypeId(typeId());
+            return m;
         }
         long len = lenChild.executeLong(frame);
         long cap = capChild != null ? capChild.executeLong(frame) : len;

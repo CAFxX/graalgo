@@ -126,6 +126,10 @@ public final class CompositeLitNode extends GoExprNode {
 
     private Object buildMap(VirtualFrame frame) {
         GoMap m = new GoMap(Math.max(8, valueNodes.length * 2));
+        // fix-redmaster-r59: stamp the wire type-table id (set by
+        // NodeFactory on the literal) so the reflect runtime can recover
+        // the map's key/elem types for the maps.Map header view.
+        m.setWireTypeId(typeId());
         for (int j = 0; j < valueNodes.length; j++) {
             Object k = MapKeys.box(keyKind, keyNodes[j], frame);
             Object v = Boxing.copyForAssign(elemKind, Boxing.box(elemKind, valueNodes[j], frame));
