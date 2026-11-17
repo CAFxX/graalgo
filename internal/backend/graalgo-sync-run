@@ -33,7 +33,14 @@ done
 # deprecated sun.misc.Unsafe" warnings on stderr (Truffle uses Unsafe
 # internally); they would otherwise pollute the program's stderr and break
 # byte-identity vs `go run`.
-exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m \
+# -XX:-UsePerfData: no hsperfdata mmap file. With it on, concurrent JVMs
+# sharing a temp dir intermittently print "Java HotSpot(TM) 64-Bit Server VM
+# warning: ... hsperfdata ... locked" on stderr — JVM noise that broke
+# byte-identity with gc (flaky snapshot-check). Suppressed at the source.
+# GRAALGO_JAVA_OPTS: extra JVM flags (word-split), e.g. resource caps for
+# test runs on shared hosts: "-Xmx2g -XX:ActiveProcessorCount=4".
+# shellcheck disable=SC2086
+exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m -XX:-UsePerfData ${GRAALGO_JAVA_OPTS:-} \
   --sun-misc-unsafe-memory-access=allow \
   -Djava.io.tmpdir="${TMPDIR:-/tmp}" \
   -cp "$CP" graalgo.p3sync.launcher.P3SyncMain "$@"
