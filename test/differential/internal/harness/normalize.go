@@ -38,12 +38,14 @@ var (
 	// "\t/abs/main.go:12 +0x1d" -> "\t/abs/main.go:12"
 	rePCOffset = regexp.MustCompile(`(?m)(\.go:\d+) \+0x[0-9a-fA-F]+$`)
 	// "fp=0xc000046f58 sp=0xc000046f38 pc=0x4a3b2c"
-	reRegAnnot = regexp.MustCompile(`\b(fp|sp|pc|gp|mp)=0x[0-9a-fA-F]+`)
+	reRegAnnot = regexp.MustCompile(`\b(fp|sp|pc|gp|mp)=0x[0-9a-fA-F]+\b`)
 	// a trace frame line: no leading space, a function name, an argument
 	// list closing the line ("...)" for elided args too).
 	reFrameLine = regexp.MustCompile(`(?m)^[A-Za-z_][\w./*()\[\]-]*\([^\n]*\)$`)
-	reHex       = regexp.MustCompile(`0x[0-9a-fA-F]+`)
-	reSignal    = regexp.MustCompile(`(?m)^\[signal [^\n]*\]$`)
+	// \b: never re-match an already-normalized "0xADDR" ("0xADD" is hex),
+	// which made the normalizer non-idempotent ("pc=0xADDRRR").
+	reHex    = regexp.MustCompile(`0x[0-9a-fA-F]+\b`)
+	reSignal = regexp.MustCompile(`(?m)^\[signal [^\n]*\]$`)
 )
 
 // Normalize applies the global rules to s (stderr, traces, build logs).

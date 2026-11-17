@@ -131,3 +131,14 @@ func TestParseReviewedExclusions(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalize_Idempotent(t *testing.T) {
+	in := "panic: x\n[signal SIGSEGV: segmentation violation code=0x1 addr=0x8 pc=0x4a3b2c]\nmain.f(0xc000010000)\n\t/x/main.go:3 +0x1d"
+	once := Normalize(in)
+	if twice := Normalize(once); twice != once {
+		t.Fatalf("not idempotent:\n%q\n%q", once, twice)
+	}
+	if strings.Contains(once, "ADDRR") {
+		t.Fatalf("marker re-normalized: %q", once)
+	}
+}
