@@ -268,6 +268,11 @@ public final class GoOs {
      * `go run`; graalgo has no binary artifact, so the entry-point file
      * path is the honest equivalent).
      *
+     * <p>The previous run's live handles are evicted through the normal
+     * close path first (R2315-14-P1-2): without the sweep a batch
+     * entry's abandoned socket keeps its port bound and its
+     * {@code SockState} under the recycled cookie.
+     *
      * <p>A static initializer seeds the same state with an empty argv so
      * the intrinsics are usable even if a caller builds (but never runs
      * through the launcher) a program.
@@ -376,6 +381,32 @@ public final class GoOs {
     }
 
     private static void resetState(String[] argv) {
+        // R2315-14-P1-2: batch-mode per-entry reset — the previous
+        // entry's handles must not survive into the next entry.
+        // HANDLES.clear() alone only drops the table: socket channels
+        // stay bound, GoNet SockState stays keyed by the recycled
+        // cookie, and poll descs stay registered, so entry N+1's
+        // cookie 16 aliases entry N's stale socket (EADDRINUSE on
+        // rebind). Evict every live handle through the normal close
+        // path first: close() evicts the poll desc, discards the
+        // SockState, and closes the underlying channel. Stdio (1/2/3)
+        // is skipped — it is re-seeded below and must never close the
+        // real streams. (No-op on first init: the table is empty.)
+        boolean evicted = false;
+        for (Long cookie : HANDLES.keySet().toArray(new Long[0])) {
+            if (cookie.longValue() <= 3L) {
+                continue;
+            }
+            close(cookie);
+            evicted = true;
+        }
+        if (evicted) {
+            // The poller thread must process the cancellations before
+            // the next entry binds, or rebind fails EADDRINUSE (the
+            // port stays bound until a selection operation processes
+            // the cancelled key — see GoNetpoll.drainEvictions).
+            graalgo.p3net.GoNetpoll.drainEvictions();
+        }
         HANDLES.clear();
         NEXT_COOKIE.set(16);
         ENV_OVERLAY.clear();
@@ -764,6 +795,11 @@ public final class GoOs {
             // waiters (with pollErrClosing) and deregister the channel.
             // Idempotent: the normal FD.Close path already unblocked.
             graalgo.p3net.GoNetpoll.evictForClose(cookie);
+            // R2315-14-P1-2: discard the per-socket control state too —
+            // without this STATES keeps the closed socket's bind/connect
+            // progress under the cookie, and the next socket allocated
+            // on the recycled cookie aliases it.
+            graalgo.p3net.GoNet.discardForClose(cookie);
         }
         try {
             handle.close();

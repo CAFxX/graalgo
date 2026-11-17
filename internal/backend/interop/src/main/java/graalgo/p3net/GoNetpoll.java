@@ -16,11 +16,13 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.jfr.ParkReason;
+import graalgo.p3log.P3Log;
 import graalgo.p3os.GoOs;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
@@ -445,6 +447,63 @@ public final class GoNetpoll {
         Selector sel = selector;
         if (sel != null) {
             sel.wakeup();
+        }
+    }
+
+    /**
+     * Batch per-entry barrier (R2315-14-P1-2): waits until the poller
+     * thread has processed every poll-desc cancellation issued so far.
+     *
+     * <p>Why a barrier is needed: closing a socket channel whose
+     * {@link SelectionKey} is cancelled-but-unprocessed does NOT free
+     * its port for rebind — the port stays bound until a selection
+     * operation on the poller thread processes the cancelled key
+     * (verified with plain NIO: cancel + close + sleep still fails
+     * {@code EADDRINUSE}; cancel + selectNow rebinds). {@link
+     * #evictForClose} only cancels and wakes, so without this barrier
+     * the next batch entry's {@code listen} can fail {@code EADDRINUSE}
+     * on the just-evicted port. The barrier enqueues a marker on the
+     * registration queue; the poller runs it on its own thread, where
+     * the marker's {@code selectNow()} processes the cancelled keys
+     * synchronously. Called by {@code GoOs.init}'s eviction sweep
+     * after all handles are closed.
+     *
+     * <p>No-op when no poller is alive (nothing is registered
+     * anywhere) or when called on the poller thread itself (never
+     * wait for ourselves). Bounded wait: a wedged poller must not
+     * hang init — on timeout the sweep proceeds best-effort and the
+     * next entry's bind fails loudly instead.
+     */
+    public static void drainEvictions() {
+        Thread pt = pollerThread;
+        Selector sel = selector;
+        if (pt == null || !pt.isAlive() || sel == null || !sel.isOpen()) {
+            return;
+        }
+        if (Thread.currentThread() == pt) {
+            return;
+        }
+        FutureTask<SelectionKey> barrier = new FutureTask<>(() -> {
+            try {
+                sel.selectNow();
+            } catch (Exception ignored) {
+                // Selector closed concurrently: registrations are gone
+                // with it, so there is nothing left to drain.
+            }
+            return null;
+        });
+        REG_Q.add(barrier);
+        try {
+            sel.wakeup();
+        } catch (Exception ignored) {
+            return; // Selector died with its registrations.
+        }
+        try {
+            barrier.get(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            P3Log.warn(GoNetpoll.class,
+                    "graalgo-netpoll: eviction drain timed out (" + e + "); "
+                    + "the next entry may fail to rebind an evicted port");
         }
     }
 

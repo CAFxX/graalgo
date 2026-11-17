@@ -11,8 +11,12 @@ import graalgo.launcher.OsSurfaceInitializer;
  * compile-time dependency on this module.
  *
  * <p>Net state ({@code graalgo.p3net.GoNet} / {@code GoNetpoll}) is not
- * reset by this class: that wiring lands in {@link GoOs#init} itself
- * (review B-04); this class only forwards the call, so a per-entry
+ * reset by this class — it is reset by {@link GoOs#init} itself
+ * (review B-04): each per-entry {@code init} evicts the previous
+ * entry's live handles through the normal close path (netpoller
+ * eviction + {@code SockState} discard + channel close) before the
+ * cookie counter restarts at 16, so a recycled cookie never aliases
+ * a stale socket. This class only forwards the call, so a per-entry
  * {@code init} in batch mode picks the complete reset up with it.
  */
 public final class GoOsSurfaceInitializer implements OsSurfaceInitializer {

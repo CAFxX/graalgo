@@ -176,6 +176,18 @@ public final class GoNet {
         STATES.clear();
     }
 
+    /**
+     * Discards the per-socket control state for one cookie (normal close
+     * path). Called by {@code graalgo.p3os.GoOs#close} for socket handles:
+     * without it a closed socket's bind/connect progress survives under
+     * the cookie, and the next socket allocated on the recycled cookie
+     * aliases the stale state (R2315-14-P1-2). Idempotent: a cookie with
+     * no state (never a socket, or already discarded) is a no-op.
+     */
+    public static void discardForClose(long cookie) {
+        STATES.remove(cookie);
+    }
+
     // ------------------------------------------------------------------
     // D5 adaptation + buffer helpers (mirroring GoOs's private ones;
     // cross-package, so duplicated here rather than exposed).
