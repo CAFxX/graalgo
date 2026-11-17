@@ -469,6 +469,13 @@ public final class SchedulerCore {
         GoroutineHandle h = new GoroutineHandle(body);
         h.isMain = main;
         h.system = system;
+        if (main) {
+            // Deadlock detection is a property of a Go PROGRAM (gc
+            // checkdead): armed only once a main goroutine exists, so
+            // embedders and unit tests that drive goroutines from outside
+            // (unparking them from a platform thread) never trip it.
+            mainSpawned = true;
+        }
         // "created by" provenance for tracebacks: the spawning goroutine
         // and its innermost Go frame (the go statement's function).
         GoroutineHandle parent = currentHandle.get();
@@ -631,6 +638,14 @@ public final class SchedulerCore {
     private volatile GoroutineHandle fatalOwner;
     /** Live non-system goroutines (gc checkdead's user goroutine count). */
     private final AtomicInteger liveUser = new AtomicInteger();
+    /** A main goroutine was spawned: deadlock detection is armed. */
+    private volatile boolean mainSpawned;
+
+    /** True when deadlock detection applies (a Go program is running). */
+    boolean deadlockArmed() {
+        return mainSpawned;
+    }
+
     /** Main goroutine called runtime.Goexit. */
     private volatile boolean mainGoexited;
 

@@ -309,7 +309,7 @@ public final class Drainer {
      * probe.
      */
     private void detectDeadlock() {
-        if (inflight != 0 || !wakeFifo.isEmpty() || !initFifo.isEmpty()
+        if (!sched.deadlockArmed() || inflight != 0 || !wakeFifo.isEmpty() || !initFifo.isEmpty()
                 || !runFifo.isEmpty() || !inIo.isEmpty() || !externalParked.isEmpty()
                 || !unparkPending.isEmpty() || !inbox.isEmpty() || sched.isExiting()) {
             return;
