@@ -21,3 +21,6 @@ test/differential/diffharness
 tools/fuzz/work/
 .gocache/
 .tmp/
+
+# differential harness run output (run.sh OUTDIR default): debris, never tracked
+test/differential/test-results/
