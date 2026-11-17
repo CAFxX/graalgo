@@ -1,0 +1,8 @@
+-- stdout --
+select
+
+-- stderr (normalized) --
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine N [select (no cases)]:
+-- exit 2 --

@@ -717,8 +717,9 @@ public final class Intrinsics {
      * (shared with the panic path). Known divergences from gc, documented:
      * no {@code +0x} pc offsets (no machine code), no argument lists
      * (graalgo frames carry no arg words), unqualified frame names (the
-     * wire carries no package path), no {@code created by} line (the
-     * scheduler does not record creators). Each divergence has an
+     * wire carries no package path). The {@code created by} trailer is
+     * appended by the scheduler (which records each goroutine's creator),
+     * not here. Each divergence has an
      * explicit re-test trigger in
      * {@code test/corpus/traceback/README.md} ("Re-test
      * triggers").

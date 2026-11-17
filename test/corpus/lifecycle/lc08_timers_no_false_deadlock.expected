@@ -1,0 +1,7 @@
+-- stdout --
+7
+1
+ok
+
+-- stderr (normalized) --
+-- exit 0 --

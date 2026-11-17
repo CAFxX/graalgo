@@ -1,0 +1,8 @@
+-- stdout --
+
+-- stderr (normalized) --
+panic: main.MyStr("hi
+	there")
+
+goroutine N [running]:
+-- exit 2 --

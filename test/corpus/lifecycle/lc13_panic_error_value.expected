@@ -1,0 +1,7 @@
+-- stdout --
+
+-- stderr (normalized) --
+panic: an error value
+
+goroutine N [running]:
+-- exit 2 --

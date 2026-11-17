@@ -1,0 +1,8 @@
+-- stdout --
+start
+
+-- stderr (normalized) --
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine N [chan receive]:
+-- exit 2 --

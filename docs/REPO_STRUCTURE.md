@@ -161,6 +161,11 @@ Related: [Makefile](../Makefile) (root build entry point),
   wrote it.
   - [corpus/](../test/corpus/) — differential corpus programs (moved here
     from `phases/phase3/corpus/`, 2026-10-13).
+    - [lifecycle/](../test/corpus/lifecycle/) — program lifecycle and
+      panic model vs gc (exit on main return, fatal goroutine panics,
+      deadlock detection, panic chains, runtime error values, GOMAXPROCS,
+      slot-releasing pipe reads); runner
+      [run_differential.sh](../test/corpus/lifecycle/run_differential.sh).
   - [differential/](../test/differential/) — the differential harness: run
     each corpus program under graalgo and under `gc`, byte-compare outputs.
     Moved here from `tools/diffharness/` (2026-10-13).

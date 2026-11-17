@@ -1,0 +1,9 @@
+-- stdout --
+recovered: first
+
+-- stderr (normalized) --
+panic: first [recovered]
+	panic: second: first
+
+goroutine N [running]:
+-- exit 2 --
