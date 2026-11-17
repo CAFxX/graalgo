@@ -272,7 +272,7 @@ func TestDefaultListPath(t *testing.T) {
 	}
 	// The pre-migration path must not resurface: phases/ no longer exists.
 	if strings.Contains(defaultListPath(root), "phases") {
-		t.Fatalf("default list path still references phases/: %q", defaultListPath(root))
+		t.Fatalf("default list path still references phases/: %q", defaultListPath(root)) // dead-path-ok (detector)
 	}
 }
 

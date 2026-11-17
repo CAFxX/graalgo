@@ -342,11 +342,6 @@ def main():
                 md_files.append(os.path.join(dirpath, fn))
 
     for md in sorted(md_files):
-        # Scratch work logs (hidden_files/) are exempt: they are untracked-by-
-        # design experiment notes, not maintained docs (same exemption as
-        # tools/precommit-check.sh).
-        if "hidden_files" in md.split(os.sep):
-            continue
         with open(md, encoding="utf-8", errors="replace") as f:
             lines = strip_code_blocks(f.readlines())
         docdir = os.path.dirname(md)
