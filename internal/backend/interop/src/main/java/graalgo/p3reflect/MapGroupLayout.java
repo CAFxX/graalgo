@@ -91,6 +91,21 @@ public final class MapGroupLayout {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
+     * The table the GROUP_TOKS entries were synthesized in. Tokens are
+     * per-run (minted densely per document in ReflectTypes phase A), so a
+     * (keyTok, elemTok) pair from one run can denote different types in
+     * the next run, and a cached group token is only valid in the table
+     * that minted it. Cleared whenever the installed table changes — the
+     * same invalidation AbiTypes.abiPointerForTok applies to its own
+     * caches. Without this, a multi-program JVM reuses a stale group
+     * token against a smaller table: bi22 failed in CI and in any JVM
+     * that ran an earlier map program with "reflect: unknown type token
+     * 11079" (group token minted for bi21's table, looked up in bi22's
+     * table of 11074 entries). (fix-redmaster-r63)
+     */
+    private static volatile ReflectTypes.Table cachedTable;
+
+    /**
      * The token of the synthesized group type for a map with the given
      * key/elem types (slot struct + [8]slot array + group struct, via
      * {@link ReflectTypes#structOf} / {@link ReflectTypes#arrayOf}).
@@ -99,7 +114,15 @@ public final class MapGroupLayout {
      * {@code infoForStructString} fallback finds its TypeInfo. Cached;
      * synthesis is idempotent (structOf/arrayOf dedup by structural key).
      */
-    public static long groupTokFor(ReflectTypes.TypeInfo key, ReflectTypes.TypeInfo elem) {
+    public static synchronized long groupTokFor(ReflectTypes.TypeInfo key, ReflectTypes.TypeInfo elem) {
+        // Tokens are per-run: drop entries minted for a previous table
+        // before consulting the cache (see cachedTable). Synchronized so
+        // the check-clear-compute sequence is atomic across threads.
+        ReflectTypes.Table table = ReflectTypes.table();
+        if (table != cachedTable) {
+            GROUP_TOKS.clear();
+            cachedTable = table;
+        }
         String cacheKey = key.tok + ":" + elem.tok;
         Long hit = GROUP_TOKS.get(cacheKey);
         if (hit != null) {
