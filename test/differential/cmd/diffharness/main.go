@@ -611,34 +611,58 @@ func cmdSrctestRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	div := 0
+	counts := map[string]int{}
 	for _, c := range comps {
-		status := "SAME    "
-		if !c.Same {
-			status = "DIVERGE "
-			div++
+		v := srctestVerdict(c)
+		counts[v]++
+		if v == "MATCH" {
+			continue
 		}
-		fmt.Printf("%s %s", status, c.Program)
+		fmt.Printf("%-9s %s", v, c.Program)
+		if v == "STALE" {
+			fmt.Printf("\n           - listed in %s (%s) but matches gc: prune the entry", filepath.Base(*exclusions), c.Expected)
+		}
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
 		}
 		fmt.Println()
 	}
-	skipped := 0
+	notrun := 0
 	for _, f := range files {
-		if strings.HasPrefix(f.Class, "exclude") {
-			skipped++
+		if strings.HasPrefix(f.Class, typeparam.ClassNotRun) {
+			notrun++
 		}
 	}
-	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+	if err := typeparam.WriteReportJSON(*out, comps, notrun); err != nil {
 		return err
 	}
-	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",
-		len(comps), div, skipped, *out)
-	if div > 0 {
-		return fmt.Errorf("%d divergences", div)
+	fmt.Printf("srctest run: %d compared: match=%d expected=%d diverge=%d stale=%d infra=%d; %d not programs; report %s\n",
+		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], notrun, *out)
+	if bad := counts["DIVERGE"] + counts["STALE"]; bad > 0 {
+		return fmt.Errorf("%d unexpected results (unlisted divergences / stale entries)", bad)
+	}
+	if counts["INFRA"] > 0 {
+		return fmt.Errorf("%w: %d files could not be compared", errInfra, counts["INFRA"])
 	}
 	return nil
+}
+
+// srctestVerdict classifies one srctest comparison: MATCH, EXPECTED (listed
+// and diverging), DIVERGE (unlisted divergence), STALE (listed but matching
+// gc), INFRA (no verdict).
+func srctestVerdict(c typeparam.Comparison) string {
+	switch {
+	case c.Infra:
+		return "INFRA"
+	case c.Same && c.Expected != "":
+		return "STALE"
+	case c.Same:
+		return "MATCH"
+	case c.Expected != "":
+		return "EXPECTED"
+	default:
+		return "DIVERGE"
+	}
 }
 
 func readManifest(path string) ([]manifestEntry, error) {

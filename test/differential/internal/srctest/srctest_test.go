@@ -58,8 +58,8 @@ func TestClassifyNotMain(t *testing.T) {
 
 func Foo() {}
 `)
-	if class != "exclude:backend-specific" {
-		t.Fatalf("want exclude:backend-specific, got %q", class)
+	if class != "notrun" {
+		t.Fatalf("want notrun, got %q", class)
 	}
 	if detail == "" {
 		t.Fatal("want a detail reason")
@@ -71,8 +71,8 @@ func TestClassifyNoFuncMain(t *testing.T) {
 
 func helper() {}
 `)
-	if class != "exclude:backend-specific" {
-		t.Fatalf("want exclude:backend-specific, got %q", class)
+	if class != "notrun" {
+		t.Fatalf("want notrun, got %q", class)
 	}
 }
 
@@ -83,8 +83,8 @@ package main
 
 func main() {}
 `)
-	if class != "exclude:backend-specific" {
-		t.Fatalf("want exclude:backend-specific, got %q", class)
+	if class != "notrun" {
+		t.Fatalf("want notrun, got %q", class)
 	}
 }
 
@@ -95,8 +95,8 @@ package main
 
 func main() {}
 `)
-	if class != "exclude:backend-specific" {
-		t.Fatalf("want exclude:backend-specific, got %q", class)
+	if class != "notrun" {
+		t.Fatalf("want notrun, got %q", class)
 	}
 }
 
@@ -119,20 +119,24 @@ import "C"
 
 func main() {}
 `)
-	if class != "exclude:backend-specific" {
-		t.Fatalf("want exclude:backend-specific, got %q", class)
+	// No automatic cgo exclusion: it runs, and a divergence must be listed
+	// explicitly in srctest-exclusions.yaml.
+	if class != "run" {
+		t.Fatalf("want run, got %q", class)
 	}
 }
 
 func TestClassifyStdlibImport(t *testing.T) {
-	class, detail := classifyOne(t, "net.go", `package main
+	class, detail := classifyOne(t, "strs.go", `package main
 
-import "net"
+import "strings"
 
-func main() {}
+func main() { _ = strings.ToUpper("a") }
 `)
-	if class != "exclude:deferred-parity" {
-		t.Fatalf("want exclude:deferred-parity, got %q (detail %q)", class, detail)
+	// No automatic import-based exclusion (the product launcher runs the
+	// stdlib): stdlib-importing programs are compared.
+	if class != "run" {
+		t.Fatalf("want run, got %q (detail %q)", class, detail)
 	}
 }
 
@@ -143,8 +147,8 @@ func TestClassifyVersionTag(t *testing.T) {
 		t.Fatalf("go1.26: want run, got %q", class)
 	}
 	class, _ = classifyOne(t, "v28.go", "//go:build go1.28\n\npackage main\n\nfunc main() {}\n")
-	if class != "exclude:backend-specific" {
-		t.Fatalf("go1.28: want exclude:backend-specific, got %q", class)
+	if class != "notrun" {
+		t.Fatalf("go1.28: want notrun, got %q", class)
 	}
 }
 
@@ -186,8 +190,10 @@ func TestYamlExclusionOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if files[0].Class != "exclude:deferred-parity" {
-		t.Fatalf("want YAML exclusion to win, got %q", files[0].Class)
+	// A listed file still runs (class unchanged) and carries the reason:
+	// the run verdict is EXPECTED while it diverges, STALE once it matches.
+	if files[0].Class != "run" || files[0].Expected != "deferred-parity" {
+		t.Fatalf("want run+expected=deferred-parity, got %q/%q", files[0].Class, files[0].Expected)
 	}
 }
 
@@ -225,8 +231,10 @@ func TestClassifyConcurrency(t *testing.T) {
 	}
 	for _, c := range cases {
 		class, _ := classifyOne(t, c.name, c.body)
-		if class != "exclude:deferred-parity" {
-			t.Errorf("%s: want exclude:deferred-parity, got %q", c.name, class)
+		// No automatic concurrency exclusion: the product launcher has
+		// the scheduler.
+		if class != "run" {
+			t.Errorf("%s: want run, got %q", c.name, class)
 		}
 	}
 }

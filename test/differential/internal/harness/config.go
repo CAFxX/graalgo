@@ -41,6 +41,10 @@ type Backend struct {
 	// declares "jvm" and gets the same, single definition of JVM noise,
 	// instead of each config copying (and forgetting) regexes.
 	NoiseSets []string `json:"noiseSets,omitempty"`
+	// Batch: the launcher accepts --batch=<file> (the phase-1 graalgo-run
+	// does; the product launcher does not), letting the typeparam/srctest
+	// adapters amortize one JVM over many files.
+	Batch bool `json:"batch,omitempty"`
 }
 
 // NoiseSets are the named stderr-noise filter sets a backend may opt into.
