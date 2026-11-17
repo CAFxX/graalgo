@@ -92,6 +92,7 @@ public final class GoroutineState {
     private static final ThreadLocal<GoroutineState> HOLDER = new ThreadLocal<>();
 
     /** The current goroutine's state, or null outside any Go execution. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoroutineState current() {
         return HOLDER.get();
     }
@@ -100,6 +101,7 @@ public final class GoroutineState {
      * Installs {@code next} as current, returning the previous holder for
      * {@link #restore(GoroutineState)}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoroutineState install(GoroutineState next) {
         GoroutineState prev = HOLDER.get();
         HOLDER.set(next);
@@ -107,6 +109,7 @@ public final class GoroutineState {
     }
 
     /** Restores the holder saved by {@link #install(GoroutineState)}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void restore(GoroutineState prev) {
         HOLDER.set(prev);
     }

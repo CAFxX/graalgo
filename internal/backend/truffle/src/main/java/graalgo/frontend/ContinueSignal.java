@@ -5,11 +5,11 @@ package graalgo.frontend;
  * innermost enclosing loop (unlabeled), or by the loop carrying the label.
  * A {@code switch} never catches it (it propagates to the enclosing loop).
  */
-public final class ContinueSignal extends RuntimeException {
+public final class ContinueSignal extends com.oracle.truffle.api.nodes.ControlFlowException {
     private final String label;
 
     public ContinueSignal(String label) {
-        super(null, null, false, false);
+
         this.label = label;
     }
 

@@ -6,11 +6,11 @@ package graalgo.frontend;
  * or by the construct carrying the label. Never escapes a loop or switch
  * node — it is not an error.
  */
-public final class BreakSignal extends RuntimeException {
+public final class BreakSignal extends com.oracle.truffle.api.nodes.ControlFlowException {
     private final String label;
 
     public BreakSignal(String label) {
-        super(null, null, false, false);
+
         this.label = label;
     }
 

@@ -41,7 +41,19 @@ public final class TimeNowNode extends GoExprNode {
         // Now() never returns the zero Time (bools ride the longs[]
         // carrier as 0/1).
         return new GoStruct(timeDesc,
-                new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
+                new long[]{graalgo.p3time.nodes.TimeNowNode.wallNanos(), 1}, new Object[0]);
+    }
+
+    /**
+     * Wall clock in Unix nanoseconds at the platform clock's full
+     * resolution (gc's time.Now carries nanoseconds; the previous
+     * {@code currentTimeMillis()*1e6} truncated every reading to whole
+     * milliseconds, so {@code time.Since} of sub-millisecond work read 0).
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static long wallNanos() {
+        java.time.Instant now = java.time.Instant.now();
+        return now.getEpochSecond() * 1_000_000_000L + now.getNano();
     }
 
     /**

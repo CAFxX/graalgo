@@ -7,11 +7,11 @@ package graalgo.frontend;
  * target label is reachable (no jumping into blocks or over declarations),
  * so a signal that escapes every block is an internal error.
  */
-public final class GotoSignal extends RuntimeException {
+public final class GotoSignal extends com.oracle.truffle.api.nodes.ControlFlowException {
     private final String label;
 
     public GotoSignal(String label) {
-        super(null, null, false, false);
+
         this.label = label;
     }
 

@@ -218,16 +218,10 @@ public final class GoFuncRootNode extends RootNode {
             try {
                 body.executeVoid(frame);
             } catch (GoReturn r) {
-                if (chain != null) {
-                    adoptRangeDefers(chain, frame, mark);
-                    chain.unwindReturning(mark);
-                }
+                unwindReturning(chain, frame, mark);
                 return readResult(frame, resultSlot, resultKind, r.value, resultBoxed);
             }
-            if (chain != null) {
-                adoptRangeDefers(chain, frame, mark);
-                chain.unwindReturning(mark);
-            }
+            unwindReturning(chain, frame, mark);
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (PanicException p) {
             PanicException rest;
@@ -252,6 +246,22 @@ public final class GoFuncRootNode extends RootNode {
             if (state != null && head != null) {
                 state.popGoStack(head.frame);
             }
+        }
+    }
+
+    /**
+     * Normal-return defer drain. The common case — no defer pushed since
+     * entry, no range-over-func stash — is decided inline (an ArrayDeque
+     * size read and a constant slot check) so a defer-free function's
+     * compiled body never calls into the {@link DeferChain} boundary.
+     */
+    private void unwindReturning(DeferChain chain, VirtualFrame frame, int mark) {
+        if (chain == null) {
+            return;
+        }
+        adoptRangeDefers(chain, frame, mark);
+        if (chain.depth() > mark) {
+            chain.unwindReturning(mark);
         }
     }
 
@@ -333,6 +343,7 @@ public final class GoFuncRootNode extends RootNode {
      * behavior on the linkname path). Callers that know the exact Go
      * type must box via the type table instead.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static graalgo.values.GoInterface wrapInterface(Object arg) {
         graalgo.values.GoKind kind;
         String goName;
