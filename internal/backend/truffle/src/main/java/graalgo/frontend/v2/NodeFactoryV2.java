@@ -170,9 +170,14 @@ public final class NodeFactoryV2 {
 
     /**
      * Resolves a v2 type-table id to a GoKind.
+     *
+     * <p>Package-private (not private) so the type-kind contract is
+     * directly unit-testable ({@code NodeFactoryV2TypeKindTest}): the
+     * mapping is the load-time gate for every v2 program, and a silent
+     * fallback here would be a silent miscompilation.
      */
     @SuppressWarnings("unchecked")
-    private static GoKind goKindForTypeId(List<Object> types, Object typeIdObj, String where) {
+    static GoKind goKindForTypeId(List<Object> types, Object typeIdObj, String where) {
         if (!(typeIdObj instanceof Long)) {
             // Type may be null (e.g. for statements) — default to interface.
             return GoKind.INTERFACE;
@@ -219,15 +224,57 @@ public final class NodeFactoryV2 {
             case "interface":
                 return GoKind.INTERFACE;
             case "named": {
-                // Named type: resolve to the underlying type.
+                // Named type: resolve to the underlying type. Type
+                // arguments do not change the value kind: List[int]
+                // and List[string] are both structs.
                 Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
                 if (detail != null && detail.get("underlying") instanceof Long) {
                     return goKindForTypeId(types, detail.get("underlying"), where);
                 }
                 return GoKind.INTERFACE;
             }
+            case "typeparam": {
+                // A type parameter behaves like its constraint at
+                // runtime (see GoKind.TYPEPARAM): resolve to the
+                // constraint's kind.
+                Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+                if (detail != null && detail.get("constraint") instanceof Long) {
+                    return goKindForTypeId(types, detail.get("constraint"), where);
+                }
+                throw new FrontendException(where + ": typeparam without constraint id");
+            }
+            case "alias": {
+                // Aliases are transparent: resolve to the aliased type.
+                Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+                if (detail != null && detail.get("rhs") instanceof Long) {
+                    return goKindForTypeId(types, detail.get("rhs"), where);
+                }
+                throw new FrontendException(where + ": alias without rhs id");
+            }
+            case "union":
+                // Unions have no runtime value: they only occur inside
+                // constraint interfaces' type sets. Reaching kind
+                // resolution with one is a frontend bug.
+                throw new FrontendException(where + ": union has no value kind");
+            case "tuple": {
+                // go/types gives a call the tuple of its results. The
+                // empty tuple (a void call) has no value: INTERFACE is
+                // the no-specific-kind stand-in (the result is
+                // discarded — a void call cannot be used as a value).
+                // A non-empty tuple has no single GoKind.
+                Map<String, Object> detail = (Map<String, Object>) typeMap.get("detail");
+                if (detail != null && detail.get("elems") instanceof List) {
+                    if (((List<?>) detail.get("elems")).isEmpty()) {
+                        return GoKind.INTERFACE;
+                    }
+                }
+                throw new FrontendException(where + ": multi-result tuple has no single value kind");
+            }
             default:
-                return GoKind.INTERFACE;
+                // No silent fallback: an unknown kind used to resolve
+                // to INTERFACE, silently miscompiling any program
+                // whose type the emitter had misdescribed.
+                throw new FrontendException(where + ": unknown type kind \"" + kind + "\"");
         }
     }
 

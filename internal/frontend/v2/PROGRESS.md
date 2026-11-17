@@ -30,6 +30,32 @@ for the design.
       of a 3-file package are byte-identical (canonical JSON encoding);
       proven to fail with the fix reverted
 
+## 2026-11-17 — v2 type table describes generics faithfully (review-1707 P0-1)
+
+- [x] `describeType` covers every `types.Type`: `named` carries real
+      methods (substituted signatures) + `typeparams`/`typeargs`, so
+      `List[int]` and `List[string]` differ on the wire; new kinds
+      `alias` (rhs — aliases are transparent, so `any` describes as
+      `interface{}`), `typeparam` (constraint), `union` (terms with
+      tilde), `tuple` (call-result elements); `interface` carries real
+      explicit methods and embedded types; struct fields no longer
+      carry a hardcoded `offset` (no v2 target layout is defined).
+      Unrepresentable types fail loudly at emit time; untyped nil and
+      invalid (builtin values) carry no type id instead of a
+      misdescription. Backend `NodeFactoryV2.goKindForTypeId` resolves
+      the new kinds (typeparam/alias via constraint/rhs, empty tuple
+      to INTERFACE, union/multi-result tuple throw) and throws on
+      unknown kinds instead of silently returning INTERFACE.
+      Tests: `emit/review_1707_types_test.go`,
+      `encode/review_1707_types_test.go`,
+      `NodeFactoryV2TypeKindTest.java`; direct unit tests for the
+      checker/parser stages (`checker/checker_test.go`,
+      `parser/parser_test.go`). All new tests fail on the pre-fix
+      emitter (verified by stash).
+- [ ] Generic instantiations at the node level (`IndexListExpr` etc.)
+      are still loudly rejected — the type table is ready, the node
+      emitters are not (separate work).
+
 ## Master merge log
 
 - 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,
@@ -50,7 +76,7 @@ for the design.
       node per ValueSpec with initializers (review-1105-v2-objs, 2026-11-05)
 - [ ] Package-level init order (dependency-ordered initialization of
       globals; currently emitted in source order)
-- [ ] Generic instantiations
+- [ ] Generic instantiations (type table done 2026-11-17; node emission still rejected)
 - [ ] Import resolution for multi-package programs
 - [ ] `go vet` clean, more unit tests per stage
 
