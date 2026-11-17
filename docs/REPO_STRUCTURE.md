@@ -178,6 +178,10 @@ Related: [Makefile](../Makefile) (root build entry point),
   - [arch/](../docs/arch/) — architecture documentation, consolidated from
     the research-era [SPEC.md](arch/SPEC.md), [PHASES.md](arch/PHASES.md), and
     [FEASIBILITY.md](arch/FEASIBILITY.md).
+    [RECOVERY.md](arch/RECOVERY.md) is the 2026-11-17 recovery plan;
+    [toolexec-design.md](arch/toolexec-design.md) is its track-T1 design for
+    the per-package `-toolexec` compile/link path (tool protocol, IR,
+    stdlib fork boundary, measured intrinsic surface, milestones).
   - [dev/](../docs/dev/) — contributor guide and architecture decision
     records (ADRs; research-era ones moved here from
     [docs/dev/adr/](../docs/dev/adr/)).
