@@ -209,7 +209,7 @@ public final class ChannelTest {
                     ChanOps.send(ch, 2L); // parks: buffer full
                     panicVal.set("NO_PANIC");
                 } catch (PanicException pe) {
-                    panicVal.set(pe.goValue().toString());
+                    panicVal.set(graalgo.runtime.PanicRendering.renderPanicLine(pe).substring("panic: ".length()));
                 }
             });
             waitFor(() -> ch.sendWaitersCount() == 1, "sender parked on full buffer");
@@ -232,7 +232,7 @@ public final class ChannelTest {
                     ChanOps.send(ch, 1L);
                     panicVal.set("NO_PANIC");
                 } catch (PanicException pe) {
-                    panicVal.set(pe.goValue().toString());
+                    panicVal.set(graalgo.runtime.PanicRendering.renderPanicLine(pe).substring("panic: ".length()));
                 }
             });
         });
@@ -252,7 +252,7 @@ public final class ChannelTest {
                     ChanOps.close(ch);
                     panicVal.set("NO_PANIC");
                 } catch (PanicException pe) {
-                    panicVal.set(pe.goValue().toString());
+                    panicVal.set(graalgo.runtime.PanicRendering.renderPanicLine(pe).substring("panic: ".length()));
                 }
             });
         });
@@ -523,7 +523,7 @@ public final class ChannelTest {
                     });
                     panicVal.set("NO_PANIC");
                 } catch (PanicException pe) {
-                    panicVal.set(pe.goValue().toString());
+                    panicVal.set(graalgo.runtime.PanicRendering.renderPanicLine(pe).substring("panic: ".length()));
                 }
             });
         });
@@ -572,7 +572,7 @@ public final class ChannelTest {
                     });
                     panicVal.set("NO_PANIC");
                 } catch (PanicException pe) {
-                    panicVal.set(pe.goValue().toString());
+                    panicVal.set(graalgo.runtime.PanicRendering.renderPanicLine(pe).substring("panic: ".length()));
                 }
             });
         });

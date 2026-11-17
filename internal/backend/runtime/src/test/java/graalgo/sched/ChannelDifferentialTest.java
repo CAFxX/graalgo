@@ -245,7 +245,7 @@ public final class ChannelDifferentialTest {
                 try {
                     ChanOps.send(ch, 1L);
                 } catch (PanicException pe) {
-                    panicLine.set("panic: " + pe.goValue());
+                    panicLine.set(graalgo.runtime.PanicRendering.renderPanicLine(pe));
                 }
             });
         });
@@ -263,7 +263,7 @@ public final class ChannelDifferentialTest {
                 try {
                     ChanOps.close(ch);
                 } catch (PanicException pe) {
-                    panicLine.set("panic: " + pe.goValue());
+                    panicLine.set(graalgo.runtime.PanicRendering.renderPanicLine(pe));
                 }
             });
         });
@@ -284,7 +284,7 @@ public final class ChannelDifferentialTest {
                             new ChanOps.SelectCase(null, false, null),
                     });
                 } catch (PanicException pe) {
-                    panicLine.set("panic: " + pe.goValue());
+                    panicLine.set(graalgo.runtime.PanicRendering.renderPanicLine(pe));
                 }
             });
         });
