@@ -107,4 +107,60 @@ public final class SyncMapTest {
         assertEquals("v", r.value(), "loadAndDelete returns value");
         assertTrue(!m.load("k").ok(), "loadAndDelete removes");
     }
+
+    /**
+     * R2316-01-P1-1: pins the invariant the {@code doRange} fix relies on
+     * — {@code load()} is a single synchronized call, so under a
+     * concurrent deleter an ok result never carries a Java-null value.
+     * (A split containsKey+get re-implementation fails this test: the
+     * delete landing between the check and the read yields ok=true with
+     * a null value.) The doRange regression itself is covered by the
+     * end-to-end stress in {@code SyncMapRangeTest}.
+     */
+    public void testLoadAtomicUnderConcurrentDelete() throws Exception {
+        GoSyncMap m = new GoSyncMap();
+        int n = 200;
+        for (int i = 0; i < n; i++) {
+            m.store(i, i + 1);
+        }
+        java.util.concurrent.atomic.AtomicBoolean bad =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        java.util.concurrent.atomic.AtomicBoolean stop =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        Thread deleter = new Thread(() -> {
+            while (!stop.get()) {
+                for (int i = 0; i < n; i++) {
+                    m.delete(i);
+                }
+                for (int i = 0; i < n; i++) {
+                    m.store(i, i + 1);
+                }
+            }
+        });
+        int loaders = 4;
+        Thread[] ts = new Thread[loaders];
+        for (int t = 0; t < loaders; t++) {
+            ts[t] = new Thread(() -> {
+                while (!stop.get()) {
+                    for (int i = 0; i < n; i++) {
+                        GoSyncMap.LoadResult r = m.load(i);
+                        if (r.ok() && r.value() == null) {
+                            bad.set(true);
+                        }
+                    }
+                }
+            });
+        }
+        deleter.start();
+        for (Thread t : ts) {
+            t.start();
+        }
+        Thread.sleep(2000);
+        stop.set(true);
+        deleter.join();
+        for (Thread t : ts) {
+            t.join();
+        }
+        assertTrue(!bad.get(), "load() returned ok=true with a null value under concurrent delete");
+    }
 }

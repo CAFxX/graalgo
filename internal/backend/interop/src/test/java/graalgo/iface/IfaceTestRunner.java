@@ -27,6 +27,10 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
         // M10 F-1: concurrent range loops must not lose iterations.
         TESTS.add(graalgo.p3sync.launcher.RangeConcurrentRegressionTest.class);
+        // R2316-01-P1-1: sync.Map.Range must never deliver nil for an absent key.
+        TESTS.add(graalgo.p3sync.launcher.SyncMapRangeTest.class);
+        // R2316-01-P1-1: same defect, driven directly (real Java threads).
+        TESTS.add(graalgo.p3sync.nodes.SyncOpNodeRangeTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
         // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.

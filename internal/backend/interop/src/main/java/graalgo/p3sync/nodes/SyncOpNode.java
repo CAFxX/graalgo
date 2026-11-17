@@ -260,10 +260,17 @@ public final class SyncOpNode extends GoExprNode {
         }
         try {
             for (Object k : m.keysSnapshot()) {
-                if (!m.containsKey(k)) {
+                // Single atomic load (R2316-01-P1-1): a containsKey+get
+                // pair lets a Delete land between the check and the read,
+                // handing the callback a nil value for an absent key.
+                // load() checks and reads atomically; absent keys are
+                // skipped, and a present key's value is never null
+                // (store normalizes null to NIL).
+                GoSyncMap.LoadResult r = m.load(k);
+                if (!r.ok()) {
                     continue;
                 }
-                Object v = m.get(k);
+                Object v = r.value();
                 Object cont = GoCalls.invoke(f, new Object[]{k, v});
                 if (cont instanceof Boolean b) {
                     if (!b) {
