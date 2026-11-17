@@ -1,10 +1,36 @@
-// Command mutation runs curated source-level mutants against the test suite.
-// For each mutant it builds an overlay (Java) or a rebuilt binary (Go),
-// runs the full suite, and reports KILLED (suite red) or SURVIVED (suite green).
+// Command mutation validates the differential oracle by mutating graalgo
+// itself (SPEC §5.7, GG-0034): deliberately break the lowering/runtime and
+// confirm the per-push differential gate (`make snapshot-check`, i.e.
+// `diffharness snapshot check` against gc's snapshot) goes red. A gate that
+// has never been seen failing is not evidence.
+//
+// Every mutant runs on a SCRATCH COPY of the repository (rsync, .git and
+// scratch dirs excluded) — the working tree is never modified. Per mutant:
+//
+//  1. apply the exact-string mutation (the 'old' text must occur exactly
+//     once in the file, else the mutant is ERROR: ambiguous);
+//  2. `make build` in the copy: a compile failure is STILLBORN (not scored);
+//  3. run the gate on the -slice programs; red => KILLED;
+//  4. a slice survivor is re-run against the FULL corpus (the whole
+//     per-push gate) before it is declared SURVIVED;
+//  5. restore the file.
+//
+// Gate exit codes: 0 green, 1 red, 3 infrastructure failure (=> ERROR, never
+// counted as a kill). The unmutated copy must be green first (baseline
+// control), otherwise every mutant would be trivially "killed".
+//
+// Score = killed / (killed + survived). Exit status: 0 when every survivor
+// carries a survivorJustification in the mutants file, 1 on an unjustified
+// survivor, 3 on a red baseline or any ERROR.
+//
+// Resource discipline: one JVM at a time (-jobs 1), nice -n 19, JVM caps via
+// GRAALGO_JAVA_OPTS (default "-Xmx2g -XX:ActiveProcessorCount=4").
 package main
 
 import (
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,290 +40,317 @@ import (
 )
 
 type Mutant struct {
-	ID          string `json:"id"`
-	Lang        string `json:"lang"` // "java" or "go"
-	File        string `json:"file"` // repo-relative
-	Old         string `json:"old"`
-	New         string `json:"new"`
-	Description string `json:"description"`
+	ID            string `json:"id"`
+	Class         string `json:"class"`
+	File          string `json:"file"` // repo-relative
+	Old           string `json:"old"`
+	New           string `json:"new"`
+	Description   string `json:"description"`
+	Justification string `json:"survivorJustification,omitempty"`
 }
 
 type Result struct {
 	ID          string `json:"id"`
+	Class       string `json:"class"`
 	Description string `json:"description"`
-	Verdict     string `json:"verdict"` // KILLED, SURVIVED, ERROR
+	Verdict     string `json:"verdict"` // KILLED, SURVIVED, STILLBORN, ERROR
+	Stage       string `json:"stage,omitempty"`
 	Detail      string `json:"detail"`
-	DurationSec int64  `json:"duration_sec"`
+	DurationSec int64  `json:"durationSec"`
+}
+
+type config struct {
+	repo, work, snapshot, expected, slice, javaOpts string
+	only                                            map[string]bool
+	confirm                                         bool
 }
 
 func main() {
-	if len(os.Args) < 3 {
-		fmt.Fprintf(os.Stderr, "usage: mutation <repo> <mutants.json>\n")
-		os.Exit(2)
-	}
-	repo := os.Args[1]
-	specPath := os.Args[2]
+	var c config
+	var mutantsPath, only, report string
+	flag.StringVar(&c.repo, "repo", ".", "repository root to copy")
+	flag.StringVar(&mutantsPath, "mutants", "tools/mutation/mutants.json", "mutant spec (relative to -repo)")
+	flag.StringVar(&c.work, "work", "", "scratch dir for the repo copy (default: a new temp dir)")
+	flag.StringVar(&c.slice, "slice", "", "comma-separated corpus programs for the fast first stage (default: full corpus only)")
+	flag.BoolVar(&c.confirm, "confirm", true, "re-run slice survivors against the full corpus")
+	flag.StringVar(&only, "only", "", "comma-separated mutant ids to run (default: all)")
+	flag.StringVar(&report, "report", "", "JSON report path (default: <work>/report.json)")
+	flag.StringVar(&c.javaOpts, "java-opts", "-Xmx2g -XX:ActiveProcessorCount=4", "GRAALGO_JAVA_OPTS for gate runs")
+	flag.Parse()
 
-	data, err := os.ReadFile(specPath)
+	repo, err := filepath.Abs(c.repo)
 	if err != nil {
-		fatal(err)
+		fatal(3, err)
+	}
+	c.repo = repo
+	data, err := os.ReadFile(filepath.Join(repo, mutantsPath))
+	if err != nil {
+		fatal(3, err)
 	}
 	var spec struct {
 		Mutants []Mutant `json:"mutants"`
 	}
 	if err := json.Unmarshal(data, &spec); err != nil {
-		fatal(err)
+		fatal(3, fmt.Errorf("parse %s: %w", mutantsPath, err))
+	}
+	if only != "" {
+		c.only = map[string]bool{}
+		for _, id := range strings.Split(only, ",") {
+			c.only[strings.TrimSpace(id)] = true
+		}
+	}
+	if c.work == "" {
+		if c.work, err = os.MkdirTemp("", "graalgo-mutation-*"); err != nil {
+			fatal(3, err)
+		}
+	}
+	if report == "" {
+		report = filepath.Join(c.work, "report.json")
+	}
+	copyDir := filepath.Join(c.work, "repo")
+	fmt.Printf("mutation: copying %s -> %s\n", repo, copyDir)
+	if err := run(c.work, nil, "rsync", "-a", "--delete",
+		"--exclude=.git", "--exclude=.tmp/", "--exclude=test-results/", "--exclude=out/test-tmp/",
+		repo+"/", copyDir+"/"); err != nil {
+		fatal(3, fmt.Errorf("rsync: %w", err))
+	}
+	c.snapshot = filepath.Join(copyDir, "test/snapshots/go1.27.1.json")
+	if snaps, _ := filepath.Glob(filepath.Join(copyDir, "test/snapshots/go*.json")); len(snaps) == 1 {
+		c.snapshot = snaps[0]
+	}
+	c.expected = filepath.Join(copyDir, "test/differential/corpus-exclusions.yaml")
+
+	// Validate every mutant applies exactly once BEFORE spending compute.
+	for _, m := range spec.Mutants {
+		if c.only != nil && !c.only[m.ID] {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(copyDir, m.File))
+		if err != nil {
+			fatal(3, fmt.Errorf("%s: %w", m.ID, err))
+		}
+		if n := strings.Count(string(src), m.Old); n != 1 {
+			fatal(3, fmt.Errorf("%s: 'old' occurs %d times in %s (must be exactly 1: rot or ambiguity)", m.ID, n, m.File))
+		}
 	}
 
-	workdir, err := os.MkdirTemp("", "mutation-*")
-	if err != nil {
-		fatal(err)
+	if err := build(copyDir); err != nil {
+		fatal(3, fmt.Errorf("baseline build failed: %w", err))
 	}
-	fmt.Printf("workdir: %s\n", workdir)
+	dh := filepath.Join(c.work, "diffharness")
+	if err := run(filepath.Join(copyDir, "test/differential"), nil, goBin(), "build", "-o", dh, "./cmd/diffharness"); err != nil {
+		fatal(3, fmt.Errorf("build diffharness: %w", err))
+	}
+	fmt.Println("mutation: baseline control (unmutated copy must be green)")
+	for _, stage := range c.stages() {
+		if v, detail := c.gate(copyDir, dh, stage); v != "green" {
+			fatal(3, fmt.Errorf("baseline %s gate not green (%s): %s", stageName(stage), v, detail))
+		}
+	}
+	fmt.Println("mutation: baseline GREEN")
 
 	var results []Result
-
-	// R1#5, R2#6: baseline control — the clean tree must be green,
-	// otherwise every mutant is trivially "killed".
-	fmt.Printf("running baseline control...\n")
-	baselineVerdict, baselineDetail := runTestSuite(repo, workdir, nil)
-	if baselineVerdict != "SURVIVED" {
-		fatal(fmt.Errorf("baseline not green: %s (%s)", baselineVerdict, baselineDetail))
-	}
-	fmt.Printf("baseline: GREEN\n")
-
 	for _, m := range spec.Mutants {
+		if c.only != nil && !c.only[m.ID] {
+			continue
+		}
 		start := time.Now()
-		verdict, detail := runMutant(repo, workdir, m)
-		results = append(results, Result{
-			ID:          m.ID,
-			Description: m.Description,
-			Verdict:     verdict,
-			Detail:      detail,
-			DurationSec: int64(time.Since(start).Seconds()),
-		})
-		fmt.Printf("[%s] %s: %s (%s)\n", m.ID, verdict, m.Description, detail)
+		r := c.runMutant(copyDir, dh, m)
+		r.DurationSec = int64(time.Since(start).Seconds())
+		results = append(results, r)
+		fmt.Printf("[%s] %-9s %s %s\n", m.ID, r.Verdict, m.Description, r.Detail)
+		if err := writeReport(report, results); err != nil {
+			fatal(3, err)
+		}
 	}
+	os.Exit(summarize(results, spec.Mutants, report))
+}
 
-	// Write report (R2#6: persist to hidden_files, not just /tmp)
-	report, _ := json.MarshalIndent(results, "", "  ")
-	os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644)
-	fmt.Printf("\nreport: %s/report.json\n", workdir)
+func (c *config) stages() []string {
+	if c.slice == "" {
+		return []string{""}
+	}
+	if c.confirm {
+		return []string{c.slice, ""}
+	}
+	return []string{c.slice}
+}
 
-	// Also copy to the repo's hidden_files for durability
-	persistDir := "/home/hatch/workspace/graalgo/phases/phase1/hidden_files/mutation"
-	os.MkdirAll(persistDir, 0755)
-	ts := time.Now().Format("20060102-150405")
-	persistPath := filepath.Join(persistDir, "report-"+ts+".json")
-	os.WriteFile(persistPath, report, 0644)
-	fmt.Printf("persisted: %s\n", persistPath)
+func stageName(s string) string {
+	if s == "" {
+		return "full-corpus"
+	}
+	return "slice"
+}
 
-	// Summary
-	killed, survived, errors := 0, 0, 0
+func (c *config) runMutant(copyDir, dh string, m Mutant) Result {
+	r := Result{ID: m.ID, Class: m.Class, Description: m.Description}
+	path := filepath.Join(copyDir, m.File)
+	orig, err := os.ReadFile(path)
+	if err != nil {
+		r.Verdict, r.Detail = "ERROR", err.Error()
+		return r
+	}
+	mutated := strings.Replace(string(orig), m.Old, m.New, 1)
+	if err := os.WriteFile(path, []byte(mutated), 0o644); err != nil {
+		r.Verdict, r.Detail = "ERROR", err.Error()
+		return r
+	}
+	defer func() {
+		// Restore; the next build sees the newer mtime and recompiles.
+		if err := os.WriteFile(path, orig, 0o644); err != nil {
+			fatal(3, fmt.Errorf("restore %s: %w", m.File, err))
+		}
+	}()
+	if err := build(copyDir); err != nil {
+		r.Verdict, r.Detail = "STILLBORN", "does not compile"
+		return r
+	}
+	stages := []string{""}
+	if c.slice != "" {
+		stages = []string{c.slice}
+		if c.confirm {
+			stages = append(stages, "")
+		}
+	}
+	for _, stage := range stages {
+		v, detail := c.gate(copyDir, dh, stage)
+		switch v {
+		case "red":
+			r.Verdict, r.Stage, r.Detail = "KILLED", stageName(stage), detail
+			return r
+		case "infra":
+			r.Verdict, r.Stage, r.Detail = "ERROR", stageName(stage), "gate infrastructure failure: "+detail
+			return r
+		}
+	}
+	r.Verdict, r.Detail = "SURVIVED", "gate green"
+	return r
+}
+
+// gate runs the differential gate against the copy; programs=="" is the
+// full corpus. Returns green/red/infra and the first failing lines.
+func (c *config) gate(copyDir, dh, programs string) (string, string) {
+	dhDir := filepath.Join(copyDir, "test/differential")
+	tmp := filepath.Join(dhDir, ".tmp")
+	os.MkdirAll(tmp, 0o755)
+	args := []string{"-n", "19", dh, "snapshot", "check",
+		"-config", "backends-p3.json", "-corpus", "corpus", "-backend", "graalgo",
+		"-snapshot", c.snapshot, "-expected", c.expected, "-jobs", "1", "-timeout", "120"}
+	if programs != "" {
+		args = append(args, "-programs", programs)
+	}
+	cmd := exec.Command("nice", args...)
+	cmd.Dir = dhDir
+	cmd.Env = append(os.Environ(),
+		"PHASE3_DIR="+filepath.Join(copyDir, "internal/backend"),
+		"PHASE1_DIR="+filepath.Join(copyDir, "internal/backend"),
+		"TMPDIR="+tmp, "GOTMPDIR="+tmp,
+		"GRAALGO_JAVA_OPTS="+c.javaOpts,
+		"GRAALGO_GOFRONTEND="+filepath.Join(copyDir, "internal/frontend/gofrontend"))
+	out, err := cmd.CombinedOutput()
+	var ee *exec.ExitError
+	switch {
+	case err == nil:
+		return "green", ""
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
+		return "red", firstFailures(string(out))
+	default:
+		return "infra", firstFailures(string(out)) + " " + err.Error()
+	}
+}
+
+func firstFailures(out string) string {
+	var keep []string
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") || strings.HasPrefix(l, "INFRA") || strings.Contains(l, "error:") {
+			keep = append(keep, strings.Join(strings.Fields(l), " "))
+		}
+		if len(keep) == 3 {
+			break
+		}
+	}
+	s := strings.Join(keep, " | ")
+	if len(s) > 400 {
+		s = s[:400] + "…"
+	}
+	return s
+}
+
+func build(copyDir string) error {
+	return run(copyDir, nil, "nice", "-n", "19", "make", "-s", "build")
+}
+
+func run(dir string, env []string, name string, args ...string) error {
+	cmd := exec.Command(name, args...)
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), env...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		tail := string(out)
+		if len(tail) > 2000 {
+			tail = tail[len(tail)-2000:]
+		}
+		return fmt.Errorf("%s %v: %w\n%s", name, args, err, tail)
+	}
+	return nil
+}
+
+func writeReport(path string, results []Result) error {
+	data, err := json.MarshalIndent(results, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+func summarize(results []Result, mutants []Mutant, report string) int {
+	just := map[string]string{}
+	for _, m := range mutants {
+		just[m.ID] = m.Justification
+	}
+	killed, survived, stillborn, errs, unjustified := 0, 0, 0, 0, 0
 	for _, r := range results {
 		switch r.Verdict {
 		case "KILLED":
 			killed++
 		case "SURVIVED":
 			survived++
-		default:
-			errors++
-		}
-	}
-	fmt.Printf("killed=%d survived=%d errors=%d\n", killed, survived, errors)
-}
-
-func runMutant(repo, workdir string, m Mutant) (string, string) {
-	mdir := filepath.Join(workdir, m.ID)
-	if err := os.MkdirAll(mdir, 0755); err != nil {
-		return "ERROR", err.Error()
-	}
-
-	// Read original file
-	srcPath := filepath.Join(repo, m.File)
-	orig, err := os.ReadFile(srcPath)
-	if err != nil {
-		return "ERROR", fmt.Sprintf("read: %v", err)
-	}
-	if !strings.Contains(string(orig), m.Old) {
-		return "ERROR", "old string not found"
-	}
-	// R2#8: warn if the pattern occurs multiple times (we mutate only the first).
-	if n := strings.Count(string(orig), m.Old); n > 1 {
-		fmt.Fprintf(os.Stderr, "warning: %s: pattern occurs %d times, mutating first only\n", m.ID, n)
-	}
-	mutated := strings.Replace(string(orig), m.Old, m.New, 1)
-
-	if m.Lang == "java" {
-		return runJavaMutant(repo, mdir, m, mutated)
-	}
-	return runGoMutant(repo, mdir, m, mutated)
-}
-
-func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
-	// Write mutated file to overlay source tree (mirror repo-relative path)
-	overlaySrc := filepath.Join(mdir, "src", m.File)
-	if err := os.MkdirAll(filepath.Dir(overlaySrc), 0755); err != nil {
-		return "ERROR", err.Error()
-	}
-	if err := os.WriteFile(overlaySrc, []byte(mutated), 0644); err != nil {
-		return "ERROR", err.Error()
-	}
-
-	// Compile single file against out/classes
-	overlayClasses := filepath.Join(mdir, "classes")
-	os.MkdirAll(overlayClasses, 0755)
-	phase1 := filepath.Join(repo, "phases/phase1")
-	cp := fmt.Sprintf("%s/out/classes:%s", phase1, jarCP(phase1))
-	cmd := exec.Command(javaBin(),
-		"-Xlint:deprecation", "-Werror",
-		"-cp", cp,
-		"-d", overlayClasses,
-		overlaySrc)
-	cmd.Dir = phase1
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "ERROR", fmt.Sprintf("javac: %v\n%s", err, out)
-	}
-
-	// Run test suite with overlay first in classpath
-	return runTestSuite(repo, mdir, map[string]string{
-		"CLASSPATH_OVERLAY": overlayClasses,
-	})
-}
-
-func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
-	// For Go exporter: copy the frontend dir, apply mutation, build
-	frontSrc := filepath.Join(repo, "internal", "frontend")
-	frontDst := filepath.Join(mdir, "frontend")
-	if err := copyDir(frontSrc, frontDst); err != nil {
-		return "ERROR", fmt.Sprintf("copy: %v", err)
-	}
-	mutPath := filepath.Join(frontDst, filepath.Base(m.File))
-	// m.File is internal/frontend/export.go, so base is export.go
-	if err := os.WriteFile(mutPath, []byte(mutated), 0644); err != nil {
-		return "ERROR", err.Error()
-	}
-
-	// Build gofrontend
-	bin := filepath.Join(mdir, "gofrontend")
-	cmd := exec.Command(goBin(), "build", "-o", bin, ".")
-	cmd.Dir = frontDst
-	cmd.Env = append(os.Environ(), "PATH="+os.Getenv("PATH"))
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "ERROR", fmt.Sprintf("go build: %v\n%s", err, out)
-	}
-
-	// Run test suite with GRAALGO_GOFRONTEND pointing to mutated binary
-	return runTestSuite(repo, mdir, map[string]string{
-		"GRAALGO_GOFRONTEND": bin,
-	})
-}
-
-func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string) {
-	phase1 := filepath.Join(repo, "phases/phase1")
-	// Build classpath: overlay (if any) : out/test : out/classes : jars
-	cp := ""
-	if ov, ok := extraEnv["CLASSPATH_OVERLAY"]; ok {
-		cp = ov + ":"
-	}
-	cp += fmt.Sprintf("%s/out/test:%s/out/classes:%s", phase1, phase1, jarCP(phase1))
-
-	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test).
-	cmd := exec.Command(javaRunBin(),
-		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
-		"-cp", cp, "graalgo.test.Runner")
-	cmd.Dir = phase1
-	cmd.Env = os.Environ()
-	for k, v := range extraEnv {
-		if k == "CLASSPATH_OVERLAY" {
-			continue
-		}
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
-	// Log output
-	logPath := filepath.Join(mdir, "test.log")
-	logFile, _ := os.Create(logPath)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-
-	if err := cmd.Run(); err != nil {
-		logFile.Close()
-		// Suite failed (non-zero exit) = mutant KILLED.
-		// R1#5: attribute the kill to the failing test(s).
-		killers := findFailingTests(logPath)
-		return "KILLED", fmt.Sprintf("killed by %v (see %s)", killers, logPath)
-	}
-	logFile.Close()
-	return "SURVIVED", "suite green"
-}
-
-// findFailingTests extracts FAIL lines from the test log.
-func findFailingTests(logPath string) []string {
-	data, err := os.ReadFile(logPath)
-	if err != nil {
-		return []string{"(unreadable log)"}
-	}
-	var killers []string
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(line, "FAIL ") {
-			// "FAIL Class.testName: ..." -> "Class.testName"
-			rest := strings.TrimPrefix(line, "FAIL ")
-			if i := strings.Index(rest, ":"); i > 0 {
-				rest = rest[:i]
+			if just[r.ID] == "" {
+				unjustified++
+				fmt.Printf("UNJUSTIFIED SURVIVOR %s: %s\n", r.ID, r.Description)
+			} else {
+				fmt.Printf("justified survivor %s: %s\n", r.ID, just[r.ID])
 			}
-			killers = append(killers, rest)
+		case "STILLBORN":
+			stillborn++
+		default:
+			errs++
 		}
 	}
-	if len(killers) == 0 {
-		return []string{"(no FAIL lines, non-zero exit)"}
+	score := 0.0
+	if killed+survived > 0 {
+		score = float64(killed) / float64(killed+survived)
 	}
-	return killers
-}
-
-func javaBin() string {
-	if p := os.Getenv("GRAALGO_JAVA"); p != "" {
-		return p
+	fmt.Printf("mutation: killed=%d survived=%d (unjustified=%d) stillborn=%d error=%d score=%.1f%% report=%s\n",
+		killed, survived, unjustified, stillborn, errs, 100*score, report)
+	switch {
+	case errs > 0:
+		return 3
+	case unjustified > 0:
+		return 1
 	}
-	// javac is alongside java in the GraalVM JDK
-	return "/home/hatch/tools/graalvm-jdk-25/bin/javac"
-}
-
-func javaRunBin() string {
-	if p := os.Getenv("GRAALGO_JAVA_RUN"); p != "" {
-		return p
-	}
-	return "/home/hatch/tools/graalvm-jdk-25/bin/java"
+	return 0
 }
 
 func goBin() string {
-	return "/home/hatch/tools/go/bin/go"
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	return filepath.Join(os.Getenv("HOME"), "tools/go/bin/go")
 }
 
-func jarCP(phase1 string) string {
-	// Match Makefile CP: lib/*.jar
-	jars, _ := filepath.Glob(filepath.Join(phase1, "lib", "*.jar"))
-	return strings.Join(jars, ":")
-}
-
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, _ := filepath.Rel(src, path)
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, 0755)
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, 0644)
-	})
-}
-
-func fatal(err error) {
-	fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
-	os.Exit(1)
+func fatal(code int, err error) {
+	fmt.Fprintf(os.Stderr, "mutation: fatal: %v\n", err)
+	os.Exit(code)
 }
