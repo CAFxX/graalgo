@@ -66,6 +66,11 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // fix-redmaster-r59 (REJECT F1 remediation): the interleaved
+        // group layout scalars and the GoByteCell sub-word cell behind
+        // the maps.Map header-view image.
+        TESTS.add(graalgo.p3reflect.MapGroupLayoutTest.class);
+        TESTS.add(graalgo.p3reflect.GoByteCellTest.class);
     }
 
     private IfaceTestRunner() {}

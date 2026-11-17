@@ -218,14 +218,23 @@ public final class MapHeaderView {
         return indirect ? new GoPointer(v) : v;
     }
 
-    /** Sets a struct field by name, through its carrier (longs vs objects). */
+    /**
+     * Sets a struct field by name, through its carrier (longs vs objects).
+     * The accessors take FIELD ordinals and translate to carrier indices
+     * internally (fix-redmaster-r59): passing {@code f.index()} — the
+     * carrier index — addresses the wrong field whenever a longs field
+     * and an objects field share a carrier index (e.g. the group
+     * struct's {@code ctrl} and {@code slots} are both carrier index 0,
+     * so the slots write landed on ctrl and died with "field ctrl is
+     * not an objects-carried field").
+     */
     private static void setField(GoStructDescriptor desc, GoStruct gs, String name, Object value) {
         int ord = fieldOrdinal(desc, name);
         GoStructDescriptor.Field f = desc.field(ord);
         if (f.inLongs()) {
-            gs.setLong(f.index(), toLongBits(f.kind(), value));
+            gs.setLong(ord, toLongBits(f.kind(), value));
         } else {
-            gs.setObject(f.index(), value);
+            gs.setObject(ord, value);
         }
     }
 

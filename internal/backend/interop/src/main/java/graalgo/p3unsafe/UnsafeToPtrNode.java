@@ -9,6 +9,7 @@ import graalgo.p3reflect.AbiTypes;
 import graalgo.p3reflect.MapHeaderView;
 import graalgo.p3reflect.ReflectTypes;
 import graalgo.p3reflect.ReflectValues;
+import graalgo.runtime.Intrinsics;
 import graalgo.values.GoByteCell;
 import graalgo.values.GoCell;
 import graalgo.values.GoInterface;
@@ -213,6 +214,14 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 if (bytePtr != null) {
                     return bytePtr;
                 }
+                // fix-redmaster-r59 (b): the same byte-of-a-word read
+                // with a GoStruct root (e.g. byte k of a group image's
+                // ctrl word) — byteCellPointer only handles GoCell
+                // roots. Mint the byte cell over the containing field.
+                Object structBytePtr = structByteCellPointer(resolved, view.byteOffset());
+                if (structBytePtr != null) {
+                    return structBytePtr;
+                }
                 return derivedPointer(resolved, view.byteOffset());
             }
             if (hit.fieldTok() != hit.targetTok()
@@ -221,6 +230,18 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 Object fieldPtr = continuedFieldPointer(resolved, view.byteOffset());
                 if (fieldPtr != null) {
                     return fieldPtr;
+                }
+                // fix-redmaster-r59 (c): a same-size reinterpretation
+                // of a field cell IS the field's storage, not a
+                // reinterpretation of memory — reflect.Value.copyVal's
+                // direct branch reads a map slot as unsafe.Pointer
+                // (both 8-byte words), so the cell pointer is exact.
+                // Differently-sized reinterpretations keep the loud
+                // derivation failure below.
+                ReflectTypes.TypeInfo fieldInfo = ReflectTypes.table().info(hit.fieldTok());
+                if (fieldInfo != null && fieldInfo.size > 0 && elemSize > 0
+                        && fieldInfo.size == elemSize) {
+                    return UnsafeTable.pointerFor(hit.cell());
                 }
                 return derivedPointer(resolved, view.byteOffset());
             }
@@ -466,6 +487,21 @@ public final class UnsafeToPtrNode extends GoExprNode {
                                     + len + "] (D5: derivation cannot leave its referent)");
                 }
                 Object next = java.lang.reflect.Array.get(level, (int) index);
+                if (next instanceof GoStruct elemStruct) {
+                    // fix-redmaster-r59 (gap (c)): a byte offset into
+                    // an array-of-struct element (e.g. a maps group
+                    // inside the groups data array) denotes a field or
+                    // byte of that struct — resolve the remainder
+                    // through the struct-field machinery, the same
+                    // resolution executeObject applies to a struct root.
+                    Object elemPtr = structOffsetPointer(elemStruct, rem);
+                    if (elemPtr != null) {
+                        return elemPtr;
+                    }
+                    throw new UnsafeHandles.UnsafeEscapeException(
+                            "unsafe: byte-derived pointer conversion cannot resolve a byte offset "
+                                    + "inside a struct array element (D5)");
+                }
                 if (next == null || !next.getClass().isArray()) {
                     throw new UnsafeHandles.UnsafeEscapeException(
                             "unsafe: byte-derived pointer conversion cannot descend into "
@@ -488,6 +524,51 @@ public final class UnsafeToPtrNode extends GoExprNode {
                             + length + "] (D5: derivation cannot leave its referent)");
         }
         return UnsafeTable.pointerFor(new UnsafeTable.ArrayRef(array, (int) index));
+    }
+
+    /**
+     * Resolves a byte offset into a struct value to a pointer
+     * (fix-redmaster-r59 gap (c)): the same resolution executeObject
+     * applies to a struct root — exact field hit (or its same-size
+     * reinterpretation), array-element continuation, or a byte cell —
+     * for use when derivedPointer's walk reaches a struct array element
+     * with a nonzero remainder. View-owned mismatches return null (the
+     * views fire only for the top-level referent in executeObject); the
+     * caller keeps its loud failure. Returns null when nothing resolves.
+     */
+    private Object structOffsetPointer(GoStruct gs, long byteOffset) {
+        FieldHit hit = structFieldAt(gs, byteOffset);
+        if (hit == null) {
+            Object fieldPtr = continuedFieldPointer(gs, byteOffset);
+            if (fieldPtr != null) {
+                return fieldPtr;
+            }
+            Object bytePtr = byteCellPointer(gs, byteOffset);
+            if (bytePtr != null) {
+                return bytePtr;
+            }
+            Object structBytePtr = structByteCellPointer(gs, byteOffset);
+            if (structBytePtr != null) {
+                return structBytePtr;
+            }
+            return null;
+        }
+        if (hit.fieldTok() == hit.targetTok()) {
+            return UnsafeTable.pointerFor(hit.cell());
+        }
+        if (headerQName == null && prefixTarget == null
+                && viewLayout == null && ifaceLayout == null) {
+            Object fieldPtr = continuedFieldPointer(gs, byteOffset);
+            if (fieldPtr != null) {
+                return fieldPtr;
+            }
+            ReflectTypes.TypeInfo fieldInfo = ReflectTypes.table().info(hit.fieldTok());
+            if (fieldInfo != null && fieldInfo.size > 0 && elemSize > 0
+                    && fieldInfo.size == elemSize) {
+                return UnsafeTable.pointerFor(hit.cell());
+            }
+        }
+        return null;
     }
 
     /**
@@ -540,6 +621,12 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 return -1;
             }
             Object first = java.lang.reflect.Array.get(array, 0);
+            if (first instanceof GoStruct firstStruct) {
+                // fix-redmaster-r59 (gap (c)): an array of structs
+                // (the maps groups data: one group per table) — the
+                // element size is the struct's Go size.
+                return goStructElemSize(firstStruct);
+            }
             if (first == null || !first.getClass().isArray()) {
                 return -1;
             }
@@ -550,6 +637,33 @@ public final class UnsafeToPtrNode extends GoExprNode {
             return inner * java.lang.reflect.Array.getLength(first);
         }
         return -1;
+    }
+
+    /**
+     * The Go byte size of a struct value (fix-redmaster-r59 gap (c)):
+     * the TypeInfo size when the descriptor resolves to one (exact —
+     * structOf lays synthesized types out from the wire sizes, and named
+     * structs carry their ABI size), else the descriptor walk. Returns
+     * -1 when neither yields a size (the caller keeps the pre-r43 flat
+     * arithmetic).
+     */
+    private static long goStructElemSize(GoStruct gs) {
+        try {
+            ReflectTypes.TypeInfo info = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (info == null) {
+                info = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+            if (info != null && info.size > 0) {
+                return info.size;
+            }
+        } catch (RuntimeException e) {
+            // Fall through to the descriptor walk.
+        }
+        try {
+            return Intrinsics.structSizeBytes(gs.descriptor());
+        } catch (RuntimeException e) {
+            return -1;
+        }
     }
 
     /** A struct-field storage hit: the field cell plus both type tokens. */
@@ -629,6 +743,22 @@ public final class UnsafeToPtrNode extends GoExprNode {
                         || !gs.descriptor().field(ord).name().equals(f.name)) {
                     return null;
                 }
+                // fix-redmaster-r59 (d): an exact field-boundary match
+                // whose kind differs from the conversion target is NOT
+                // the addressed storage when the field is a container:
+                // offset 8 into a group image is the slots array, but a
+                // STRING read there addresses slot 0's key, not the
+                // array — descend into element 0 (array-of-struct) or
+                // field 0 (struct), falling back to the field hit when
+                // the descent does not resolve.
+                ReflectTypes.TypeInfo targetInfo = ReflectTypes.table().info(targetTok);
+                if (targetInfo != null && targetInfo.kind != null
+                        && f.type.kind != null && f.type.kind != targetInfo.kind) {
+                    FieldHit descended = descendExactMatch(gs, ord, f);
+                    if (descended != null) {
+                        return descended;
+                    }
+                }
                 return new FieldHit(
                         new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()),
                         f.type.tok, targetTok);
@@ -689,6 +819,36 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 }
                 return structFieldAt(elemStruct, rem);
             }
+        }
+        return null;
+    }
+
+    /**
+     * Descends an exact field-boundary match into the container's first
+     * element (fix-redmaster-r59 (d)): an ARRAY-of-STRUCT field's element
+     * 0, or a STRUCT field's field 0. Returns null when the field is not
+     * such a container or the descent does not resolve (the caller keeps
+     * the field hit).
+     */
+    private FieldHit descendExactMatch(GoStruct gs, int ord, ReflectTypes.FieldInfo f) {
+        if (f.type.kind == GoKind.ARRAY && f.type.elem != null
+                && f.type.elem.kind == GoKind.STRUCT) {
+            Object arr = ReflectValues.structFieldGet(gs, ord, GoKind.ARRAY);
+            if (arr == null) {
+                return null;
+            }
+            Object elem = java.lang.reflect.Array.get(arr, 0);
+            if (!(elem instanceof GoStruct elemStruct)) {
+                return null;
+            }
+            return structFieldAt(elemStruct, 0);
+        }
+        if (f.type.kind == GoKind.STRUCT) {
+            Object nested = ReflectValues.structFieldGet(gs, ord, GoKind.STRUCT);
+            if (!(nested instanceof GoStruct nestedStruct)) {
+                return null;
+            }
+            return structFieldAt(nestedStruct, 0);
         }
         return null;
     }
@@ -1460,6 +1620,101 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 return null;
             }
         }
+    }
+
+    /**
+     * A byte pointer into a Long-carried scalar field of a struct
+     * referent (fix-redmaster-r59 (b)): when the resolved referent is a
+     * {@link GoStruct} and the target element is one byte, byte
+     * {@code byteOffset} of the containing Long-carried field is the
+     * addressed storage — return a {@link GoByteCell} pointer over a
+     * {@link GoFieldCell} for it. The containing field is found directly
+     * or by descending into a STRUCT field or an array-of-struct element
+     * (gc flat memory: a group image's ctrl word is read as
+     * {@code *(*ctrl)(unsafe.Add(unsafe.Pointer(g), k))} with a group
+     * struct root). Returns null when the shape does not match (the
+     * caller keeps its existing loud derivation failure) or the target
+     * is wider than one byte.
+     */
+    private Object structByteCellPointer(Object referent, long byteOffset) {
+        if (elemSize != 1) {
+            return null;
+        }
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                root = cell.get();
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                break;
+            }
+        }
+        if (!(root instanceof GoStruct gs)) {
+            return null;
+        }
+        return structByteCellIn(gs, byteOffset);
+    }
+
+    /** Recursive worker for {@link #structByteCellPointer}: the byte cell for a byte offset into one struct. */
+    private Object structByteCellIn(GoStruct gs, long byteOffset) {
+        ReflectTypes.TypeInfo info;
+        try {
+            info = ReflectTypes.infoForName(gs.descriptor().typeName());
+            if (info == null) {
+                info = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+            }
+        } catch (RuntimeException e) {
+            return null;
+        }
+        if (info == null || info.fields == null) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : info.fields) {
+            if (f.type == null || f.index.length != 1 || f.type.size <= 0) {
+                continue;
+            }
+            if (byteOffset < f.offset || byteOffset >= f.offset + f.type.size) {
+                continue;
+            }
+            int ord = f.index[0];
+            if (ord < 0 || ord >= gs.descriptor().fields().size()
+                    || !gs.descriptor().field(ord).name().equals(f.name)) {
+                return null;
+            }
+            long rel = byteOffset - f.offset;
+            if (f.type.kind == GoKind.STRUCT) {
+                Object nested = ReflectValues.structFieldGet(gs, ord, GoKind.STRUCT);
+                if (!(nested instanceof GoStruct nestedStruct)) {
+                    return null;
+                }
+                return structByteCellIn(nestedStruct, rel);
+            }
+            if (f.type.kind == GoKind.ARRAY && f.type.elem != null
+                    && f.type.elem.kind == GoKind.STRUCT && f.type.elem.size > 0) {
+                Object arr = ReflectValues.structFieldGet(gs, ord, GoKind.ARRAY);
+                if (arr == null) {
+                    return null;
+                }
+                long idx = rel / f.type.elem.size;
+                long rem = rel % f.type.elem.size;
+                if (idx < 0 || idx >= f.type.arrayLen) {
+                    return null;
+                }
+                Object elem = java.lang.reflect.Array.get(arr, (int) idx);
+                if (!(elem instanceof GoStruct elemStruct)) {
+                    return null;
+                }
+                return structByteCellIn(elemStruct, rem);
+            }
+            // A Long-carried scalar field: byte rel of its word.
+            if (gs.descriptor().field(ord).inLongs() && rel >= 0 && rel < 8) {
+                return new GoPointer(new GoByteCell(
+                        new GoFieldCell(gs, ord, gs.descriptor().field(ord).kind()), (int) rel));
+            }
+            return null;
+        }
+        return null;
     }
 
     /** Classifies one target field as an interface word, or null if it is not one. */

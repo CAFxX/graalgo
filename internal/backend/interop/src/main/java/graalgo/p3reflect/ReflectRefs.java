@@ -373,6 +373,20 @@ public final class ReflectRefs {
                 continue;
             }
             if (byteOffset == f.offset) {
+                // fix-redmaster-r59 (d): an exact field-boundary match
+                // whose kind differs from the requested kind is NOT the
+                // addressed storage when the field is a container:
+                // offset 8 into a group image is the slots array, but a
+                // STRING read there addresses slot 0's key — descend
+                // into element 0 (array-of-struct) or field 0 (struct),
+                // guarded by the descended field's kind, falling back
+                // to the field read when the descent does not resolve.
+                if (f.type.kind != null && f.type.kind != kind) {
+                    Object descended = descendExactMatch(gs, f, kind);
+                    if (descended != null) {
+                        return descended;
+                    }
+                }
                 return ReflectValues.structFieldGet(gs, f.index[0], kind);
             }
             if (f.type.size > 0 && byteOffset > f.offset && byteOffset < f.offset + f.type.size) {
@@ -444,6 +458,52 @@ public final class ReflectRefs {
         }
         throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                 "reflect: no field at byte offset " + byteOffset + " of struct " + info.name + " (D5)");
+    }
+
+    /**
+     * Descends an exact field-boundary match into the container's first
+     * element (fix-redmaster-r59 (d)): an ARRAY-of-STRUCT field's element
+     * 0, or a STRUCT field's field 0 — but only when that first field's
+     * kind is the requested kind (a wrong-kind descent would return a
+     * misdecoded value where the caller expects the container). Returns
+     * null when the field is not such a container or the descent does
+     * not resolve (the caller keeps the field read).
+     */
+    private static Object descendExactMatch(GoStruct gs, ReflectTypes.FieldInfo f, GoKind kind) {
+        GoStruct target = null;
+        if (f.type.kind == GoKind.ARRAY && f.type.elem != null
+                && f.type.elem.kind == GoKind.STRUCT) {
+            Object fv = ReflectValues.structFieldGet(gs, f.index[0], GoKind.ARRAY);
+            if (fv instanceof Object[] oa && oa.length > 0 && oa[0] instanceof GoStruct elemStruct) {
+                target = elemStruct;
+            }
+        } else if (f.type.kind == GoKind.STRUCT) {
+            Object fv = ReflectValues.structFieldGet(gs, f.index[0], GoKind.STRUCT);
+            if (fv instanceof GoStruct nested) {
+                target = nested;
+            }
+        }
+        if (target == null || offsetZeroKind(target) != kind) {
+            return null;
+        }
+        return readStructFieldAt(target, 0, kind);
+    }
+
+    /** The kind of the field at offset 0 of a struct, or null when unknown. */
+    private static GoKind offsetZeroKind(GoStruct gs) {
+        ReflectTypes.TypeInfo info = ReflectTypes.infoForName(gs.descriptor().typeName());
+        if (info == null) {
+            info = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+        }
+        if (info == null || info.fields == null) {
+            return null;
+        }
+        for (ReflectTypes.FieldInfo f : info.fields) {
+            if (f.type != null && f.index.length == 1 && f.offset == 0) {
+                return f.type.kind;
+            }
+        }
+        return null;
     }
 
     private static Object readScalarAt(Object root, long byteOffset, GoKind kind) {
