@@ -24,3 +24,4 @@ tools/fuzz/work/
 
 # differential harness run output (run.sh OUTDIR default): debris, never tracked
 test/differential/test-results/
+__pycache__/

@@ -1,111 +1,79 @@
-# Behavior snapshots (M10 WS I)
+# Behavior snapshots (SPEC §5.9, GG-0036)
 
-Behavior snapshots record graalgo's **observable behavior** on the
-differential corpus ([../../test/differential/corpus/](../../test/differential/corpus/))
-against a pinned Go toolchain — the **upgrade baseline** (PHASES.md M10).
-A future toolchain upgrade or refactor diffs against these files to detect
-behavior drift.
+A behavior snapshot records **gc's** (the reference toolchain's) observable
+behavior on the differential corpus
+([../../test/differential/corpus/](../../test/differential/corpus/)).
+graalgo is checked against it on every push: **graalgo must match gc**.
+graalgo's own output is never the baseline (format v1 recorded graalgo's
+output, which baked every graalgo bug into the "expected" behavior).
 
-**Backend:** the snapshots are recorded against the **product launcher
-P3SyncMain** (`graalgo` backend in
-[`test/differential/backends-p3.json`](../../test/differential/backends-p3.json)),
-*not* the phase-1 `graalgo-run` in
-[`test/differential/backends.json`](../../test/differential/backends.json).
-Recording against the phase-1 frontend would enshrine its build failures
-(no channel/scheduler support) as the baseline and leave P3SyncMain
-regressions invisible to the per-push gate. The phase-1 config is retained
-for the typeparam and srctest adapters (layer 2), which test the frontend;
-it is no longer the snapshot backend.
+Expected divergences are not hidden in the snapshot: they are explicit,
+reviewed, reason-coded entries in
+[`corpus-exclusions.yaml`](../../test/differential/corpus-exclusions.yaml)
+(SPEC §5.6 vocabulary: `backend-specific` / `unspecified-behavior` /
+`deferred-parity`). Listed programs still run; one that starts matching gc
+fails the check as STALE until its entry is removed.
 
 ## Layout
 
-- `go<VERSION>.json` — one snapshot file per Go toolchain, e.g.
+- `go<VERSION>.json` — one snapshot per Go toolchain, e.g.
   [`go1.27.1.json`](go1.27.1.json). On a toolchain upgrade, record the new
-  file and diff it against the old one: the diff *is* the upgrade's
-  behavior delta.
+  file and diff it against the old one: drift in gc's own snapshot is an
+  upstream semantic change to triage.
 - `README.md` — this file.
 
-**Path note:** the phase-3 plan suggested
-`phases/phase3/hidden_files/snapshots/` as the evidence location; these live
-at `test/snapshots/` instead — snapshots are a first-class versioned
-deliverable (committed, CI-gated), not internal bookkeeping.
-
-## Format (`graalgo-behavior-snapshot/v1`)
-
-Top-level metadata:
+## Format (`graalgo-behavior-snapshot/v2`)
 
 | Field | Meaning |
 |---|---|
-| `format` | `"graalgo-behavior-snapshot/v1"` — bump on any format or normalization-rule change; old files then fail the check loudly instead of drifting silently |
-| `toolchain` | Go toolchain the snapshot was recorded against, e.g. `"go1.27.1"` |
-| `backend` | Backend name from [`backends-p3.json`](../../test/differential/backends-p3.json) (`"graalgo"` → P3SyncMain) |
-| `graalgoCommit` | graalgo git commit the snapshot was recorded from |
+| `format` | `"graalgo-behavior-snapshot/v2"`; any other value fails the check loudly |
+| `toolchain` | Reference toolchain, e.g. `"go1.27.1"` |
+| `reference` | Reference backend name in [`backends-p3.json`](../../test/differential/backends-p3.json) (`"gc-a"`) |
 | `recordedAt` | RFC3339 UTC timestamp |
-| `corpus` | Repo-relative corpus label (e.g. `"test/differential/corpus"`) |
-| `normalizer` | Normalization rule-set id (`"harness.Normalize+backend.stderrFilters/v1"`) |
-| `excluded` | Config exclusion list at record time (coverage is part of the baseline) |
+| `corpus` | Repo-relative corpus label |
+| `normalizer` | Normalization rule-set id; a change fails the check until re-recorded |
 | `programs` | Per-program entries, sorted by name |
 
-Per-program entry:
+Per-program entry: `name`, `sourceSha256` (content address of `main.go`:
+an edited, added or removed program without a re-record fails the check),
+`buildOk`, `buildLog`, `exitCode` (`-1` on timeout), `timedOut`, `stdout`,
+`stderr`. Output that is not valid UTF-8 is stored base64-encoded in
+`stdoutBase64` / `stderrBase64` (a JSON string would silently replace the
+invalid bytes with U+FFFD).
 
-| Field | Meaning |
-|---|---|
-| `name` | Corpus program directory, e.g. `"01_hello"` |
-| `args` | Program argv (the current corpus uses none; the field is the extension point) |
-| `stdin` | Program stdin bytes (none today; extension point) |
-| `buildOk` | Whether the backend's build step succeeded |
-| `buildLog` | Normalized build log (a program that fails to build has observable behavior too — the failure is the baseline) |
-| `exitCode` | Process exit code (`-1` on timeout or harness run error) |
-| `timedOut` | Whether the per-program timeout fired |
-| `stdout` | Normalized stdout bytes |
-| `stderr` | Normalized stderr bytes |
+### Normalization
 
-### What is normalized away (not semantic observables)
+Only genuinely nondeterministic text is normalized
+([`normalize.go`](../../test/differential/internal/harness/normalize.go)):
+goroutine ids, trace PC offsets, register annotations, hex inside trace
+frame argument lists, signal lines. Source line numbers in traces, computed
+`0x…` values, message text, exit codes and timeouts are compared exactly.
+Stdout is exact unless a program opts in through a `NORMALIZE` file (e.g.
+`20_fmt_formats` prints `%p`: rule `pointers`). Machine paths (the corpus
+root, the launcher path) are scrubbed to `{CORPUS}` / `{GRAALGO_RUN}`. JVM
+noise on graalgo's stderr is dropped by the harness-owned `jvm` noise set
+(the launchers also run with `-XX:-UsePerfData`).
 
-- **Timings** — run durations are never recorded.
-- **Machine paths** — the corpus root is scrubbed to `{CORPUS}`, the
-  launcher path to `{GRAALGO_RUN}` (the harness already scrubs its work
-  root to `{WORK}`), so a snapshot recorded on one checkout verifies on
-  another.
-- **Addresses / goroutine ids / `.go` line numbers** —
-  [`harness.Normalize`](../../test/differential/internal/harness/normalize.go).
-- **Backend stderr noise** — the backend's `stderrFilters` from
-  [`backends.json`](../../test/differential/backends.json) (e.g. the Truffle
-  `sun.misc.Unsafe` warnings).
-
-Recorded **exactly**: message text, exit codes, timeout flags,
-build-failure logs, panic messages.
-
-### Recording guarantees
-
-`snapshot record` runs every program **twice** (self-consistency gate): any
-nondeterminism fails the recording instead of entering the baseline. A
-program whose output is nondeterministic by design belongs on the config's
-exclusion list with a reason code — never in the baseline.
-
-## Regenerating
+## Recording
 
 ```bash
-make snapshot        # re-record test/snapshots/go<VERSION>.json
+make snapshot        # re-record test/snapshots/go<VERSION>.json under gc
 ```
 
-Run this **only** for a toolchain upgrade or a deliberately re-baselined
-behavior change, then commit the result. It requires a built tree
-(`build` is a prerequisite) and takes a few minutes (each corpus program
-runs twice under a fresh JVM).
+Every program runs three times under gc (self-consistency gate: any
+nondeterminism fails the recording). Re-record when a corpus program is
+added or edited, and on a toolchain upgrade; commit the result. No graalgo
+is involved.
 
 ## Checking
 
 ```bash
-make snapshot-check  # fail on any drift from the committed baseline
+make snapshot-check                                    # whole corpus
+make snapshot-check SNAPSHOT_PROGRAMS=49_int_arith_edges,50_shifts
 ```
 
-`snapshot-check` re-runs each program once and fails on any field drift,
-on corpus programs missing from the snapshot, on snapshot entries missing
-from the corpus, and on exclusion-list drift. It is part of `make all`,
-so per-push CI ([`ci.yml`](../../.github/workflows/ci.yml)) runs it:
-**a refactor that changes observable behavior fails loudly at the commit
-that caused it.** Per-release is the wrong cadence for the check — the
-baseline exists precisely so refactors (per-push) can be diffed against it;
-per-release would let drift accumulate unattributably. Re-*recording* is
-the per-release (or deliberate-change) operation.
+Verdicts per program: MATCH; DRIFT (unlisted divergence: fail); EXPECTED
+(listed divergence); STALE (listed but matching gc: fail); INFRA (no
+verdict — e.g. a corrupted frontend export — after retries: exit 3);
+REF-DRIFT (gc itself no longer matches its snapshot: fail). It runs per
+push via `make all`.
