@@ -108,7 +108,8 @@ func TestRunProgram_Timeout(t *testing.T) {
 func TestRunProgram_StdoutAddressNormalized(t *testing.T) {
 	// A program printing a pointer must compare equal across two runs even
 	// though the raw addresses differ (ASLR). This is the red-green test
-	// for the stdout address-normalization decision.
+	// for the stdout address-normalization decision: the program opts in
+	// (NORMALIZE file -> StdoutRules); without the opt-in stdout is exact.
 	dir := t.TempDir()
 	src := `package main
 
@@ -120,7 +121,7 @@ func main() { x := 42; fmt.Printf("%p %p\n", &x, &x) }
 	if err := os.WriteFile(main, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	prog := Program{Name: "ptrprint", Dir: dir, Main: main}
+	prog := Program{Name: "ptrprint", Dir: dir, Main: main, StdoutRules: []string{"pointers"}}
 	cfg := &Config{TimeoutSec: 15}
 	b := testBackend(t, "t")
 	a := RunProgram(cfg, b, prog, t.TempDir())
@@ -128,7 +129,7 @@ func main() { x := 42; fmt.Printf("%p %p\n", &x, &x) }
 	if !a.BuildOK || !c.BuildOK {
 		t.Fatalf("build failed: %s / %s", a.BuildLog, c.BuildLog)
 	}
-	if strings.Contains(a.Stdout, "0xADDR") == false {
+	if !strings.Contains(a.Stdout, "0xPTR") {
 		t.Fatalf("stdout address not normalized: %q", a.Stdout)
 	}
 	if cmp := Compare(a, c); !cmp.Same {

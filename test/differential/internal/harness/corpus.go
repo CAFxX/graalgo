@@ -12,6 +12,9 @@ type Program struct {
 	Name string // directory base name, e.g. "01_hello"
 	Dir  string
 	Main string // path to main.go
+	// StdoutRules are the opt-in stdout normalization rules declared in
+	// the program's NORMALIZE file (see NormalizeStdout); usually none.
+	StdoutRules []string
 }
 
 // DiscoverCorpus finds all corpus programs: immediate subdirectories of
@@ -37,7 +40,15 @@ func DiscoverCorpus(root string) ([]Program, error) {
 		if st, err := os.Stat(main); err != nil || st.IsDir() {
 			continue
 		}
-		progs = append(progs, Program{Name: e.Name(), Dir: filepath.Join(root, e.Name()), Main: main})
+		p := Program{Name: e.Name(), Dir: filepath.Join(root, e.Name()), Main: main}
+		if data, err := os.ReadFile(filepath.Join(p.Dir, "NORMALIZE")); err == nil {
+			rules, err := ParseNormalizeFile(string(data))
+			if err != nil {
+				return nil, fmt.Errorf("%s/NORMALIZE: %w", p.Name, err)
+			}
+			p.StdoutRules = rules
+		}
+		progs = append(progs, p)
 	}
 	sort.Slice(progs, func(i, j int) bool { return progs[i].Name < progs[j].Name })
 	if len(progs) == 0 {

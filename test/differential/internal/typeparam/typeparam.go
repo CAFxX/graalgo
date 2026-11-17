@@ -173,54 +173,19 @@ func readHeader(path string) (directive, constraint string) {
 	return directive, constraint
 }
 
-// LoadExclusions parses the versioned YAML exclusion file. The format is
-// deliberately minimal (no YAML dependency):
-//
-//	# comments allowed
-//	version: 1
-//	exclusions:
-//	- file: foo.go
-//	  reason: deferred-parity
-//	  detail: free text
+// LoadExclusions parses the versioned, reason-coded exclusion file via
+// the shared harness loader (one vocabulary for every layer, SPEC §5.6):
+// an unknown reason code, an empty detail or a duplicate entry is an error.
 func LoadExclusions(path string) (version string, excl map[string]Exclusion, err error) {
-	excl = map[string]Exclusion{}
-	data, err := os.ReadFile(path)
+	v, rx, err := harness.LoadReviewedExclusions(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("read exclusions: %w", err)
+		return "", nil, err
 	}
-	var cur Exclusion
-	inEntry := false
-	flush := func() {
-		if inEntry && cur.File != "" {
-			excl[cur.File] = cur
-		}
-		cur = Exclusion{}
-		inEntry = false
+	excl = make(map[string]Exclusion, len(rx))
+	for k, e := range rx {
+		excl[k] = Exclusion{File: e.File, Reason: e.Reason, Detail: e.Detail}
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		if strings.HasPrefix(t, "version:") {
-			version = strings.TrimSpace(strings.TrimPrefix(t, "version:"))
-			continue
-		}
-		if strings.HasPrefix(t, "- file:") {
-			flush()
-			cur.File = strings.TrimSpace(strings.TrimPrefix(t, "- file:"))
-			inEntry = true
-		} else if strings.HasPrefix(t, "reason:") && inEntry {
-			cur.Reason = strings.TrimSpace(strings.TrimPrefix(t, "reason:"))
-		} else if strings.HasPrefix(t, "detail:") && inEntry {
-			cur.Detail = strings.TrimSpace(strings.TrimPrefix(t, "detail:"))
-		}
-	}
-	flush()
-	if version == "" {
-		return "", nil, fmt.Errorf("exclusions file %s has no version: line", path)
-	}
-	return version, excl, nil
+	return v, excl, nil
 }
 
 // WriteScanJSON writes {"scan": {"files": [...], "total": N}}.
@@ -585,7 +550,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		oc := harness.Outcome{
 			Program:  filepath.Base(filepath.Dir(src)),
 			Backend:  alt.Name,
-			Stdout:   harness.Normalize(r.Stdout),
+			Stdout:   r.Stdout, // exact: stdout normalization is per-program opt-in only
 			Stderr:   alt.FilterStderr(harness.Normalize(r.Stderr)),
 			ExitCode: r.Exit,
 		}
