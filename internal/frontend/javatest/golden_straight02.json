@@ -40,6 +40,14 @@
   ],
   "objects": [
     {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
       "kind": "var",
       "name": "a",
       "type": 1,
@@ -173,7 +181,7 @@
                     "a"
                   ],
                   "objs": [
-                    0
+                    1
                   ],
                   "type": 1,
                   "values": [
@@ -210,7 +218,7 @@
                     "b"
                   ],
                   "objs": [
-                    1
+                    2
                   ],
                   "type": 1,
                   "values": []
@@ -238,7 +246,7 @@
                       },
                       "fields": {
                         "name": "b",
-                        "obj": 1,
+                        "obj": 2,
                         "type": 1
                       }
                     }
@@ -267,7 +275,7 @@
                           },
                           "fields": {
                             "name": "a",
-                            "obj": 0,
+                            "obj": 1,
                             "type": 1
                           }
                         },
@@ -314,7 +322,7 @@
                     },
                     "fields": {
                       "name": "b",
-                      "obj": 1,
+                      "obj": 2,
                       "type": 1
                     }
                   }
@@ -342,7 +350,7 @@
                       },
                       "fields": {
                         "name": "b",
-                        "obj": 1,
+                        "obj": 2,
                         "type": 1
                       }
                     }
@@ -382,7 +390,7 @@
                     "c"
                   ],
                   "objs": [
-                    2
+                    3
                   ],
                   "type": null,
                   "values": [
@@ -432,7 +440,7 @@
                                   },
                                   "fields": {
                                     "name": "b",
-                                    "obj": 1,
+                                    "obj": 2,
                                     "type": 1
                                   }
                                 },
@@ -490,7 +498,7 @@
                     "d"
                   ],
                   "objs": [
-                    3
+                    4
                   ],
                   "type": null,
                   "values": [
@@ -517,7 +525,7 @@
                           },
                           "fields": {
                             "name": "c",
-                            "obj": 2,
+                            "obj": 3,
                             "type": 1
                           }
                         }
@@ -541,7 +549,7 @@
                     "e"
                   ],
                   "objs": [
-                    4
+                    5
                   ],
                   "type": null,
                   "values": [
@@ -568,7 +576,7 @@
                           },
                           "fields": {
                             "name": "d",
-                            "obj": 3,
+                            "obj": 4,
                             "type": 1
                           }
                         },
@@ -621,7 +629,7 @@
                     "f"
                   ],
                   "objs": [
-                    5
+                    6
                   ],
                   "type": null,
                   "values": [
@@ -648,7 +656,7 @@
                           },
                           "fields": {
                             "name": "e",
-                            "obj": 4,
+                            "obj": 5,
                             "type": 1
                           }
                         },
@@ -687,7 +695,7 @@
                     "g"
                   ],
                   "objs": [
-                    6
+                    7
                   ],
                   "type": null,
                   "values": [
@@ -701,7 +709,7 @@
                         "len": 5
                       },
                       "fields": {
-                        "op": "\u0026",
+                        "op": "&",
                         "type": 1,
                         "x": {
                           "kind": "ident",
@@ -714,7 +722,7 @@
                           },
                           "fields": {
                             "name": "f",
-                            "obj": 5,
+                            "obj": 6,
                             "type": 1
                           }
                         },
@@ -753,7 +761,7 @@
                     "h"
                   ],
                   "objs": [
-                    7
+                    8
                   ],
                   "type": null,
                   "values": [
@@ -780,7 +788,7 @@
                           },
                           "fields": {
                             "name": "g",
-                            "obj": 6,
+                            "obj": 7,
                             "type": 1
                           }
                         },
@@ -819,7 +827,7 @@
                     "i"
                   ],
                   "objs": [
-                    8
+                    9
                   ],
                   "type": null,
                   "values": [
@@ -846,7 +854,7 @@
                           },
                           "fields": {
                             "name": "h",
-                            "obj": 7,
+                            "obj": 8,
                             "type": 1
                           }
                         },
@@ -885,7 +893,7 @@
                     "j"
                   ],
                   "objs": [
-                    9
+                    10
                   ],
                   "type": null,
                   "values": [
@@ -899,7 +907,7 @@
                         "len": 6
                       },
                       "fields": {
-                        "op": "\u003c\u003c",
+                        "op": "<<",
                         "type": 1,
                         "x": {
                           "kind": "ident",
@@ -912,7 +920,7 @@
                           },
                           "fields": {
                             "name": "i",
-                            "obj": 8,
+                            "obj": 9,
                             "type": 1
                           }
                         },
@@ -951,7 +959,7 @@
                     "k"
                   ],
                   "objs": [
-                    10
+                    11
                   ],
                   "type": null,
                   "values": [
@@ -965,7 +973,7 @@
                         "len": 6
                       },
                       "fields": {
-                        "op": "\u003e\u003e",
+                        "op": ">>",
                         "type": 1,
                         "x": {
                           "kind": "ident",
@@ -978,7 +986,7 @@
                           },
                           "fields": {
                             "name": "j",
-                            "obj": 9,
+                            "obj": 10,
                             "type": 1
                           }
                         },
@@ -1017,7 +1025,7 @@
                     "m"
                   ],
                   "objs": [
-                    11
+                    12
                   ],
                   "type": null,
                   "values": [
@@ -1044,7 +1052,7 @@
                           },
                           "fields": {
                             "name": "k",
-                            "obj": 10,
+                            "obj": 11,
                             "type": 1
                           }
                         }
@@ -1068,7 +1076,7 @@
                     "n"
                   ],
                   "objs": [
-                    12
+                    13
                   ],
                   "type": null,
                   "values": [
@@ -1082,7 +1090,7 @@
                         "len": 7
                       },
                       "fields": {
-                        "op": "\u0026^",
+                        "op": "&^",
                         "type": 1,
                         "x": {
                           "kind": "ident",
@@ -1095,7 +1103,7 @@
                           },
                           "fields": {
                             "name": "k",
-                            "obj": 10,
+                            "obj": 11,
                             "type": 1
                           }
                         },
@@ -1134,7 +1142,7 @@
                     "p"
                   ],
                   "objs": [
-                    13
+                    14
                   ],
                   "type": null,
                   "values": [
@@ -1161,7 +1169,7 @@
                           },
                           "fields": {
                             "name": "n",
-                            "obj": 12,
+                            "obj": 13,
                             "type": 1
                           }
                         }
@@ -1185,7 +1193,7 @@
                     "q"
                   ],
                   "objs": [
-                    14
+                    15
                   ],
                   "type": null,
                   "values": [
@@ -1200,7 +1208,7 @@
                       },
                       "fields": {
                         "name": "p",
-                        "obj": 13,
+                        "obj": 14,
                         "type": 1
                       }
                     }
@@ -1229,7 +1237,7 @@
                       },
                       "fields": {
                         "name": "q",
-                        "obj": 14,
+                        "obj": 15,
                         "type": 1
                       }
                     }
@@ -1269,7 +1277,7 @@
                     "sum"
                   ],
                   "objs": [
-                    15
+                    16
                   ],
                   "type": null,
                   "values": [
@@ -1452,7 +1460,7 @@
                                                                               },
                                                                               "fields": {
                                                                                 "name": "a",
-                                                                                "obj": 0,
+                                                                                "obj": 1,
                                                                                 "type": 1
                                                                               }
                                                                             },
@@ -1467,7 +1475,7 @@
                                                                               },
                                                                               "fields": {
                                                                                 "name": "b",
-                                                                                "obj": 1,
+                                                                                "obj": 2,
                                                                                 "type": 1
                                                                               }
                                                                             }
@@ -1484,7 +1492,7 @@
                                                                           },
                                                                           "fields": {
                                                                             "name": "c",
-                                                                            "obj": 2,
+                                                                            "obj": 3,
                                                                             "type": 1
                                                                           }
                                                                         }
@@ -1501,7 +1509,7 @@
                                                                       },
                                                                       "fields": {
                                                                         "name": "d",
-                                                                        "obj": 3,
+                                                                        "obj": 4,
                                                                         "type": 1
                                                                       }
                                                                     }
@@ -1518,7 +1526,7 @@
                                                                   },
                                                                   "fields": {
                                                                     "name": "e",
-                                                                    "obj": 4,
+                                                                    "obj": 5,
                                                                     "type": 1
                                                                   }
                                                                 }
@@ -1535,7 +1543,7 @@
                                                               },
                                                               "fields": {
                                                                 "name": "f",
-                                                                "obj": 5,
+                                                                "obj": 6,
                                                                 "type": 1
                                                               }
                                                             }
@@ -1552,7 +1560,7 @@
                                                           },
                                                           "fields": {
                                                             "name": "g",
-                                                            "obj": 6,
+                                                            "obj": 7,
                                                             "type": 1
                                                           }
                                                         }
@@ -1569,7 +1577,7 @@
                                                       },
                                                       "fields": {
                                                         "name": "h",
-                                                        "obj": 7,
+                                                        "obj": 8,
                                                         "type": 1
                                                       }
                                                     }
@@ -1586,7 +1594,7 @@
                                                   },
                                                   "fields": {
                                                     "name": "i",
-                                                    "obj": 8,
+                                                    "obj": 9,
                                                     "type": 1
                                                   }
                                                 }
@@ -1603,7 +1611,7 @@
                                               },
                                               "fields": {
                                                 "name": "j",
-                                                "obj": 9,
+                                                "obj": 10,
                                                 "type": 1
                                               }
                                             }
@@ -1620,7 +1628,7 @@
                                           },
                                           "fields": {
                                             "name": "k",
-                                            "obj": 10,
+                                            "obj": 11,
                                             "type": 1
                                           }
                                         }
@@ -1637,7 +1645,7 @@
                                       },
                                       "fields": {
                                         "name": "m",
-                                        "obj": 11,
+                                        "obj": 12,
                                         "type": 1
                                       }
                                     }
@@ -1654,7 +1662,7 @@
                                   },
                                   "fields": {
                                     "name": "n",
-                                    "obj": 12,
+                                    "obj": 13,
                                     "type": 1
                                   }
                                 }
@@ -1671,7 +1679,7 @@
                               },
                               "fields": {
                                 "name": "p",
-                                "obj": 13,
+                                "obj": 14,
                                 "type": 1
                               }
                             }
@@ -1688,7 +1696,7 @@
                           },
                           "fields": {
                             "name": "q",
-                            "obj": 14,
+                            "obj": 15,
                             "type": 1
                           }
                         }
@@ -1719,7 +1727,7 @@
                       },
                       "fields": {
                         "name": "sum",
-                        "obj": 15,
+                        "obj": 16,
                         "type": 1
                       }
                     }
@@ -1736,7 +1744,7 @@
                       },
                       "fields": {
                         "name": "sum",
-                        "obj": 15,
+                        "obj": 16,
                         "type": 1
                       }
                     }
@@ -1779,7 +1787,7 @@
                       },
                       "fields": {
                         "name": "sum",
-                        "obj": 15,
+                        "obj": 16,
                         "type": 1
                       }
                     }
@@ -1823,7 +1831,9 @@
         },
         "name": "main",
         "params": [],
-        "sig": 0
+        "sig": 0,
+        "obj": 0,
+        "pkgpath": "main"
       }
     }
   ]

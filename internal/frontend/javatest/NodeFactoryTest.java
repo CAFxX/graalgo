@@ -45,6 +45,19 @@ public final class NodeFactoryTest {
         }
     }
 
+    /** Expects a FrontendException whose message names gc's badtype error. */
+    static void checkBadtype(Runnable r, String name) {
+        try {
+            r.run();
+            check(false, name + " (no exception)");
+        } catch (FrontendException e) {
+            check(e.getMessage().contains("badtype"),
+                    name + " -> " + e.getMessage());
+        } catch (Throwable t) {
+            check(false, name + " (wrong exception: " + t + ")");
+        }
+    }
+
     static NodeFactory.Program build(Path dir, String base) throws Exception {
         String go = Files.readString(dir.resolve(base + ".go"));
         String json = Files.readString(dir.resolve(base + ".json"));
@@ -119,6 +132,27 @@ public final class NodeFactoryTest {
         expectFrontendException(() -> new NodeFactory(src1).buildProgram(badOp), "unknown binary op rejected");
         expectFrontendException(
                 () -> new NodeFactory(src1).buildProgram("{oops"), "malformed JSON rejected");
+        // --- print/println operand kinds (REVIEW-2026-11-17-07 NEW-P1-1
+        // adjacent P2): gc rejects struct/array operands at COMPILE time
+        // (badtype in walkPrint); the factory must fail the build, not
+        // throw IllegalArgumentException from BuiltinPrint at runtime.
+        // go/types accepts them, so the exporter does not stop them.
+        String badPrintStruct = Files.readString(dir.resolve("badprintstruct.json"));
+        String badPrintArray = Files.readString(dir.resolve("badprintarray.json"));
+        // Message-checked: the rejection must come from the print guard
+        // (badtype), not from any other build failure in the fixture.
+        checkBadtype(() -> new NodeFactory(src1).buildProgram(badPrintStruct),
+                "println(struct) rejected at build time");
+        checkBadtype(() -> new NodeFactory(src1).buildProgram(badPrintArray),
+                "println(array) rejected at build time");
+        // Positive control: println of an int still builds.
+        String goodPrintInt = Files.readString(dir.resolve("goodprintint.json"));
+        try {
+            new NodeFactory(src1).buildProgram(goodPrintInt);
+            check(true, "println(int) builds");
+        } catch (Throwable t) {
+            check(false, "println(int) builds (threw " + t + ")");
+        }
         expectFrontendException(
                 () -> new NodeFactory(src1).registerExprKind("binary", (n, c) -> null),
                 "duplicate kind registration rejected");

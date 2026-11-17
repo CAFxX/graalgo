@@ -1119,6 +1119,17 @@ public final class NodeFactoryV2 {
                 // writes all of them via BuiltinPrint. Returning only
                 // args.get(0) (or nil for zero args) would silently drop
                 // the output and arguments 2..n.
+                // gc rejects struct/array operands at COMPILE time
+                // (badtype in walkPrint): fail the build here instead
+                // of letting them reach BuiltinPrint.writeOne's default
+                // arm, which throws IllegalArgumentException at runtime.
+                for (GoExprNode a : args) {
+                    GoKind k = a.kind();
+                    if (k == GoKind.STRUCT || k == GoKind.ARRAY) {
+                        throw new FrontendException(where + ": " + builtin
+                                + " of " + k + " is a compile error in gc (badtype)");
+                    }
+                }
                 return new PrintNode("println".equals(builtin),
                         args.toArray(new GoExprNode[0]));
             }

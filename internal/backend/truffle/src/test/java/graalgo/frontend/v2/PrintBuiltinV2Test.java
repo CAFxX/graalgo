@@ -1,13 +1,13 @@
 package graalgo.frontend.v2;
 
 import com.oracle.truffle.api.Truffle;
+import graalgo.frontend.FrontendException;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
-import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -123,7 +123,7 @@ public final class PrintBuiltinV2Test {
         return m;
     }
 
-    /** Type table: id 0 = string, id 1 = int, id 2 = bool, id 3 = float64. */
+    /** Type table: id 0 = string, id 1 = int, id 2 = bool, id 3 = float64, id 4 = struct, id 5 = array. */
     private static List<Object> types() {
         return List.of(
             map("kind", "basic",
@@ -133,7 +133,12 @@ public final class PrintBuiltinV2Test {
             map("kind", "basic",
                 "detail", map("name", "bool", "class", "bool")),
             map("kind", "basic",
-                "detail", map("name", "float64", "class", "float")));
+                "detail", map("name", "float64", "class", "float")),
+            map("kind", "struct",
+                "detail", map("fields", List.of(
+                    map("name", "X", "type", 1L)))),
+            map("kind", "array",
+                "detail", map("elem", 1L, "len", 2L)));
     }
 
     /** Canonical decoded string value (R-P0-2): no quotes, no unescaping. */
@@ -155,6 +160,18 @@ public final class PrintBuiltinV2Test {
     private static Map<String, Object> floatLit(double d) {
         return map("kind", "basiclit",
             "fields", map("value", Double.toString(d), "type", 3L));
+    }
+
+    /** Struct literal S{1}: composite literal of struct type id 4. */
+    private static Map<String, Object> structLit() {
+        return map("kind", "compositelit",
+            "fields", map("type", 4L, "elems", List.of(intLit(1))));
+    }
+
+    /** Array literal [2]int{1, 2}: composite literal of array type id 5. */
+    private static Map<String, Object> arrayLit() {
+        return map("kind", "compositelit",
+            "fields", map("type", 5L, "elems", List.of(intLit(1), intLit(2))));
     }
 
     private static Map<String, Object> builtinCall(String builtin, List<Object> args) {
@@ -255,5 +272,37 @@ public final class PrintBuiltinV2Test {
     public void testSecondArgSideEffectRuns() throws IOException {
         Map<String, Object> inner = builtinCall("print", List.of(strLit("x")));
         expect("println", List.of(strLit("y"), inner), "xy (0x0,0x0)\n");
+    }
+
+    /** Building a program whose print/println takes a struct/array operand must fail. */
+    private static void expectBuildRejected(byte[] doc, String name) throws IOException {
+        NodeFactoryV2 factory = new NodeFactoryV2(
+            Source.newBuilder("go", "package main", "print-v2.go").build());
+        try {
+            factory.buildProgram(doc);
+        } catch (FrontendException e) {
+            check(e.getMessage().contains("badtype"),
+                name + " rejected, wrong message: " + e.getMessage());
+            return;
+        }
+        throw new AssertionError(name + ": build succeeded, want FrontendException");
+    }
+
+    /**
+     * gc rejects struct/array print operands at COMPILE time (badtype in
+     * walkPrint); the factory must fail the build, not throw
+     * IllegalArgumentException from BuiltinPrint at runtime.
+     */
+    public void testPrintlnStructRejected() throws IOException {
+        expectBuildRejected(
+            programWithStmt(exprStmt(builtinCall("println", List.of(structLit())))),
+            "println(struct)");
+    }
+
+    /** Same guard for print (not just println) and for array operands. */
+    public void testPrintArrayRejected() throws IOException {
+        expectBuildRejected(
+            programWithStmt(exprStmt(builtinCall("print", List.of(arrayLit())))),
+            "print(array)");
     }
 }

@@ -32,6 +32,14 @@
   ],
   "objects": [
     {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
       "kind": "var",
       "name": "x",
       "type": 1,
@@ -87,7 +95,7 @@
                     "x"
                   ],
                   "objs": [
-                    0
+                    1
                   ],
                   "type": null,
                   "values": [
@@ -124,7 +132,7 @@
                     "y"
                   ],
                   "objs": [
-                    1
+                    2
                   ],
                   "type": null,
                   "values": [
@@ -151,7 +159,7 @@
                           },
                           "fields": {
                             "name": "x",
-                            "obj": 0,
+                            "obj": 1,
                             "type": 1
                           }
                         },
@@ -190,7 +198,7 @@
                     "z"
                   ],
                   "objs": [
-                    2
+                    3
                   ],
                   "type": null,
                   "values": [
@@ -217,7 +225,7 @@
                           },
                           "fields": {
                             "name": "x",
-                            "obj": 0,
+                            "obj": 1,
                             "type": 1
                           }
                         },
@@ -232,7 +240,7 @@
                           },
                           "fields": {
                             "name": "y",
-                            "obj": 1,
+                            "obj": 2,
                             "type": 1
                           }
                         }
@@ -263,7 +271,7 @@
                       },
                       "fields": {
                         "name": "z",
-                        "obj": 2,
+                        "obj": 3,
                         "type": 1
                       }
                     }
@@ -280,7 +288,7 @@
                       },
                       "fields": {
                         "name": "z",
-                        "obj": 2,
+                        "obj": 3,
                         "type": 1
                       }
                     }
@@ -293,7 +301,9 @@
         },
         "name": "main",
         "params": [],
-        "sig": 0
+        "sig": 0,
+        "obj": 0,
+        "pkgpath": "main"
       }
     }
   ]

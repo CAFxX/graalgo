@@ -3671,8 +3671,22 @@ public final class NodeFactory {
                 }
                 yield new RecoverBuiltinNode();
             }
-            case "print" -> new PrintNode(false, args);
-            case "println" -> new PrintNode(true, args);
+            case "print", "println" -> {
+                // gc rejects struct/array print operands at COMPILE time
+                // (badtype in walkPrint). Fail the build here instead of
+                // letting them reach BuiltinPrint.writeOne's default arm,
+                // which throws IllegalArgumentException at runtime.
+                // (go/types accepts them, so the exporter does not stop
+                // them; REVIEW-2026-11-17-07 NEW-P1-1 adjacent P2.)
+                for (GoExprNode a : args) {
+                    GoKind k = a.kind();
+                    if (k == GoKind.STRUCT || k == GoKind.ARRAY) {
+                        throw new FrontendException(path + ": " + builtin
+                                + " of " + k + " is a compile error in gc (badtype)");
+                    }
+                }
+                yield new PrintNode("println".equals(builtin), args);
+            }
             case "len" -> {
                 requireArgs(path, builtin, args, 1);
                 yield new LenNode(args[0]);
