@@ -66,9 +66,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * equal iff they name the same storage, so a handle-valued CAS matches
  * gc's address CAS on every representable case.
  *
- * <p>Nil addresses panic with gc's nil-dereference panic for load and
- * store (the old deref lowering's behavior, kept); swap/CAS keep their
- * pre-existing plain-field behavior, untouched by this change.
+ * <p>Nil addresses panic with gc's nil-dereference panic for all four
+ * ops (the old deref lowering's behavior, kept for load/store;
+ * R2315-14-P1-3 extends it to swap/CAS, whose plain-field paths
+ * silently succeeded on a nil address reached through the unsafe
+ * round-trip {@code (*unsafe.Pointer)(unsafe.Pointer(nil))}).
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1 change.
@@ -214,6 +216,14 @@ public final class AtomicPtrOpNode extends GoExprNode {
                 // swap: returns the old handle.
                 Object s = storage(frame);
                 long newVal = handleArg(argChildren[0], frame);
+                // R2315-14-P1-3: a nil address must panic, never
+                // silently succeed. The check sits after the value
+                // evaluation (gc evaluates call arguments before the
+                // callee panics — the store path has the same order)
+                // and before the storage-shape dispatch, so it covers
+                // both the cell and the plain-field shapes (a cell
+                // address is never nil, so it is a no-op there).
+                requireNonNil(s);
                 if (s instanceof AtomicReference<?> ar) {
                     @SuppressWarnings("unchecked")
                     AtomicReference<Object> cell = (AtomicReference<Object>) ar;
@@ -244,6 +254,10 @@ public final class AtomicPtrOpNode extends GoExprNode {
         Object s = storage(frame);
         long oldVal = handleArg(argChildren[0], frame);
         long newVal = handleArg(argChildren[1], frame);
+        // R2315-14-P1-3: nil address panics (see the swap path above
+        // for the placement rationale: after value evaluation, before
+        // the storage-shape dispatch).
+        requireNonNil(s);
         if (s instanceof AtomicReference<?> ar) {
             @SuppressWarnings("unchecked")
             AtomicReference<Object> cell = (AtomicReference<Object>) ar;

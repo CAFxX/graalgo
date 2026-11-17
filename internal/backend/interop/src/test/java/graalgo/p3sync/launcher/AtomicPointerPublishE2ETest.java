@@ -191,6 +191,80 @@ public final class AtomicPointerPublishE2ETest {
             + "\tfmt.Println(\"cas-nil-new: ok\", ok2, \"now-nil\", atomic.LoadPointer(&p) == nil)\n"
             + "}\n";
 
+    /**
+     * R2315-14-P1-3: nil-ADDRESS SwapPointer / CompareAndSwapPointer
+     * must panic with gc's nil-dereference panic, never silently
+     * succeed. Each probe recovers the panic and prints the recovered
+     * value; gc 1.27.1 prints
+     * {@code runtime error: invalid memory address or nil pointer
+     * dereference} for every probe (verified by running the same
+     * program under gc).
+     *
+     * <p>The hole is reachable only through the unsafe round-trip
+     * {@code (*unsafe.Pointer)(unsafe.Pointer(nil))}: that conversion
+     * yields a nil GoPointer (a non-null Java object with a null
+     * referent), so {@code storage()} returns it and the swap/CAS
+     * paths — which had no nil-address check — silently returned 0 /
+     * true, writing into the detached holder object. A plain nil
+     * {@code *unsafe.Pointer} variable already panicked pre-fix (the
+     * address node yields Java null, so {@code storage()} panics);
+     * those two probes pin the non-trigger. If swap/CAS stopped
+     * panicking for the round-trip form, its probe would print
+     * {@code no-panic} and this test would fail.
+     */
+    private static final String PROG_NILADDR_SWAPCAS =
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"sync/atomic\"\n\t\"unsafe\"\n)\n\n"
+            + "func probeSwap() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\tx := 1\n"
+            + "\taddr := (*unsafe.Pointer)(unsafe.Pointer(nil))\n"
+            + "\tatomic.SwapPointer(addr, unsafe.Pointer(&x))\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func probeCas() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\ty := 2\n"
+            + "\taddr := (*unsafe.Pointer)(unsafe.Pointer(nil))\n"
+            + "\tatomic.CompareAndSwapPointer(addr, nil, unsafe.Pointer(&y))\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func probeSwapNilVar() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\tx := 3\n"
+            + "\tvar addr *unsafe.Pointer\n"
+            + "\tatomic.SwapPointer(addr, unsafe.Pointer(&x))\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func probeCasNilVar() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\ty := 4\n"
+            + "\tvar addr *unsafe.Pointer\n"
+            + "\tatomic.CompareAndSwapPointer(addr, nil, unsafe.Pointer(&y))\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func main() {\n"
+            + "\tfmt.Println(probeSwap())\n"
+            + "\tfmt.Println(probeCas())\n"
+            + "\tfmt.Println(probeSwapNilVar())\n"
+            + "\tfmt.Println(probeCasNilVar())\n"
+            + "}\n";
+
     private static final int REPS = 10;
 
     private static void assertTrue(boolean cond, String msg) {
@@ -267,5 +341,14 @@ public final class AtomicPointerPublishE2ETest {
     public void testNilValueArgs() throws Exception {
         checkRepeated("atomicptrnilvalue.go", PROG_NILVALUE,
                 "store-nil: nil\nswap-nil: old-payload 1 now-nil true\ncas-nil-old: ok true payload 2\ncas-nil-new: ok true now-nil true");
+    }
+
+    /** R2315-14-P1-3: nil-address SwapPointer / CompareAndSwapPointer panic. */
+    public void testNilAddressSwapCasPanics() throws Exception {
+        checkRepeated("atomicptrniladdrswapcas.go", PROG_NILADDR_SWAPCAS,
+                "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "runtime error: invalid memory address or nil pointer dereference");
     }
 }
