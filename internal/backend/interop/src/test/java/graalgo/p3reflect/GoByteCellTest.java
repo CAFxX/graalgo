@@ -87,6 +87,68 @@ public final class GoByteCellTest {
         }
     }
 
+    /** r64 (C1): an Integer cell is NOT Long storage — bytes 4-7 would read sign-extension bytes. */
+    public void testIntegerCellFailsLoud() {
+        GoBox box = new GoBox(Integer.valueOf(0x01020304));
+        try {
+            new GoByteCell(box, 0).get();
+            throw new AssertionError("reading an Integer cell must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+        try {
+            new GoByteCell(box, 0).set(Long.valueOf(1));
+            throw new AssertionError("writing an Integer cell must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+    }
+
+    /** r64 (C1): a Double cell is NOT Long storage — longValue() would truncate 1.5 to 1. */
+    public void testDoubleCellFailsLoud() {
+        GoBox box = new GoBox(Double.valueOf(1.5));
+        try {
+            new GoByteCell(box, 0).get();
+            throw new AssertionError("reading a Double cell must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+        try {
+            new GoByteCell(box, 0).set(Long.valueOf(1));
+            throw new AssertionError("writing a Double cell must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+    }
+
+    /** r64 (C1): a floating-point byte value would truncate silently — it fails loudly. */
+    public void testDoubleValueFailsLoud() {
+        GoBox box = wordBox();
+        try {
+            new GoByteCell(box, 0).set(Double.valueOf(1.5));
+            throw new AssertionError("storing a Double byte value must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+        try {
+            new GoByteCell(box, 0).set(Float.valueOf(2.5f));
+            throw new AssertionError("storing a Float byte value must fail");
+        } catch (IllegalStateException expected) {
+            // expected
+        }
+    }
+
+    /** r64 (C1): a guest uint8 arrives Integer-boxed — storing it is exact, not an error. */
+    public void testIntegerValueStoresByte() {
+        GoBox box = wordBox();
+        new GoByteCell(box, 3).set(Integer.valueOf(0xAB));
+        assertEquals(0x08070605AB030201L, ((Long) box.get()).longValue(),
+                "writing byte 3 as Integer must change only byte 3");
+        new GoByteCell(box, 0).set(Byte.valueOf((byte) 0x7F));
+        assertEquals(0x08070605AB03027FL, ((Long) box.get()).longValue(),
+                "writing byte 0 as Byte must change only byte 0");
+    }
+
     public void testNonLongStorageFailsLoud() {
         GoBox box = new GoBox("not a long");
         try {

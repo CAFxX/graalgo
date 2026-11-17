@@ -8,8 +8,11 @@ package graalgo.values;
  *
  * <p>{@code get} extracts byte {@code byteIndex} (little-endian) of the
  * wrapped cell's long; {@code set} merges a byte back into the long
- * (read-modify-write through the wrapped cell). The byte value is a
- * {@code Long} in canonical boxed form, so the existing cell-pointer
+ * (read-modify-write through the wrapped cell). {@code get} returns the
+ * byte as a {@code Long} in canonical boxed form, and {@code set}
+ * accepts any integral {@code Number} (a guest uint8 arrives
+ * Integer-boxed) while rejecting floating-point values loudly, so the
+ * existing cell-pointer
  * machinery ({@link GoPointer}, DerefNode, DerefWriteNode) works
  * unchanged — no DerefNode/DerefWriteNode change is needed for
  * sub-word reads or writes. The wrapped cell must hold a {@code Long}
@@ -45,27 +48,37 @@ public final class GoByteCell implements GoCell {
     @Override
     public Object get() {
         Object v = cell.get();
-        if (!(v instanceof Number n)) {
+        // r64 (C1): the wrapped word MUST be a Long. Any other Number
+        // fails loudly: Double.longValue() truncates (1.5 -> 1) and
+        // Integer.longValue() sign-extends, so bytes 4-7 would read
+        // extension bytes — silently wrong instead of loudly wrong.
+        if (!(v instanceof Long)) {
             throw new IllegalStateException("GoByteCell: wrapped cell holds "
                     + (v == null ? "null" : v.getClass().getSimpleName()) + ", not a Long");
         }
-        long word = n.longValue();
+        long word = ((Long) v).longValue();
         return Long.valueOf((word >> (8 * byteIndex)) & 0xFF);
     }
 
     @Override
     public void set(Object value) {
         Object cur = cell.get();
-        if (!(cur instanceof Number)) {
+        // r64 (C1): same Long-only storage invariant as get().
+        if (!(cur instanceof Long)) {
             throw new IllegalStateException("GoByteCell: wrapped cell holds "
                     + (cur == null ? "null" : cur.getClass().getSimpleName()) + ", not a Long");
         }
-        if (!(value instanceof Number n)) {
+        // The byte being stored is an integral Number: a guest uint8
+        // arrives Integer-boxed (Boxing.java), so Long-only here would
+        // break every real byte write. Double/Float would truncate
+        // silently, so they fail loudly instead.
+        if (!(value instanceof Long || value instanceof Integer
+                || value instanceof Byte || value instanceof Short)) {
             throw new IllegalStateException("GoByteCell: cannot store "
                     + (value == null ? "null" : value.getClass().getSimpleName()) + " as a byte");
         }
-        long word = ((Number) cur).longValue();
-        long b = n.longValue() & 0xFF;
+        long word = ((Long) cur).longValue();
+        long b = ((Number) value).longValue() & 0xFF;
         long merged = (word & ~(0xFFL << (8 * byteIndex))) | (b << (8 * byteIndex));
         cell.set(Long.valueOf(merged));
     }
