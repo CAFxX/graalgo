@@ -66,3 +66,25 @@ Chat: f7467b85-7da6-4da0-b9ec-94631a60dafe.
 ## Push log
 - 2026-11-17 ~05:36 UTC: branch created on GitHub at 0533c7cc (no objects
   uploaded — SHA already present as r60 tip).
+
+## Update 2026-11-17 ~05:44 UTC — Go toolchain broken in module mode (ENV, not repo)
+- `make build` FAILED at the gofrontend step: `package fmt/unsafe/... is not in std`
+  (modload ImportMissingError). Root cause: Go module mode is broken in this
+  VM post-reboot — `go list fmt` fails even in a fresh module AND with
+  GOTOOLCHAIN=local, on BOTH ~/tools/go and ~/tools/go2 (both go1.27.1).
+  `GO111MODULE=off go list unsafe` / `go run` WORK (hello-world prints).
+  Module cache ~/go/pkg/mod is near-empty (sumdb only); proxy reachable via
+  curl. Cause of the module-mode breakage NOT yet established.
+- LOCAL WORKAROUND (verification only, no repo change): build with
+  `GO111MODULE=off` in env — gofrontend builds clean under it
+  (13.5MB test binary /var/tmp/gotest-gofrontend, rc=0). `make build`
+  re-run 05:43 UTC with GO111MODULE=off, log /var/tmp/r62-build2.log.
+  CI is unaffected (own Go toolchain). If a successor resumes: re-check
+  `go list fmt` in module mode first; if still broken, keep GO111MODULE=off
+  for local builds only.
+- Load 1-min hit 14.40 at 05:43 — near shedder freeze (>=16). Back off
+  before heavy parallel work; a T-state process is FROZEN, not hung.
+
+## Push log (continued)
+- 2026-11-17 ~05:37 UTC: ca37837a (PROGRESS-r62.md) pushed via push_repo.py
+  (state /var/tmp/r62-push-state.json); ls-remote confirms r62 = ca37837a.
