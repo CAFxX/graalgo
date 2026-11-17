@@ -2,8 +2,11 @@ package main
 
 // exec.go — backend execution for the M8 fuzzer.
 //
-// Two backends: stock gc (~/tools/go) and graalgo-run (phases/phase1).
-// Each run captures build success, exit code, stdout, stderr.
+// Two backends: stock gc ($GO, default ~/tools/go/bin/go) and the graalgo
+// product launcher ($GRAALGO_SYNC_RUN, default
+// <repo>/internal/backend/graalgo-sync-run, found by walking up from the
+// working directory). Each run captures build success, exit code, stdout,
+// stderr.
 
 import (
 	"bytes"
@@ -14,8 +17,36 @@ import (
 	"time"
 )
 
-var goBin = os.ExpandEnv("$HOME/tools/go/bin/go")
-var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/phases/phase1/graalgo-run")
+var goBin = envOr("GO", os.ExpandEnv("$HOME/tools/go/bin/go"))
+var graalgoRun = envOr("GRAALGO_SYNC_RUN", findLauncher())
+
+func envOr(k, def string) string {
+	if v := os.Getenv(k); v != "" {
+		return v
+	}
+	return def
+}
+
+// findLauncher walks up from the working directory to the repo's product
+// launcher. An unresolvable launcher is returned as a non-existent path:
+// every run then fails to start and is classified INFRA, never DIVERGED.
+func findLauncher() string {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "graalgo-sync-run-not-found"
+	}
+	for {
+		p := filepath.Join(dir, "internal", "backend", "graalgo-sync-run")
+		if st, err := os.Stat(p); err == nil && !st.IsDir() {
+			return p
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "graalgo-sync-run-not-found"
+		}
+		dir = parent
+	}
+}
 
 type runResult struct {
 	buildOK   bool

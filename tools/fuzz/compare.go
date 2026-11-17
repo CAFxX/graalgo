@@ -10,6 +10,9 @@ package main
 //   GC_INVALID   — gc rejected the program (generator bug, not counted)
 //   TRACE_DIFF   — only panic-trace formatting differs (known 27_panic_trace
 //                  limitation: PC offsets/paths/qualifiers)
+//   INFRA        — no verdict: the graalgo launcher could not start or load
+//                  its classes, or the frontend export was corrupted. Never
+//                  counted as a divergence; `run` exits 3 if any occurred.
 
 import (
 	"regexp"
@@ -24,6 +27,7 @@ const (
 	vScopeReject
 	vGCInvalid
 	vTraceDiff
+	vInfra
 )
 
 func (v verdict) String() string {
@@ -38,6 +42,8 @@ func (v verdict) String() string {
 		return "GC_INVALID"
 	case vTraceDiff:
 		return "TRACE_DIFF"
+	case vInfra:
+		return "INFRA"
 	}
 	return "?"
 }
@@ -81,10 +87,17 @@ func firstLine(s string) string {
 	return s
 }
 
+// reInfra matches graalgo failures that are about the harness/launcher,
+// not the program.
+var reInfra = regexp.MustCompile(`ClassNotFoundException|NoClassDefFoundError|Could not find or load main class|Could not create the Java Virtual Machine|JSON parse error|JSON encoding failed|no such file or directory|executable file not found`)
+
 // compare runs the full verdict logic for one program.
 func compare(gc, gr runResult) verdict {
 	if !gc.buildOK {
 		return vGCInvalid
+	}
+	if gr.buildCode == -1 || reInfra.MatchString(gr.buildErr) || reInfra.MatchString(gr.stderr) {
+		return vInfra
 	}
 	if !gr.buildOK {
 		if gr.buildCode == 2 && isScopeError(gr.buildErr) {
