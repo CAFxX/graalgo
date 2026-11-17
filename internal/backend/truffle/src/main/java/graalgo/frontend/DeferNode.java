@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.DeferredCall;
 import graalgo.runtime.GoroutineState;
@@ -58,17 +59,23 @@ public final class DeferNode extends GoStmtNode {
         this.argKinds = argKinds;
     }
 
+    @ExplodeLoop
+    private Object[] evalArgs(VirtualFrame frame) {
+        Object[] argVals = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            // Go evaluates and copies defer arguments at the defer
+            // statement (value semantics for arrays/structs).
+            argVals[i] = Boxing.copyForAssign(args[i].kind(),
+                    Boxing.box(args[i].kind(), args[i], frame));
+        }
+        return argVals;
+    }
+
     @Override
     public void executeVoid(VirtualFrame frame) {
         DeferredCall dc;
         {
-            Object[] argVals = new Object[args.length];
-            for (int i = 0; i < args.length; i++) {
-                // Go evaluates and copies defer arguments at the defer
-                // statement (value semantics for arrays/structs).
-                argVals[i] = Boxing.copyForAssign(args[i].kind(),
-                        Boxing.box(args[i].kind(), args[i], frame));
-            }
+            Object[] argVals = evalArgs(frame);
             if (builtinName != null) {
                 dc = DeferredCall.builtin(builtinName, argVals, argKinds);
                 // P3-M4 remediation (P1-2): a deferred panic(x) throws at

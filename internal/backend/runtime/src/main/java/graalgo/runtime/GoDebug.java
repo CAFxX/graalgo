@@ -45,6 +45,7 @@ public final class GoDebug {
     private static volatile GoFunc newIncNonDefaultFunc;
 
     /** Removes all registrations (launcher, per run). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void clear() {
         updateFunc = null;
         METRICS.clear();
@@ -56,6 +57,7 @@ public final class GoDebug {
      * {@code ("", env)}, where env is the current {@code $GODEBUG} value
      * (gc's registration-time {@code update(def, env)} call).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void setUpdate(GoFunc f, String env) {
         if (f == null) {
             throw new IllegalArgumentException("GoDebug.setUpdate: null func");
@@ -70,6 +72,7 @@ public final class GoDebug {
      * {@code update(def, env)} on every change). No-op when no callback
      * is registered.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void onGodebugChange(String env) {
         GoFunc f = updateFunc;
         if (f != null) {
@@ -77,6 +80,7 @@ public final class GoDebug {
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void invokeUpdate(String env) {
         GoFunc f = updateFunc;
         if (f == null) {
@@ -87,6 +91,7 @@ public final class GoDebug {
     }
 
     /** Registers a named metric reader (runtime/metrics feed; retained). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void registerMetric(String name, GoFunc read) {
         if (name == null || read == null) {
             throw new IllegalArgumentException("GoDebug.registerMetric: null name or func");
@@ -95,6 +100,7 @@ public final class GoDebug {
     }
 
     /** Registers the runtime's non-default-counter constructor. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void setNewIncNonDefault(GoFunc f) {
         if (f == null) {
             throw new IllegalArgumentException("GoDebug.setNewIncNonDefault: null func");

@@ -68,6 +68,7 @@ public final class GoTimer implements TimerHeap.ChanOwner {
      * {@code time.NewTimer(d)}: fires once after {@code ns}
      * nanoseconds. Non-positive {@code ns} fires immediately.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoTimer newTimer(long ns) {
         TimerHeap heap = SchedulerCore.current().timerHeap();
         return new GoTimer(heap, ns, 0);
@@ -77,6 +78,7 @@ public final class GoTimer implements TimerHeap.ChanOwner {
      * {@code time.NewTicker(d)}: fires every {@code ns} nanoseconds.
      * Panics on non-positive interval (gc parity).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoTimer newTicker(long ns) {
         if (ns <= 0) {
             Panic.throwPanic(GoStrings.of("non-positive interval for NewTicker"));
@@ -89,6 +91,7 @@ public final class GoTimer implements TimerHeap.ChanOwner {
      * {@code time.After(d)}: the channel of a one-shot timer.
      * Non-positive {@code ns} fires immediately.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static ChanOps.Chan after(long ns) {
         return newTimer(ns).channel();
     }
@@ -99,6 +102,7 @@ public final class GoTimer implements TimerHeap.ChanOwner {
      * on non-positive interval (gc parity: unlike NewTicker, Tick
      * returns nil if d <= 0).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static ChanOps.Chan tick(long ns) {
         if (ns <= 0) {
             return null;

@@ -29,6 +29,7 @@ public final class InterfaceDispatchProbes {
         }
 
         /** Records one dispatch through {@code itab} (no-op unless enabled). */
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
         public void record(Object itab) {
             if (!enabled) {
                 return;
@@ -78,6 +79,7 @@ public final class InterfaceDispatchProbes {
     }
 
     /** Registers (or returns) the named dispatch site. Idempotent. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized Site registerSite(String name) {
         return sites.computeIfAbsent(name, Site::new);
     }

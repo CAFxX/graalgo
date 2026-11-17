@@ -14,6 +14,7 @@ package graalgo.values;
 public final class GoEquality {
     private GoEquality() {}
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean equal(Object a, Object b) {
         if (a == b) {
             // Covers reference-identity and the (null, null) case. Note: for
@@ -163,6 +164,7 @@ public final class GoEquality {
     }
 
     /** Hash consistent with {@link #equal}: equal keys hash equal. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int hash(Object key) {
         if (key instanceof Long l) {
             return Long.hashCode(l);

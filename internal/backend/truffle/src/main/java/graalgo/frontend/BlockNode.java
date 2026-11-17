@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 
 /**
@@ -18,12 +19,40 @@ import com.oracle.truffle.api.nodes.Node;
 public final class BlockNode extends GoStmtNode {
     @Children private final GoStmtNode[] stmts;
 
+    /**
+     * True when some statement of this block is a goto target. Blocks
+     * without labels (the overwhelmingly common case) run as a straight,
+     * PE-unrolled sequence: a goto from inside them can only target an
+     * enclosing block, so the signal propagates exactly as before.
+     */
+    private final boolean hasLabels;
+
     public BlockNode(GoStmtNode[] stmts) {
         this.stmts = stmts;
+        boolean labels = false;
+        for (GoStmtNode s : stmts) {
+            labels |= s instanceof LabeledStmtNode;
+        }
+        this.hasLabels = labels;
     }
 
     @Override
     public void executeVoid(VirtualFrame frame) {
+        if (!hasLabels) {
+            executeStraight(frame);
+            return;
+        }
+        executeWithGotos(frame);
+    }
+
+    @ExplodeLoop
+    private void executeStraight(VirtualFrame frame) {
+        for (GoStmtNode s : stmts) {
+            s.executeVoid(frame);
+        }
+    }
+
+    private void executeWithGotos(VirtualFrame frame) {
         int pc = 0;
         while (pc < stmts.length) {
             try {

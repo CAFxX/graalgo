@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
 
@@ -33,6 +34,7 @@ public final class MinMaxNode extends GoExprNode {
      * boxed (sub-64-bit ints as Integer, 64-bit as Long, float32 as Float,
      * float64 as Double, strings as GoString).
      */
+    @ExplodeLoop
     private Object computeBest(VirtualFrame frame) {
         GoKind k = kind();
         if (k == GoKind.STRING) {

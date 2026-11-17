@@ -416,6 +416,7 @@ public final class SelectOp {
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoChan requireGoChan(ChanOps.Chan ch) {
         if (!(ch instanceof GoChan g)) {
             throw new IllegalArgumentException(

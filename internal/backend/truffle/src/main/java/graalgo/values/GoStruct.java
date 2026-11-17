@@ -69,6 +69,7 @@ public final class GoStruct {
     }
 
     /** The Go zero value for the described struct type. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStruct zero(GoStructDescriptor descriptor) {
         Object[] objects = new Object[descriptor.objectsCount()];
         for (int i = 0; i < descriptor.fields().size(); i++) {
@@ -160,6 +161,7 @@ public final class GoStruct {
      * store of a struct value goes through this, so {@code b := a; b.E.X
      * = 1} never observably mutates {@code a} (M4, WS E).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public GoStruct deepCopy() {
         Object[] objs = new Object[objects.length];
         for (int i = 0; i < descriptor.fields().size(); i++) {
@@ -200,6 +202,7 @@ public final class GoStruct {
      * would leave struct element slots aliased across copies, so that
      * {@code a[i].field = x} on one copy observably mutates the other.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object deepCopyArray(Object array) {
         Class<?> ct = array.getClass().getComponentType();
         int n = java.lang.reflect.Array.getLength(array);
@@ -254,6 +257,7 @@ public final class GoStruct {
     }
 
     @Override
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public boolean equals(Object o) {
         return o instanceof GoStruct gs && descriptor == gs.descriptor
                 && Arrays.equals(longs, gs.longs) && structObjectsEqual(objects, gs.objects);
@@ -272,6 +276,7 @@ public final class GoStruct {
     }
 
     @Override
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public int hashCode() {
         int h = System.identityHashCode(descriptor);
         h = 31 * h + Arrays.hashCode(longs);
@@ -282,6 +287,7 @@ public final class GoStruct {
     }
 
     @Override
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public String toString() {
         return "GoStruct{" + descriptor.typeName() + "}";
     }

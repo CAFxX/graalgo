@@ -3,8 +3,12 @@ package graalgo.iface;
 import java.util.List;
 import java.util.Map;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 
 import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
@@ -60,7 +64,15 @@ public final class IfaceDispatchNode extends GoExprNode {
     @Child
     private GoExprNode recv;
     @Children
-    private GoExprNode[] args;
+    private final GoExprNode[] args;
+    /**
+     * T0.B: the compiled fast path — a Truffle PIC keyed on the dynamic
+     * type descriptor's identity (descriptors are canonical per Go type),
+     * each entry holding a {@link DirectCallNode} the compiler can inline
+     * (SPEC §3.3 / §2.6.1 devirtualization). See {@link IfaceCallCacheNode}.
+     */
+    @Child
+    private IfaceCallCacheNode callCache = IfaceCallCacheNodeGen.create();
 
     private final String methodName;
     private final List<String> ifaceMethodNames;
@@ -110,6 +122,70 @@ public final class IfaceDispatchNode extends GoExprNode {
 
     private Object dispatch(VirtualFrame frame) {
         GoInterface gi = requireReceiver(recv.executeObject(frame));
+        if (InterfaceDispatchProbes.isEnabled()) {
+            // Polymorphism dump mode: every dispatch must reach probe().
+            return dispatchSlow(frame, gi);
+        }
+        return callCache.execute(frame, gi, this);
+    }
+
+    /**
+     * Fast-path eligibility for one dynamic type, resolved once per PIC
+     * entry: a direct (non-promoted, non-redispatching, non-address-taking)
+     * method target. Anything else returns null and the entry always
+     * takes {@link #dispatchSlow}. Goes through {@link #lookupPic} so PIC
+     * and megamorphic bookkeeping are exactly what the slow path would do.
+     */
+    @TruffleBoundary
+    FastTarget resolveFast(GoInterface gi) {
+        String descName = ((GoTypeDescriptor) gi.descriptor()).name();
+        IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
+        IfaceMethodTarget t = lookupPic(itab);
+        if (!t.supported() || !t.isDirect() || t.isEmbeddedRedispatch() || t.addrOf()) {
+            return null;
+        }
+        return new FastTarget(t.func(), receiverParamIsInterface(t));
+    }
+
+    /** A resolved direct method target (see {@link #resolveFast}). */
+    record FastTarget(graalgo.values.GoFunc func, boolean passInterface) {}
+
+    /**
+     * The compiled-path call: same argument protocol as
+     * {@link #dispatchSlow} for a direct target (receiver data, or the
+     * interface value itself for an interface-typed receiver parameter,
+     * then the arguments), through the PIC entry's direct call node.
+     */
+    Object callFast(VirtualFrame frame, DirectCallNode call, FastTarget fast, GoInterface gi) {
+        Object[] argVals = evalArgs(frame);
+        Object[] callArgs = new Object[argVals.length + 1];
+        callArgs[0] = fast.passInterface() ? gi : gi.data();
+        System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
+        GoroutineState state = GoroutineState.current();
+        boolean prev = state != null && state.isRecoverAllowed();
+        if (state != null) {
+            state.setRecoverAllowed(false);
+        }
+        try {
+            return call.call(GoCalls.callArgs(fast.func(), callArgs));
+        } finally {
+            if (state != null) {
+                state.setRecoverAllowed(prev);
+            }
+        }
+    }
+
+    @ExplodeLoop
+    private Object[] evalArgs(VirtualFrame frame) {
+        Object[] argVals = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            argVals[i] = boxArg(args[i], frame);
+        }
+        return argVals;
+    }
+
+    /** The general dispatch (probes, promoted/embedded targets, megamorphic sites). */
+    Object dispatchSlow(VirtualFrame frame, GoInterface gi) {
         Object data = gi.data(); // null for typed-nil: passed through as params[0]
         String descName = ((GoTypeDescriptor) gi.descriptor()).name();
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
@@ -155,10 +231,7 @@ public final class IfaceDispatchNode extends GoExprNode {
             }
             target = inner;
         }
-        Object[] argVals = new Object[args.length];
-        for (int i = 0; i < args.length; i++) {
-            argVals[i] = boxArg(args[i], frame);
-        }
+        Object[] argVals = evalArgs(frame);
         Object[] callArgs = new Object[argVals.length + 1];
         // P3-M3: promoted methods receive the embedded value — walk the
         // exporter's "index" path from the dynamic value. A value-receiver
@@ -242,6 +315,7 @@ public final class IfaceDispatchNode extends GoExprNode {
             Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
             throw new AssertionError("unreachable: Panic.throwPanic returned");
         }
+        CompilerDirectives.transferToInterpreterAndInvalidate();
         throw new FrontendException("ifacemethod: receiver evaluated to "
                 + r.getClass().getName() + ", not a GoInterface (internal error)");
     }
@@ -262,6 +336,7 @@ public final class IfaceDispatchNode extends GoExprNode {
         return lookupPicMiss(itab);
     }
 
+    @TruffleBoundary
     private synchronized IfaceMethodTarget lookupPicMiss(IfaceItab itab) {
         // Recheck under the lock: another thread may have filled the slot.
         PicSlot s0 = pic0;
@@ -311,6 +386,7 @@ public final class IfaceDispatchNode extends GoExprNode {
     /** M9 polymorphism probe site, created lazily on first probed dispatch. */
     private volatile InterfaceDispatchProbes.Site probeSite;
 
+    @TruffleBoundary
     private void probe(IfaceItab itab) {
         if (!InterfaceDispatchProbes.isEnabled()) {
             return;
@@ -360,6 +436,7 @@ public final class IfaceDispatchNode extends GoExprNode {
         if (slot == FrameSlotKind.Object) {
             return arg.executeObject(frame);
         }
+        CompilerDirectives.transferToInterpreterAndInvalidate();
         throw new FrontendException("cannot box kind " + arg.kind() + " (WS E)");
     }
 

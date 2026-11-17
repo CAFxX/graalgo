@@ -25,6 +25,7 @@ public final class GoQuote {
     record Rune(int r, int width) {}
 
     /** utf8.DecodeRuneInString equivalent. Package-visible for Fmt's byte-wise paths (M8). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static Rune decodeRune(byte[] s, int i) {
         int n = s.length - i;
         int c0 = s[i] & 0xFF;
@@ -79,15 +80,18 @@ public final class GoQuote {
         return new Rune(RUNE_ERROR, 1);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean validRune(int r) {
         return !(r < 0 || r > MAX_RUNE || (0xD800 <= r && r <= 0xDFFF));
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void appendRune(StringBuilder sb, int r) {
         sb.appendCodePoint(r);
     }
 
     /** Port of {@code strconv.appendEscapedRune}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void appendEscapedRune(StringBuilder sb, int r, char quote,
             boolean asciiOnly, boolean graphicOnly) {
         if (r == quote || r == '\\') {
@@ -139,6 +143,7 @@ public final class GoQuote {
      * Port of {@code strconv.appendQuotedWith}: quotes UTF-8 bytes
      * {@code s} with {@code quote} ({@code '"'} or {@code '\''}).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static String quoteWith(byte[] s, char quote, boolean asciiOnly, boolean graphicOnly) {
         StringBuilder sb = new StringBuilder(s.length + 2);
         sb.append(quote);
@@ -160,16 +165,19 @@ public final class GoQuote {
     }
 
     /** {@code strconv.Quote} on UTF-8 bytes. Public for frontend type rendering (P0-fmt-022). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String quote(byte[] s) {
         return quoteWith(s, '"', false, false);
     }
 
     /** {@code strconv.QuoteToASCII} on UTF-8 bytes. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static String quoteToASCII(byte[] s) {
         return quoteWith(s, '"', true, false);
     }
 
     /** {@code strconv.QuoteRune}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static String quoteRune(int r) {
         if (!validRune(r)) {
             r = RUNE_ERROR;
@@ -182,6 +190,7 @@ public final class GoQuote {
     }
 
     /** {@code strconv.QuoteRuneToASCII}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static String quoteRuneToASCII(int r) {
         if (!validRune(r)) {
             r = RUNE_ERROR;
@@ -194,6 +203,7 @@ public final class GoQuote {
     }
 
     /** Port of {@code strconv.CanBackquote}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static boolean canBackquote(byte[] s) {
         for (int i = 0; i < s.length; ) {
             Rune dr = decodeRune(s, i);

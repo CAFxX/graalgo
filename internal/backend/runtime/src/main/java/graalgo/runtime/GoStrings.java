@@ -9,6 +9,7 @@ final class GoStrings {
     private GoStrings() {}
 
     /** A Go string value for a constant message (e.g. panic text). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static GoString of(String s) {
         return GoString.fromUtf8(s);
     }

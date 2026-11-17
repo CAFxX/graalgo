@@ -49,6 +49,7 @@ public final class Intrinsics {
      * checked; violations throw {@link IndexOutOfBoundsException} (callers
      * translate to Go panics).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void memmove(Object dst, int dstOff, Object src, int srcOff, int n) {
         if (n < 0) {
             throw new IndexOutOfBoundsException("memmove: negative count " + n);
@@ -75,6 +76,7 @@ public final class Intrinsics {
      * equality); primitive-typed arrays are compared elementwise with the
      * matching primitive equality.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean memequal(Object a, int aOff, Object b, int bOff, int n) {
         if (n < 0) {
             throw new IndexOutOfBoundsException("memequal: negative count " + n);
@@ -176,6 +178,7 @@ public final class Intrinsics {
      * {@link #newTypedArray}); the element descriptor may be null for
      * non-struct kinds.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoSlice makeslice(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc,
             int len, int cap) {
         Object array = newTypedArray(elemKind, elemDesc, cap);
@@ -204,6 +207,7 @@ public final class Intrinsics {
      * differs, plus unobservable allocator pressure (gc allocates nothing
      * here).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoSlice growslice(GoSlice old, GoKind elemKind,
             graalgo.values.GoStructDescriptor elemDesc, int newLen,
             long elemSizeBytes, boolean elemHasPointers) {
@@ -263,6 +267,7 @@ public final class Intrinsics {
      * gc's {@code nextslicecap} + {@code roundupsize} cap computation,
      * exposed for testing (the growth math is the falsifiable unit).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static int nextSliceCap(int newLen, int oldCap, long elemSizeBytes, boolean elemHasPointers) {
         int newcap = oldCap;
         int doublecap = newcap + newcap;
@@ -300,6 +305,7 @@ public final class Intrinsics {
         return (int) result;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long multiplyExactToLong(int a, long b) {
         long r = (long) a * b;
         if (a != 0 && r / a != b) {
@@ -359,6 +365,7 @@ public final class Intrinsics {
      * gc's {@code roundupsize} (runtime/msize.go), unsigned 64-bit
      * arithmetic. {@code noscan} = element type carries no pointers.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static long roundupsize(long size, boolean noscan) {
         long reqSize = size;
         if (Long.compareUnsigned(reqSize, MAX_SMALL_SIZE - MALLOC_HEADER_SIZE) <= 0) {
@@ -388,6 +395,7 @@ public final class Intrinsics {
      * complex elements to (0+0i). Requires the element descriptor for
      * struct kinds; may be null for non-struct kinds.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static Object newTypedArray(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc, int len) {
         // Single canonical allocator: Boxing.newArray owns the kind→backing
         // mapping (D5). This wrapper exists for call-site continuity only.
@@ -399,6 +407,7 @@ public final class Intrinsics {
     // ------------------------------------------------------------------
 
     /** {@code m[k] = v}: assign (insert or overwrite). Keys are already in canonical boxed form. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void mapAssign(GoMap m, Object key, Object value) {
         m.put(key, value);
     }
@@ -407,16 +416,19 @@ public final class Intrinsics {
      * Map lookup returning {@code null} when absent — callers apply the
      * comma-ok / zero-value rule (see IndexNode).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object mapAccess(GoMap m, Object key) {
         return m.get(key);
     }
 
     /** {@code delete(m, k)}: no-op on absent keys; {@code null} map is a no-op (callers check). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void mapDelete(GoMap m, Object key) {
         m.delete(key);
     }
 
     /** {@code len(m)}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int mapLen(GoMap m) {
         return m.size();
     }
@@ -426,6 +438,7 @@ public final class Intrinsics {
     // ------------------------------------------------------------------
 
     /** Element size in bytes for a GoKind (D5 mapping). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long elemSizeBytes(GoKind kind) {
         return switch (kind) {
             case INT8, UINT8, BOOL -> 1;
@@ -441,6 +454,7 @@ public final class Intrinsics {
     }
 
     /** Whether values of this kind contain pointers (for GC scanning). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean elemHasPointers(GoKind kind) {
         return switch (kind) {
             case STRING, SLICE, MAP, POINTER, FUNC, CHAN, INTERFACE, UNSAFE_POINTER -> true;
@@ -458,6 +472,7 @@ public final class Intrinsics {
      * descriptor carries: basic kinds and STRUCT via arrayElemDesc).
      * Anything else fails fast.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long structSizeBytes(graalgo.values.GoStructDescriptor desc) {
         return structSizeAndAlign(desc)[0];
     }
@@ -467,6 +482,7 @@ public final class Intrinsics {
      * descriptor: {@code size} is the padded struct size, {@code alignment}
      * the struct's natural alignment (max field alignment, capped at 8).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long[] structSizeAndAlign(graalgo.values.GoStructDescriptor desc) {
         long offset = 0;
         long maxAlign = 1;
@@ -482,6 +498,7 @@ public final class Intrinsics {
     }
 
     /** Returns {@code {size, alignment}} for one struct field. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long[] fieldSizeAndAlign(graalgo.values.GoStructDescriptor.Field f) {
         GoKind kind = f.kind();
         long basic = elemSizeBytes(kind);
@@ -510,6 +527,7 @@ public final class Intrinsics {
     }
 
     /** Returns {@code {size, alignment}} for an ARRAY-kind field's element. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long[] arrayElemSizeAndAlign(graalgo.values.GoStructDescriptor.Field f) {
         graalgo.values.GoKind ek = f.arrayElemKind();
         long basic = ek == null ? 0 : elemSizeBytes(ek);
@@ -529,6 +547,7 @@ public final class Intrinsics {
      * No struct descriptor (struct slots are not zero-initialized; the
      * caller must provide elements for the grown region).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoSlice growslice(GoSlice old, GoKind elemKind, int additional) {
         int oldLen = old == null ? 0 : old.len();
         return growslice(old, elemKind, null, oldLen + additional,
@@ -543,6 +562,7 @@ public final class Intrinsics {
      * <p>P3-M7: a nil dst or src is legal Go (copies 0 elements) — the
      * GoSlice reference is null for nil slices, so null-check both.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int slicecopy(GoSlice dst, GoSlice src, GoKind elemKind) {
         int n = Math.min(dst == null ? 0 : dst.len(), src == null ? 0 : src.len());
         if (n > 0) {
@@ -552,6 +572,7 @@ public final class Intrinsics {
     }
 
     /** Typed memmove of {@code n} elements of {@code elemKind}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void memmove(Object dstArr, int dstOff, Object srcArr, int srcOff,
             int n, GoKind elemKind) {
         switch (elemKind) {
@@ -609,11 +630,13 @@ public final class Intrinsics {
     }
 
     /** Iterator state for {@code range} over maps: a keys snapshot (insertion-order-independent). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object[] mapIterInit(GoMap m) {
         return m.keysSnapshot();
     }
 
     /** Next key from an iterator snapshot, or {@code null} when exhausted. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object mapIterNext(Object[] snapshot, int index) {
         return index < snapshot.length ? snapshot[index] : null;
     }
@@ -628,6 +651,7 @@ public final class Intrinsics {
     private static long wyrandState = System.nanoTime() ^ 0x9E3779B97F4A7C15L;
 
     /** 64-bit wyrand step (REAL). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized long fastrand64() {
         wyrandState += 0xA0761D6478BD642FL;
         long s = wyrandState;
@@ -645,6 +669,7 @@ public final class Intrinsics {
     }
 
     /** 32-bit fast random (REAL): low 32 bits of a wyrand step. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int fastrand() {
         return (int) fastrand64();
     }
@@ -656,6 +681,7 @@ public final class Intrinsics {
      * 0, so {@code fastrandn(0) == 0} (a guard would turn a defined gc
      * result into a fatal exception).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int fastrandn(int n) {
         return (int) ((Integer.toUnsignedLong(fastrand()) * Integer.toUnsignedLong(n)) >>> 32);
     }
@@ -677,6 +703,7 @@ public final class Intrinsics {
      * Installs the itab provider (phase-3 launcher). A null provider
      * restores the unimplemented state.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void setItabProvider(
             BiFunction<GoTypeDescriptor, GoTypeDescriptor, Object> provider) {
         itabProvider = provider;
@@ -687,6 +714,7 @@ public final class Intrinsics {
      * the installed provider (P3-M3 itab machinery). Without a provider
      * (phase-1-only mode, which has no method tables) throws, as before.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object itabFor(GoTypeDescriptor descriptor, GoTypeDescriptor iface) {
         BiFunction<GoTypeDescriptor, GoTypeDescriptor, Object> p = itabProvider;
         if (p == null) {
@@ -702,6 +730,7 @@ public final class Intrinsics {
      * {@link GoroutineState#current()}, so under phase-2/3 classpaths it
      * sees the virtual-thread-scoped holder.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String traceback() {
         GoroutineState state = GoroutineState.current();
         if (state == null) {
@@ -728,6 +757,7 @@ public final class Intrinsics {
      * @param throwSiteOverride source section for the innermost frame
      *        (the panic throw site), or null to use the frame's own
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String renderGoStack(long goroutineId, GoStackFrame top,
             SourceSection throwSiteOverride) {
         StringBuilder sb = new StringBuilder();

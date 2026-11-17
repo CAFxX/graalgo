@@ -1,9 +1,12 @@
 package graalgo.frontend;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotTypeException;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
@@ -46,8 +49,8 @@ import graalgo.values.GoKind;
 public final class GoFuncRootNode extends RootNode {
     @Child private GoStmtNode body;
     private final int closureSlot;
-    private final int[] paramSlots;
-    private final GoKind[] paramKinds;
+    @CompilationFinal(dimensions = 1) private final int[] paramSlots;
+    @CompilationFinal(dimensions = 1) private final GoKind[] paramKinds;
     private final int resultSlot;
     private final GoKind resultKind;
     // P3-M9 (WS D): an address-taken named result's slot holds a GoBox
@@ -59,7 +62,7 @@ public final class GoFuncRootNode extends RootNode {
      * Snapshot slots for captured boxed variables (loopcap); parallel to
      * {@link GoFunc#boxCells()}. Null when the literal captures none.
      */
-    private final int[] snapSlots;
+    @CompilationFinal(dimensions = 1) private final int[] snapSlots;
     /**
      * PKG-039: frame slot holding this function's range-over-func defer
      * stash, or -1 when the function contains no range-over-func (see
@@ -130,9 +133,17 @@ public final class GoFuncRootNode extends RootNode {
         Object[] args = frame.getArguments();
         GoFunc fn = (GoFunc) args[0];
         frame.setObject(closureSlot, fn.closureFrame());
+        installSnapshots(frame, fn);
+        bindParams(frame, args);
+        return executeBody(frame);
+    }
+
+    @ExplodeLoop
+    private void installSnapshots(VirtualFrame frame, GoFunc fn) {
         if (snapSlots != null) {
             graalgo.values.GoBox[] cells = fn.boxCells();
             if (cells == null || cells.length != snapSlots.length) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 throw new IllegalStateException("GoFuncRootNode(" + funcName
                         + "): snapshot mismatch: root expects " + snapSlots.length
                         + " boxed cells, GoFunc has " + (cells == null ? "none" : cells.length));
@@ -141,6 +152,10 @@ public final class GoFuncRootNode extends RootNode {
                 frame.setObject(snapSlots[i], cells[i]);
             }
         }
+    }
+
+    @ExplodeLoop
+    private void bindParams(VirtualFrame frame, Object[] args) {
         for (int i = 0; i < paramSlots.length; i++) {
             Object arg = args[i + 1];
             // M5 (WS F): interface params wrap concrete values. If the arg
@@ -161,6 +176,7 @@ public final class GoFuncRootNode extends RootNode {
                     && arg instanceof graalgo.values.GoInterface gi) {
                 Object data = gi.data();
                 if (data == null) {
+                    CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new graalgo.frontend.FrontendException(
                             "linkname: nil interface value for concrete parameter "
                                     + i + " of " + funcName);
@@ -178,6 +194,7 @@ public final class GoFuncRootNode extends RootNode {
             // bridge with an any-typed arg for a concrete param.)
             if (paramKinds[i] != graalgo.values.GoKind.INTERFACE
                     && arg instanceof graalgo.values.GoInterface) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
                 throw new AssertionError("GoFuncRootNode(" + funcName
                         + "): concrete param " + i
                         + " still interface-boxed after unwrap (caller contract violated)");
@@ -207,6 +224,9 @@ public final class GoFuncRootNode extends RootNode {
             }
             Boxing.setSlot(frame, paramSlots[i], paramKinds[i], arg);
         }
+    }
+
+    private Object executeBody(VirtualFrame frame) {
         GoroutineState state = GoroutineState.current();
         DeferChain chain = state != null ? state.deferChain() : null;
         int mark = chain != null ? chain.depth() : 0;

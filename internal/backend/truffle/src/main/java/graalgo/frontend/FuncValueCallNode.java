@@ -1,6 +1,8 @@
 package graalgo.frontend;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.GoCalls;
 import graalgo.runtime.GoroutineState;
@@ -75,6 +77,12 @@ public final class FuncValueCallNode extends GoExprNode {
         if (!CallSiteProbes.isEnabled()) {
             return;
         }
+        recordProbe(f, argVals);
+    }
+
+    /** Probe recording (diagnostic mode only): never partially evaluated. */
+    @TruffleBoundary
+    private void recordProbe(GoFunc f, Object[] argVals) {
         CallSiteProbes.Site site = probeSite;
         if (site == null) {
             site = CallSiteProbes.registerSite(siteName());
@@ -95,13 +103,7 @@ public final class FuncValueCallNode extends GoExprNode {
         if (f == null) {
             graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference(), null, null, this);
         }
-        Object[] argVals = new Object[args.length];
-        for (int i = 0; i < args.length; i++) {
-            // Go value semantics: array/struct arguments are copied at the
-            // call site (copyForAssign); slices/maps/pointers stay shared.
-            argVals[i] = Boxing.copyForAssign(args[i].kind(),
-                    Boxing.box(args[i].kind(), args[i], frame));
-        }
+        Object[] argVals = evalArgs(frame);
         // recover() is only non-nil when called directly by a deferred
         // function: clear the flag for nested calls, restore afterwards.
         GoroutineState state = GoroutineState.current();
@@ -114,9 +116,8 @@ public final class FuncValueCallNode extends GoExprNode {
             // P3-M4 (WS C): record the call site in the caller's frame
             // before the callee pushes its own — gc's traceback shows the
             // call site in each caller frame.
-            GoroutineState callState = GoroutineState.current();
-            if (callState != null) {
-                callState.updateTopFrameSection(getSourceSection());
+            if (state != null) {
+                state.updateTopFrameSection(getSourceSection());
             }
             // DSL inline-cache dispatch (monomorphic → DirectCallNode,
             // megamorphic → GoCalls.invoke fallback, unchanged behavior).
@@ -126,6 +127,18 @@ public final class FuncValueCallNode extends GoExprNode {
                 state.setRecoverAllowed(prev);
             }
         }
+    }
+
+    @ExplodeLoop
+    private Object[] evalArgs(VirtualFrame frame) {
+        Object[] argVals = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            // Go value semantics: array/struct arguments are copied at the
+            // call site (copyForAssign); slices/maps/pointers stay shared.
+            argVals[i] = Boxing.copyForAssign(args[i].kind(),
+                    Boxing.box(args[i].kind(), args[i], frame));
+        }
+        return argVals;
     }
 
     @Override

@@ -133,6 +133,7 @@ final class GoIsPrint {
         8202, 8239, 8287, 12288,
     };
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int bsearch(int[] s, int v) {
         int n = s.length, i = 0, j = n;
         while (i < j) {
@@ -146,12 +147,14 @@ final class GoIsPrint {
         return i; // first index with s[i] >= v (or n)
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean found(int[] s, int v) {
         int i = bsearch(s, v);
         return i < s.length && s[i] == v;
     }
 
     /** Verbatim port of strconv.IsPrint. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static boolean isPrint(int r) {
         // Fast check for Latin-1
         if (r <= 0xFF) {
@@ -183,11 +186,13 @@ final class GoIsPrint {
     }
 
     /** Verbatim port of strconv.isInGraphicList (16-bit only, as in Go). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isInGraphicList(int r) {
         return found(ISGRAPHIC, r);
     }
 
     /** Verbatim port of strconv.IsGraphic. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static boolean isGraphic(int r) {
         if (isPrint(r)) {
             return true;

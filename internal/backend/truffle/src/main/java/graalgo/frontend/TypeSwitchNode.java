@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
@@ -86,32 +87,21 @@ public final class TypeSwitchNode extends GoStmtNode {
         GoInterface v = (GoInterface) tag.executeObject(frame);
         GoTypeDescriptor dyn = v != null ? (GoTypeDescriptor) v.descriptor() : null;
         Object data = v != null ? v.data() : null;
+        runMatching(frame, v, dyn, data);
+    }
+
+    /**
+     * Clause selection, unrolled over the clause children so the chosen
+     * clause's body call is constant. The per-clause type-list scan stays
+     * an ordinary loop ({@link #clauseMatches}).
+     */
+    @ExplodeLoop
+    private void runMatching(VirtualFrame frame, GoInterface v, GoTypeDescriptor dyn, Object data) {
         for (TypeCaseClause c : clauseArray) {
             if (c.isDefault) {
                 continue;
             }
-            boolean hit = false;
-            if (c.nilCase && data == null) {
-                hit = true;
-            } else if (data != null) {
-                for (int i = 0; i < c.types.size(); i++) {
-                    GoTypeDescriptor t = c.types.get(i);
-                    if (t == dyn) {
-                        hit = true;
-                        break;
-                    }
-                    // P3-M8b: interface clause — match by implementation,
-                    // not descriptor identity (e.g. case unwrapper: with
-                    // dynamic type *os.PathError).
-                    java.util.List<String> im = c.ifaceMethods == null ? null
-                            : c.ifaceMethods.get(i);
-                    if (im != null && dynamicMethodSets != null && implementsDyn(dyn, im)) {
-                        hit = true;
-                        break;
-                    }
-                }
-            }
-            if (!hit) {
+            if (!clauseMatches(c, dyn, data)) {
                 continue;
             }
             bindAndRun(frame, c, v, dyn, data);
@@ -123,6 +113,31 @@ public final class TypeSwitchNode extends GoStmtNode {
                 return;
             }
         }
+    }
+
+    private boolean clauseMatches(TypeCaseClause c, GoTypeDescriptor dyn, Object data) {
+        boolean hit = false;
+        if (c.nilCase && data == null) {
+            hit = true;
+        } else if (data != null) {
+            for (int i = 0; i < c.types.size(); i++) {
+                GoTypeDescriptor t = c.types.get(i);
+                if (t == dyn) {
+                    hit = true;
+                    break;
+                }
+                // P3-M8b: interface clause — match by implementation,
+                // not descriptor identity (e.g. case unwrapper: with
+                // dynamic type *os.PathError).
+                java.util.List<String> im = c.ifaceMethods == null ? null
+                        : c.ifaceMethods.get(i);
+                if (im != null && dynamicMethodSets != null && implementsDyn(dyn, im)) {
+                    hit = true;
+                    break;
+                }
+            }
+        }
+        return hit;
     }
 
     private void bindAndRun(VirtualFrame frame, TypeCaseClause c,
@@ -153,6 +168,7 @@ public final class TypeSwitchNode extends GoStmtNode {
      * dynamic type's method implkey set must cover the interface's.
      * Mirrors {@link TypeAssertNode#holds}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private boolean implementsDyn(GoTypeDescriptor dyn, java.util.List<String> ifaceMethods) {
         if (dyn == null) {
             return false;

@@ -43,12 +43,14 @@ public final class GoMap {
     }
 
     /** Returns the value for {@code key}, or {@code null} if absent. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public Object get(Object key) {
         int i = findSlot(key);
         return i >= 0 ? values[i] : null;
     }
 
     /** Inserts or replaces {@code key → value}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void put(Object key, Object value) {
         if (key == null) {
             throw new IllegalArgumentException("Go map keys are never null in Phase 1 (WS D refines)");
@@ -88,6 +90,7 @@ public final class GoMap {
     }
 
     /** Removes {@code key}; no-op if absent. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void delete(Object key) {
         int i = findSlot(key);
         if (i >= 0) {
@@ -100,6 +103,7 @@ public final class GoMap {
     }
 
     /** Removes all entries (the {@code clear} builtin). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void clear() {
         java.util.Arrays.fill(keys, null);
         java.util.Arrays.fill(values, null);
@@ -109,6 +113,7 @@ public final class GoMap {
     }
 
     /** True when {@code key} is present (even with a null value). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public boolean containsKey(Object key) {
         return findSlot(key) >= 0;
     }
@@ -120,6 +125,7 @@ public final class GoMap {
      * entry removed during iteration is not produced); entries created
      * mid-iteration are never produced (the spec permits skipping them).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public Object[] keysSnapshot() {
         Object[] out = new Object[size];
         int j = 0;

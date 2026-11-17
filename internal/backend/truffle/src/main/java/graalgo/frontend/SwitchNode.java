@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.GoEquality;
 import graalgo.values.GoInterface;
@@ -29,11 +30,11 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
     @Children private GoStmtNode[] bodies;
     /** All case expressions, flattened; clause i spans [clauseOffsets[i], clauseOffsets[i+1]). */
     @Children private GoExprNode[] allCaseExprs;
-    private final int[] clauseOffsets;
-    private final boolean[] isDefault;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] clauseOffsets;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1) private final boolean[] isDefault;
     private final GoKind tagKind;
     /** Dynamic-type descriptor per case expression (build-time resolved), flattened like above. */
-    private final GoTypeDescriptor[] allCaseDescs;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1) private final GoTypeDescriptor[] allCaseDescs;
     /** Dynamic-type descriptor of the tag (for interface-typed cases). */
     private final GoTypeDescriptor tagDesc;
     private String label;
@@ -82,7 +83,20 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
         if (idx < 0) {
             return;
         }
-        for (int i = idx; i < bodies.length; i++) {
+        runFrom(frame, idx);
+    }
+
+    /**
+     * Runs clause bodies from {@code idx} on (fallthrough continues to the
+     * next). Unrolled over all bodies so each body call is a constant
+     * child; clauses before {@code idx} are skipped.
+     */
+    @ExplodeLoop
+    private void runFrom(VirtualFrame frame, int idx) {
+        for (int i = 0; i < bodies.length; i++) {
+            if (i < idx) {
+                continue;
+            }
             try {
                 bodies[i].executeVoid(frame);
                 return; // No fallthrough: done.
@@ -105,6 +119,7 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
         return Boxing.box(tagKind, tag, frame);
     }
 
+    @ExplodeLoop
     private int findMatch(VirtualFrame frame, Object tagVal) {
         int def = -1;
         for (int i = 0; i < isDefault.length; i++) {

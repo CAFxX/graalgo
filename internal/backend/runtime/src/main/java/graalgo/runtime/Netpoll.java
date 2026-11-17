@@ -26,6 +26,7 @@ package graalgo.runtime;
 public final class Netpoll {
     private Netpoll() {}
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static UnsupportedOperationException deleted(String what) {
         return new UnsupportedOperationException(
                 "netpoller deleted per GG-0018 (P2-M3): " + what
@@ -34,26 +35,31 @@ public final class Netpoll {
     }
 
     /** DELETED — the network poller does not exist (GG-0018). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void init() {
         throw deleted("init");
     }
 
     /** DELETED — the network poller does not exist (GG-0018). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long open(int fd, int mode) {
         throw deleted("open");
     }
 
     /** DELETED — the network poller does not exist (GG-0018). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void close(int fd) {
         throw deleted("close");
     }
 
     /** DELETED — the network poller does not exist (GG-0018). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean waitForEvents(boolean block) {
         throw deleted("waitForEvents");
     }
 
     /** DELETED — the network poller does not exist (GG-0018). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void breakWait() {
         throw deleted("breakWait");
     }

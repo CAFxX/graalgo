@@ -43,16 +43,19 @@ public final class BuiltinPrint {
     public record Arg(GoKind kind, Object value) {}
 
     /** {@code print(args...)} → stderr, no separators, no trailing newline. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void print(Arg[] args) {
         write(formatAll(args, false));
     }
 
     /** {@code println(args...)} → stderr, spaces between args, trailing newline. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void println(Arg[] args) {
         write(formatAll(args, true));
     }
 
     /** Renders the full call to bytes (exposed for testing). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static byte[] formatAll(Arg[] args, boolean newline) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (int i = 0; i < args.length; i++) {
@@ -67,10 +70,12 @@ public final class BuiltinPrint {
         return out.toByteArray();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void write(ByteArrayOutputStream out) {
         write(out.toByteArray());
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void write(byte[] bytes) {
         try {
             System.err.write(bytes);
@@ -80,6 +85,7 @@ public final class BuiltinPrint {
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void writeOne(ByteArrayOutputStream out, Arg arg) {
         GoKind k = arg.kind();
         Object v = arg.value();
@@ -128,6 +134,7 @@ public final class BuiltinPrint {
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void writeAscii(ByteArrayOutputStream out, String s) {
         out.write(s.getBytes(StandardCharsets.US_ASCII), 0, s.length());
     }

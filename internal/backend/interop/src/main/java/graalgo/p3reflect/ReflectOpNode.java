@@ -2,6 +2,7 @@ package graalgo.p3reflect;
 
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
@@ -90,6 +91,7 @@ public final class ReflectOpNode extends GoExprNode {
      * in primitive frame slots, so a blind {@code executeObject} throws
      * {@code FrameSlotTypeException}.
      */
+    @ExplodeLoop
     private Object dispatchBoxed(VirtualFrame frame) {
         Object[] argv = new Object[args.length];
         for (int i = 0; i < args.length; i++) {

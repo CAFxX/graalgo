@@ -52,6 +52,7 @@ public final class CallSiteProbes {
         }
 
         /** Records one invocation of compiled-target {@code key} (no-op unless enabled). */
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
         public void recordTarget(Object key) {
             if (!enabled || key == null) {
                 return;
@@ -62,6 +63,7 @@ public final class CallSiteProbes {
         }
 
         /** Records one method-call receiver type key (no-op unless enabled). */
+        @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
         public void recordReceiver(Object key) {
             if (!enabled || key == null) {
                 return;
@@ -103,6 +105,7 @@ public final class CallSiteProbes {
     private static final Map<String, Site> sites = new HashMap<>();
 
     /** Registers (or returns the existing) site for {@code name}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized Site registerSite(String name) {
         return sites.computeIfAbsent(name, Site::new);
     }

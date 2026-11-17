@@ -1,6 +1,7 @@
 package graalgo.p3builtin.nodes;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 
 import graalgo.frontend.FrontendException;
@@ -42,6 +43,7 @@ public final class MinMaxNode extends GoExprNode {
     }
 
     @Override
+    @ExplodeLoop
     public long executeLong(VirtualFrame frame) {
         if (!kind().isIntKind() || kind().isFloatKind()) {
             throw new IllegalStateException("minmax executeLong on non-int kind " + kind());
@@ -66,6 +68,7 @@ public final class MinMaxNode extends GoExprNode {
     }
 
     @Override
+    @ExplodeLoop
     public float executeFloat(VirtualFrame frame) {
         if (kind() != GoKind.FLOAT32) {
             throw new IllegalStateException("minmax executeFloat on non-float32 kind " + kind());
@@ -84,6 +87,7 @@ public final class MinMaxNode extends GoExprNode {
     }
 
     @Override
+    @ExplodeLoop
     public double executeDouble(VirtualFrame frame) {
         if (kind() != GoKind.FLOAT64 && kind() != GoKind.UNTYPED_FLOAT) {
             throw new IllegalStateException("minmax executeDouble on non-float64 kind " + kind());
@@ -102,6 +106,7 @@ public final class MinMaxNode extends GoExprNode {
     }
 
     @Override
+    @ExplodeLoop
     public Object executeObject(VirtualFrame frame) {
         if (kind() != GoKind.STRING && kind() != GoKind.UNTYPED_STRING) {
             throw new IllegalStateException("minmax executeObject on non-string kind " + kind());

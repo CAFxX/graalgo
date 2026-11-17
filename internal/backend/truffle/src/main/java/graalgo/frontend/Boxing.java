@@ -43,6 +43,12 @@ public final class Boxing {
     }
 
     /** Writes a canonical boxed value to a frame slot of the given kind. */
+    /** Cold path of {@link #setSlot}/{@link #readSlot}: never partially evaluated. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static FrontendException cannotSlot(String op, GoKind kind) {
+        return new FrontendException("cannot " + op + " kind " + kind + " (WS E)");
+    }
+
     static void setSlot(VirtualFrame frame, int slot, GoKind kind, Object boxed) {
         switch (kind.slotKind()) {
             case Int -> frame.setInt(slot, ((Integer) boxed).intValue());
@@ -51,7 +57,7 @@ public final class Boxing {
             case Double -> frame.setDouble(slot, ((Double) boxed).doubleValue());
             case Boolean -> frame.setBoolean(slot, ((Boolean) boxed).booleanValue());
             case Object -> frame.setObject(slot, boxed);
-            default -> throw new FrontendException("cannot write kind " + kind + " (WS E)");
+            default -> throw cannotSlot("write", kind);
         }
     }
 
@@ -64,7 +70,7 @@ public final class Boxing {
             case Double -> Double.valueOf(frame.getDouble(slot));
             case Boolean -> Boolean.valueOf(frame.getBoolean(slot));
             case Object -> frame.getObject(slot);
-            default -> throw new FrontendException("cannot read kind " + kind + " (WS E)");
+            default -> throw cannotSlot("read", kind);
         };
     }
 

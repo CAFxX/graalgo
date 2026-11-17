@@ -22,6 +22,7 @@ import graalgo.values.GoStructDescriptor;
  */
 public final class SelectorNode extends GoExprNode {
     @Child private GoExprNode obj;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1)
     private final int[] selpath;
 
     public SelectorNode(GoExprNode obj, int[] selpath, GoKind fieldKind) {
@@ -343,7 +344,7 @@ public final class SelectorNode extends GoExprNode {
         // fix-redmaster-r53: pass the compiled field kind so the
         // final step's embedding descent is kind-aware (a *Type-typed
         // Kind_ read on a MapType shell must not land on KeysOff).
-        Object o = readFieldPath(rawObj, selpath, false, this, kind());
+        Object o = readOwnPath(rawObj);
         if (o instanceof Long l) {
             // Longs-carried field: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
@@ -354,6 +355,26 @@ public final class SelectorNode extends GoExprNode {
             // fields live in the objects array; a nil field reads as null
             // and must decode to 0L for executeLong/executeInt callers.)
             return Long.valueOf(0);
+        }
+        return o;
+    }
+
+    /**
+     * {@link #readFieldPath(Object, int[], boolean, Node, GoKind)} over
+     * this node's own (compilation-constant) path, unrolled per step so
+     * each step's field index and final-step check fold in compiled code.
+     */
+    @com.oracle.truffle.api.nodes.ExplodeLoop
+    private Object readOwnPath(Object o) {
+        GoKind expectedKind = kind();
+        for (int i = 0; i < selpath.length; i++) {
+            o = deref(o, this);
+            GoStruct s = (GoStruct) o;
+            if (i == selpath.length - 1) {
+                o = readFieldEmbedded(s, selpath[i], expectedKind);
+            } else {
+                o = readFieldEmbedded(s, selpath[i], false);
+            }
         }
         return o;
     }
