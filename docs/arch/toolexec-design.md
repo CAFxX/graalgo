@@ -754,7 +754,7 @@ estimate; ranges reflect the uncertainty named in §12.
 
 | M | Deliverable | Gate (differential vs gc) | Effort |
 |---|---|---|---|
-| **M0** | Walking skeleton: launcher flags by hand, `graalgo-tool` shadow compile + IR member + link to a runnable artifact for `package main` with `println` (prototype of this lane, §13) | stdout/stderr/exit code equal to gc for the skeleton program; warm rebuild runs zero tools | done in this lane (see §13 for what is and is not proven) |
+| **M0** | Walking skeleton of the build side: `graalgo-tool` shadow compile + IR member + link to stub + bundle (prototype of this lane, §13). JVM execution of the bundle is **not** part of what was built. | protocol tests of §13: warm rebuild runs zero tools, cache separation, build ID, gc-identical diagnostics | done in this lane |
 | **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory; multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate) | 15–25 |
 | **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (with the pool patch), `iter`, `time`; intrinsic registry + link-time resolution and reachability | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs | 10–15 |
 | **M1c** | `syscall` raw-entry intrinsic with the syscall table (write/read/open/close/fstat/fcntl/getpid first), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes | 8–12 |
@@ -845,6 +845,47 @@ is fixed.
 
 ## 13. Prototype status (this lane)
 
-See the section appended by the prototype commit for what was built and
-verified; if that section is absent, only the design and the experiments of
-§11 exist.
+[internal/toolexec/](../../internal/toolexec/) is a new Go module (v1 and
+the existing commands are untouched) containing the walking skeleton of §2:
+
+- [cmd/graalgo-tool/](../../internal/toolexec/cmd/graalgo-tool/) — the
+  wrapper: `-V=full` identity, shadow compile, IR archive member, link to
+  stub + bundle with build-ID patch, pass-through of every other tool,
+  `PATH` lookup for bare tool names.
+- [cmd/graalgo-stub/](../../internal/toolexec/cmd/graalgo-stub/) — the
+  launcher stub.
+- [archive/](../../internal/toolexec/archive/),
+  [bundle/](../../internal/toolexec/bundle/) — the `ar` member and bundle
+  formats.
+
+**Verified** by the module's tests (`make test-toolexec`), which drive the
+stock `go build -toolexec` over a two-package module:
+
+| Claim of this design | Evidence |
+|---|---|
+| An extra `ar` member survives cmd/go's pack and build-ID rewrite and does not disturb stock consumers (§2.2) | gc compiles an importer against the extended archive; `go tool pack t` lists it; the full `go build` succeeds; with the namespacing removed, even gc's own linker consumed such archives |
+| The IR pass can type-check against the shadow compile's export data through `-importcfg` (§2.2 step 4) | the bundle contains the IR of both user packages |
+| Patching the ID into the stub's ELF note gives cmd/go a readable, rewritable build ID (§2.4) | `go tool buildid` returns a four-field content ID; with the patch removed the test fails **and** every warm build re-runs `link` |
+| Warm cache = zero tool runs; gc and graalgo entries are disjoint in one `GOCACHE` (§2.1, GG-0028) | tool log is empty on the second build; `go list -export` returns different archives per backend; answering `-V=full` with the stock line makes the test fail (the backends then share entries) |
+| Compile diagnostics are gc's (§4.1) | wrapped and stock `go build` output of an ill-typed package are byte-identical |
+| Unsupported input fails the build with the package named, and no executable is written | `select` statement test |
+| The stub hands the executable and argv to the runner and propagates its exit status | stand-in runner test |
+
+**Not done, deliberately:**
+
+- **The linked program does not execute on the JVM yet.** The stub's
+  runner hand-off is tested with a stand-in. Reading the existing Java v2
+  code showed that this is not a small step:
+  [NodeFactoryV2.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
+  returns bare statement trees with no call targets, cannot call another
+  function or package, and builds `println` as "evaluate the first argument
+  and discard it" — it prints nothing. A runner on top of it would be
+  throw-away work in files the T0 lanes are editing; the real loader and
+  factory are W4.
+- The IR in the archive is the frontend/v2 document (`g2bi`), not the GIR
+  container of §3.2 (W2/W3).
+- Packages compiled with `-std` get no IR: the fork of §5 does not exist
+  (W5). The skeleton's `-std` check is the only place where it departs from
+  "compile whatever cmd/go hands over", and it disappears with W5.
+- No launcher (§1), no response-file expansion, no `-chain`, no symbol
+  resolution, init order or `-X` at link.
