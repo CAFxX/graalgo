@@ -108,9 +108,9 @@ public final class IndexNode extends GoExprNode {
             }
             case STRING -> {
                 long idx = key.executeLong(frame);
-                byte[] bytes = ((GoString) container.executeObject(frame)).bytes();
-                int i = checkedIndex(idx, bytes.length);
-                yield Integer.valueOf(bytes[i] & 0xFF);
+                GoString str = (GoString) container.executeObject(frame);
+                int i = checkedIndex(idx, str.length());
+                yield Integer.valueOf(str.byteAt(i));
             }
             case MAP -> {
                 GoMap m = (GoMap) container.executeObject(frame);

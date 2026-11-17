@@ -676,7 +676,7 @@ public final class ReflectOpNode extends GoExprNode {
             }
             case STRING -> {
                 GoString gs = (GoString) ReflectRefs.denotedValue(p.ptr(), GoKind.STRING);
-                byte b = gs.bytes()[i];
+                byte b = (byte) gs.byteAt(i);
                 long h = ReflectRefs.intern(b);
                 long uint8Tok = ReflectTypes.table().tokForKind(GoKind.UINT8);
                 return ReflectValues.pack(desc, uint8Tok, h, 0);
@@ -781,7 +781,7 @@ public final class ReflectOpNode extends GoExprNode {
         return switch (t.kind) {
             case ARRAY -> t.arrayLen;
             case SLICE -> ((GoSlice) d5).len();
-            case STRING -> ((GoString) d5).bytes().length;
+            case STRING -> ((GoString) d5).length();
             case MAP -> graalgo.runtime.Intrinsics.mapLen((GoMap) d5);
             case CHAN -> graalgo.runtime.ChanOps.len((graalgo.runtime.ChanOps.Chan) d5);
             case POINTER -> {
@@ -842,7 +842,7 @@ public final class ReflectOpNode extends GoExprNode {
             case FLOAT64 -> ((Double) d5) == 0d;
             case COMPLEX64 -> graalgo.values.GoComplex32.ZERO.equals(d5);
             case COMPLEX128 -> graalgo.values.GoComplex64.ZERO.equals(d5);
-            case STRING -> ((GoString) d5).bytes().length == 0;
+            case STRING -> ((GoString) d5).length() == 0;
             case ARRAY -> {
                 for (int i = 0; i < t.arrayLen; i++) {
                     if (!isZeroValue(t.elem,

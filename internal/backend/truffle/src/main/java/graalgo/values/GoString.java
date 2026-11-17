@@ -48,6 +48,15 @@ public final class GoString implements Comparable<GoString> {
         return bytes.length;
     }
 
+    /**
+     * The byte at {@code i} (unsigned value 0..255), without the defensive
+     * copy {@link #bytes()} makes: {@code len(s)} and {@code s[i]} must be
+     * O(1), not O(len(s)).
+     */
+    public int byteAt(int i) {
+        return bytes[i] & 0xFF;
+    }
+
     /** Concatenation ({@code +} on Go strings). */
     public GoString concat(GoString other) {
         byte[] out = Arrays.copyOf(bytes, bytes.length + other.bytes.length);
