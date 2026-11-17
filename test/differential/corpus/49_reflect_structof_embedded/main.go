@@ -7,10 +7,10 @@ import (
 
 type E struct{ X int }
 
-func (e E) Get() int        { return e.X }
-func (e E) Pub() string     { return fmt.Sprintf("pub %d", e.X) }
-func (e E) unexp() int      { return e.X + 1 }
-func (e *E) Ptr() int       { return e.X + 1 }
+func (e E) Get() int    { return e.X }
+func (e E) Pub() string { return fmt.Sprintf("pub %d", e.X) }
+func (e E) unexp() int  { return e.X + 1 }
+func (e *E) Ptr() int   { return e.X + 1 }
 
 type MyInt int
 
