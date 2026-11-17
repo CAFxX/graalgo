@@ -467,3 +467,748 @@ inside the action.
 of gc's stack-guard poisoning). This costs an argument slot per call and an
 entry lookup at every host → Go boundary, which is why it is the fallback and
 why the decision is taken before TR-3 fixes the calling convention.
+
+## 3. Carriers and frames
+
+### 3.1 Sized integers without boxing or specialization explosion
+
+Go's types are static, so the mapping from Go type to Java carrier is a pure
+function applied by the node factory. The current mapping is kept:
+
+| Go type | Carrier | Canonical form held in the carrier |
+|---|---|---|
+| `bool` | `boolean` | |
+| `int8`, `int16`, `int32` (`rune`) | `int` | sign-extended value |
+| `uint8` (`byte`), `uint16` | `int` | zero-extended value (0…255, 0…65535) |
+| `uint32` | `int` | the 32 bits; arithmetic is two's-complement identical, the unsigned operations differ |
+| `int`, `int64` | `long` | value |
+| `uint`, `uint64`, `uintptr` | `long` | the 64 bits |
+| `float32` / `float64` | `float` / `double` | |
+| `complex64` / `complex128` | immutable value object (as today) | scalar-replaced when it does not escape |
+| `string`, slices, maps, channels, funcs, pointers, interfaces, structs, arrays | `Object` (exact class known statically except where §4.4/§4.6 say otherwise) | |
+| `unsafe.Pointer` | per SPEC §3.4 (handle) | |
+
+Invariant: **every `int`/`long` produced by an expression node is in canonical
+form for its Go type.** With that invariant most operations need no knowledge
+of the width:
+
+| Operation class | Node variants needed | Notes |
+|---|---|---|
+| `+ - *`, unary `-`, `<<`, `++ --` | `I32`, `I64`, then a **wrap node** for the four narrow types | Java wraps at 32/64 bits exactly as Go does. For `int8/16`, `uint8/16` the result leaves canonical form and is re-normalized by `WrapI8Node` = `(byte) x`, `WrapI16Node` = `(short) x`, `WrapU8Node` = `x & 0xFF`, `WrapU16Node` = `x & 0xFFFF`. |
+| `& \| ^ &^` | `I32`, `I64` | canonical operands give a canonical result for signed and unsigned narrow types alike; no wrap. Unary `^` on unsigned narrow types wraps. |
+| `/ %` | `I32`, `U32`, `I64`, `U64` | unsigned variants use `Integer/Long.divideUnsigned`/`remainderUnsigned`. Narrow unsigned operands are already non-negative `int`s and use the signed `I32` node. Signed narrow division wraps only for `MIN / -1`; the factory adds the wrap node. Division by zero panics behind a branch profile. `MIN / -1` needs no check: Java and Go agree (`MIN`, remainder 0). |
+| `>>` | `I32` arithmetic, `U32` logical, `I64`, `U64` | canonical operands, no wrap. Shift counts are normalized to `long` by the factory; a count ≥ width gives 0 or the sign fill, never Java's masked count; a negative signed count panics. |
+| `== !=` | `I32`, `I64` | |
+| `< <= > >=` | `I32` (all of `int8/16/32`, `uint8/16`), `U32`, `I64`, `U64` | canonical narrow unsigned values compare correctly as signed `int`s. |
+| integer ↔ integer conversion | one node per (carrier, target form) pair: 2 carriers × 8 forms, most of them the wrap nodes above plus `I32→I64` sign- and zero-extension | |
+| integer ↔ float | per carrier and signedness (`U64→F64` and `F64→U64` need the unsigned algorithms; `F→int` out-of-range results follow gc on amd64, which the differential corpus pins) | |
+
+So the arithmetic surface is roughly 20 operations × at most 4 carrier
+variants, written once as small DSL nodes, plus 4 wrap nodes — not a class per
+(operation, Go type). In compiled code a wrap node is one instruction fused
+into its consumer. In the interpreter it is one extra node dispatch on narrow
+types only; if the interpreter benchmark of P-D shows that it matters for
+`uint8` loops, fused variants (`AddU8Node`) are added for the hot operations,
+which the conventions allow without touching the factory's logic.
+
+No `@TypeSystem`, no implicit casts, no `UnexpectedResultException`: an
+expression node's Java return type is fixed by the Go type of the expression
+(§4.1).
+
+Untyped constants never reach the backend as values: the frontend emits the
+exact constant already converted to the type the context requires (toolexec
+design §3.1). `exactDecimal()` and the `UNTYPED_*` kinds disappear from nodes.
+
+### 3.2 Frame layout
+
+- The factory builds one `FrameDescriptor` per function with
+  `FrameDescriptor.newBuilder()`; each Go local, parameter and named result
+  that is neither captured nor address-taken gets one slot whose kind is
+  decided once from its Go type. Distinct Go variables in disjoint scopes may
+  share a slot only if they have the same carrier (the factory's choice;
+  default: no sharing, simpler debugging).
+- Slots are accessed with the kind-specific accessors (`getLong`/`setLong`,
+  …). Because kinds never change, the `FrameSlotTypeException` path is dead
+  code; nodes do not catch it (H1-style `catch` blocks around frame reads, as
+  in today's root nodes, go away). `[JAR]` Truffle also offers *static* slots
+  (`FrameSlotKind.Static`, `getLongStatic`/`setLongStatic`, …), which skip the
+  tag byte entirely and are intended for statically typed languages. They are
+  a later optimization: the debugger's default frame views read tagged slots,
+  so static slots require the scope objects of §6.4 first. P-D measures
+  whether the tag writes show up at all.
+- Locals of struct, array and other reference types use `Object` slots holding
+  the exact value class.
+- A captured or address-taken variable's slot holds its **cell** (§4.4).
+- Slot names and the Go type are stored as slot name/info so that tools can
+  show locals (§6.4).
+- `defaultValue`: slots are explicitly zeroed by the declaration node (Go's
+  zero value), never left to a descriptor default; `defaultValueIllegal()`
+  `[JAR]` is set in test builds so that a read-before-write is an error rather
+  than a silent 0.
+- Arguments arrive in `frame.getArguments()` and are copied into typed slots
+  by a prologue with `@ExplodeLoop` over a `@CompilationFinal(dimensions = 1)`
+  slot table (what T0.B did to the existing root node), or read in place by
+  `ArgNode`s when a parameter is never assigned (factory decision; default:
+  copy).
+- Go code never materializes a frame, never reads a caller's frame, and never
+  stores a frame in a heap object.
+
+## 4. Node design
+
+### 4.1 Families and base classes
+
+SPEC §3.3 prescribes "expression nodes with typed execute methods … and void
+statement nodes". The realization:
+
+```java
+public abstract class GoNode extends Node { /* source section encoding, §6.2 */ }
+
+public abstract class ExprNode extends GoNode implements InstrumentableNode {
+    public abstract Object executeGeneric(VirtualFrame frame);   // boxing boundary, tools, interop
+}
+public abstract class I64Node  extends ExprNode { public abstract long    executeLong(VirtualFrame f);
+    @Override public final Object executeGeneric(VirtualFrame f) { return executeLong(f); } }
+public abstract class I32Node  extends ExprNode { public abstract int     executeInt(VirtualFrame f); … }
+public abstract class F64Node  extends ExprNode { public abstract double  executeDouble(VirtualFrame f); … }
+public abstract class F32Node  extends ExprNode { public abstract float   executeFloat(VirtualFrame f); … }
+public abstract class BoolNode extends ExprNode { public abstract boolean executeBoolean(VirtualFrame f); … }
+public abstract class RefNode  extends ExprNode { /* executeGeneric only; subclasses narrow with casts */ }
+
+public abstract class StmtNode extends GoNode implements InstrumentableNode {
+    public abstract void executeVoid(VirtualFrame frame);
+}
+```
+
+A child field is declared with the family it needs (`@Child I64Node left`), so
+a type error in the factory is a Java compile error or a `ClassCastException`
+at tree construction — not an `UnsupportedOperationException` at run time as
+with today's `GoExprNode` defaults. `[PROTO]` DSL nodes declared as
+
+```java
+@NodeChild(value = "left",  type = I64Node.class)
+@NodeChild(value = "right", type = I64Node.class)
+abstract static class AddI64Node extends I64Node {
+    @Specialization static long add(long a, long b) { return a + b; }
+}
+```
+
+generate an `executeLong` that calls the children's `executeLong` directly,
+with no state bits and no generic fallback.
+
+This is how SPEC §3.3's "DSL specialization budget is spent only at genuinely
+dynamic sites" is read here: the DSL is used everywhere as a *code generator*
+(child evaluation, inlined helper nodes, uncached variants for interop), while
+*run-time specialization* — more than one `@Specialization` chosen by observed
+values, `@Cached` inline caches — appears only at the sites of §4.6.
+
+### 4.2 The factory selects; nodes do not switch
+
+For every construct whose behaviour depends on a Go type, the factory picks
+the node class (or DSL factory) from the static type. Nodes contain no
+`switch (kind)` (H14) and no class tests on arrays (H16).
+
+| Construct | Variants (chosen statically) | Notes |
+|---|---|---|
+| local read/write | per carrier: `LocalI32/I64/F32/F64/Bool/RefNode`, cell variants (§4.4) | `@NodeField int slot` |
+| global read/write | per carrier, `(packageIndex, index)` fields, context reference (§2.4) | |
+| arithmetic, compare, convert | §3.1 | `@NodeChild` + single `@Specialization` |
+| string ops | `StrLen`, `StrIndex` (`bytes[i] & 0xFF`), `StrConcat`, `StrEq`, `StrLess`, `StrSlice`, conversions | `GoString` stays `byte[]`-backed (SPEC §3.4). `Arrays.equals`/`mismatch` and `System.arraycopy` are on the allow-list of §11 rule B4; `for` loops over bytes are fine under PE (they are not unrolled). |
+| slice index / store | per element carrier: `byte[]`, `short[]`, `int[]`, `long[]`, `float[]`, `double[]`, `boolean[]`, `Object[]` | `CompilerDirectives.castExact(s.array, long[].class)`; bounds test `Integer.compareUnsigned(i, s.len) < 0`, failure behind `InlinedBranchProfile` → boundary method that builds the panic. Unsigned narrow element reads mask. |
+| array (`[N]T`) index / store | same carriers; constant index proven in range by `go/types` needs no check | |
+| `len`, `cap` | per operand kind (string, slice, array constant, map, chan) | |
+| slicing `s[i:j:k]` | per operand kind | `GoSlice` is a small final-field object; scalar-replaced when it does not escape |
+| struct field read/write | per carrier: `FieldI64Node(index)` reads `s.longs[index]`, `FieldRefNode(index)` reads `s.objects[index]`; float fields via raw-bits conversion | the field path through embedded structs is flattened by the frontend into a chain of nodes with constant indices; `GoStruct.getLong`'s per-access validation against `List<Field>` (H15) is replaced by asserts |
+| struct copy (value assignment) | `StructCopyNode(descriptor)` with the descriptor as a PE constant and `@ExplodeLoop` over nested value fields | replaces `Boxing.copyForAssign`'s `instanceof` ladder (H7) |
+| composite literals, `new`, `make` | per type | allocation nodes report to `AllocationReporter` only when it is active (§6.7) |
+| `append`, `copy`, `clear`, `delete`, `min`, `max` | per element carrier / key kind | growth path behind `@TruffleBoundary`-free helper with `@InliningCutoff`; `System.arraycopy` |
+| map read/write/delete/range | per key kind: integer carriers, `string`, generic (interface/struct/array keys) | §4.6 |
+| channel ops, `select`, `go` | one node each, runtime entry behind `@TruffleBoundary` | non-blocking fast paths may be added later behind profiles |
+| conversions to interface | `ToIfaceNode(itab)` / `ToEfaceNode(type)` with constant descriptor | §4.6 |
+
+Runtime helpers that nodes call live in final classes of static methods
+(`GoStrings`, `GoSlices`, `GoMaps`, …), each method either PE-safe by rule B4
+or annotated `@TruffleBoundary`. That is also what keeps the operations
+portable to Bytecode DSL operations (§8).
+
+`@NodeField` is used for immutable per-node data (slot, index, descriptor);
+plain `final` fields in hand-written nodes are equivalent. Arrays in nodes are
+`@CompilationFinal(dimensions = 1)`. `@ImportStatic` brings guard helpers into
+DSL expressions (`@ImportStatic(GoGuards.class)`); `@Fallback` is used only in
+the pointer-shape nodes of §4.4 and the interop conversion nodes of §5.3,
+where it throws an internal error — in statically typed nodes there is no
+fallback to write.
+
+`@GenerateInline`, `@GenerateCached`, `@GenerateUncached`:
+
+- AST nodes built by the factory are ordinary cached nodes (`@GenerateInline`
+  does not apply to nodes with `@NodeChild`).
+- **Helper nodes** used from specializations and from interop exports
+  (`ToGoNode`, `ToInteropNode`, `ItabLookupNode`, `MapHashNode`,
+  `CallFuncNode`) are `@GenerateInline @GenerateCached(false)` and take a
+  leading `Node inliningTarget`; they are used as `@Cached ItabLookupNode n`
+  plus `@Bind Node node` (the pinned DSL accepts `@Bind` on a `Node` parameter
+  without an expression `[PROTO]`). They add no child node and no extra
+  interpreter dispatch.
+- Helpers reachable from interop exports or from runtime slow paths also get
+  `@GenerateUncached`, so `InteropLibrary.getUncached()` callers and
+  `@TruffleBoundary` code can use them.
+- Profiles in DSL nodes are the inlined ones (`InlinedBranchProfile`,
+  `InlinedConditionProfile`, `InlinedCountingConditionProfile`,
+  `InlinedLoopConditionProfile` `[JAR]`); hand-written nodes use
+  `BranchProfile`/`CountingConditionProfile` fields.
+
+Profile policy: `CountingConditionProfile` on `if` and loop conditions (it
+feeds branch probabilities to Graal); `InlinedBranchProfile` in front of every
+panic and every slow path; no value profiles on statically typed data. The
+only value profiles are the type-identity caches of §4.6.
+
+### 4.3 Root nodes
+
+```java
+public final class GoFuncRootNode extends RootNode {          // no defers
+    @Child private PrologueNode prologue;                      // args → slots, cells for captured params
+    @Child private StmtNode body;
+    @Child private ResultNode result;                          // reads the result slot(s), boxes at the boundary
+    @Override public Object execute(VirtualFrame frame) {
+        prologue.executeVoid(frame);
+        try { body.executeVoid(frame); } catch (ReturnException r) { /* singleton, no payload */ }
+        return result.executeGeneric(frame);
+    }
+}
+public final class GoDeferFuncRootNode extends RootNode { … }  // §4.5
+```
+
+- `super(language, descriptor)` with the real language. `getName()` returns
+  gc's symbol name (`pkg.F`, `pkg.(*T).M`, `pkg.F.func1`),
+  `getQualifiedName()` the same, `getSourceSection()` the function's section,
+  `isInternal()` true for runtime-generated wrappers (method-value thunks,
+  goroutine entry, package init driver).
+- No per-call work that is not the function's own: no safepoint call (§2.7),
+  no `G` lookup, no shadow-stack push (§6.5), no `try`/`catch` for panics
+  unless the function has a `defer`.
+- Results: one result of a primitive carrier is returned boxed (the `Object`
+  return of `execute` forces it; inlining removes the box). Multiple results
+  are returned as an `Object[]` tuple created by `ResultNode`; the call node
+  unpacks it into the destination slots. Escape analysis removes the tuple
+  when the callee is inlined.
+- `isCloneUninitializedSupported()`/`cloneUninitialized()` are implemented by
+  asking the `FunctionUnit` to decode the body again (§4.7).
+- `prepareForInstrumentation` is where a function with elided statement
+  wrappers materializes them (§6.3).
+
+### 4.4 Variables that escape: cells, closures, pointers
+
+The frontend flags every local that is captured by a closure or has its
+address taken (toolexec design §3.1). Such a variable lives in a **typed
+cell** allocated at its declaration; its frame slot holds the cell.
+
+```java
+public final class I64Cell  { public long value; }      // also I32Cell, F64Cell, F32Cell, BoolCell
+public final class RefCell  { public Object value; }
+```
+
+- A closure value is `GoFunc { RootCallTarget target; Object[] captures; }`
+  where `captures` holds the cells (shared, by-reference capture as Go
+  specifies) in the order of the IR's capture list. The callee prologue copies
+  them into its own frame slots with `@ExplodeLoop`. Per-iteration loop
+  variables (Go 1.22 semantics) are simply a fresh cell per iteration,
+  allocated by the loop body's declaration node; the "snapshot slot" machinery
+  of today's root node disappears.
+- `frame.materialize()` is banned in Go nodes (rule F2). Graal's partial
+  escape analysis removes cells and closure objects that do not escape the
+  compilation unit — which, after inlining a callee that takes a `func`
+  argument, is the common case.
+- A top-level function referenced as a value is a preallocated `GoFunc` with
+  `captures == null`; a method value is a `GoFunc` whose target is a thunk
+  root and whose single capture is the receiver.
+
+**Pointers** (replacing the five-mode `GoPointer`, H19):
+
+| Pointer to | Representation |
+|---|---|
+| a struct (`*T`, T a struct type) | the `GoStruct` reference itself. Nested struct values and struct elements of arrays/slices are their own `GoStruct` objects in the parent's `Object[]`, so `&x.inner` and `&s[i]` are also plain references. |
+| a variable of non-struct type | its cell (`I64Cell`, …) |
+| an element of an array or slice of non-struct type | `ElemPtr { Object array; int index; }` |
+| a non-struct field of a struct | `FieldPtr { GoStruct s; int index; }` |
+
+The pointee *type* is static, the pointer *shape* is not, so load and store
+through `*p` for non-struct pointees are DSL nodes with one specialization per
+shape — the one place outside §4.6 where a node has several specializations:
+
+```java
+@NodeChild(value = "ptr", type = RefNode.class)
+abstract class LoadI64Node extends I64Node {
+    @Specialization static long cell(I64Cell c)  { return c.value; }
+    @Specialization static long elem(ElemPtr p)  { return ((long[]) p.array)[p.index]; }
+    @Specialization static long field(FieldPtr p) { return p.s.longs[p.index]; }
+    @Fallback static long nil(Object p, @Bind Node n) { throw GoPanics.nilDeref(n); }   // p == null
+}
+```
+
+Pointer equality is reference equality for structs and cells and
+`(array, index)` / `(struct, index)` equality for the other two; the factory
+knows from the type which comparison node to build, and the comparison node
+specializes on shape like the loads.
+
+This is a value-model change within the latitude of SPEC §3.4 ("Go pointer =
+opaque Java reference"); the final shape is owned by whoever implements W4 of
+the toolexec design. The requirements from this document are: final,
+single-purpose classes; typed cells; no static hooks.
+
+### 4.5 Calls, the calling convention, defers and panics
+
+**Convention.** `arguments[0]` is the callee's `GoFunc` (for its captures;
+`null` for a statically called top-level function), `arguments[1..]` are the
+Go arguments in canonical carrier form, boxed. A method's receiver is the
+first Go argument. Interface arguments are passed as interface values; there
+is no caller- or callee-side re-wrapping by runtime kind test (H7): the
+factory inserts `ToIfaceNode` where the *static* types require it.
+(If P-B fails, `arguments[0]` becomes the `G` and the function value moves to
+`arguments[1]`; §2.7.)
+
+**Static calls** (callee known to `go/types`: package-level functions,
+methods on concrete types — the large majority):
+
+```java
+final class CallNode extends … {
+    @Children private final ExprNode[] args;
+    @Child private DirectCallNode call;            // created on first execution
+    private final FunctionUnit callee;             // lazily decoded (toolexec design §4.3)
+    @ExplodeLoop Object call(VirtualFrame f) {
+        if (call == null) { CompilerDirectives.transferToInterpreterAndInvalidate();
+                            call = insert(DirectCallNode.create(callee.callTarget())); }
+        Object[] a = new Object[args.length + 1];
+        for (int i = 0; i < args.length; i++) a[i + 1] = args[i].executeGeneric(f);
+        return call.call(a);
+    }
+}
+```
+
+`[PROTO]` this shape inlines and compiles recursive `fib`. Typed variants
+(`CallI64Node`, …) unbox the result with a cast, not `((Number) r).longValue()`.
+Value-typed struct and array arguments are copied by a `StructCopyNode`
+inserted by the factory at the call site.
+
+**Dynamic calls** (func values): §4.6.
+
+**Open-coded defers.** A function containing `defer` is built as a
+`GoDeferFuncRootNode`:
+
+- Each `defer` statement that is not inside a loop gets an index *i*, frame
+  slots for its callee and evaluated arguments, and bit *i* in an `int`
+  "defer bits" slot. Executing the statement evaluates callee and arguments
+  into the slots and sets the bit.
+- The root's exit sequence runs, in reverse index order with `@ExplodeLoop`,
+  `if (bits & (1 << i)) != 0 { clear bit; call }`. A deferred call to a
+  statically known function is a `DirectCallNode` and inlines:
+  `defer mu.Unlock()` compiles to the unlock.
+- A `defer` inside a loop (or more than 32 sites) appends a record to a
+  per-frame list held in a frame slot; the exit sequence drains it first.
+- The root wraps the body in `try { … } catch (PanicException p)`; on panic it
+  marks `G.panicking`, runs the same exit sequence with recovery enabled, and
+  either rethrows or — if a deferred call recovered — returns the named
+  results. `Goexit` unwinding runs the exit sequence and rethrows.
+- `recover()` reads `G` through `M` (§2.5). It is valid only when called
+  directly by a deferred function during panicking; the root sets the
+  eligibility flag around each deferred call, as today, but only on the panic
+  path.
+- Range-over-func bodies that `defer` attach to the enclosing function's list
+  through a cell passed to the synthesized yield closure (gc's
+  `deferrangefunc`), replacing the "range stash slot".
+
+Functions without `defer` have no handler and no `G` access at all. This is
+gc's own design since Go 1.14 and removes `DeferChain`'s `ArrayDeque` (H15)
+from the call path.
+
+**Panics.** `PanicException extends AbstractTruffleException` (as today) and
+is constructed with the throwing node as location so that Truffle attaches the
+guest stack lazily (§6.5). Run-time panics (nil dereference, index out of
+range, division by zero, failed type assertion) are created by
+`@TruffleBoundary` factory methods on `GoPanics` called behind an
+`InlinedBranchProfile`. `Goexit`, `ReturnException`, `BreakException`,
+`ContinueException` are `ControlFlowException`s.
+
+Host `StackOverflowError` and `OutOfMemoryError` are never caught by Go nodes
+(§9).
+
+### 4.6 The four dynamic sites
+
+These are the sites where run-time information beats the static type, and the
+only ones with `@Cached` inline caches (SPEC §3.3).
+
+**(a) Interface method call — the central one.**
+
+An interface value is `GoIface { GoItab itab; Object data; }` for non-empty
+interface types and `GoEface { GoType type; Object data; }` for `any`
+(SPEC §3.4: "(dynamic type descriptor, data) + itab"). A `GoItab` is immutable:
+`{ GoType dynamicType; GoType ifaceType; @CompilationFinal(dimensions = 1)
+GoFunc[] methods; }`, with `methods` in the interface's method order, so a
+call site holds a constant **method index** and never a name. Itabs are
+interned in the language-level cache (§2.4).
+
+```java
+@ReportPolymorphism
+abstract class IfaceCallNode extends ExprNode {
+    final int methodIndex;
+    @Specialization(guards = "recv.itab == cachedItab", limit = "3")
+    Object cached(VirtualFrame f, GoIface recv, Object[] args,
+                  @Cached("recv.itab") GoItab cachedItab,
+                  @Cached("create(cachedItab.methods[methodIndex].target)") DirectCallNode call) {
+        return call.call(pack(cachedItab.methods[methodIndex], recv.data, args));
+    }
+    @Specialization(replaces = "cached")
+    Object megamorphic(VirtualFrame f, GoIface recv, Object[] args, @Cached IndirectCallNode call) {
+        GoFunc m = recv.itab.methods[methodIndex];
+        return call.call(m.target, pack(m, recv.data, args));
+    }
+}
+```
+
+- The guard is a reference comparison against a PE constant; itabs are
+  immutable, so no `Assumption` is involved (SPEC §3.3).
+- A nil interface receiver panics before dispatch (`recv == null` behind a
+  branch profile).
+- The megamorphic case is an array load and an indirect call — no hash lookup
+  (SPEC §3.3 allowed one; the method-index layout makes it unnecessary).
+- Where the value was converted to the interface in the same compilation unit
+  (`ToIfaceNode` with a constant itab, callee inlined), the guard folds, the
+  method inlines and the `GoIface` box is scalar-replaced: SPEC §2.6.1's
+  cascade, step by step.
+- Methods promoted through embedded fields get a thunk target generated when
+  the itab is built, so the call site never walks field paths (today's
+  `isEmbeddedRedispatch` loop).
+
+**(b) Func-value call.** `guards = "fn.target == cachedTarget"`, limit 3,
+`DirectCallNode`; megamorphic through `IndirectCallNode`. `@ReportPolymorphism`.
+Today's `CallDispatchNode` has the right cached half and the wrong megamorphic
+half (H6).
+
+**(c) Type assertion and type switch.**
+
+- To a concrete type `T`: `eface.type == T` with `T` a PE constant (for
+  `GoIface`: `itab.dynamicType == T`). No cache.
+- To an interface type `I`: the answer depends on the dynamic type's method
+  set, so the node caches `dynamicType → GoItab-or-failure`
+  (`guards = "type == cachedType"`, limit 4) through the inlinable
+  `ItabLookupNode`; the uncached path is a `@TruffleBoundary` lookup in the
+  language-level itab cache.
+- A type switch is compiled by the factory into a decision sequence: concrete
+  cases as identity comparisons in source order, each with a counting
+  condition profile; interface cases through `ItabLookupNode`. For switches
+  with many concrete cases the node instead caches `dynamicType → case index`
+  (limit 4) and jumps — the "decision tree + value profile" of SPEC §3.3.
+  Type lists and method-name sets (H15) are resolved at build time into arrays
+  of descriptors.
+
+**(d) Maps.** `GoMap` remains the hand-written open-addressing table SPEC §3.4
+requires. The key *kind* is static, so the factory chooses
+`MapGetI64Node`, `MapGetStrNode`, `MapGetGenericNode` (and the corresponding
+put/delete/range nodes). For integer and string keys the probe loop is plain
+Java over the table's arrays and is PE-safe; hashing a string is a loop over
+bytes in a helper marked `@InliningCutoff` for host inlining. The slow paths —
+growth, rehash, generic-key hashing and equality (which may call Go
+`==` on interface values and may panic on uncomparable types) — are behind
+`@TruffleBoundary`. SPEC's "inline fast path guarded on table version" applies
+to iteration: a range loop captures the table's version and takes the slow
+path when it changes. The concurrent-write detector is a plain flag check
+behind a branch profile.
+
+### 4.7 Inlining, splitting and compilation knobs
+
+- Inlining is Truffle's language-agnostic inliner over `DirectCallNode`s.
+  Nothing is forced by default. `DirectCallNode.forceInlining()` is used only
+  for generated thunks (method values, promoted-method wrappers, goroutine
+  entry).
+- `RootNode.isTrivial()` returns true for leaf functions the factory can see
+  are a single expression (accessors); it biases the inliner.
+- **Splitting.** When a callee is inlined, its inline caches are *shared* by
+  every caller. `sort.Sort(data sort.Interface)` therefore sees every `data`
+  type the program ever sorts at one `IfaceCallNode` and goes megamorphic for
+  everyone. Truffle's answer is splitting: a call site gets its own copy of
+  the callee when the callee reports polymorphism. For Go this is what carries
+  SPEC §2.6.1 from user code into library code, so it is part of the design:
+  `IfaceCallNode`, the func-value call node and the type-switch cache are
+  `@ReportPolymorphism`; root nodes implement `cloneUninitialized()` by
+  re-decoding the function body from GIR (function bodies are independently
+  decodable blobs, toolexec design D5 — no AST cloning code is needed).
+  Splitting starts **enabled with Truffle's default budget** and is evaluated
+  on the interface benchmark (TR-4); `engine.Splitting=false` is the control.
+- Functions that are too large to compile (generated tables, giant `init`s):
+  blocks use Truffle's `BlockNode.create(elements, executor)` `[JAR]`, which
+  lets the runtime compile a huge block in pieces.
+- `@TruffleBoundary` rules are in §11 (B1–B6). In short: everything in the
+  runtime library is a boundary unless it is on the PE-safe allow-list;
+  nothing reachable from a node's fast path may allocate through a JDK
+  collection, format a string, take a lock, park, or perform I/O without one.
+- `@InliningCutoff` (`HostCompilerDirectives.InliningCutoff` `[JAR]`) marks
+  slow-path helpers so the *host* compiler does not inline them into
+  interpreter `execute` methods; it matters for interpreter speed on HotSpot
+  and in native images, not for PE.
+- `@ExplodeLoop` goes on every loop over `@Children` or over a
+  `@CompilationFinal` array; `CompilerAsserts.partialEvaluationConstant(n)`
+  asserts the bound. Loops over guest data are never exploded.
+- Options used by gates, verified present on the pin `[JAR]`:
+  `engine.CompilationFailureAction` (`ExitVM`/`Throw`),
+  `engine.CompileImmediately`, `engine.BackgroundCompilation`,
+  `engine.Compilation`, `engine.CompileAOTOnCreate`,
+  `engine.TraceTransferToInterpreter`, `engine.TraceDeoptimizeFrame`,
+  `engine.TraceAssumptions`, `engine.CompilationStatistics`. From the
+  documentation, to be confirmed when the gate is built `[DOC]`:
+  `engine.TraceCompilation`, `engine.TracePerformanceWarnings=all`,
+  `engine.TreatPerformanceWarningsAsErrors=all`, `engine.TraceSplitting`,
+  `compiler.TraceInlining`, `engine.SpecializationStatistics`.
+
+### 4.8 Statements and control flow
+
+| Construct | Design |
+|---|---|
+| block | `@Children StmtNode[]` with `@ExplodeLoop`; blocks above a size threshold use Truffle's `BlockNode` |
+| `if` | `CountingConditionProfile` |
+| `for`, `range` | `Truffle.getRuntime().createLoopNode(repeatingNode)` (OSR, back-edge counting, safepoint). One `RepeatingNode` class per loop form: condition loop, `range` over int, string (UTF-8 decode inline), array, slice (length captured once), map (iterator object, version check), channel, function (yield closure). `continue` is caught inside `executeRepeating`, `break` outside `loop.execute`. |
+| `break`, `continue` | `ControlFlowException` singletons for the unlabeled forms; a labeled form throws an instance preallocated per label and the target compares by identity. The factory omits the `catch` on loops whose body contains no matching jump. |
+| `return` | store into the typed result slot(s), then `throw ReturnException.INSTANCE`; a `return` in tail position of the function body compiles to the store alone (factory decision). No boxed payload. |
+| `switch` | the factory resolves `fallthrough` statically by chaining case bodies — no `FallthroughSignal`. Integer and string tag switches become compare sequences with profiles; a dense integer switch may use a `@CompilationFinal` table and `switch` on a PE-constant index. |
+| `goto`, labels | Go restricts `goto` to labels in an enclosing block, not jumping over declarations. A block that contains goto-target labels is built as a `GotoBlockNode`: its statements are split into segments at the labels and an `int pc` loop with `@ExplodeLoop(kind = MERGE_EXPLODE)` dispatches segments; a `goto` out of nested statements throws a per-label `ControlFlowException` caught by that block, which sets `pc`. Labels are indices, not strings. |
+| `select` | evaluates channel and value operands, calls the runtime (`@TruffleBoundary`), then dispatches on the returned case index with an exploded loop over the case bodies |
+| `go` | evaluates the function value and arguments, then a boundary call to the scheduler |
+| `defer`, `panic`, `recover` | §4.5 |
+
+## 5. Interop (SPEC §2.4, §4.3)
+
+### 5.1 Principles
+
+1. **Go nodes never call `InteropLibrary` on Go values.** Interop appears in
+   exactly three places: the exports on Go value classes (code that runs only
+   when a foreign caller or a tool sends a message), the intrinsic nodes
+   behind the `graalgo/java` package, and the two conversion nodes at the
+   boundary. Implementing `TruffleObject` is a marker and costs nothing.
+2. Go values are exported with `@ExportLibrary(InteropLibrary.class)` on the
+   value classes themselves. `DynamicObject`/`Shape` is not used: Go types are
+   closed and static, and SPEC §3.4 fixes the struct layout. Polyglot
+   `ProxyArray`/`ProxyObject`/`ProxyExecutable` are host-side adapters for
+   *Java* objects that want to look like guest objects; a language exports
+   messages instead. SPEC §4.3's table names them in its "Java" column; what a
+   Java embedder actually receives is `Value`, and `value.as(List.class)` /
+   `as(Map.class)` / `as(Function.class)` give the `List`/`Map`/lambda views
+   the table promises (amendment A3, wording only).
+3. Every value that leaves Go passes through `ToInteropNode`; every value that
+   enters passes through `ToGoNode(targetType)`. Both are inlinable DSL helper
+   nodes, specialized on the (static) Go type at the boundary, with
+   `assert InteropLibrary.isValidValue(v)` on the way out.
+4. Copy is the default; views are explicit (SPEC §4.3).
+
+### 5.2 Messages per Go value kind
+
+| Go value | Exported as | Semantics |
+|---|---|---|
+| `bool` | Java `Boolean` | value |
+| `int8…int64`, `int`, `uint8…uint32` | `Byte`/`Short`/`Integer`/`Long` chosen so the numeric value is preserved (`uint32` → `Long`) | value |
+| `uint`, `uint64`, `uintptr` | `Long` when the value fits; otherwise a `GoUint64` object exporting `isNumber`, `fitsInLong = false`, `fitsInBigInteger`, `asBigInteger`, `fitsInDouble` when exact | value; never a negative `long` |
+| `float32`, `float64` | `Float`, `Double` | value |
+| `complex64/128` | object with members `real`, `imag` | copy |
+| `string` | `GoString` exports `isString`, `asString` (UTF-8 decode; invalid sequences become U+FFFD as in Go's `[]rune` conversion), `asTruffleString` | copy (immutable anyway) |
+| struct value `T` | `GoStruct` exports `hasMembers`, `getMembers`, `isMemberReadable`, `readMember`; **snapshot**: the boundary copies the struct, and the copy's members are modifiable | copy (Go value semantics) |
+| `*T`, T struct | the same exports on the shared object plus `isMemberModifiable`/`writeMember`, `isMemberInvocable`/`invokeMember` for the pointer method set | reference |
+| struct members | exported fields and promoted fields by Go name; unexported fields only with `includeInternal` (`isMemberInternal`), for debuggers; methods as invocable members | field values pass through the conversion nodes |
+| `[N]T` | `hasArrayElements`, fixed size | copy |
+| `[]byte` | `hasArrayElements` **and** `hasBufferElements`/`readBufferByte`…; `value.as(byte[].class)` copies | SPEC: bulk copy by default; the buffer messages are the explicit view |
+| other slices | `hasArrayElements`, `getArraySize`, `readArrayElement`, `writeArrayElement` (in `len`), not insertable/removable | view of the backing array; `java.Of` / the typed conversions copy unless the view is requested (§5.5) |
+| `map[K]V` | `hasHashEntries`, `getHashSize`, `isHashEntryReadable/Modifiable/Insertable/Removable`, `readHashValue`, `writeHashEntry`, `removeHashEntry`, `getHashEntriesIterator` | view; keys converted with `ToGoNode(K)`; iteration order randomized per iterator as in Go. Maps never export members, also for string keys. |
+| `func` | `GoFunc` exports `isExecutable`, `execute`, `hasExecutableName`, `getExecutableName`, `hasSourceLocation` | arguments converted per parameter type (signature from the target's root node), arity checked (`ArityException`); results per §5.3 |
+| channel | opaque object with invocable members `Send`, `Recv`, `TryRecv`, `Close`, `Len`, `Cap` | handle (SPEC: never a `BlockingQueue`) |
+| pointer to non-struct | opaque object with invocable members `Load`, `Store` | reference. Go pointers **do not** export `isPointer`/`asPointer`: those messages mean a native address, which a Go pointer does not have (GG-0015). Only cgo-pinned memory (SPEC §3.7) may. |
+| interface value | unwrapped: the boundary exports the dynamic value; if the dynamic type is a named non-struct type with methods, a `GoBoxed` object that forwards the underlying value's messages and adds the methods as invocable members | per dynamic value |
+| nil pointer, slice, map, chan, func, interface | `GoNil` (one per static type where the type is known, else the untyped singleton): `isNull = true` | |
+| `error` returned across the boundary | §5.3 | |
+| `unsafe.Pointer` | not exportable; conversion fails with a Go error | |
+
+All exported objects answer `hasLanguage`/`getLanguage` (`GoLanguage.class`),
+`toDisplayString` (Go's `%v`, behind a boundary), `hasMetaObject`/
+`getMetaObject` (the `GoType` descriptor, which exports `isMetaObject`,
+`getMetaQualifiedName`, `getMetaSimpleName`, `isMetaInstance`), and identity
+(`isIdentical`/`identityHashCode`) for reference kinds. On the pin the
+language messages are `hasLanguage`/`getLanguage` `[JAR]`; 25.1 replaces them
+with `hasLanguageId`/`getLanguageId` `[DOC]`, which the `-Werror` build will
+flag at the next pin bump.
+
+Member lookup is cached on `(descriptor identity, member name)` with limit 3
+and a `@TruffleBoundary` uncached path `[PROTO]`:
+
+```java
+@ExportMessage static final class ReadMember {
+    @Specialization(guards = {"s.desc == cachedDesc", "member.equals(cachedMember)", "idx >= 0"}, limit = "3")
+    static Object cached(GoStruct s, String member, @Cached("s.desc") StructDesc cachedDesc,
+                         @Cached("member") String cachedMember,
+                         @Cached("cachedDesc.find(cachedMember)") int idx) { … }
+    @Specialization(replaces = "cached") @TruffleBoundary
+    static Object uncached(GoStruct s, String member) throws UnknownIdentifierException { … }
+}
+```
+
+### 5.3 Calls and errors across the boundary
+
+**Host → Go.** `execute` on a `GoFunc`:
+
+1. The calling thread is entered by the polyglot layer; its `M` exists or is
+   created; a foreign `G` is installed if the thread has none (§2.6).
+2. Arguments are converted by `ToGoNode` for each parameter's static type. A
+   host object passed for an interface parameter becomes a `java.Value`
+   (§5.5) boxed in that interface if the interface is `any` or is implemented
+   by `java.Value`; otherwise `UnsupportedTypeException`.
+3. The call is a `DirectCallNode`/`IndirectCallNode` as in the prototype.
+4. Results: none → the language's null object; one → converted; several → an
+   interop array. **A trailing `error` result is not returned**: `nil` is
+   dropped, non-nil is thrown as `GoErrorException` (an
+   `AbstractTruffleException` carrying the error value).
+
+**Exceptions.**
+
+| Go | Seen by the host |
+|---|---|
+| unrecovered `panic(v)` unwinding out of a host-initiated call | `PolyglotException` with `isGuestException()`, guest object = `v`, message = gc's rendering (`panic: …` body), guest stack frames from §6.5. `PanicException` exports `isException`, `throwException`, `getExceptionType = RUNTIME_ERROR`, `hasExceptionMessage`, `getExceptionMessage`, `hasExceptionStackTrace`. The context stays usable: a panic on a foreign thread does not kill the program, because there is no Go caller to crash. |
+| non-nil `error` result | `PolyglotException`, guest object = the error value (members = its methods), message = `Error()`, `hasExceptionCause`/`getExceptionCause` = `Unwrap()` when present. This is SPEC §4.3's "`RuntimeException` proxy (value + message + Go stack)". |
+| `os.Exit(n)` | `isExit()`, `getExitStatus() == n` (§2.3) |
+| `runtime.Goexit` on a foreign thread | converted to a `GoErrorException`; `Goexit` never crosses the boundary as a `ControlFlowException` |
+| fatal error (stack overflow, concurrent map write, deadlock) | context closed with exit status 2 |
+
+**Go → host.** A host method call made through `graalgo/java` catches, at the
+intrinsic node, any exception for which `InteropLibrary.isException` holds
+(host exceptions and other languages' exceptions) and returns it as a Go
+`error` of type `*java.Throwable` (§5.5). **It is never a Go panic** (SPEC
+§2.4). Host `Error`s that are not exceptions in the interop sense
+(`StackOverflowError`, `OutOfMemoryError`, internal errors) are not converted.
+
+**Scheduler interplay.** A goroutine in a host call keeps its run token, like
+a short cgo call. The call node sets `G.inHostCall` around the call (two
+field writes); the monitor thread of §2.7 hands the token to another
+goroutine if a host call outlasts the quantum — gc's `sysmon` retaking a P
+from a long syscall. Host code that calls back into Go on the same thread
+continues on the same `G`.
+
+**Thread safety.** Views expose Go's own data-race rules to Java: unsynchronized
+concurrent slice access is a race, concurrent map mutation is a fatal error.
+The contract documents this per view (SPEC §4.3: "views are explicit and
+documented per call").
+
+### 5.4 The module object and the embedding API
+
+`Context.eval(bundle)` returns the **module object**: members are the bundle's
+packages by import path; each package object's members are its exported
+package-level functions (executable), variables (read/write through the
+context's global storage), constants, and types (meta objects; instantiable
+for struct types: `instantiate()` returns `*T` zero value).
+
+```java
+try (Context ctx = Context.newBuilder("go")
+        .allowCreateThread(true)                      // goroutines
+        .allowHostAccess(HostAccess.SCOPED)           // SPEC §4.3 default
+        .option("go.RunMain", "false")
+        .build()) {
+    Source bundle = Source.newBuilder("go", ByteSequence.create(bytes), "app.ggb")
+                          .mimeType("application/x-graalgo-bundle").build();
+    Value mod   = ctx.eval(bundle);
+    Value pkg   = mod.getMember("example.com/geo");
+    Value p     = pkg.getMember("NewPoint").execute(3, 4);     // *geo.Point
+    long x      = p.getMember("X").asLong();
+    double d    = p.invokeMember("Norm").asDouble();
+    List<?> xs  = pkg.getMember("Primes").execute(100).as(List.class);   // slice view
+    try { pkg.getMember("Parse").execute("bad"); }
+    catch (PolyglotException e) { Value goErr = e.getGuestObject(); … }  // Go error
+}
+```
+
+`getBindings("go")` returns the same module object for the context's bundle
+(a context runs one bundle; evaluating a second bundle in the same context is
+an error in v1). `TruffleLanguage.getScope` returns it for tools.
+
+Typed Java access ("Go-from-Java is annotation/codegen-driven at build time",
+SPEC §4.3): in JIT mode `value.as(MyInterface.class)` already works for any
+Java interface whose methods match member names. For closed-world images the
+build generates the interfaces and the proxy registrations from the bundle's
+export list — a small generator in the link step, specified with TR-9, not
+here.
+
+### 5.5 The `graalgo/java` package (GG-0003)
+
+An ordinary Go package shipped in graalgo's `GOROOT`
+(`$GOROOT/src/graalgo/java`), whose body-less functions resolve to Java
+intrinsics by the toolexec design's rule D9 — no name is special-cased in the
+tool. Under stock gc the package does not link, which is the intended
+"additive" behaviour.
+
+```go
+package java
+
+// Value is a handle to a host (Java) or foreign polyglot object.
+// The zero Value is Java null.
+type Value struct{ ref any }
+
+func Class(name string) (Value, error)         // Env.lookupHostSymbol; ErrHostAccess if not allowed
+func Import(symbol string) (Value, error)      // polyglot bindings (Env.importSymbol)
+func Export(symbol string, v any) error
+
+func (v Value) IsNull() bool
+func (v Value) Call(method string, args ...any) (Value, error)   // invokeMember
+func (v Value) Invoke(args ...any) (Value, error)                // execute (lambdas)
+func (v Value) New(args ...any) (Value, error)                   // instantiate
+func (v Value) Get(member string) (Value, error)                 // readMember
+func (v Value) Set(member string, x any) error
+func (v Value) Len() (int, error)
+func (v Value) Index(i int) (Value, error)
+func (v Value) SetIndex(i int, x any) error
+func (v Value) String() string                                   // toDisplayString
+
+// Conversions follow SPEC §4.3: copy by default.
+func Of(x any) Value                           // Go → Java, copy (string → java.lang.String, []byte → byte[], …)
+func View(x any) Value                         // explicit view for slices and maps
+func As[T any](v Value) (T, error)             // Java → Go, copy; T = string, []byte, []E, map[K]V, numeric, bool, Value
+func Func[F any](v Value) (F, error)           // Java lambda / functional interface → Go func of type F
+
+// Throwable is the Go error for a Java exception.
+type Throwable struct{ … }
+func (t *Throwable) Error() string             // class name + ": " + message
+func (t *Throwable) Message() string
+func (t *Throwable) JavaStack() []string
+func (t *Throwable) Unwrap() error             // cause, as *Throwable, or nil
+func (t *Throwable) Value() Value              // the exception object
+```
+
+- Each body-less function is an intrinsic node using
+  `@CachedLibrary(limit = "3") InteropLibrary`; `Class` uses
+  `env.lookupHostSymbol`, host objects are recognized with `env.isHostObject`
+  and unwrapped only inside the runtime (`env.asHostObject`) where a Java type
+  is required (`As[[]byte]` on a host `byte[]`).
+- `As` and `Func` are generic functions; under the toolexec design's run-time
+  instantiation (D6) each instantiation gets its own tree, so the target Go
+  type is a PE constant in the conversion node. `Func[F]` builds a `GoFunc`
+  whose target is a thunk that converts arguments, calls
+  `InteropLibrary.execute` and converts the result; a Java exception becomes
+  the trailing `error` result if `F` has one, else a panic with the
+  `*Throwable` (the one place a Java exception can surface as a panic, because
+  the Go signature gives it nowhere else to go; documented).
+- Go `func` → Java: `java.Of(f)` is the `GoFunc` itself; `HostAccess` lets the
+  host coerce an executable to a functional interface.
+- Typed bindings (`graalgo java-bind java.util.ArrayList` generating Go
+  wrapper types over `Value`) are build-time code generation and need no
+  runtime support beyond the above; later work.
+
+### 5.6 Host access policy
+
+SPEC §4.3: "Host access defaults to `SCOPED`-like scoping, never `ALL`."
+`HostAccess.SCOPED` is explicit-annotation access plus scoped callback
+parameters: a Go program could then call only methods annotated
+`@HostAccess.Export`, which no JDK class is. Proposed reading (amendment A4):
+
+- **Embedded** (`Context` created by a Java application): the embedder's
+  `HostAccess` is used as given; the documented recommendation and the
+  default in graalgo's own embedding helpers is `SCOPED`. `java.Class` fails
+  with `ErrHostAccess` unless `allowHostClassLookup` permits the class.
+- **Standalone** (`go run`, a built executable): the program is as trusted as
+  any Go binary. If and only if the bundle's manifest records an import of
+  `graalgo/java`, the launcher enables host class lookup and a `HostAccess`
+  built from `SCOPED` with public access to an allow-list of packages
+  (default `java.*`, `javax.*`; extended by a launcher flag). Programs that do
+  not import the package get no host access at all.
+
+This needs the owner's decision because it relaxes "never `ALL`" for
+standalone programs in substance if not in name.
