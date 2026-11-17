@@ -68,7 +68,7 @@ Evidence labels used throughout:
 
 ### 0.3 What the prototype established
 
-A 450-line standalone language (not in the repository; §13.1) compiled with
+A 500-line standalone language (not in the repository; §13.1) compiled with
 `javac -Xlint:deprecation -Werror` against the pinned jars and run on the
 pinned JDK shows `[PROTO]`:
 
@@ -529,8 +529,8 @@ design §3.1). `exactDecimal()` and the `UNTYPED_*` kinds disappear from nodes.
   default: no sharing, simpler debugging).
 - Slots are accessed with the kind-specific accessors (`getLong`/`setLong`,
   …). Because kinds never change, the `FrameSlotTypeException` path is dead
-  code; nodes do not catch it (H1-style `catch` blocks around frame reads, as
-  in today's root nodes, go away). `[JAR]` Truffle also offers *static* slots
+  code; nodes do not catch it (the `catch` blocks around frame reads in
+  today's root nodes go away). `[JAR]` Truffle also offers *static* slots
   (`FrameSlotKind.Static`, `getLongStatic`/`setLongStatic`, …), which skip the
   tag byte entirely and are intended for statically typed languages. They are
   a later optimization: the debugger's default frame views read tagged slots,
@@ -1263,10 +1263,9 @@ verifiable offline.
 
 Mechanics: `StmtNode` and `ExprNode` implement `InstrumentableNode` and are
 annotated `@GenerateWrapper`; `isInstrumentable()` is `position != NONE`;
-`hasTag` is a table lookup on a per-class tag mask. The generated
-`WrapperNode` for the typed families delegates each typed `execute*` method
-(`@GenerateWrapper` supports this through the `@InstrumentableNode` execute
-signatures; each family base class gets its own wrapper). Wrappers are inserted
+`hasTag` is a table lookup on a per-class tag mask. `@GenerateWrapper` generates a wrapper that delegates every `execute*`
+method of the annotated class, so each typed family base class gets its own
+wrapper and keeps its primitive return type. Wrappers are inserted
 lazily by the instrumentation framework: an uninstrumented program has none,
 so tags cost one `int` per node class.
 
@@ -1850,7 +1849,7 @@ Style guide for a node class (what "born idiomatic" means in review):
 
 ### 13.1 Done in this lane
 
-A standalone language (five source files, ~450 lines) outside the repository,
+A standalone language (five source files, ~500 lines) outside the repository,
 in the session scratchpad
 (`/tmp/claude-1000/-home-cafxx-dev-graalgo/695032aa-7918-4687-abb5-5d96a0af48b1/scratchpad/truffle/`,
 not durable). It was compiled with the pinned jars and
