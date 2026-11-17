@@ -6,11 +6,14 @@ import graalgo.frontend.GoFieldCell;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.p3reflect.AbiTypes;
+import graalgo.p3reflect.MapHeaderView;
 import graalgo.p3reflect.ReflectTypes;
 import graalgo.p3reflect.ReflectValues;
+import graalgo.values.GoByteCell;
 import graalgo.values.GoCell;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
 import graalgo.values.UnsafeHandles;
@@ -62,6 +65,23 @@ import java.util.List;
  * Targets whose layout does not fit keep the pre-view behavior
  * exactly.
  *
+ * <p>fix-redmaster-r59 (maps.Map header view): when the target struct's
+ * field layout fits the {@code internal/runtime/maps.Map} header shape
+ * (see {@link #captureMapHeaderTarget} — nine fields at fixed offsets
+ * with header classes, type-directed only) and the resolved referent
+ * is a live {@link GoMap}, the node returns a pointer to the header
+ * struct materialized by {@link MapHeaderView} instead of a pointer to
+ * the map itself. Without this, {@code (*maps.Map)(mptr)} in real
+ * {@code reflect/map.go} dereferenced the {@code GoMap} and died
+ * casting it to {@code GoStruct}. Targets whose layout does not fit,
+ * and non-map referents, keep the pre-view behavior exactly.
+ *
+ * <p>fix-redmaster-r59 (sub-word reads): when a byte offset lands
+ * strictly inside a Long-carried scalar field and the target is one
+ * byte, the node mints a {@link GoByteCell} over the field cell, so
+ * {@code *(*ctrl)(unsafe.Add(unsafe.Pointer(g), k))} reads byte
+ * {@code k} of the ctrlGroup word (the maps iteration fast path).
+ *
  * <p>fix-redmaster-r40 (prefix views): when the target is a named
  * struct and the resolved referent is a struct of the target's
  * embedded field-0 type (or a wrapper whose field 0 is the target
@@ -89,6 +109,12 @@ public final class UnsafeToPtrNode extends GoExprNode {
 
     /** Qualified name of the header-view target struct, or null when no header view applies. */
     private final String headerQName;
+
+    /**
+     * Qualified name of the maps.Map header-view target struct, or null
+     * when the target does not have the header layout (fix-redmaster-r59).
+     */
+    private final String mapHeaderQName;
 
     /** Prefix-view target (target qname + field-0 embedded qname), or null. */
     private final PrefixTarget prefixTarget;
@@ -135,12 +161,13 @@ public final class UnsafeToPtrNode extends GoExprNode {
             List<AbiTypes.ViewField> viewLayout, String headerQName,
             PrefixTarget prefixTarget, long elemSize, int targetElemWireId,
             List<AbiTypes.ViewField> ifaceLayout, boolean ptrToPtr,
-            PrefixTarget ptrToPtrTarget) {
+            PrefixTarget ptrToPtrTarget, String mapHeaderQName) {
         super(GoKind.POINTER);
         this.child = child;
         this.targetQName = targetQName;
         this.viewLayout = viewLayout;
         this.headerQName = headerQName;
+        this.mapHeaderQName = mapHeaderQName;
         this.prefixTarget = prefixTarget;
         this.elemSize = elemSize;
         this.targetElemWireId = targetElemWireId;
@@ -175,6 +202,16 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 Object fieldPtr = continuedFieldPointer(resolved, view.byteOffset());
                 if (fieldPtr != null) {
                     return fieldPtr;
+                }
+                // fix-redmaster-r59: a byte offset into a Long-carried
+                // scalar field cell (e.g. byte k of a ctrlGroup word)
+                // with a one-byte target denotes that byte: mint a
+                // GoByteCell over the field cell. Wider targets and
+                // non-Long cells keep the existing loud derivation
+                // failure below.
+                Object bytePtr = byteCellPointer(resolved, view.byteOffset());
+                if (bytePtr != null) {
+                    return bytePtr;
                 }
                 return derivedPointer(resolved, view.byteOffset());
             }
@@ -239,6 +276,15 @@ public final class UnsafeToPtrNode extends GoExprNode {
             if (gi != null) {
                 return UnsafeTable.pointerFor(new graalgo.values.GoBox(gi));
             }
+        }
+        if (mapHeaderQName != null && storedValue(resolved) instanceof GoMap gm) {
+            // fix-redmaster-r59: the target struct has the maps.Map
+            // header layout (captured at build time) and the referent is
+            // a live GoMap — return a pointer to the materialized header
+            // so the guest's own header-field reads land on a real
+            // struct. Other referents keep the pre-view behavior exactly
+            // (a genuine header struct converts by identity below).
+            return new GoPointer(MapHeaderView.build(gm));
         }
         if (strictField) {
             throw new UnsafeHandles.UnsafeEscapeException(
@@ -611,6 +657,38 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 }
                 return structFieldAt(nestedStruct, byteOffset - f.offset);
             }
+            // fix-redmaster-r59: an offset strictly inside an
+            // array-of-struct field descends into the addressed element
+            // (element index = rel / elemSize, remainder recursed) —
+            // gc flat memory again, for the group image's slots array:
+            // group.key(i) / group.elem(i) form
+            // add(groupPtr, slotsOff + i*slotSize + fieldOff).
+            if (f.type.kind == GoKind.ARRAY && f.type.elem != null
+                    && f.type.elem.kind == GoKind.STRUCT && f.type.elem.size > 0
+                    && byteOffset > f.offset
+                    && byteOffset < f.offset + f.type.size) {
+                int ord = f.index[0];
+                if (ord < 0 || ord >= gs.descriptor().fields().size()
+                        || !gs.descriptor().field(ord).name().equals(f.name)) {
+                    return null;
+                }
+                Object arr = ReflectValues.structFieldGet(gs, ord, GoKind.ARRAY);
+                if (arr == null) {
+                    return null;
+                }
+                long rel = byteOffset - f.offset;
+                long elemSize = f.type.elem.size;
+                long idx = rel / elemSize;
+                long rem = rel % elemSize;
+                if (idx < 0 || idx >= f.type.arrayLen) {
+                    return null;
+                }
+                Object elem = java.lang.reflect.Array.get(arr, (int) idx);
+                if (!(elem instanceof GoStruct elemStruct)) {
+                    return null;
+                }
+                return structFieldAt(elemStruct, rem);
+            }
         }
         return null;
     }
@@ -894,6 +972,7 @@ public final class UnsafeToPtrNode extends GoExprNode {
         }
         ViewTarget target = captureViewTarget(ctx, typeId);
         String headerQName = captureHeaderTarget(ctx, typeId);
+        String mapHeaderQName = captureMapHeaderTarget(ctx, typeId);
         PrefixTarget prefixTarget = capturePrefixTarget(ctx, typeId);
         int targetElemWireId = -1;
         boolean ptrToPtr = false;
@@ -915,7 +994,8 @@ public final class UnsafeToPtrNode extends GoExprNode {
                 targetElemWireId,
                 captureIfaceTarget(ctx, typeId),
                 ptrToPtr,
-                ptrToPtrTarget);
+                ptrToPtrTarget,
+                mapHeaderQName);
         n.setTypeId(typeId);
         return n;
     }
@@ -1248,6 +1328,138 @@ public final class UnsafeToPtrNode extends GoExprNode {
         }
         String bclass = e.object("detail", path).string("class", path);
         return "int".equals(bclass) || "uint".equals(bclass);
+    }
+
+    /**
+     * Captures the maps.Map header-view target (fix-redmaster-r59), or
+     * null when the target is not a header-shaped struct. The target
+     * must be a pointer to a named struct with exactly nine fields at
+     * offsets 0, 8, 16, 24, 32, 33, 34, 35, 40 with classes uint, uint,
+     * data, int, uint, uint, uint, bool, uint — the
+     * {@code internal/runtime/maps.Map} header layout (used, seed,
+     * dirPtr, dirLen, globalDepth, globalShift, writing,
+     * tombstonePossible, clearSeq). Classification is by layout only
+     * (the r40 header-view precedent): no package name is consulted,
+     * so an identically-shaped user struct converts identically — in
+     * gc it would read the same header bytes. The qualified name is
+     * returned only so the header view's descriptor resolves via the
+     * real type.
+     */
+    private static String captureMapHeaderTarget(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "unsafetooptr.fields.type";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            return null;
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        Json.Object e = ctx.types.entry(elemId, path);
+        String qname = null;
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            qname = e.object("detail", path).string("name", path);
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"struct".equals(e.string("kind", path)) || qname == null) {
+            return null;
+        }
+        Json.Array fields = e.object("detail", path).array("fields", path);
+        if (fields.size() != 9) {
+            return null;
+        }
+        long[] wantOffsets = {0, 8, 16, 24, 32, 33, 34, 35, 40};
+        for (int i = 0; i < 9; i++) {
+            Json.Value fv = fields.get(i);
+            if (!(fv instanceof Json.Object fo)) {
+                return null;
+            }
+            if (fo.longInt("offset", path) != wantOffsets[i]) {
+                return null;
+            }
+            int ftype = fo.intValue("type", path);
+            boolean fits = switch (i) {
+                case 0, 1, 4, 5, 6, 8 -> isUintWordField(ctx, ftype, path);
+                case 2 -> isDataWordField(ctx, ftype, path);
+                case 3 -> isIntWordField(ctx, ftype, path);
+                case 7 -> isBoolWordField(ctx, ftype, path);
+                default -> false;
+            };
+            if (!fits) {
+                return null;
+            }
+        }
+        return qname;
+    }
+
+    /**
+     * Whether a wire type is a uint word: a basic uint-class type
+     * (named wrappers unwrapped first). Covers uint64/uint8/uintptr
+     * (uintptr's class is uint).
+     */
+    private static boolean isUintWordField(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        Json.Object e = ctx.types.entry(typeId, path);
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"basic".equals(e.string("kind", path))) {
+            return false;
+        }
+        return "uint".equals(e.object("detail", path).string("class", path));
+    }
+
+    /**
+     * Whether a wire type is a bool word: a basic bool-class type
+     * (named wrappers unwrapped first).
+     */
+    private static boolean isBoolWordField(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        Json.Object e = ctx.types.entry(typeId, path);
+        for (int step = 0; step < 32; step++) {
+            if (!"named".equals(e.string("kind", path))) {
+                break;
+            }
+            int underlying = e.object("detail", path).intValue("underlying", path);
+            e = ctx.types.entry(underlying, path);
+        }
+        if (!"basic".equals(e.string("kind", path))) {
+            return false;
+        }
+        return "bool".equals(e.object("detail", path).string("class", path));
+    }
+
+    /**
+     * A byte pointer into a Long-carried scalar field cell
+     * (fix-redmaster-r59): when the resolved referent (after unwrapping
+     * storage cells) is a {@link GoCell} holding a Long and the target
+     * element is one byte, byte {@code byteOffset} of that long is the
+     * addressed storage — return a {@link GoByteCell} pointer over it.
+     * Returns null when the shape does not match (the caller keeps its
+     * existing loud derivation failure) or the target is wider than one
+     * byte (sub-word multi-byte reads are not minted).
+     */
+    private Object byteCellPointer(Object referent, long byteOffset) {
+        if (elemSize != 1 || byteOffset <= 0 || byteOffset >= 8) {
+            return null;
+        }
+        Object root = referent;
+        while (true) {
+            if (root instanceof GoCell cell) {
+                Object v = cell.get();
+                if (!(v instanceof Number)) {
+                    return null;
+                }
+                return new GoPointer(new GoByteCell(cell, (int) byteOffset));
+            } else if (root instanceof graalgo.p3reflect.ReflectRefs.Cell rc) {
+                root = rc.value;
+            } else {
+                return null;
+            }
+        }
     }
 
     /** Classifies one target field as an interface word, or null if it is not one. */

@@ -145,3 +145,12 @@ design (r59-evidence/DESIGN.md).
   (internal/runtime/sys/intrinsics.go) — verify empirically via tests.
 - `Key.Equal` is called ONLY on the grown path (table.go ~913), which
   never fires for images; AbiTypes fills a real Equal func value anyway.
+
+## Addendum — dirPtr shape (2026-11-17 ~03:10 CET, during implementation)
+
+Item 8 as written says dirPtr is always the groups array. CORRECTED:
+real Go `Iter.Init` does `groupSmall.data = m.dirPtr` for small maps
+(`table.go:750-753`), so a small map's dirPtr points DIRECTLY at the
+single group struct. Large maps: dirPtr → the directory array.
+MapHeaderView implements the faithful shapes (small: handle of the group
+struct; large: handle of the Object[] directory of *table pointers).

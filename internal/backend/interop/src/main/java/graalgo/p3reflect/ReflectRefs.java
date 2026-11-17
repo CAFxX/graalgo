@@ -276,6 +276,36 @@ public final class ReflectRefs {
             GoSlice slice = (GoSlice) denotedValue(sr.base(), GoKind.SLICE);
             return ReflectValues.arrayGet(slice.array(), kind, slice.offset() + sr.index());
         }
+        if (ref instanceof UnsafeTable.ByteRef) {
+            // fix-redmaster-r59: a ByteRef into a struct denotes the
+            // field at that byte offset for ANY kind (gc flat memory),
+            // not just scalars — the maps iteration fast path reads
+            // group.key(i)/group.elem(i) (struct, string, interface,
+            // ...) through byte-derived pointers, and the old
+            // scalar-only gate left those denoted as the ByteRef
+            // itself. Non-struct roots keep the scalar-only array
+            // walk below (a non-scalar kind over a non-struct root
+            // denotes nothing readable and falls through to deref).
+            UnsafeTable.ResolvedView view = UnsafeTable.current().resolveView(handle);
+            Object root = view.root();
+            if (root instanceof Cell c) {
+                root = c.value;
+            } else if (root instanceof graalgo.values.GoCell gc) {
+                root = gc.get();
+            }
+            if (root instanceof GoStruct gs) {
+                // A ByteRef into a struct denotes the field at
+                // that byte offset (gc flat memory; reflect
+                // Field reads): the array walk below cannot read
+                // it and traps as a non-array root (snapshot
+                // 11/20: main.Point + 8 = field Y).
+                return readStructFieldAt(gs, view.byteOffset(), kind);
+            }
+            if (isScalarKind(kind)) {
+                return readScalarAt(view.root(), view.byteOffset(), kind);
+            }
+            return deref(ref);
+        }
         if (isScalarKind(kind)) {
             // fix-redmaster-r43: a handle denoting array storage read as
             // a scalar kind denotes the scalar at that address, not the
@@ -290,24 +320,6 @@ public final class ReflectRefs {
             // this walk replaces). Aggregate kinds and non-array roots
             // pass through unchanged (struct descent stays with
             // loadOffsetZero's own loop).
-            if (ref instanceof UnsafeTable.ByteRef) {
-                UnsafeTable.ResolvedView view = UnsafeTable.current().resolveView(handle);
-                Object root = view.root();
-                if (root instanceof Cell c) {
-                    root = c.value;
-                } else if (root instanceof graalgo.values.GoCell gc) {
-                    root = gc.get();
-                }
-                if (root instanceof GoStruct gs) {
-                    // A ByteRef into a struct denotes the field at
-                    // that byte offset (gc flat memory; reflect
-                    // Field reads): the array walk below cannot read
-                    // it and traps as a non-array root (snapshot
-                    // 11/20: main.Point + 8 = field Y).
-                    return readStructFieldAt(gs, view.byteOffset(), kind);
-                }
-                return readScalarAt(view.root(), view.byteOffset(), kind);
-            }
             if (ref instanceof UnsafeTable.ArrayRef ar) {
                 return readScalarAtElement(ar.array(), ar.offset(), kind);
             }
@@ -345,6 +357,13 @@ public final class ReflectRefs {
     private static Object readStructFieldAt(GoStruct gs, long byteOffset, GoKind kind) {
         ReflectTypes.TypeInfo info = ReflectTypes.infoForName(gs.descriptor().typeName());
         if (info == null) {
+            // fix-redmaster-r59: unnamed structs (including the
+            // synthesized group/slot structs, whose descriptor name is
+            // the structural rendering) recover via typeString match
+            // (the r43 precedent in UnsafeToPtrNode.structFieldAt).
+            info = ReflectTypes.infoForStructString(gs.descriptor().typeName());
+        }
+        if (info == null) {
             throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                     "reflect: cannot read scalar at byte offset " + byteOffset
                             + " of unnamed struct " + gs.descriptor().typeName() + " (D5)");
@@ -361,8 +380,62 @@ public final class ReflectRefs {
                 if (fv instanceof GoStruct nested) {
                     return readStructFieldAt(nested, byteOffset - f.offset, kind);
                 }
+                // fix-redmaster-r59: an offset strictly inside an
+                // array-of-struct field descends into the addressed
+                // element (index = rel / elemSize, remainder recursed)
+                // — gc flat memory, for the group image's slots array.
+                // The generic array walk below cannot read struct
+                // elements (it only descends nested arrays), so this
+                // branch must come first.
+                if (fv instanceof Object[] oa && f.type.elem != null
+                        && f.type.elem.kind == GoKind.STRUCT && f.type.elem.size > 0) {
+                    long rel = byteOffset - f.offset;
+                    long idx = rel / f.type.elem.size;
+                    long rem = rel % f.type.elem.size;
+                    if (idx < 0 || idx >= oa.length) {
+                        throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                                "reflect: array-of-struct element index " + idx + " out of range [0, "
+                                        + oa.length + ") (D5)");
+                    }
+                    Object elem = oa[(int) idx];
+                    if (!(elem instanceof GoStruct elemStruct)) {
+                        throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
+                                "reflect: array-of-struct element " + idx + " is not a struct (D5)");
+                    }
+                    return readStructFieldAt(elemStruct, rem, kind);
+                }
                 if (fv != null && fv.getClass().isArray()) {
                     return readScalarWalk(fv, byteOffset - f.offset, kind);
+                }
+                // fix-redmaster-r59: a byte offset strictly inside a
+                // Long-carried scalar field denotes a sub-word of that
+                // field (gc flat memory) — extract the bytes the target
+                // kind covers instead of trapping. The ctrlGroup byte
+                // read (*(*ctrl)(unsafe.Add(unsafe.Pointer(g), k)))
+                // is exactly this shape (byte k of the uint64 ctrl
+                // word). Non-Long-carried fields and out-of-word
+                // targets keep the loud failure below.
+                if (gs.descriptor().field(f.index[0]).inLongs()) {
+                    long rel = byteOffset - f.offset;
+                    long es = elemSize(kind);
+                    if (es > 0 && rel >= 0 && rel + es <= 8) {
+                        long bits = gs.getLong(f.index[0]);
+                        long mask = es == 8 ? -1L : (1L << (8 * es)) - 1;
+                        long extracted = (bits >> (8 * rel)) & mask;
+                        return switch (kind) {
+                            case INT8 -> Integer.valueOf((int) (byte) extracted);
+                            case INT16 -> Integer.valueOf((int) (short) extracted);
+                            case INT32, UINT8, UINT16, UINT32 -> Integer.valueOf((int) extracted);
+                            case INT64, UINT64 -> Long.valueOf(extracted);
+                            case FLOAT32 -> Float.valueOf(Float.intBitsToFloat((int) extracted));
+                            case FLOAT64 -> Double.valueOf(Double.longBitsToDouble(extracted));
+                            case BOOL -> Boolean.valueOf(extracted != 0);
+                            default -> throw new graalgo.values.UnsafeHandles
+                                    .UnsafeEscapeException("reflect: byte offset " + byteOffset
+                                            + " inside non-aggregate field " + f.name
+                                            + " of struct " + info.name + " (D5)");
+                        };
+                    }
                 }
                 throw new graalgo.values.UnsafeHandles.UnsafeEscapeException(
                         "reflect: byte offset " + byteOffset + " inside non-aggregate field "

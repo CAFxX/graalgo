@@ -933,6 +933,22 @@ public final class ReflectLinknames {
             if (view.byteOffset() == 0) {
                 return loadOffsetZero(h, t, symbol);
             }
+            // fix-redmaster-r59: a byte-offset view of a struct root
+            // denotes the field at that offset (gc flat memory) — the
+            // maps iteration fast path (group.key(i)/group.elem(i)
+            // through byte-derived pointers). Route it through
+            // denotedValue, which resolves ByteRef-over-GoStruct for
+            // any kind; array roots keep the element-index path below
+            // (arrayRoot still traps loudly for anything else).
+            Object root = view.root();
+            if (root instanceof graalgo.values.GoCell gc) {
+                root = gc.get();
+            } else if (root instanceof ReflectRefs.Cell rc) {
+                root = rc.value;
+            }
+            if (root instanceof GoStruct) {
+                return ReflectRefs.denotedValue(h, t.kind);
+            }
             return ReflectValues.arrayGet(arrayRoot(view, symbol), t.kind,
                     elementIndex(view, t, symbol));
         }
