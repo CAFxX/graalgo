@@ -66,9 +66,9 @@ backends[0] (the reference); `run` compares every backend against the first.
 |---|---|---|---|
 | `gc-a` | `{GO}/bin/go build -o {BIN} {SRC}` | `{BIN}` | reference backend |
 | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
-| `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | [backends-p3.json](backends-p3.json): product launcher `${PHASE3_DIR}/graalgo-sync-run` (P3SyncMain); [backends.json](backends.json): phase-1 `graalgo-run` (`batch: true`, typeparam adapter) |
+| `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | [backends-p3.json](backends-p3.json): product launcher `${GRAALGO_BACKEND_DIR}/graalgo-sync-run` (P3SyncMain); [backends.json](backends.json): phase-1 `graalgo-run` (`batch: true`, typeparam adapter) |
 
-`PHASE3_DIR` defaults to `<repo>/internal/backend` in the Makefile and
+`GRAALGO_BACKEND_DIR` defaults to `<repo>/internal/backend` in the Makefile and
 scripts. JVM backends declare `noiseSets: ["jvm"]`: one harness-owned
 definition of JVM stderr noise (Unsafe deprecation and HotSpot VM
 warnings). `diffharness run -backends gc-a,gc-b` selects backends.

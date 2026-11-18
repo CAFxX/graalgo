@@ -1,0 +1,40 @@
+{
+ "placeholder": {
+  ".github/scripts/check_no_bridges.py": 2,
+  "internal/frontend/gen_synth_archive_mime.py": 1,
+  "internal/frontend/p3frontend/synth_time_context.go": 1,
+  "internal/frontend/p3frontend/timecontext_test.go": 1,
+  "internal/frontend/synth_archive_tar.go": 6,
+  "internal/frontend/synth_bytes.go": 2,
+  "internal/frontend/synth_compress_bzip2.go": 1,
+  "internal/frontend/synth_compress_lzw.go": 1,
+  "internal/frontend/synth_crypto_tls.go": 1,
+  "internal/frontend/synth_math.go": 1,
+  "internal/frontend/synth_math_big.go": 24,
+  "internal/frontend/synth_mime.go": 1,
+  "internal/frontend/synth_mime_multipart.go": 3,
+  "internal/frontend/synth_regexpsyntax.go": 2,
+  "internal/frontend/synth_slices.go": 1,
+  "internal/frontend/synth_strconv.go": 1,
+  "internal/frontend/synth_time_context.go": 1,
+  "internal/frontend/synth_unicode.go": 1,
+  "internal/frontend/synth_xml.go": 1,
+  "internal/frontend/v2/emit/emit.go": 1
+ },
+ "unimplemented": {
+  "internal/backend/interop/src/main/java/graalgo/p3link/Synctest.java": 2,
+  "internal/backend/interop/src/main/java/graalgo/p3reflect/ReflectLinknames.java": 1,
+  "internal/backend/truffle/src/main/java/graalgo/frontend/CapNode.java": 1,
+  "internal/backend/truffle/src/main/java/graalgo/frontend/LenNode.java": 1,
+  "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java": 5,
+  "internal/backend/truffle/src/main/java/graalgo/frontend/TypeAssertNode.java": 1,
+  "internal/backend/truffle/src/main/java/graalgo/frontend/UnimplementedRootNode.java": 3,
+  "internal/frontend/diskimport.go": 1,
+  "internal/frontend/export.go": 4,
+  "internal/frontend/mr_disk.go": 1,
+  "internal/frontend/synth_bytealg.go": 1,
+  "internal/frontend/synth_mathrandv2.go": 1,
+  "internal/frontend/synth_reflect.go": 5,
+  "internal/frontend/synth_syscall.go": 1
+ }
+}

@@ -143,7 +143,7 @@ stock gc). GG-0013/GG-0044 stay **locked** per PLAN.md.
 are differential-green on the arithmetic corpus, verified by
 `ArithmeticCorpusTest` + `ValuesTest` (`// verifies: GG-0015`). The D8
 `Safepoint.poll()` seam is in place at function entries (no-op in
-Phase 1; signature frozen in `docs/freeze-stub.md`).
+Phase 1; signature frozen in `docs/spec/freeze-stub.md`).
 
 **GG-0019 active** (2026-10-04, M5): defer/panic/recover/Goexit are
 differential-green on the 20-program panic corpus, verified by

@@ -247,8 +247,7 @@ func (c *config) gate(copyDir, dh, programs string) (string, string) {
 	cmd := exec.Command("nice", args...)
 	cmd.Dir = dhDir
 	cmd.Env = append(os.Environ(),
-		"PHASE3_DIR="+filepath.Join(copyDir, "internal/backend"),
-		"PHASE1_DIR="+filepath.Join(copyDir, "internal/backend"),
+		"GRAALGO_BACKEND_DIR="+filepath.Join(copyDir, "internal/backend"),
 		"TMPDIR="+tmp, "GOTMPDIR="+tmp,
 		"GRAALGO_JAVA_OPTS="+c.javaOpts,
 		"GRAALGO_GOFRONTEND="+filepath.Join(copyDir, "internal/frontend/gofrontend"))

@@ -37,7 +37,7 @@ python3 tools/validate_frontend_v1.py --selftest                 # validator sel
 ```
 
 Regenerating goldens after an *intentional* wire change (must ship with a
-[`docs/frontend-v1.md`](../../docs/arch/frontend-v1.md) update in
+[`docs/arch/frontend-v1.md`](../../docs/arch/frontend-v1.md) update in
 the same change):
 
 ```sh

@@ -9,7 +9,7 @@ routes through graalgo's Truffle backend.
 make graalgo
 ```
 
-This produces `./graalgo` in the repo root.
+This produces the `graalgo` binary in the repo root (gitignored).
 
 ## Usage
 

@@ -7,10 +7,10 @@
 ```bash
 # From the repo root:
 make fast-build                    # incremental compile of changed Java files
-make fast-run GO=path/to/file.go   # compile + run a Go program
+make fast-run PROG=path/to/file.go   # compile + run a Go program
 make fast-test TEST=com.foo.Bar    # compile + run a Java test class
 make fast-test TEST=com.foo.Bar METHOD=testX  # single test method
-make fast-watch GO=path/to/file.go # rebuild + rerun on file change
+make fast-watch PROG=path/to/file.go # rebuild + rerun on file change
 ```
 
 Or directly:

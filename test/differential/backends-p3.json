@@ -59,7 +59,7 @@
         "{SRC}"
       ],
       "vars": {
-        "GRAALGO_RUN": "${PHASE3_DIR}/graalgo-sync-run"
+        "GRAALGO_RUN": "${GRAALGO_BACKEND_DIR}/graalgo-sync-run"
       }
     }
   ],

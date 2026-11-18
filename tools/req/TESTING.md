@@ -113,7 +113,7 @@ always fails, even for root.
 ## Scan contract for `*_test.go` files
 
 Deliberate product decision (2026-10-01, documented in
-`docs/requirements-registry.md`): **in `*_test.go` files the scanner
+the upstream momo requirements-registry doc, not carried over): **in `*_test.go` files the scanner
 collects only `verifies: MM-XXXX` annotations** (`kind=verifies`).
 Plain ID mentions are skipped and rule-(d) sloppy-format checks are
 skipped there.

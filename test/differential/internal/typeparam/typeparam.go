@@ -553,7 +553,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 			graalgoRun = cmd[0]
 		}
 	}
-	// Expand vars in graalgoRun (it may contain ${PHASE3_DIR} etc.).
+	// Expand vars in graalgoRun (it may contain ${GRAALGO_BACKEND_DIR} etc.).
 	// For now, use the rendered build command's first token and replace
 	// --check {SRC} with --batch <file>.
 	buildCmd := alt.RenderBuild("/tmp/placeholder-src", "/tmp/placeholder-bin")
