@@ -67,7 +67,13 @@ jobs:
 
       - name: Conformance differential (GOROOT/test vs gc)
         # actions/setup-go ships a full GOROOT including test/.
+        # GRAALGO_JAVA_OPTS: the same fixed JVM heap as the local triage
+        # runs that pinned srctest-exclusions.yaml. Heap-sensitive programs
+        # (init1.go reads runtime.MemStats; graalgo's heap growth follows
+        # the JVM max heap, not GOGC — BUG-0025) otherwise diverge only on
+        # the runner's larger default heap (1/4 of RAM).
         env:
           DH_TIMEOUT: "90"
           JOBS: "4"
+          GRAALGO_JAVA_OPTS: "-Xmx2g"
         run: ./test/differential/run_conformance.sh

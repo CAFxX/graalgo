@@ -21,134 +21,314 @@
 #       (SPEC §5.6 reserves that code for behavior gc leaves to the
 #       implementation): recoded `deferred-parity`, each citing its bug id
 #       in docs/dev/bugs.md.
-version: 3
+#   4 (2026-11-18, ci-green lane): full triage of the first complete run
+#       (CI: 69 unexpected). Harness artifacts fixed in the adapter (action
+#       lines: // skip, // compile, // build, // run args, GOROOT/test cwd;
+#       stable {WORK}/{VAR} divergence texts); structural backend fixes
+#       (named chan types, chan ==, send boxing) made 235.go, chancap.go,
+#       convT2X.go, named.go, struct0.go, typeswitch.go match; 14 stale
+#       entries pruned. Every remaining entry cites a docs/dev/bugs.md id
+#       (deferred-parity) or the spec clause leaving the behavior to the
+#       implementation (unspecified-behavior), and pins the divergence
+#       signature except where the text is not reproducible (timings,
+#       timestamps). Local run: JOBS=1, -Xmx2g.
+version: 4
 exclusions:
 - file: append.go
   reason: deferred-parity
-  detail: graalgo build crash under P3SyncMain - IllegalArgumentException 'illegal conversion INT64 -> STRUCT'
-- file: chancap.go
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: java.lang.IllegalArgumentException: illegal conversion: INT64 -> STRUCT
+  signature: e36fd44e7ec872c5
+- file: blank.go
   reason: deferred-parity
-  detail: graalgo build fails - 'makechan type must be a chan, got named' (named channel types)
-- file: cmp.go
-  reason: deferred-parity
-  detail: graalgo build crash - 'illegal binary op/kind combination EQ operand=CHAN' (channel equality)
-- file: 235.go
-  reason: deferred-parity
-  detail: BUG-0002: named result assignment frontend bug (reference to unknown object id)
-- file: bigmap.go
-  reason: deferred-parity
-  detail: BUG-0008: map key of kind ARRAY not supported in Phase 1
+  detail: BUG-0022 (struct == compares blank fields); observed: stderr differs at line 1: ref="" alt="panic: T{} != T{}"
+  signature: 81115017ba2af5b0
 - file: closure2.go
   reason: deferred-parity
-  detail: BUG-0001: range variable *ast.IndexExpr not in frontend/v1 scope (WS D)
+  detail: BUG-0001: range variable *ast.IndexExpr not in frontend/v1 scope (WS D); observed: range variable *ast.IndexExpr is not supported in frontend/v1 scope
+  signature: 4f8b9c74d317909d
+- file: cmp.go
+  reason: deferred-parity
+  detail: BUG-0019 (runtime ClassCastException); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class graalgo.values.GoString cann
+  signature: 5ffaef36395a48eb
 - file: complit2.go
   reason: deferred-parity
-  detail: BUG-0001: frontend scope gap (composite literal)
-- file: const3.go
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: complit.fields: no such struct field "b" (WS E)
+  signature: 7d258102afa13367
+- file: const4.go
   reason: deferred-parity
-  detail: BUG-0001: const type info propagation gap
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: cap of POINTER is not implemented (WS G); channels are Phase 2
+  signature: eb9aa24c3ee188a9
+- file: const7.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/const7.go/main.go:17:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/src/o
+  signature: 0ed01a7e95b37808
 - file: convert4.go
   reason: deferred-parity
-  detail: BUG-0001: frontend type error (conversion scope gap)
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: java.lang.IllegalArgumentException: illegal conversion: SLICE -> ARRAY
+  signature: b3af6eef84c7786e
 - file: convert5.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend type error (conversion scope gap)
+  reason: unspecified-behavior
+  detail: Go spec (Conversions): out-of-range non-constant float->integer conversion is implementation-dependent; the test pins gc's amd64 result under -d=converthash (minus1_32 -> uint)
+  signature: ae59b5d16339f8a8
+- file: convinline.go
+  reason: unspecified-behavior
+  detail: Go spec (Conversions): a non-constant float->integer conversion whose value is out of range has an implementation-dependent result; the generated program pins gc's amd64 values (float32_to_uint(-1.5))
+  signature: 1ba752111f0897dd
 - file: ddd.go
   reason: deferred-parity
-  detail: BUG-0001: method call on non-named receiver (WS H)
-- file: devirt.go
+  detail: BUG-0001: method call on non-named receiver (WS H); observed: identifier "T" denotes *types.TypeName
+  signature: 896a0c06d0331132
+- file: deferfin.go
   reason: deferred-parity
-  detail: BUG-0001: ifacemethod expression kind not supported
-- file: divmod.go
-  reason: deferred-parity
-  detail: BUG-0001: multi-valued call result not in frontend/v1 scope (WS D)
-- file: func.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend scope gap
-- file: func6.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend scope gap
-- file: inline_caller.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend type error (inlining scope)
-- file: inline_callers.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend type error (inlining scope)
-- file: method.go
-  reason: deferred-parity
-  detail: BUG-0001: method call on non-named receiver struct{main.T} (WS H)
-- file: method3.go
-  reason: deferred-parity
-  detail: BUG-0001: identifier T denotes *types.TypeName (method scope)
-- file: method5.go
-  reason: deferred-parity
-  detail: BUG-0001: interface method with 2 results not supported
-- file: method7.go
-  reason: deferred-parity
-  detail: BUG-0001: method expression via interface not supported
-- file: nilptr.go
-  reason: deferred-parity
-  detail: BUG-0001: & on *ast.ParenExpr not in frontend/v1 scope (WS D)
-- file: nilptr4.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend scope gap (nil pointer)
-- file: peano.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend type error
-- file: range4.go
-  reason: deferred-parity
-  detail: BUG-0001: range variable *ast.StarExpr not in frontend/v1 scope
-- file: recover1.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend type error (recover scope)
-- file: rename.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend type error
-- file: slicecap.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend scope gap
-- file: uintptrescapes3.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend scope gap (uintptr)
-- file: unsafe_string.go
-  reason: deferred-parity
-  detail: BUG-0001: frontend scope gap (unsafe)
-- file: defer.go
-  reason: deferred-parity
-  detail: BUG-0004: variadic interface forwarding bug (fmt.Sprint(v...) gives [9][8] not 98)
+  detail: BUG-0016 (finalizer called with nil argument / not run); observed: stderr differs at line 1: ref="" alt="10 out of 10 finalizer are not called"
+  signature: 10b1d2fa857a7c0c
 - file: defernil.go
   reason: deferred-parity
-  detail: BUG-0004: variadic interface forwarding bug (same root cause)
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="panic: runtime error: invalid memory address or nil pointer dereference [recovered]"
+  signature: 5850b164f5020faa
+- file: devirtualization_nil_panics.go
+  reason: deferred-parity
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="panic: runtime error: invalid memory address or nil pointer dereference [recovered]"
+  signature: 5850b164f5020faa
+- file: escape.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: call of non-function variable f is not supported in frontend/v1 scope (WS D)
+  signature: 89964c2d3c9c6461
+- file: finprofiled.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: call to unknown function MemProfile
+  signature: 5f7d93e7af0a9e25
+- file: func6.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: call.fields: call to paren is not supported in frontend/v1 scope (WS D: methods and qualified calls)
+  signature: 2b3f360a53c9cbf6
+- file: gcgort.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: linkname: no intrinsic regis
+  signature: 7e1ecfce043cd3d4
+- file: genmeth1.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: *ast.IndexListExpr is not supported in frontend/v1 scope (WS D)
+  signature: 7fa2a75770daa8d6
+- file: goprint.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: go func "println" not declared
+  signature: 68a127c0eca3454a
+- file: heapsampling.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: call to unknown function MemProfile
+  signature: 14fc053316765a61
+- file: initialize.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: keyed literal key/value count mismatch
+  signature: a2c02232ac7e1e3b
+- file: inline_caller.go
+  reason: deferred-parity
+  detail: BUG-0011 (trace/caller rendering: unqualified names, relative paths); observed: stderr differs at line 1: ref="" alt="panic: skip=0 expected function main.h, got h"
+  signature: 3015736f568a96ca
+- file: inline_callers.go
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error (inlining scope); observed: stderr differs at line 1: ref="" alt="panic: runtime error: invalid memory address or nil pointer dereference"
+  signature: 474675c1b70a1f70
+- file: inline_literal.go
+  reason: deferred-parity
+  detail: BUG-0019 (runtime ClassCastException); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class graalgo.values.GoFunc cannot
+  signature: 1010badc9efc961d
+- file: linkmain_run.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/linkmain_run.go/main.go:17:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}
+  signature: c0572d717c94e16f
+- file: linkobj.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/linkobj.go/main.go:18:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/src/
+- file: linkx_run.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/linkx_run.go/main.go:17:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/sr
+  signature: ebd3a0b74ce68a02
 - file: literal2.go
   reason: deferred-parity
-  detail: BUG-0006: complex number comparison bug ((0+1.8e308i) != itself)
-- file: newexpr.go
+  detail: BUG-0006: complex number comparison bug ((0+1.8e308i) != itself); observed: stdout differs at line 1: ref="" alt="(0+1.7976931348623157e+308i) != (0+1.7976931348623157e+308i)"
+  signature: 95bd9317be69e207
+- file: makeslice.go
   reason: deferred-parity
-  detail: BUG-0005: new(x) with non-constant x returns zero value
-- file: solitaire.go
+  detail: BUG-0019 (runtime ClassCastException); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class java.lang.String cannot be c
+  signature: 588b3df69dffd722
+- file: mallocfin.go
   reason: deferred-parity
-  detail: BUG-0007: peg-solitaire solver finds no solution (search divergence)
-- file: zerosize.go
-  reason: unspecified-behavior
-  detail: pointer equality for zero-size allocations is unspecified
-- file: nilptr2.go
-  reason: unspecified-behavior
-  detail: prints pointer address (absolute addresses excluded per GG-0030)
-- file: gc.go
+  detail: BUG-0016 (finalizer called with nil argument / not run); observed: stderr differs at line 1: ref="" alt="panic: runtime error: invalid memory address or nil pointer dereference"
+  signature: 474675c1b70a1f70
+- file: map.go
   reason: deferred-parity
-  detail: runtime.GC needs the GC interop layer (Phase 2)
+  detail: BUG-0019 (runtime ClassCastException); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class java.lang.Float cannot be ca
+  signature: bd5e757adbc43e3e
+- file: mapclear.go
+  reason: deferred-parity
+  detail: BUG-0019 (runtime ClassCastException); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class java.lang.Long cannot be cas
+  signature: 85418e455db28fc1
+- file: maplinear.go
+  reason: deferred-parity
+  detail: BUG-0023 (map insert timing check); observed: stderr differs at line 1: ref="" alt="panic: NaN: too slow: 60000 inserts: 1.995063159s; 120000 inserts: 8.153337816s"
 - file: maymorestack.go
   reason: deferred-parity
-  detail: runtime.KeepAlive needs the GC interop layer (Phase 2)
+  detail: BUG-0011 (trace/caller rendering: unqualified names, relative paths); observed: stderr differs at line 5: ref="\t{WORK}/src/maymorestack.go/main.go:27" alt="\tmain.go:27"
+  signature: 07f965bd70c30e5d
+- file: method.go
+  reason: deferred-parity
+  detail: BUG-0001: method call on non-named receiver struct{main.T} (WS H); observed: identifier "S" denotes *types.TypeName
+  signature: 13ac91a67f5aa243
+- file: method3.go
+  reason: deferred-parity
+  detail: BUG-0001: identifier T denotes *types.TypeName (method scope); observed: identifier "T" denotes *types.TypeName
+  signature: 22440b92b0eedf4f
+- file: method5.go
+  reason: deferred-parity
+  detail: BUG-0001: interface method with 2 results not supported; observed: method value M is not supported: method value via interface (P3-M3 scope)
+  signature: e619720656c8c74b
+- file: method7.go
+  reason: deferred-parity
+  detail: BUG-0001: method expression via interface not supported; observed: method expression m is not supported: method expression via interface (P3-M3 scope)
+  signature: a8f768d31f826c59
+- file: newexpr.go
+  reason: deferred-parity
+  detail: BUG-0005: new(x) with non-constant x returns zero value; observed: stderr differs at line 1: ref="" alt="panic: wrong value"
+  signature: bcdcc790053cd2b6
+- file: nil.go
+  reason: deferred-parity
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="panic: runtime error: invalid memory address or nil pointer dereference"
+  signature: 474675c1b70a1f70
+- file: nilptr.go
+  reason: deferred-parity
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.NullPointerException: Cannot invoke \"graalgo.values.G
+  signature: 9bf690579a2534cb
+- file: nilptr2.go
+  reason: deferred-parity
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="0x0"
+  signature: 51abfd1180a503f2
+- file: noinit.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: complit.fields: pointer composite literal to non-struct (WS E)
+  signature: 8946ae94d5994e6a
+- file: nosplit.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/nosplit.go/main.go:17:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/src/
+  signature: c56d4247c883adaa
+- file: peano.go
+  reason: deferred-parity
+  detail: BUG-0024 (deep recursion overflows the JVM thread stack); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal stack overflow in goroutine: java.lang.StackOverflowError: Humongous stack chunk"
+  signature: 63fea9f2bb3738ae
+- file: range.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: range variable *ast.IndexExpr is not supported in frontend/v1 scope
+  signature: 4b7c3022bb15d70b
+- file: range4.go
+  reason: deferred-parity
+  detail: BUG-0001: range variable *ast.StarExpr not in frontend/v1 scope; observed: range variable *ast.StarExpr is not supported in frontend/v1 scope
+  signature: 526cc9a44afa34d3
+- file: rangegen.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/rangegen.go/main.go:30:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/src
+  signature: d57b4088f9d1c9f9
+- file: recover.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: call to unknown function Breakpoint
+  signature: b1579f6e5bb9843b
+- file: recover1.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: call to unknown function Breakpoint
+  signature: a86f96899f724059
+- file: recover2.go
+  reason: deferred-parity
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="panic: expected panic"
+  signature: d380dc11d793e365
+- file: recover4.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: linkname: no intrinsic regis
+  signature: 7e1ecfce043cd3d4
+- file: reflectmethod1.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: call.fields: call to typeassert is not supported in frontend/v1 scope (WS D: methods and qualified calls)
+  signature: 2540640dad925bd2
+- file: reflectmethod2.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: call.fields: call to typeassert is not supported in frontend/v1 scope (WS D: methods and qualified calls)
+  signature: 18d7a9ee484fb05c
+- file: reflectmethod3.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: call.fields: call to typeassert is not supported in frontend/v1 scope (WS D: methods and qualified calls)
+  signature: 06cf8624b5da4b56
+- file: reflectmethod4.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: call.fields: call to typeassert is not supported in frontend/v1 scope (WS D: methods and qualified calls)
+  signature: c72e3fcf148c3fa5
+- file: reflectmethod5.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: method expression Method is not supported: method expression via interface (P3-M3 scope)
+  signature: 6cb97347b1912c79
+- file: reflectmethod6.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: method expression MethodByName is not supported: method expression via interface (P3-M3 scope)
+  signature: 62cb6cac7020ad93
+- file: reflectmethod7.go
+  reason: deferred-parity
+  detail: BUG-0020 (nil-deref panic attribution/recovery); observed: stderr differs at line 1: ref="" alt="panic: FAIL"
+  signature: 065e1f34322f0ff0
+- file: rename.go
+  reason: deferred-parity
+  detail: BUG-0017 (runtime-internal function or linkname missing); observed: call to unknown function Breakpoint
+  signature: 2161908a60c1858d
+- file: reorder.go
+  reason: deferred-parity
+  detail: BUG-0021 (assignment evaluation order); observed: stdout differs at line 1: ref="" alt="[1 100 3], want 100,2,3"
+  signature: 5838ee2cc1ca6485
+- file: shift3.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: basiclit.fields: cannot parse integer constant "(1 + 0i)" (WS D)
+  signature: d6d2d1cc77cc97df
+- file: sigchld.go
+  reason: deferred-parity
+  detail: BUG-0015 (os/exec / child processes unsupported); observed: stderr differs at line 1: ref="survived SIGCHLD" alt="panic: syscall.Kill: no graalgo intrinsic; re-test: os/exec milestone"
+  signature: 2b7d24dd1f14ec1b
+- file: slicecap.go
+  reason: deferred-parity
+  detail: BUG-0019 (runtime ClassCastException); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class graalgo.values.GoString cann
+  signature: 5ffaef36395a48eb
 - file: stackobj.go
   reason: deferred-parity
-  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2); observed: stderr differs at line 1: ref="" alt="panic: heap object never collected"
+  signature: d9e9867f95562ca0
 - file: stackobj2.go
   reason: deferred-parity
-  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+  detail: BUG-0024 (deep recursion overflows the JVM thread stack); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal stack overflow in goroutine: java.lang.StackOverflowError: Humongous stack chunk"
+  signature: 63fea9f2bb3738ae
 - file: stackobj3.go
   reason: deferred-parity
-  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
-- file: print.go
+  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2); observed: stderr differs at line 1: ref="" alt="panic: bad liveness"
+  signature: b19f33bfa21764f9
+- file: switch.go
+  reason: deferred-parity
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: switch.fields: dangling type id -1 (table has 5828 entries)
+  signature: 5223d611562819a1
+- file: tinyfin.go
+  reason: deferred-parity
+  detail: BUG-0016 (finalizer called with nil argument / not run); observed: stderr differs at line 1: ref="" alt="panic: runtime error: invalid memory address or nil pointer dereference"
+  signature: 474675c1b70a1f70
+- file: unsafe_slice_data.go
+  reason: deferred-parity
+  detail: BUG-0018 (unsafe.Pointer from real address (value model)); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: uint
+  signature: b794f4f01cffe4a5
+- file: unsafe_string_data.go
+  reason: deferred-parity
+  detail: BUG-0018 (unsafe.Pointer from real address (value model)); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: uint
+  signature: b794f4f01cffe4a5
+- file: unsafebuiltins.go
+  reason: deferred-parity
+  detail: BUG-0018 (unsafe.Pointer from real address (value model)); observed: stderr differs at line 1: ref="" alt="panic: FAIL"
+  signature: 065e1f34322f0ff0
+- file: winbatch.go
+  reason: deferred-parity
+  detail: BUG-0001 (v1 frontend scope gap / type error); observed: variable "lstat" used before declaration
+  signature: 56045a2eb1d8831f
+- file: zerosize.go
   reason: unspecified-behavior
-  detail: builtin println of pointers/interfaces prints absolute addresses (excluded per GG-0030)
+  detail: pointer equality for zero-size allocations is unspecified; observed: stderr differs at line 1: ref="" alt="p=0x0 q=0x0 p==q = false"
+  signature: 430cdeaf7ef6b65c
