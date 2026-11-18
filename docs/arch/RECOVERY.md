@@ -58,7 +58,7 @@ Integration branch: `wt/recovery/integration`.
 | 2026-11-18 | A8 **accepted**: open-coded defers (statically lowered for top-level defers not in loops under the limit; explicit per-goroutine chain as fallback and as panic/recover/Goexit unwinding path; `recover`/`Goexit`/`runtime.Caller` match gc); `GG-0019` superseded by `GG-0067` (re-issued below); SPEC §3.5 and Appendix B amended | [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md), SPEC §3.5, truffle-design §4.5, §14 |
 | 2026-11-18 | A7 (safepoint preemption) **accepted conditionally on P-B** `[OPEN]`: the owner switches only if prototype P-B validates; SPEC, GG-SCHED-0001 and GG-0017 unchanged and `Safepoint.poll()` stays until then | ADR-0012, truffle-design §13.2, §14 |
 | 2026-11-18 | A9 (closures over typed cells) **deferred pending benchmarks**: SPEC §3.4 unchanged (`MaterializedFrame` closures) until the owner decides after the closure benchmarks | ADR-0012, truffle-design §14 |
-| 2026-11-18 | **Re-issue (owner decision on the independent Fable review):** the four requirements locked that day without owner sign-off are superseded by drafts with corrected wording — `GG-0065` → GG-0068 (GODEBUG: what gc ignores is ignored; fail only on an unsupported knob's effective value from any source), `GG-0066` → GG-0069 (frontend unmodified; graalgo-tool refuses to run when built by another release), `GG-SCHED-0005` → GG-SCHED-0006 (slot *and* carrier accounting around every may-block host call; semaphore and poller parks; fail-fast bracket misuse), `GG-0067` split into GG-0070 (observable semantics incl. `panicnil` and caller frames, with [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (open-coded/chain mechanism, limit *L* pinned by a boundary test). All five are **draft, awaiting owner sign-off**; `req lint` gains rule (e), a locked-text hash check | [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md) (re-issue section), ADR-0011 (status corrected), SPEC §3.2, §3.5, §4.5, §7.15, Appendix B |
+| 2026-11-18 | **Re-issue (owner decision on the independent Fable review):** the four requirements locked that day without owner sign-off are superseded by requirements with corrected wording — `GG-0065` → GG-0068 (GODEBUG: what gc ignores is ignored; fail only on an unsupported knob's effective value from any source), `GG-0066` → GG-0069 (frontend unmodified; graalgo-tool refuses to run when built by another release), `GG-SCHED-0005` → GG-SCHED-0006 (slot *and* carrier accounting around every may-block host call; semaphore and poller parks; fail-fast bracket misuse), `GG-0067` split into GG-0070 (observable semantics incl. `panicnil` and caller frames, with [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (open-coded/chain mechanism, limit *L* pinned by a boundary test). **The owner signed off and locked all five on 2026-11-18** (`req lock`, after reading the independent Fable review); `GG-0063` (its only defect is the `GG-SCHED-0004` citation, resolved by the `superseded_by` chain) and `GG-0013` (cosmetic "vendored stdlib" wording) are left as is, not re-issued. `req lint` gains rule (e), a locked-text hash check | [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md) (re-issue section), ADR-0011 (status corrected), SPEC §3.2, §3.5, §4.5, §7.15, Appendix B |
 
 ## Tracks
 
@@ -160,8 +160,8 @@ rule (Sulong vs direct AST) whose re-test triggers are watched, not built.
 | GG-0013 No language pinning | W3, M1a gate |
 | GG-0014 One Truffle AST | W4/TR-3, TR-4, TR-13 |
 | GG-0017 Goroutines on virtual threads | shared scheduler (landed), TR-1, TR-5, TR-6 (A7 conditional on P-B), WP-SCHED |
-| GG-0070 Panic/defer/recover/Goexit semantics and caller frames (draft; with GG-0071 supersedes `GG-0067`) | T0.A (landed, v1), TR-3, TR-7, W10 (traceback normalizer rules T4–T6) |
-| GG-0071 Defer mechanism: open-coded up to *L*, chain otherwise (draft) | TR-3 (A8 accepted) |
+| GG-0070 Panic/defer/recover/Goexit semantics and caller frames (locked 2026-11-18; with GG-0071 supersedes `GG-0067`) | T0.A (landed, v1), TR-3, TR-7, W10 (traceback normalizer rules T4–T6) |
+| GG-0071 Defer mechanism: open-coded up to *L*, chain otherwise (locked 2026-11-18) | TR-3 (A8 accepted) |
 | GG-0020 Intrinsic surface | W5, W6, W8, W9, M5 coverage audit |
 | GG-0021 Linkname by symbol name | W6, M5 linkname-diff, WP-UPG1 (`rtlink`) |
 | GG-0022 cgo via Panama | WP-CGO1, WP-CGO2 |
@@ -206,10 +206,10 @@ rule (Sulong vs direct AST) whose re-test triggers are watched, not built.
 | GG-0062 unsafe.Pointer/uintptr | W13 |
 | GG-0063 Runtime epoll poller | W8b |
 | GG-0064 Spawn helper | W8b |
-| GG-0068 GODEBUG registry, gc-compatible parsing (draft) | WP-GODEBUG, W5, WP-UPG1 |
-| GG-0069 Frontend of the tracked release, unmodified (draft) | W1/W2 (landed: tracked-release test, `-goversion`/`-V=full` checks), graalgo-tool refuse-to-run check (follow-up), WP-UPG2 |
+| GG-0068 GODEBUG registry, gc-compatible parsing (locked 2026-11-18) | WP-GODEBUG, W5, WP-UPG1 |
+| GG-0069 Frontend of the tracked release, unmodified (locked 2026-11-18) | W1/W2 (landed: tracked-release test, `-goversion`/`-V=full` checks), graalgo-tool refuse-to-run check (follow-up), WP-UPG2 |
 | GG-SCHED-0001–0003 | shared scheduler (landed), TR-6 (A7 conditional on P-B), WP-SCHED |
-| GG-SCHED-0006 (draft) | W8a, W8b, WP-PIN |
+| GG-SCHED-0006 (locked 2026-11-18) | W8a, W8b, WP-PIN |
 | GG-WAKE-0001–0003 | shared scheduler (landed), WP-SCHED |
 | GG-FAIR-0001–0003 | shared scheduler (landed), WP-SCHED |
 

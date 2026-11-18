@@ -11,7 +11,7 @@ decisions T4 and T7 and are marked where they occur: **A7** (safepoint
 preemption instead of `Safepoint.poll()`), **A8** (open-coded defers) and
 **A9** (closures over typed cells instead of a `MaterializedFrame`). The owner
 decided on 2026-11-18 ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)):
-**A8 accepted** (SPEC §3.5 amended; requirements re-issued 2026-11-18 as the drafts GG-0070/GG-0071, awaiting owner sign-off); **A7 accepted conditionally
+**A8 accepted** (SPEC §3.5 amended; requirements re-issued 2026-11-18 as GG-0070/GG-0071, locked on owner sign-off the same day); **A7 accepted conditionally
 on P-B** `[OPEN]` (SPEC unchanged until P-B validates); **A9 deferred pending
 benchmarks** (SPEC unchanged). Where a section below says "until accepted,
 implementation follows SPEC", that applies to A7 and A9 only (§14.1 has the
@@ -828,8 +828,8 @@ inserted by the factory at the call site.
 
 **Open-coded defers** — **SPEC AMENDMENT A8, ACCEPTED 2026-11-18**
 ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md); SPEC §3.5 amended;
-requirements GG-0070 (semantics) and GG-0071 (this mechanism), drafts
-awaiting owner sign-off, supersede `GG-0067`, which superseded `GG-0019`). The semantics are those of the Go
+requirements GG-0070 (semantics) and GG-0071 (this mechanism), locked
+2026-11-18 on owner sign-off, supersede `GG-0067`, which superseded `GG-0019`). The semantics are those of the Go
 spec and gc and are the same on both paths — LIFO order, argument evaluation
 at the `defer` statement, `recover` eligibility, `Goexit`, panics in deferred
 calls, range-over-func, `runtime.Caller` — and the tests are shared. A
@@ -2042,7 +2042,7 @@ its decision). Status column: owner decisions of 2026-11-18
 | A5 | §3.3, GG-0014 | Only if TR-13 says so: allow function bodies to be Bytecode DSL roots; "one AST" read as "one executable representation for all modes". | after M1d | Pending — deferred to the TR-13 bake-off. |
 | A6 | §3.3 | Clarification, no change of intent: the megamorphic interface-call fallback is an itab method-table index, not a hash lookup; splitting is part of the devirtualization design. | TR-4 | Pending. |
 | A7 | §3.5; GG-SCHED-0001, GG-0017 | Preemption by Truffle safepoints: a monitor thread submits a `ThreadLocalAction` that performs the quantum park; `Safepoint.poll()` at back-edges and function entries is deleted (T4, §2.7, TR-6). Supersede GG-SCHED-0001 and GG-0017 with "quantum expiry is delivered at Truffle safepoints". | TR-6 (after P-B) | **Accepted conditionally on P-B `[OPEN]`** (owner, 2026-11-18, [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)): the owner switches only if prototype P-B validates (§13.2). SPEC and the requirements are unchanged; until P-B validates, SPEC — `Safepoint.poll()` stays. |
-| A8 | §3.5; `GG-0019` | Open-coded defers per function, statically lowered for the common case (defers outside loops and range-over-func bodies, at most *L*), with the explicit per-goroutine chain as the fallback (loops, range-over-func, over *L*); each frame runs its own pending defers on panic/Goexit; `recover`/`Goexit`/`runtime.Caller` match gc (T7, §4.5, TR-3). | TR-3 | **Accepted 2026-11-18** ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)). `GG-0019` superseded by `GG-0067`, whose lock had no owner sign-off; **re-issued 2026-11-18** as the drafts GG-0070 (semantics, incl. `panicnil` and caller frames per [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (mechanism), **awaiting owner sign-off**; SPEC §3.5 and Appendix B amended. |
+| A8 | §3.5; `GG-0019` | Open-coded defers per function, statically lowered for the common case (defers outside loops and range-over-func bodies, at most *L*), with the explicit per-goroutine chain as the fallback (loops, range-over-func, over *L*); each frame runs its own pending defers on panic/Goexit; `recover`/`Goexit`/`runtime.Caller` match gc (T7, §4.5, TR-3). | TR-3 | **Accepted 2026-11-18** ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)). `GG-0019` superseded by `GG-0067`, whose lock had no owner sign-off; **re-issued 2026-11-18** as GG-0070 (semantics, incl. `panicnil` and caller frames per [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (mechanism), **locked 2026-11-18 on owner sign-off**; SPEC §3.5 and Appendix B amended. |
 | A9 | §3.4 (text only; GG-0061 does not mention closures) | Closures are `GoFunc{target, captures}` over typed cells; `frame.materialize()` banned (T7, §4.4, rule F2). | TR-3 | **Deferred pending benchmarks** (owner, 2026-11-18): decided after the closure benchmarks; SPEC unchanged — `{RootCallTarget, MaterializedFrame\|null}`. |
 
 Other decisions requested:

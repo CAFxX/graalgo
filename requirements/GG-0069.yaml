@@ -3,9 +3,11 @@ title: 'Frontend: go/parser + go/types of the tracked release, unmodified'
 statement: graalgo SHALL use go/parser + go/types of the tracked Go release as its frontend, unmodified, taken from the toolchain that builds graalgo-tool. graalgo's own build-and-test gate SHALL fail, and graalgo-tool SHALL refuse to run (naming both versions), when it was not built by exactly the tracked release; graalgo-tool SHALL refuse compile/link invocations whose -goversion or -V=full is of another release. The frontend SHALL run at compile time and hand the backend serialized typed IR (GIR), never Go source. Frontend and standard library SHALL move to a new release as one unit.
 rationale: 'Re-issue of GG-0066 from the independent review of 2026-11-18. GG-0066 required that ''its build SHALL fail'' on another toolchain, but the code only has a test (release.TestBuiltByTrackedToolchain, run by make all) and a graalgo-tool built by another toolchain runs; ''unmodified'' was implicit; the -goversion/-V=full checks graalgo-tool already performs were not stated. toolexec-design D10: the per-package -toolexec path runs the frontend inside graalgo-tool, so the toolchain that builds it carries the tracked release''s go/* verbatim; a vendored tree (GG-0012) duplicates it. ADR-0011 decision 2, re-issued per ADR-0012.'
 parent: ""
-status: draft
+status: locked
 superseded_by: ""
 verification_plan: 'release.TestBuiltByTrackedToolchain in the make all gate fails when the toolexec module is built by any other toolchain (red-green: run it under a second toolchain); a graalgo-tool built by another toolchain exits non-zero with a message naming its build version and the tracked release; graalgo-tool rejects a compile invocation whose -goversion is of another release and a tool whose -V=full reports another release; go list -deps of graalgo-tool resolves go/parser and go/types to the standard library of GOROOT (no replace, vendor or copy); the backend''s node factory has no Go-source entry point; the emitter''s compile-only gate over all std packages.'
 history:
     - '2026-11-18: created (draft), supersedes GG-0066'
     - '2026-11-18: drafted from Fable review; awaiting owner sign-off'
+    - '2026-11-18: locked'
+    - '2026-11-18: locked — owner sign-off after independent (Fable) review'

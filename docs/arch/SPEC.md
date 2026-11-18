@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md); open-coded defers and the re-issue of the 2026-11-18 requirements as drafts, [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)) · **Requirements:** 83 records — `requirements/GG-0001`–`GG-0071`, `GG-SCHED-0001`–`0006`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0019/0055 and `GG-SCHED-0004` superseded by `GG-0066`/0061/0062/0063/`GG-0067`/`GG-0065` and `GG-SCHED-0005`; those four 2026-11-18 records were in turn superseded by the **drafts** GG-0069, GG-0070 + GG-0071, GG-0068 and GG-SCHED-0006, which await owner sign-off (text marked `[PROPOSAL]` below)
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md); open-coded defers and the re-issue of the 2026-11-18 requirements, [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)) · **Requirements:** 83 records — `requirements/GG-0001`–`GG-0071`, `GG-SCHED-0001`–`0006`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0019/0055 and `GG-SCHED-0004` superseded by `GG-0066`/0061/0062/0063/`GG-0067`/`GG-0065` and `GG-SCHED-0005`; those four 2026-11-18 records were in turn superseded by GG-0069, GG-0070 + GG-0071, GG-0068 and GG-SCHED-0006, which the owner signed off and **locked on 2026-11-18** after an independent (Fable) review (text marked `[DECIDED]` below)
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed ·
@@ -271,7 +271,7 @@ source: the backend's **node factory decodes GIR** (lazily, per function)
 and builds Truffle nodes `[DECIDED]` (amended 2026-11-18, ADR-0011; was "a
 node factory walks the typed AST"). The `go/*` packages are not a vendored
 copy: they are those of the **tracked release's toolchain that builds
-`graalgo-tool`**, unmodified. `[PROPOSAL]` (GG-0069, draft awaiting owner
+`graalgo-tool`**, unmodified. `[DECIDED]` (GG-0069, locked 2026-11-18 on owner
 sign-off, superseding `GG-0066`, which superseded the
 byte-identical-vendored-tree check of `GG-0012`): graalgo's own build-and-test
 gate fails, and `graalgo-tool` refuses to run naming both versions, when it
@@ -465,7 +465,7 @@ in the prototype `[VERIFIED]`. **All blocking in the runtime and its
 intrinsics (including patched stdlib code) SHALL go through scheduler-aware
 parks** (channel, select, timer/sleep, semaphore, scheduler-token sleep,
 poller park) `[DECIDED]`; the semaphore and poller parks are named since
-2026-11-18 `[PROPOSAL]` (GG-SCHED-0006, draft awaiting owner sign-off,
+2026-11-18 `[DECIDED]` (GG-SCHED-0006, locked 2026-11-18 on owner sign-off,
 superseding `GG-SCHED-0005`). A goroutine entering a **host or foreign call
 that may block** — every syscall role-table entry marked may-block, and any
 other blocking host call — is bracketed by the **slot-releasing wrapper**
@@ -477,7 +477,7 @@ Unlike a virtual thread blocked in NIO, which unmounted, a goroutine in a
 Panama downcall **pins its carrier** for the whole call (below, and
 [abi-spike.md](abi-spike.md) §2.5), so releasing the slot is not enough: the
 pinned carrier SHALL be off-pool or counted in the +k budget (GG-0057), so
-that N such goroutines at cap=N never starve a runnable one `[PROPOSAL]`
+that N such goroutines at cap=N never starve a runnable one `[DECIDED]`
 (GG-SCHED-0006). `internal/poll` readiness waits (`runtime_pollWait`) never
 enter a blocking downcall: they park in the epoll poller of GG-0063, holding
 neither slot nor carrier.
@@ -489,7 +489,7 @@ blocking fails, wrapper passes) `[VERIFIED]` (prototype scope; it must be
 re-run on real pinned downcalls at carriers = cap). Unpaired
 `ioEnter` trips a fail-fast drainer assert `[DECIDED]`; re-entrant `ioEnter`,
 `ioExit` without `ioEnter` and goroutine exit inside the bracket fail fast
-too `[PROPOSAL]` (GG-SCHED-0006). A Phase-2 measurement
+too `[DECIDED]` (GG-SCHED-0006). A Phase-2 measurement
 trigger covers the wrapper's throughput cost `[DECIDED]`.
 
 **cgo / pinning under option C.** A vthread in a native/FFM call pins its
@@ -534,7 +534,7 @@ wait-queues of scheduler-parked virtual threads); **select** ports
 `runtime/select.go` logic (lock channels in address order, poll, park one
 Parker on all, spurious-wakeup loop, `fastrand` among ready cases).
 **Defer, panic, recover, Goexit** — two requirements since the 2026-11-18
-re-issue, both `[PROPOSAL]` drafts awaiting owner sign-off (superseding
+re-issue, both `[DECIDED]`, locked 2026-11-18 on owner sign-off (superseding
 `GG-0067`, which superseded `GG-0019`; ADR-0012). *Semantics* (GG-0070):
 exactly gc's — LIFO, callee and arguments evaluated at the `defer`
 statement, `recover` eligibility, named-result modification, panics in
@@ -591,7 +591,7 @@ This supersedes spike 2's yield-based falsifier.
 
 *Requirements track:* the scheduler SHALLs above are encoded as GG-SCHED-0001–0003,
 GG-WAKE-0001–0003, GG-FAIR-0001–0003 (all locked 2026-10-03) and GG-SCHED-0006
-(draft 2026-11-18, awaiting owner sign-off; it supersedes `GG-SCHED-0005`,
+(locked 2026-11-18 on owner sign-off; it supersedes `GG-SCHED-0005`,
 which superseded `GG-SCHED-0004`: the slot-releasing wrapper brackets every
 may-block host or foreign call with carrier accounting, readiness waits park
 in the epoll poller). GG-0063's locked text cites "the scheduler's
@@ -799,7 +799,7 @@ unsupported-with-justification** — in a versioned registry `[DECIDED]`.
 **What gc ignores, graalgo ignores** `[DECIDED]` 2026-11-18 (superseding
 `GG-0055`'s "unknown knobs default to deny-with-error",
 [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)); the precise rule is
-`[PROPOSAL]` GG-0068 (draft awaiting owner sign-off, superseding `GG-0065`,
+`[DECIDED]` GG-0068 (locked 2026-11-18 on owner sign-off, superseding `GG-0065`,
 [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)): in the `GODEBUG`
 environment variable, at startup and on later updates, a key the tracked
 release does not define, a field without `=`, and a value gc cannot parse
@@ -1185,8 +1185,8 @@ consistently ≥2× across phases → the estimate is re-baselined with evidence
 
 ### 7.15 GODEBUG — versioned per-knob registry
 
-**Closure** `[DECIDED]` (amended 2026-11-18; requirement GG-0068, draft
-awaiting owner sign-off): §4.5 — every knob classified per release
+**Closure** `[DECIDED]` (amended 2026-11-18; requirement GG-0068, locked
+2026-11-18 on owner sign-off): §4.5 — every knob classified per release
 (emulated / no-op / unsupported + justification); what gc's `GODEBUG` parser
 ignores is ignored silently; graalgo fails at startup only when an
 unsupported knob's effective value, from any source, is not the default,
@@ -1399,16 +1399,16 @@ configuration, with a re-test trigger. Phase-0 entries:
 | `GG-0065` | GODEBUG registry, gc-compatible unknown keys — superseded by GG-0068 | — |
 | `GG-0066` | Frontend: go/parser + go/types of the tracked toolchain — superseded by GG-0069 | — |
 | `GG-0067` | Panic/defer/Goexit model: open-coded defers with explicit-chain fallback — superseded by GG-0070 (semantics) and GG-0071 (mechanism) | — |
-| GG-0068 | GODEBUG: gc-compatible parsing; unsupported knobs fail only when in effect (**draft**, awaiting owner sign-off) | §4.5 (§7.15 closure) |
-| GG-0069 | Frontend: go/parser + go/types of the tracked release, unmodified (**draft**) | §3.2 |
-| GG-0070 | Panic/defer/recover/Goexit semantics and caller frames exactly as gc (**draft**) | §3.5; [traceback-normalization.md](traceback-normalization.md) |
-| GG-0071 | Defer mechanism: open-coded up to a fixed limit, per-goroutine chain otherwise (**draft**) | §3.5 |
+| GG-0068 | GODEBUG: gc-compatible parsing; unsupported knobs fail only when in effect (locked 2026-11-18) | §4.5 (§7.15 closure) |
+| GG-0069 | Frontend: go/parser + go/types of the tracked release, unmodified (locked 2026-11-18) | §3.2 |
+| GG-0070 | Panic/defer/recover/Goexit semantics and caller frames exactly as gc (locked 2026-11-18) | §3.5; [traceback-normalization.md](traceback-normalization.md) |
+| GG-0071 | Defer mechanism: open-coded up to a fixed limit, per-goroutine chain otherwise (locked 2026-11-18) | §3.5 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |
 | `GG-SCHED-0004` | Scheduler-aware blocking only (NIO wording) — superseded by `GG-SCHED-0005`, then GG-SCHED-0006 | — |
 | `GG-SCHED-0005` | Scheduler-aware blocking; slot release around blocking downcalls — superseded by GG-SCHED-0006 | — |
-| GG-SCHED-0006 | Scheduler-aware blocking; slot and carrier accounting around blocking host calls (**draft**, awaiting owner sign-off) | §3.5 |
+| GG-SCHED-0006 | Scheduler-aware blocking; slot and carrier accounting around blocking host calls (locked 2026-11-18) | §3.5 |
 | GG-WAKE-0001 | Park/unpark pairing safety | §3.5 |
 | GG-WAKE-0002 | Lost-wakeup invariant | §3.5 |
 | GG-WAKE-0003 | Wake and init priority lanes | §3.5 |

@@ -1,8 +1,8 @@
 # Traceback and caller-frame equivalence with gc
 
-**Status:** draft 2026-11-18, part of the re-issued panic requirements
-GG-0070 (semantics) and GG-0071 (mechanism), both **draft, awaiting owner
-sign-off** ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)).
+**Status:** 2026-11-18, part of the re-issued panic requirements
+GG-0070 (semantics) and GG-0071 (mechanism), both **locked 2026-11-18 on
+owner sign-off** ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)).
 **Probed against:** gc go1.27.1 (`~/tools/go`), linux/amd64, default
 `GOTRACEBACK`.
 

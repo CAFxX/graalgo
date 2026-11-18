@@ -8,12 +8,14 @@ from the global spec-conformance review, relayed by the coordinator). The
 the owner never confirmed the wording or the lock. An earlier version of
 this record said the locks were made on coordinator instruction; that was
 wrong. On 2026-11-18 the owner had the texts independently reviewed and
-decided to re-issue them: they are superseded by the drafts GG-0068,
-GG-0069 and GG-SCHED-0006, which await owner sign-off
-([ADR-0012](ADR-0012-open-coded-defers.md), "Re-issue").
+decided to re-issue them: they are superseded by GG-0068, GG-0069 and
+GG-SCHED-0006, which the owner signed off and locked on 2026-11-18
+([ADR-0012](ADR-0012-open-coded-defers.md), "Re-issue"). Final state:
+the decisions below stand, and the requirement texts are the owner-locked
+re-issues, not the 2026-11-18 originals.
 **Scope:** [SPEC.md](../../arch/SPEC.md) §3.2, §3.3, §3.5, §4.5, §7.15, Appendix B, Appendix C;
-requirements `GG-0055` → `GG-0065` → GG-0068 (draft), `GG-0012` → `GG-0066` →
-GG-0069 (draft), `GG-SCHED-0004` → `GG-SCHED-0005` → GG-SCHED-0006 (draft).
+requirements `GG-0055` → `GG-0065` → GG-0068 (locked), `GG-0012` → `GG-0066` →
+GG-0069 (locked), `GG-SCHED-0004` → `GG-SCHED-0005` → GG-SCHED-0006 (locked).
 **Evidence:** the global spec-conformance review of 2026-11-18 (items A2, B2,
 B6, D1, D3); each finding was re-checked against the tree at `cbb2ebd0`
 before it was acted on.
