@@ -359,15 +359,21 @@ func (e *emitter) typeStructure(t types.Type) ir.Type {
 			}
 			ms[i] = ir.IfaceMethod{Name: m.Name(), Pkg: pkg, Sig: e.typeID(m.Type())}
 		}
+		// Embeddeds: the normalized type set (ir.InterfaceTypeSet), the
+		// same value the canonical key encodes: `comparable` when
+		// required, then one element for the term list (the type itself
+		// for a single non-tilde term, else a Union).
 		var emb []ir.TypeID
-		for i := range t.NumEmbeddeds() {
-			et := t.EmbeddedType(i)
-			if _, isIface := et.Underlying().(*types.Interface); isIface {
-				if n, ok := et.(*types.Named); !ok || n.Obj().Pkg() != nil {
-					continue
-				}
+		ts := ir.InterfaceTypeSet(t)
+		if ts.Comparable {
+			emb = append(emb, e.typeID(types.Universe.Lookup("comparable").Type()))
+		}
+		if !ts.All {
+			if len(ts.Terms) == 1 && !ts.Terms[0].Tilde() {
+				emb = append(emb, e.typeID(ts.Terms[0].Type()))
+			} else {
+				emb = append(emb, e.typeID(types.NewUnion(ts.Terms)))
 			}
-			emb = append(emb, e.typeID(et))
 		}
 		return &ir.InterfaceType{Methods: ms, Embeddeds: emb, Implicit: t.IsImplicit()}
 	case *types.Tuple:

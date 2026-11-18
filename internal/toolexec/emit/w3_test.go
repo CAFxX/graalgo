@@ -160,3 +160,22 @@ func (R[E]) Meth() any { type V struct{ e E }; return V{} }
 		}
 	}
 }
+
+// Constraint interfaces carry their normalized type set: interface{ Num }
+// is not interface{} (W2 dropped embedded interfaces' terms).
+func TestConstraintStructure(t *testing.T) {
+	f := emitSrc(t, `package p
+type Num interface{ ~int | ~float64 }
+func F[T interface{ Num; comparable }](x T) T { return x }
+`)
+	for _, te := range f.Types {
+		if it, ok := te.Type.(*ir.InterfaceType); ok && len(it.Methods) == 0 && te.Key != "interface {}" {
+			if te.Key != "interface { ~float64 | ~int }" || len(it.Embeddeds) != 1 {
+				t.Errorf("%s: embeddeds %v", te.Key, it.Embeddeds)
+			}
+			if u, ok := f.Types[it.Embeddeds[0]-1].Type.(*ir.UnionType); !ok || len(u.Terms) != 2 {
+				t.Errorf("%s: term list %#v", te.Key, f.Types[it.Embeddeds[0]-1].Type)
+			}
+		}
+	}
+}
