@@ -173,7 +173,7 @@ hangs).
 `smoke/panic.go`, [smoke/hello.go](../../spikes/06-sulong/exp/hello.go) with [smoke/README.md](../../../../README.md) documenting the
 verification (wait-loop shape, quantum-neutered hangs, gc output match).
 
-**P1-4 (GG annotations):** Removed inaccurate verifies: GG-SCHED-0001
+**P1-4 (GG annotations):** Removed inaccurate `verifies: GG-SCHED-0001`
 from spawn/quiescence/wiring/crash tests (GG-SCHED-0001 is specifically
 quantum-expiry; only testQuantumExpiryPreempts keeps it).
 
@@ -304,7 +304,7 @@ panic messages). No scheduling-observable divergences found; nothing to
 add to the P2-M10 divergence list yet.
 
 **GG-0017 chan slice →active** (first channel test landed with
-verifies: GG-0017 annotations).
+`verifies: GG-0017` annotations).
 
 **Design notes for reviewers:**
 - Same-FQN ChanOps overlay: frozen signatures byte-identical; added
@@ -375,7 +375,7 @@ testSelectCloseWhileParked).
 role is split into a second goroutine in the translation; documented.
 
 **P2s:** added testSelectSameChannelTwice, testCloseWakesMultipleReceivers;
-regen.sh scripts .expected/.panic generation; verifies: GG-0017 on the
+regen.sh scripts .expected/.panic generation; `verifies: GG-0017` on the
 differential class; ch06 comment clarified.
 
 **Tests:** 51/51 green (15 scheduler + 24 channel + 12 differential).

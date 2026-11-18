@@ -39,7 +39,8 @@ fixes; the launcher's temporary deviations are recorded separately in
    make (unknown key, near-miss key, unknown key at startup, bare field
    without `=`, malformed value, non-ASCII digits — gc's `parsegodebug`
    skips all of them silently) lost their `verifies:` annotations in the
-   supersession; the other annotations were re-pointed to GG-0065.
+   supersession; the other annotations were re-pointed to GG-0065
+   ([verifies-audit.md](../verifies-audit.md) lists the follow-ups).
 
 2. **Frontend provenance and GIR (`GG-0012` → GG-0066; review items B2,
    D1).** toolexec-design D10 (implemented by W1/W2:
