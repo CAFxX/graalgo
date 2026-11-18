@@ -93,8 +93,8 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 			add("%s: missing reason code (reason: is mandatory)", where)
 			continue
 		}
-		if !known[e.Reason] {
-			add("%s: unknown reason code %q (not in reason_codes: vocabulary)", where, e.Reason)
+		if !known[e.Reason] && !isSpecReason(e.Reason) {
+			add("%s: unknown reason code %q (neither a SPEC §5.6 code nor in the reason_codes: vocabulary)", where, e.Reason)
 		}
 		if e.Detail == "" {
 			add("%s: missing detail: (every v1 entry must carry evidence)", where)
@@ -343,4 +343,16 @@ func bumpHint(v string) string {
 		n = n*10 + int(r-'0')
 	}
 	return fmt.Sprintf("%d", n+1)
+}
+
+// isSpecReason reports whether code is one of the SPEC §5.6 reason codes,
+// which every exclusion list accepts directly (one vocabulary; the
+// reason_codes: section only refines them).
+func isSpecReason(code string) bool {
+	for _, s := range SpecReasonCodes {
+		if code == s {
+			return true
+		}
+	}
+	return false
 }

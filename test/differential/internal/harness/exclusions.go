@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -109,6 +110,7 @@ func ParseReviewedExclusions(name, text string) (version string, excl map[string
 	var grp *groupEntry
 	curLine := 0
 	inEntry := false
+	inCodes := false // a reason_codes: vocabulary section (stdlib-fork list)
 	flush := func() {
 		if grp != nil {
 			g := grp
@@ -150,6 +152,17 @@ func ParseReviewedExclusions(name, text string) (version string, excl map[string
 			continue
 		}
 		val := func(key string) string { return strings.TrimSpace(strings.TrimPrefix(t, key)) }
+		if t == "reason_codes:" {
+			flush()
+			inCodes = true
+			continue
+		}
+		if inCodes {
+			if t != "exclusions:" && t != "groups:" && !strings.HasPrefix(t, "version:") {
+				continue // the vocabulary is validated by tools/stdlib-excl
+			}
+			inCodes = false
+		}
 		switch {
 		case strings.HasPrefix(t, "version:"):
 			version = val("version:")
@@ -188,6 +201,68 @@ func ParseReviewedExclusions(name, text string) (version string, excl map[string
 		return "", nil, fmt.Errorf("exclusions file %s invalid:\n  %s", name, strings.Join(errs, "\n  "))
 	}
 	return version, excl, nil
+}
+
+// pinnedSig is a DiffSignature; unpinnedSig is the explicit, reasoned
+// "cannot pin" marker: `signature: unpinned (<why>)` for an entry whose
+// divergence text is not reproducible (timings) or that never runs.
+var (
+	pinnedSig   = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	unpinnedSig = regexp.MustCompile(`^unpinned \(\s*\S.*\)$`)
+)
+
+// IsPinned reports whether sig is a DiffSignature (not empty, not the
+// unpinned marker): only a pinned signature is compared with a divergence.
+func IsPinned(sig string) bool { return pinnedSig.MatchString(sig) }
+
+// bugRef matches a bug-register id (docs/dev/bugs.md).
+var bugRef = regexp.MustCompile(`\bBUG-[0-9]{4}\b`)
+
+// bugRow matches a register row of docs/dev/bugs.md: "| BUG-NNNN | ...".
+var bugRow = regexp.MustCompile(`(?m)^\|\s*(BUG-[0-9]{4})\s*\|`)
+
+// LoadBugIDs returns the ids of the bug register's rows.
+func LoadBugIDs(path string) (map[string]bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read bug register: %w", err)
+	}
+	ids := map[string]bool{}
+	for _, m := range bugRow.FindAllStringSubmatch(string(data), -1) {
+		ids[m[1]] = true
+	}
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("bug register %s has no BUG-NNNN rows", path)
+	}
+	return ids, nil
+}
+
+// RegisterProblems is the register gate (AGENTS.md §3, docs/dev/bugs.md):
+// a deferred-parity entry is a graalgo bug, so it must cite at least one id
+// of the bug register (every cited id must exist), and — in a differential
+// register (requireSignature) — pin the signature of its divergence. A
+// group entry (one cause, many files, with an expiry) needs the bug id but
+// no signature: there is no single divergence text to pin.
+func RegisterProblems(name string, excl map[string]ReviewedExclusion, bugs map[string]bool, requireSignature bool) []string {
+	var problems []string
+	for _, f := range SortedExclusionNames(excl) {
+		x := excl[f]
+		for _, id := range bugRef.FindAllString(x.Detail, -1) {
+			if !bugs[id] {
+				problems = append(problems, fmt.Sprintf("%s: %s: cites %s, which is not in the bug register", name, f, id))
+			}
+		}
+		if x.Reason != "deferred-parity" {
+			continue
+		}
+		if !bugRef.MatchString(x.Detail) {
+			problems = append(problems, fmt.Sprintf("%s: %s: deferred-parity entry cites no BUG id (a graalgo bug needs a docs/dev/bugs.md row)", name, f))
+		}
+		if requireSignature && x.Group == "" && !IsPinned(x.Signature) && !unpinnedSig.MatchString(x.Signature) {
+			problems = append(problems, fmt.Sprintf("%s: %s: deferred-parity entry pins no signature (a 16-hex DiffSignature, or `unpinned (<why>)` when the text is not reproducible)", name, f))
+		}
+	}
+	return problems
 }
 
 // SortedExclusionNames returns the entry names in sorted order.

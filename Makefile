@@ -34,7 +34,8 @@
 #               GG ids, this Makefile's .PHONY/header, generated-files
 #               list, placeholder + runtime-unimplemented ratchets, the
 #               new-path/v1 layering gate, the no-bridges gate (vs
-#               GATE_BASE or the merge-base), every
+#               GATE_BASE or the merge-base), the exclusion-register
+#               gate (bug id + signature per deferred-parity entry), every
 #               .github/scripts/test_*.py, markdown links, `tools/req
 #               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
 #               tests, vendoring diff, frontend/v1 wire-format validator)
@@ -192,6 +193,12 @@ check-repo:
 	python3 .github/scripts/check_ratchets.py
 	python3 .github/scripts/check_layering.py
 	python3 .github/scripts/check_no_bridges.py
+	# exclusion registers: every deferred-parity entry cites a bugs.md id
+	# and (differential registers) pins a signature; gate tests first.
+	cd test/differential && PATH="$(dir $(GO)):$$PATH" $(GO) test -count=1 -run 'Register|IsPinned|LoadBugIDs|Parse' ./internal/harness/ && \
+	  PATH="$(dir $(GO)):$$PATH" $(GO) run ./cmd/diffharness registers -bugs ../../docs/dev/bugs.md \
+	  -unsigned ../../tools/stdlib-fork/exclusions.yaml \
+	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
 	python3 .github/scripts/check_markdown_links.py --skip-external
 	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
 

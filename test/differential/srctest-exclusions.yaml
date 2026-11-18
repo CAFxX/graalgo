@@ -151,6 +151,7 @@ exclusions:
 - file: linkobj.go
   reason: deferred-parity
   detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/linkobj.go/main.go:18:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/src/
+  signature: unpinned (the gc side logs a timestamp; the alt text carries a truncated temp path)
 - file: linkx_run.go
   reason: deferred-parity
   detail: BUG-0015 (os/exec / child processes unsupported); observed: type error: {WORK}/src/linkx_run.go/main.go:17:2: could not import os/exec (gofrontend: import "os/exec": gofrontend: type error in "os/exec": {GO}/sr
@@ -178,6 +179,7 @@ exclusions:
 - file: maplinear.go
   reason: deferred-parity
   detail: BUG-0023 (map insert timing check); observed: stderr differs at line 1: ref="" alt="panic: NaN: too slow: 60000 inserts: 1.995063159s; 120000 inserts: 8.153337816s"
+  signature: unpinned (measured timings in the text; on a slow host the program times out instead — local 2026-11-18: timeout: ref=false alt=true)
 - file: maymorestack.go
   reason: deferred-parity
   detail: BUG-0011 (trace/caller rendering: unqualified names, relative paths); observed: stderr differs at line 5: ref="\t{WORK}/src/maymorestack.go/main.go:27" alt="\tmain.go:27"
@@ -304,7 +306,7 @@ exclusions:
   signature: 5ffaef36395a48eb
 - file: stackobj.go
   reason: deferred-parity
-  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2); observed: stderr differs at line 1: ref="" alt="panic: heap object never collected"
+  detail: BUG-0016 (finalizers of objects freed by runtime.GC() are not run); observed: stderr differs at line 1: ref="" alt="panic: heap object never collected"
   signature: d9e9867f95562ca0
 - file: stackobj2.go
   reason: deferred-parity
@@ -312,7 +314,7 @@ exclusions:
   signature: 63fea9f2bb3738ae
 - file: stackobj3.go
   reason: deferred-parity
-  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2); observed: stderr differs at line 1: ref="" alt="panic: bad liveness"
+  detail: BUG-0016 (finalizers of objects freed by runtime.GC() are not run); observed: stderr differs at line 1: ref="" alt="panic: bad liveness"
   signature: b19f33bfa21764f9
 - file: switch.go
   reason: deferred-parity

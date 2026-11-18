@@ -67,6 +67,12 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   bugs. **Never run
   `make snapshot` to silence graalgo** — it cannot (it records gc), and an
   exclusion without review is the same lie.
+- `make check` enforces the register rules (`diffharness registers`):
+  every `deferred-parity` entry cites a `BUG-NNNN` row of bugs.md, every
+  cited id exists, and every individual entry of a differential register
+  pins its `signature:` — or says `signature: unpinned (<why>)` when the
+  divergence text is not reproducible (timings, timestamps) or the file
+  never runs.
 - The same rules hold for
   [srctest-exclusions.yaml](test/differential/srctest-exclusions.yaml),
   [typeparam-exclusions.yaml](test/differential/typeparam-exclusions.yaml)

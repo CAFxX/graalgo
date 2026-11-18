@@ -10,7 +10,10 @@
 # (stale fixtures, missing interop classpath, T0.A panic values),
 # GoNetpollTest was deleted (v1 NIO netpoller, superseded by GG-0063); the
 # rest test v1 surfaces that are deleted wholesale at M3.
+# 2026-11-18 (ci-green2): TypeparamDifferentialTest un-quarantined — its
+# "no result for every comparison" was infrastructure (GRAALGO_BACKEND_DIR
+# unset for the adapter; one entry's exception killed the batch JVM); it
+# passes locally: 196 comparisons, 108 match, 88 expected, 0 stale.
 graalgo.launcher.MainTest | v1 graalgo-run --check no longer rejects out-of-scope decls / clear(map) (2 tests); stack-depth check moved to StackDepthLimitTest | toolexec M3 cutover (v1 deletion) | M3
 graalgo.frontend.GenericsCorpusTest | gn09: v1 NodeFactory has no "ifacemethod" expr kind on this test's factory path (1 test) | toolexec M3 cutover (v1 deletion) | M3
 graalgo.runtime.BuiltinsCorpusTest | v1 reflect/fmt bugs: bi20 struct print (unsafe byte-offset trap), bi21 nested maps (GoMap->GoStruct cast), bi22 float edge (reflect.maplen on Long) (3 tests) | toolexec M3 cutover (v1 deletion) | M3
-graalgo.frontend.TypeparamDifferentialTest | typeparam batch JVM yields no result for all 42 comparisons (infra; see global review G3) | toolexec M3 cutover (v1 deletion) | M3

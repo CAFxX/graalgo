@@ -68,7 +68,7 @@ public final class TypeparamDifferentialTest {
     private static final int MAX_EXCLUSIONS = 224;
 
     /** Expected version of the exclusion list (bumped on material changes). */
-    private static final String EXPECTED_EXCLUSIONS_VERSION = "4";
+    private static final String EXPECTED_EXCLUSIONS_VERSION = "6";
 
     private static Path repoDir() {
         return resolveRepoDir(
@@ -286,9 +286,11 @@ public final class TypeparamDifferentialTest {
             if (excluded && entry == null) {
                 problems.add(name + ": excluded by adapter (" + f.string("detail", "scan.files")
                         + ") but missing from " + exclusionsFile().getFileName());
-            } else if (!excluded && entry != null) {
-                problems.add(name + ": included by adapter but present on exclusion list");
-            } else if (excluded) {
+            } else if (entry != null) {
+                // Listed files that the adapter can run still run (global
+                // review G4: EXPECTED while they diverge, STALE once they
+                // match); only unrunnable ones are classified exclude.
+                // Either way the entry must be well-formed.
                 if (!VALID_REASONS.contains(entry[0])) {
                     problems.add(name + ": invalid reason code " + entry[0]);
                 }
@@ -350,6 +352,11 @@ public final class TypeparamDifferentialTest {
         pb.environment().put("GOTOOLCHAIN", "local");
         pb.environment().put("DH_GO", ToolPaths.stockGo().getParent().getParent().toString());
         pb.environment().put("REPO_DIR", repoDir().toAbsolutePath().toString());
+        // backends.json's graalgo launcher is ${GRAALGO_BACKEND_DIR}/graalgo-run:
+        // without it every batch failed to start ("fork/exec {GRAALGO_RUN}")
+        // and every comparison came back INFRA.
+        pb.environment().put("GRAALGO_BACKEND_DIR",
+                repoDir().resolve("internal").resolve("backend").toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         Process p = pb.start();
         // Stream the adapter's progress to the test log.
@@ -363,7 +370,7 @@ public final class TypeparamDifferentialTest {
         // P2-14: if the adapter died before writing the report, say so with
         // its log — don't let a NoSuchFileException on the missing JSON
         // mask the real failure.
-        if (p.exitValue() != 0) {
+        if (p.exitValue() != 0 && !Files.isRegularFile(reportOut)) {
             throw new AssertionError("typeparam run exited " + p.exitValue()
                     + " (adapter log above)");
         }
@@ -374,8 +381,12 @@ public final class TypeparamDifferentialTest {
         Json.Object report = (Json.Object) Json.parse(
                 Files.readString(reportOut, StandardCharsets.UTF_8));
         Json.Object summary = report.object("summary", "report");
+        // The adapter's exit status is the verdict: 0 means every
+        // divergence is a listed, pinned expected divergence (EXPECTED) and
+        // no listed file matches gc (STALE). The report's "diverged" count
+        // includes the EXPECTED ones, so it is not a failure by itself.
         long diverged = summary.longInt("diverged", "report.summary");
-        if (diverged > 0 || p.exitValue() != 0) {
+        if (p.exitValue() != 0) {
             Path dst = repoDir().resolve(".out").resolve("typeparam-divergences.json");
             Files.createDirectories(dst.getParent());
             Files.copy(reportOut, dst, StandardCopyOption.REPLACE_EXISTING);
@@ -392,11 +403,12 @@ public final class TypeparamDifferentialTest {
                     bad.add(c.string("program", "report.comparisons") + " " + rlist);
                 }
             }
-            throw new AssertionError(diverged + " divergences (report -> "
+            throw new AssertionError("typeparam run exited " + p.exitValue() + " (unlisted/drifted "
+                    + "divergences, stale entries or INFRA; adapter log above; report -> "
                     + dst.getFileName() + "):\n  - " + String.join("\n  - ", bad));
         }
         System.out.println("typeparam run: " + summary.longInt("total", "report.summary")
-                + " comparisons, 0 diverged, "
+                + " comparisons, " + diverged + " expected divergences (listed), "
                 + summary.longInt("skipped", "report.summary") + " excluded");
     }
 
