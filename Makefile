@@ -372,7 +372,7 @@ snapshot-check: build
 # (the edge-case corpus); slice survivors are re-run on the full corpus.
 # Exit 1 = unjustified survivor, 3 = infra error / red baseline. Slow
 # (~1-2 h): nightly in .github/workflows/mutation.yml, not per-push.
-MUTATION_SLICE ?= 06_nested_defer,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,54_string_ops,55_slice_bounds,56_map_ops,57_defer_order
+MUTATION_SLICE ?= 06_nested_defer,60_narrow_unary_widen,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,55_slice_bounds,56_map_ops,57_defer_order
 MUTATION_WORK ?=
 mutation: generate build
 	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) \
