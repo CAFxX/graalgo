@@ -37,6 +37,10 @@
 #               plus fresh exports — the validator was shelfware until
 #               fix-0005-validator-kinds wired it in)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-java-fast
+#               the fast backend Java unit tests (incl. FreezeSignatureTest,
+#               WakeupModelTest, WakeupRaceStressTest; ~30 s); the slow ones
+#               are test-java-slow (weekly full-suite job)
 #     test-regression
 #               regression tests for fixed PKGs
 #               ([test/regression/](test/regression/)): each
@@ -110,9 +114,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-java-fast test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -257,6 +261,13 @@ test: build
 # classes with each module's own classpath and per-test timing:
 #   test-java-fast  per-push (in `make all`): classes measured fast
 #   test-java-slow  nightly/weekly: the corpus differentials and stress tests
+# Split measured 2026-11-18 (make test-java-timing, nice 19, -Xmx2g): fast
+# lists total ~26 s of test time (classes <= ~4 s each). Slow lists hold
+# classes > ~4 s AND classes with failures on that run (they never ran
+# per-push and had rotted): MainTest, GenericsCorpusTest, VarsCorpusTest,
+# BuiltinsCorpusTest, TypeparamDifferentialTest, SectionClampTest,
+# IfaceMethodTablesTest, ChanBuilderTest, GoOsErrnoTest, GoNetpollTest -
+# so test-java-slow is RED until those are fixed (owners: backend lanes).
 # Re-measure with `make test-java-timing` (all classes, timings printed)
 # before moving a class between lists. A class missing from both lists is
 # caught by `java-test-lists-check` (every class registered in a module
@@ -279,12 +290,12 @@ define run_java_tests
 	  -cp "$(2)" ClassListRunner $(3)
 endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
-JAVA_FAST_TRUFFLE := graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.SectionClampTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest
-JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
-JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.IoSlotsTest graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOverlayTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.PanicOverlayDriftTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest
-JAVA_SLOW_RUNTIME := graalgo.sched.ChannelDifferentialTest graalgo.sched.TimerDifferentialTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest graalgo.runtime.sync.SyncStressTest graalgo.sched.JfrParkCostTest
-JAVA_FAST_INTEROP := graalgo.iface.IfaceDispatchNodeTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.p3time.TimeChanLenCapTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3reflect.ReflectTypesTest graalgo.p3net.GoNetpollTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
-JAVA_SLOW_INTEROP := graalgo.iface.AtomicContentionTest graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
+JAVA_FAST_TRUFFLE := graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest
+JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest graalgo.frontend.SectionClampTest
+JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.launcher.LauncherOverlayTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.PanicOverlayDriftTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
+JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
+JAVA_FAST_INTEROP := graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
+JAVA_SLOW_INTEROP := graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3net.GoNetpollTest graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
 
 java-test-classes: build
 	$(MAKE) -C internal/backend/truffle out/test-classes/.built
