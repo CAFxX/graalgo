@@ -559,6 +559,15 @@ func (in *Interp) printFatal(p *goPanic) {
 			q.link.repanicked = true
 		}
 	}
+	// preprintpanics: every value's text is rendered (running its Error()/
+	// String()) before anything prints; a method that panics turns the
+	// report into gc's "panic while printing panic value" throw.
+	texts, inner := in.renderPanicTexts(p)
+	if inner != nil {
+		fmt.Fprintf(in.stderr, "fatal error: panic while printing panic value: %s\n\ngoroutine 1 [running]:\n", in.throwValueText(inner.val))
+		in.printStack(inner.stack)
+		return
+	}
 	var b bytes.Buffer
 	var print func(q *goPanic)
 	print = func(q *goPanic) {
@@ -569,7 +578,7 @@ func (in *Interp) printFatal(p *goPanic) {
 			}
 			b.WriteString("\t")
 		}
-		b.WriteString("panic: " + in.panicText(q.val))
+		b.WriteString("panic: " + texts[q])
 		switch {
 		case q.recovered && q.repanicked:
 			b.WriteString(" [recovered, repanicked]")
@@ -585,6 +594,39 @@ func (in *Interp) printFatal(p *goPanic) {
 	b.WriteString("\ngoroutine 1 [running]:\n")
 	io.Copy(in.stderr, &b)
 	in.printStack(p.stack)
+}
+
+// renderPanicTexts renders the text of every panic in p's chain, or
+// returns the panic raised by an Error()/String() method while doing so.
+func (in *Interp) renderPanicTexts(p *goPanic) (texts map[*goPanic]string, inner *goPanic) {
+	defer func() {
+		if r := recover(); r != nil {
+			x, ok := r.(*goPanic)
+			if !ok {
+				panic(r)
+			}
+			texts, inner = nil, x
+		}
+	}()
+	texts = make(map[*goPanic]string)
+	for q := p; q != nil; q = q.link {
+		texts[q] = in.panicText(q.val)
+	}
+	return texts, nil
+}
+
+// throwValueText is gc preprintpanics' recover: a value of the predeclared
+// type string prints as is, any other value as "type <T>".
+func (in *Interp) throwValueText(v Iface) string {
+	if v.T != nil && !v.T.IsNamed() && v.T.Kind == KString {
+		if s, ok := v.V.(string); ok {
+			return s
+		}
+	}
+	if v.T == nil {
+		return "type <nil>"
+	}
+	return "type " + v.T.Str
 }
 
 func (in *Interp) printStack(st []stackEntry) {

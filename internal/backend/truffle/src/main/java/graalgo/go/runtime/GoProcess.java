@@ -64,7 +64,19 @@ public final class GoProcess {
     }
 
     private void fatalPanic(GoPanic top) {
-        StringBuilder sb = new StringBuilder(renderChain(top));
+        // gc preprintpanics: every Error()/String() runs before anything prints; a method that
+        // panics turns the report into the throw "panic while printing panic value".
+        String chain;
+        try {
+            chain = renderChain(top);
+        } catch (GoPanic inner) {
+            writeErr(("fatal error: panic while printing panic value: " + throwValueText(inner.value)
+                    + "\n\ngoroutine " + sched.currentGoroutine().id + " [running]:\n")
+                    .getBytes(StandardCharsets.UTF_8));
+            sched.requestExit(2);
+            return;
+        }
+        StringBuilder sb = new StringBuilder(chain);
         // gc prints the signal line whenever the goroutine took the signal, even if a later
         // panic replaced the one it raised.
         for (GoPanic p = top; p != null; p = p.link) {
@@ -140,6 +152,21 @@ public final class GoProcess {
             return t.isNamed() ? t.str() + "(" + s + ")" : s;
         }
         return "(" + t.str() + ") 0xADDR";
+    }
+
+    /**
+     * gc preprintpanics' recover: a value of the predeclared type {@code string} prints as is,
+     * any other value as {@code type <dynamic type>}.
+     */
+    private static String throwValueText(Object value) {
+        Iface v = (Iface) value;
+        if (v.data instanceof GoErrorValue e && e.typeName() != null) {
+            return "type " + e.typeName();
+        }
+        if (!v.type.isNamed() && v.type.kind == GoType.STRING) {
+            return v.data.toString();
+        }
+        return "type " + v.type.str();
     }
 
     private static String indent(String s) {
