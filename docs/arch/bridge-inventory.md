@@ -30,6 +30,13 @@ bridges, no new `synth_*.go`), and an entry is removed only when its code is
 deleted. M3's exit criterion is an empty inventory and an empty grandfather
 list in [check_no_bridges.py](../../.github/scripts/check_no_bridges.py).
 
+The bridges below are the user-visible part of M3's deletion; the complete
+list of what the cutover deletes — including the non-bridge v1
+infrastructure (frontends `v2`/`p3frontend`/vendored `go/*`,
+`internal/driver`, `internal/vet`, the v1 launchers, `tools/gate1`, the
+v1-only Makefile targets, allow-list/ratchet/quarantine entries and the v1
+Java tests) — is [toolexec-design.md §9.1](toolexec-design.md#91-m3-delete-inventory-w11).
+
 ## Active bridges
 
 ### B-2. `NodeFactory.syncPrimitiveName` (name-keyed sync lowering)

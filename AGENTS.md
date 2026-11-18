@@ -19,7 +19,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   overlay, the 18 generated `synth_*.go`, the GIR Go/Java codecs), `build`
   (truffle + interop Java modules), `snapshot-check`, `check`, the module
   tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
-  `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`. CI
+  `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
+  and the new path's gates `test-m1a` (import-free corpus vs gc through
+  the `-toolexec` path) and `pe-check-m1a`. CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).
 - `make check` — the static gates: pinned-jar checksums; placeholder,
@@ -39,14 +41,17 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   base; ratchet budgets may not rise above the base's; `LOCKED-TEXT.sum`
   lines are only added and requirement statuses never move back (`req
   lint` rule (f)); `req seal` is one-shot.
-- `make test-java-slow` — the slow Java classes (nightly/weekly). Known
+- `make test-java-slow` — the slow Java classes (the weekly CI
+  `full-suite` job, Mondays). Known
   failures are listed in [test/java/quarantine.txt](test/java/quarantine.txt)
   (class, reason, owner — a RECOVERY.md track/work-package id or
   `lane:<name>` —, expiry — a future date or a RECOVERY.md milestone —;
   validated by `make java-test-lists-check`); the target fails on any failure
   outside the quarantine **and** on a quarantined class that now passes.
 - `make test` — the full differential suite (30+ minutes): never per-push,
-  never on a shared host without asking; nightly CI runs it.
+  never on a shared host without asking; the weekly CI `full-suite` job
+  runs it. (Nightly: `mutation.yml` and `fuzz-soak.yml`; the layer-3
+  `stdlib-gate.yml` is manual-only until BUG-0033 is triaged.)
 - Per-module Go tests: `go test ./...` inside the module's own directory
   (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its
   own `go.mod`).
@@ -120,7 +125,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   [internal/frontend/](internal/frontend/) and the Java std
   reimplementations in [internal/backend/interop/](internal/backend/interop/)
   are frozen and are **all deleted at M3** with the v1 pipeline
-  ([toolexec-design.md](docs/arch/toolexec-design.md) D11/D12). The frozen
+  ([toolexec-design.md](docs/arch/toolexec-design.md) D11/D12). That is the
+  whole interop module (every package in it is a v1 stand-in), not the
+  runtime library the new path shares; the complete list of what M3
+  deletes and what stays is toolexec-design §9.1. The frozen
   inventory is [docs/arch/bridge-inventory.md](docs/arch/bridge-inventory.md);
   the no-bridges gate
   ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py))
