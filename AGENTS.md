@@ -28,8 +28,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   duplicate-FQN; dead-path; MR-table subset; repo gates (tracked-file
   size/binary gate, doc-path existence, GG-id existence, Makefile
   `.PHONY`/header consistency, generated-files list, placeholder/TODO and
-  runtime-`unimplemented` ratchets, the new-path/v1 layering gate — each
-  with its own planted-violation test); every `.github/scripts/test_*.py`; `tools/req lint`; and the
+  runtime-`unimplemented` ratchets, the new-path/v1 layering gate, the
+  no-bridges gate over every commit since `$NO_BRIDGES_BASE` (CI: the
+  push's `before` sha) or the merge-base with `origin/master` — each with
+  its own planted-violation test); every `.github/scripts/test_*.py`; `tools/req lint`; and the
   gofrontend `build.sh check` (gofmt/vet/tests, vendoring diff, wire-format
   validator).
 - `make test-java-slow` — the slow Java classes (nightly/weekly). Known

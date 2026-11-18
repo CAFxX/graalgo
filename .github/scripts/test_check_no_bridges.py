@@ -22,7 +22,13 @@ Positive controls are synthetic diffs that MUST still fail: the gate
 is a tripwire, not a rubber stamp.
 """
 
+import contextlib
+import io
+import os
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -322,6 +328,99 @@ class TestNoBridgesGate(unittest.TestCase):
 
     def test_import_addition_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(IMPORT_ADDITION), [])
+
+
+class TestDiffSource(unittest.TestCase):
+    """The diff the gate inspects: every pushed commit, never just the last."""
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.cwd = os.getcwd()
+        os.chdir(self.dir)
+        self.addCleanup(os.chdir, self.cwd)
+        self.git("init", "-q", "-b", "master")
+        self.git("config", "user.email", "t@example.invalid")
+        self.git("config", "user.name", "t")
+        self.write("README", "base\n")
+        self.base = self.commit("base")
+
+    def git(self, *args):
+        return subprocess.run(["git"] + list(args), check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def write(self, rel, text):
+        p = Path(self.dir, rel)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+
+    def commit(self, msg):
+        self.git("add", "-A")
+        self.git("commit", "-q", "-m", msg)
+        return self.git("rev-parse", "HEAD")
+
+    def main(self, *argv):
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            rc = cnb.main(list(argv))
+        return rc, out.getvalue()
+
+    def fast_forward_of_three(self):
+        # The bridge lands in the FIRST of three pushed commits.
+        self.write("internal/frontend/synth_newpkg.go", "package frontend\n")
+        self.commit("bridge")
+        self.write("README", "base\nmore\n")
+        self.commit("innocent 1")
+        self.write("README", "base\nmore\nmore\n")
+        self.commit("innocent 2")
+
+    def test_explicit_base_checks_every_pushed_commit(self):
+        self.fast_forward_of_three()
+        rc, out = self.main("--base", self.base)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("NEW SYNTHETIC FILE", out)
+        # Control: the old HEAD~1 source alone misses it.
+        diff = self.git("diff", "HEAD~1...HEAD")
+        self.assertEqual(cnb.check_no_bridges(diff), [])
+
+    def test_env_base_is_used(self):
+        self.fast_forward_of_three()
+        os.environ["NO_BRIDGES_BASE"] = self.base
+        self.addCleanup(os.environ.pop, "NO_BRIDGES_BASE", None)
+        rc, out = self.main()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("explicit base", out)
+
+    def test_zero_or_unknown_base_falls_back(self):
+        self.write("README", "base\nx\n")
+        self.commit("one")
+        for base in ("0" * 40, "deadbeef" * 5):
+            rc, out = self.main("--base", base)
+            self.assertEqual(rc, 0, out)
+            self.assertNotIn("explicit base", out)
+
+    def test_explicit_base_with_empty_diff_passes(self):
+        rc, out = self.main("--base", self.base)
+        self.assertEqual(rc, 0, out)
+
+    def test_merge_base_covers_lane_commits_and_uncommitted(self):
+        self.git("checkout", "-q", "-b", "lane")
+        self.write("internal/frontend/synth_lane.go", "package frontend\n")
+        self.commit("lane bridge")
+        self.write("README", "base\nlane\n")
+        self.commit("lane innocent")
+        rc, out = self.main()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("merge-base with master", out)
+        # Uncommitted shipped-code bridge on top of a clean lane commit.
+        self.git("reset", "-q", "--hard", self.base)
+        self.write("internal/frontend/x.go", "package frontend\n")
+        self.commit("clean")
+        self.assertEqual(self.main()[0], 0)
+        Path(self.dir, "internal/frontend/x.go").write_text(
+            'package frontend\nfunc f() { addFunc("Bar") }\n')
+        rc, out = self.main()
+        self.assertEqual(rc, 1, out)
+        self.assertIn("SYNTHETIC REGISTRATION", out)
 
 
 if __name__ == "__main__":

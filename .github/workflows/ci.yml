@@ -43,12 +43,18 @@ jobs:
   build-and-check:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      # The no-bridges gate diffs NO_BRIDGES_BASE...HEAD: every commit the
+      # push (its `before` sha) or the PR (its base sha) brings, so a
+      # fast-forward of N commits is checked whole — not just HEAD~1.
+      # Used by the step below and by `make check` inside `make all`.
+      NO_BRIDGES_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (fast-forward merge of a lane branch + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # Full history: the no-bridges gate needs NO_BRIDGES_BASE (and,
+          # for its fallbacks, HEAD~1) — a shallow checkout has neither and
+          # the gate would fail loudly instead of inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)

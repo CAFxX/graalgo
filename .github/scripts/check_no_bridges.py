@@ -27,18 +27,27 @@ taken from the p3fmt-stub branch diff, 16547f17, which the old script
 failed with 3 false positives).
 
 Diff sources, in order:
-  1. origin/master...HEAD  (PR / feature branch)
-  2. git diff HEAD         (uncommitted working-tree changes)
+  1. --base SHA / $NO_BRIDGES_BASE  (CI: the push's `before` sha, or the
+                           PR's base sha): `git diff SHA...HEAD`, i.e.
+                           EVERY commit the push or PR brings — a
+                           fast-forward of N commits is checked whole, not
+                           just its last commit. An all-zero sha (new
+                           branch) or an unresolvable one (shallow
+                           checkout) falls through to the next source.
+  2. merge-base of HEAD and origin/master (else master), diffed against the
+     working tree: the lane's commits plus uncommitted changes (local
+     `make check`).
   3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: fast-forward merge + push, no PR —
-                           checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+  4. HEAD~1...HEAD         (last resort: a checkout sitting on master with
+                           no base given — inspect at least the last commit)
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
-CI must check out full history (fetch-depth: 0) for source 4 to resolve.
+A resolvable explicit base with an empty diff is an honest pass.
+CI must check out full history (fetch-depth: 0).
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -79,29 +88,55 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
-    """Get the diff of added lines, plus a label naming the diff source.
+ZERO_SHA = re.compile(r"^0+$")
 
-    Returns ("", "") when no diff could be determined — the caller must
-    treat that as a loud failure, never a vacuous pass.
+
+def _git(args):
+    try:
+        r = subprocess.run(["git"] + args, capture_output=True, text=True, timeout=60)
+    except Exception:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def _commit(ref):
+    """The commit sha ref resolves to, or None."""
+    if not ref or ZERO_SHA.match(ref):
+        return None
+    out = _git(["rev-parse", "--verify", "--quiet", ref + "^{commit}"])
+    return out.strip() if out else None
+
+
+def get_diff(base=None):
+    """Get the diff to inspect, plus a label naming the diff source.
+
+    Returns (diff, label); diff is None when no diff could be determined
+    (the caller fails loudly), "" for an honest empty diff against an
+    explicit base.
     """
-    # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
-    candidates = [
-        ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
-        ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
-        ("staged", ["git", "diff", "--cached", "--", "."]),
-        ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),
-    ]
-    for name, cmd in candidates:
-        try:
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        except Exception:
+    sha = _commit(base)
+    if sha:
+        out = _git(["diff", f"{sha}...HEAD", "--", "."])
+        if out is not None:
+            return out, f"{base[:12]}...HEAD (explicit base)"
+    for upstream in ("origin/master", "master"):
+        if not _commit(upstream):
             continue
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout, name
-    return "", ""
+        mb = _git(["merge-base", "HEAD", upstream])
+        if not mb:
+            continue
+        out = _git(["diff", mb.strip(), "--", "."])
+        if out and out.strip():
+            return out, f"merge-base with {upstream} ({mb.strip()[:12]}) + working tree"
+        break
+    out = _git(["diff", "--cached", "--", "."])
+    if out and out.strip():
+        return out, "staged"
+    out = _git(["diff", "HEAD~1...HEAD", "--", "."])
+    if out and out.strip():
+        return out, "HEAD~1...HEAD (no base: last commit only)"
+    return None, ""
+
 
 def _is_test_file(fname):
     """Test files and test harnesses: never shipped code, so a pattern
@@ -319,17 +354,24 @@ def check_no_bridges(diff):
 
     return errors
 
-def main():
-    diff, source = get_diff()
-    if not diff.strip():
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    base = os.environ.get("NO_BRIDGES_BASE", "")
+    if len(argv) == 2 and argv[0] == "--base":
+        base = argv[1]
+    elif argv:
+        print("usage: check_no_bridges.py [--base SHA]")
+        return 2
+    diff, source = get_diff(base)
+    if diff is None:
         # Never pass vacuously: on the standard integration path (fast-forward
         # integrate + push, no PR) every diff source above is empty only when
         # the checkout has no history to diff against. Skipping here is
         # exactly the false-green hole this check exists to close.
         print("NO-BRIDGES CHECK FAILED:")
-        print("  could not determine any diff to inspect (no PR diff, no")
-        print("  working-tree changes, and HEAD~1 is unavailable — is this a")
-        print("  shallow checkout? CI must use fetch-depth: 0).")
+        print("  could not determine any diff to inspect (no usable base, no")
+        print("  merge-base diff, no staged changes, and HEAD~1 is unavailable —")
+        print("  is this a shallow checkout? CI must use fetch-depth: 0).")
         print("  Refusing to pass vacuously.")
         return 1
 
