@@ -1,116 +1,142 @@
 # AGENTS.md — operating manual for graalgo
 
 This is the working contract for agents (and humans) editing this repo.
-Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
+Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md). The
+current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
+[docs/arch/SPEC.md](docs/arch/SPEC.md) is authoritative.
 
-## 1. Build & test
+## 1. Environment
 
-- Toolchain: `~/tools/go/bin/go` (go1.27.1). Export it on `PATH` or pass
-  `GO=~/tools/go/bin/go make ...`.
-- `make all` — the per-push gate: regenerate generated artifacts
-  (`generate`), compile everything (`build`), verify behavior snapshots
-  (`snapshot-check`), run the grep/format gates (`check`), run the fast
-  in-JVM tests (`test-ci`). Then CI runs `git diff --exit-code`: if `make
-  all` regenerates any tracked file differently from what's committed, the
-  build fails. **Push only after `make all` is green locally.**
-- `make check` — placeholder / debug-leftover / netpoller / exclusion-list
-  grep gates + gofrontend gofmt/vet/tests.
-- `make test` — the full differential suite (30+ minutes). Not per-push;
-  for local verification and nightly runs. Invoke explicitly.
-- `make snapshot-check` — re-runs the differential corpus under graalgo and
-  fails on drift from the committed baseline in
-  [test/snapshots/](test/snapshots/). Any commit that changes observable
-  behavior must fail loudly here — never silently.
-- `make snapshot` — **re-records** the baseline. Run only for a toolchain
-  upgrade or a deliberately re-baselined behavior change, then commit the
-  result. Never run to make a red check green.
-- Per-package Go tests: `go test ./...` inside the package's own module
-  directory (see [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md)).
-- Differential harness: [test/differential/run.sh](test/differential/run.sh)
-  (moved here from `tools/diffharness/` with the test-reorganization lane,
-  2026-10-13).
+- Toolchains (see [docs/dev/ENV.md](docs/dev/ENV.md)):
+  `export PATH=~/tools/go/bin:~/tools/graalvm-jdk-25/bin:$PATH
+  JAVA_HOME=~/tools/graalvm-jdk-25` — Go go1.27.1 at `~/tools/go`, Oracle
+  GraalVM JDK 25 at `~/tools/graalvm-jdk-25`. The Makefiles honor `GO=` and
+  `GRAALVM_HOME=`.
 
-## 2. Worktree discipline
+## 2. Build & test
 
-- `master` is **integration-only**: never edit, build, or commit there. It
-  advances by fast-forward merges only.
-- Claim an exclusive worktree per lane:
-  `~/workspace/system/bin/wt.py new graalgo <stream> --chat <chat-id>`
-  (branch `wt/<chat>/<stream>`, registry-enforced exclusivity). Work only in
-  your worktree; the coordinator integrates via `wt.py integrate` (merge
-  lock + pristine-main check + `--ff-only`; non-ff → you rebase in your
-  worktree and re-verify).
-- Commit with **explicit pathspecs** — never bare `git commit` — when anyone
-  else may have staged changes. On this shared tree, never `git stash`
-  blindly: check `git status` for others' in-flight files first.
-- Every commit is pushed immediately after landing, and CI is watched to
-  verdict (green or explained failure) before the lane is called done.
+- `make all` — the per-push gate, in order: `generate` (gofrontend,
+  overlay, the 18 generated `synth_*.go`, the GIR Go/Java codecs), `build`
+  (truffle + interop Java modules), `snapshot-check`, `check`, the module
+  tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
+  `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`. CI
+  then fails if `make all` left any modified **or untracked** file
+  (`git diff --exit-code` + `git status --porcelain`).
+- `make check` — the static gates: pinned-jar checksums; placeholder,
+  debug-leftover, v1-netpoller, off-heap/NIO (only `graalgo.syscall` may use
+  `MemorySegment`/`Arena`/`java.nio.channels`) and pin-surface grep gates;
+  duplicate-FQN; dead-path; MR-table subset; repo gates (tracked-file
+  size/binary gate, doc-path existence, GG-id existence, Makefile
+  `.PHONY`/header consistency, generated-files list, placeholder/TODO and
+  runtime-`unimplemented` ratchets — each with its own planted-violation
+  test); every `.github/scripts/test_*.py`; `tools/req lint`; and the
+  gofrontend `build.sh check` (gofmt/vet/tests, vendoring diff, wire-format
+  validator).
+- `make test-java-slow` — the slow Java classes (nightly/weekly). Known
+  failures are listed in [test/java/quarantine.txt](test/java/quarantine.txt)
+  (class, reason, owner, expiry milestone); the target fails on any failure
+  outside the quarantine **and** on a quarantined class that now passes.
+- `make test` — the full differential suite (30+ minutes): never per-push,
+  never on a shared host without asking; nightly CI runs it.
+- Per-module Go tests: `go test ./...` inside the module's own directory
+  (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its
+  own `go.mod`).
 
-## 3. Correctness contract
+## 3. Snapshots and expected divergences
 
-- graalgo's observable behavior is defined by `gc` (the reference Go
-  toolchain). **Any change that can alter behavior must run the differential
-  probe** (`make snapshot-check`, and the corpus differential for the
-  affected area) and show no drift — or the drift is deliberate, reviewed,
-  and re-baselined with `make snapshot` in the same change.
-- Tests are never tautological: every test must be demonstrably capable of
-  failing. If a bug escapes, the suite was insufficient — hunt the error
-  class, patch the process, don't just fix the instance.
-- Binary done-gates for every change: spec exists; no placeholders; suite
-  green; independent review findings remediated and re-tested. "Works in the
-  happy path" is not done.
+- [test/snapshots/](test/snapshots/) records **gc's** behavior on the
+  differential corpus — never graalgo's. `make snapshot` re-records gc and
+  runs only when a corpus program changes or on a toolchain upgrade.
+- `make snapshot-check` runs the corpus under graalgo and fails on any
+  divergence from gc's snapshot. A known graalgo divergence is a reviewed,
+  reason-coded (SPEC §5.6: `backend-specific`, `unspecified-behavior`,
+  `deferred-parity`) entry in
+  [test/differential/corpus-exclusions.yaml](test/differential/corpus-exclusions.yaml);
+  graalgo bugs carry an id from [docs/dev/bugs.md](docs/dev/bugs.md), and
+  each entry pins the `signature:` of its divergence (a listed program that
+  diverges in a new way is DRIFT; an unpinned one fails). A listed program
+  that now matches gc fails as STALE. A failure that only an infra retry
+  makes pass is counted against `-retry-budget` (default 0): flakes are
+  bugs. **Never run
+  `make snapshot` to silence graalgo** — it cannot (it records gc), and an
+  exclusion without review is the same lie.
+- The same rules hold for
+  [srctest-exclusions.yaml](test/differential/srctest-exclusions.yaml),
+  [typeparam-exclusions.yaml](test/differential/typeparam-exclusions.yaml)
+  and [tools/stdlib-fork/exclusions.yaml](tools/stdlib-fork/exclusions.yaml).
 
-## 4. Generality rule
+## 4. Worktrees and commits
 
-- Fixes are **structural, never name-keyed**: fix the mechanism, never
-  special-case a package, symbol, or test name. A fix that only works for
-  the failing case is not a fix.
+- The integration checkout is `~/dev/graalgo` on `master`, which advances by
+  **fast-forward merges only**; never edit, build or commit there.
+- One git worktree + branch per lane under `~/dev/graalgo-wt/<lane>`
+  (`git worktree add ~/dev/graalgo-wt/<lane> -b wt/<area>/<lane> master`).
+  Work only in your worktree; the coordinator fast-forwards `master`. A
+  non-fast-forward means you rebase in your worktree and re-verify.
+- Commit with **explicit pathspecs**; never `git add -A` or a bare
+  `git commit -a`. Never `git stash` in a tree someone else may be using.
+- Push only when the coordinator asks; watch CI to a verdict before calling
+  a lane done.
+
+## 5. Correctness contract
+
+- Observable behavior is defined by `gc`. Any change that can alter
+  behavior runs the differential probe for the affected area (a
+  `SNAPSHOT_PROGRAMS=` slice of `make snapshot-check`, the relevant corpus
+  runner) and shows no new divergence.
+- Tests are never tautological: every test (and every gate) must be
+  demonstrably capable of failing — gates ship with a test that plants the
+  violation they guard. If a bug escapes, hunt the error class and patch the
+  process, not just the instance.
+- Done means: spec exists; no placeholders; gates green; independent review
+  findings remediated and re-tested.
+- **Periodic global reviews**: at each milestone (and at least weekly while
+  lanes are active) an independent reviewer audits the whole tree against
+  SPEC and this file; findings become lane work items with tests, not
+  notes.
+
+## 6. Generality, synthetic code, and upstream
+
+- Fixes are **structural, never name-keyed**: never special-case a
+  package, symbol, or test name.
 - **Upstream Go is never modified.** [stdlib/patches/](stdlib/patches/)
-  holds minimal diffs against upstream sources when a package cannot
-  compile unmodified — the fix still goes into graalgo, with the patch
-  documenting what unblocks the real sources (see
-  [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) §Principles).
-- Synthetic stdlib packages are honest workarounds, not destinations: each
-  implementation (in [internal/frontend/](internal/frontend/) as `synth_*.go`)
-  states why it is synthetic and what root-cause fix retires it. The full
-  bridge inventory — every grandfathered bridge, its root-cause fix, and the
-  phased removal order — lives in
-  [docs/arch/bridge-inventory.md](docs/arch/bridge-inventory.md); the
-  no-bridges gate ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py))
-  grandfathers exactly what is inventoried there.
+  holds minimal diffs when a package cannot compile unmodified.
+- **No new `synth_*.go`.** The existing synthetic stdlib files in
+  [internal/frontend/](internal/frontend/) and the Java std
+  reimplementations in [internal/backend/interop/](internal/backend/interop/)
+  are frozen and are **all deleted at M3** with the v1 pipeline
+  ([toolexec-design.md](docs/arch/toolexec-design.md) D11/D12). The frozen
+  inventory is [docs/arch/bridge-inventory.md](docs/arch/bridge-inventory.md);
+  the no-bridges gate
+  ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py))
+  rejects additions.
 
-## 5. No-debris rule
+## 7. Resources and hygiene (shared host)
 
-- `hidden_files/` must **never reappear**. Per-run evidence belongs in
-  commit messages, not in untracked scratch directories.
-- Build artifacts (`out/`, `*.err`, binaries) are gitignored and deleted,
-  never committed.
-- Research scratch (wave logs, run dumps, speculative drafts) is
-  consolidated into [docs/arch/](docs/arch/) / [docs/dev/](docs/dev/) or
-  deleted — never left lying in the tree.
+- Every heavy command runs under `nice -n 19` (`nice -n 10` for short
+  interactive builds). One JVM / heavy process at a time per lane; JVMs with
+  `-Xmx2g -XX:ActiveProcessorCount=4` (`GRAALGO_JAVA_OPTS`,
+  `JAVA_TEST_OPTS`); `make -j2` at most; `SNAPSHOT_JOBS=1` for snapshot
+  slices. Kill stray processes you started.
+- JVM crash logs go to scratch, never the repo:
+  `-XX:ErrorFile=<scratch>/hs_err_pid%p.log`. Scratch lives outside the
+  tree (or in a gitignored `.tmp/`); `git status` is clean when a lane
+  ends.
+- No debris: no `hidden_files/`, build outputs, binaries, archives, JFR
+  recordings or logs > 1 MB in git (the size/binary gate enforces it;
+  exceptions go in
+  [.github/scripts/large_files_allowlist.txt](.github/scripts/large_files_allowlist.txt)
+  with a reason). Per-run evidence goes in commit messages.
+- Performance: treat every commit as performance-sensitive — no accidental
+  quadratic paths, no hot-path allocations, no synchronized I/O in the
+  scheduler loop.
 
-## 6. Performance sensitivity
+## 8. Docs
 
-- This project is a performance play (JIT-compiled Go on GraalVM). Treat
-  every commit as performance-sensitive: no accidental quadratic paths, no
-  allocations on hot paths, no synchronized I/O in the scheduler loop.
-- **Every VM command runs under `nice`** — default `nice -n 10`, `nice -n
-  19` for heavy batch compute (benchmarks, sweeps, bulk test runs). Never
-  renice the agent runtime or system daemons — worker compute only.
-- Before dispatching heavy work (workers, builds, test runs), run
-  `~/workspace/system/bin/load-shed.sh backoff`: exit 0 = clear, exit 1 =
-  back off and retry later. Don't pile onto a saturated box.
-- Heavy embarrassingly-parallel batch work goes to GitHub Actions via the
-  fanout repo by default; the VM keeps the tight edit/run/debug loop.
-
-## 7. Where things live
-
-[docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) is the authoritative map:
-full directory tree with one-line descriptions, the old→new mapping table
-from the research era, layout principles, and what is intentionally not in
-the repo. When you add a directory or move code, update that document in
-the same change — **docs are part of the change, never a follow-up** — and
-every file/dir name you write in a doc is a clickable relative link
-(mechanically enforced by
-[.github/scripts/check_markdown_links.py](.github/scripts/check_markdown_links.py);
-run it before pushing doc changes).
+[docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) is the authoritative map.
+Docs are part of the change: add/move a directory → update the map in the
+same commit. Every repo path written in a non-archived doc must exist
+(links checked by
+[check_markdown_links.py](.github/scripts/check_markdown_links.py),
+backticked paths by `check_doc_paths.py` in `make check`); mark a path that
+does not exist yet as "(planned)".

@@ -16,6 +16,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import check_gg_ids as g  # noqa: E402
 
+# Fake ids are assembled at run time so tools/req lint does not see them.
+FAKE = "GG" + "-0777"
+FAKE_NS = "GG" + "-WAKE-0042"
+
 
 def tree(files):
     d = Path(tempfile.mkdtemp())
@@ -37,18 +41,18 @@ class Gate(unittest.TestCase):
         self.assertEqual(g.scan(d, ["docs/a.md"]), [])
 
     def test_unknown_id_fails(self):
-        d = tree({**REG, "internal/x.go": "// verifies: GG-0777\n"})
+        d = tree({**REG, "internal/x.go": "// verifies: " + FAKE + "\n"})
         errs = g.scan(d, ["internal/x.go"])
         self.assertEqual(len(errs), 1, errs)
-        self.assertIn("GG-0777", errs[0])
+        self.assertIn(FAKE, errs[0])
 
     def test_unknown_namespaced_id_fails(self):
-        d = tree({**REG, "docs/a.md": "GG-WAKE-0042\n"})
+        d = tree({**REG, "docs/a.md": FAKE_NS + "\n"})
         self.assertEqual(len(g.scan(d, ["docs/a.md"])), 1)
 
     def test_binary_skipped(self):
         d = tree(REG)
-        (d / "bin.dat").write_bytes(b"\0\0GG-0777")
+        (d / "bin.dat").write_bytes(b"\0\0" + FAKE.encode())
         self.assertEqual(g.scan(d, ["bin.dat"]), [])
 
 
