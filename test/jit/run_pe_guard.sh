@@ -21,6 +21,20 @@
 # false), so every compile is finished — and traced — before the program
 # continues, independent of machine load.
 #
+# The guard also fails, with a message naming the cause rather than a
+# misleading output diff, when
+#   - the program crashes (non-zero exit: the tail of its stderr is
+#     printed), or
+#   - the JVM has no optimizing Truffle runtime (Truffle fell back to the
+#     interpreter-only runtime: wrong JDK, JVMCI disabled, jars missing) —
+#     nothing can compile there, so every other check would be noise.
+#
+# Heap: the frontend/v1 JSON IR for this program (fmt + strings closure)
+# is ~120 MB and the AST build peaks at ~1 GB live, so the default heap is
+# 2 GB. With -Xmx1g the build dies with "Java heap space" before main runs
+# — the CI failure of 2026-11-18 (ubuntu-24.04 runners: a 1g cap OOMs on
+# any core count). Override with PEGUARD_JAVA_OPTS.
+#
 # Requires `make build`. Runs in ~30 s.
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,13 +51,21 @@ fail=0
 run_mode() {
   local mode="$1"; shift
   local out="$WORK/$mode.out" err="$WORK/$mode.err" status=0
-  JAVA_TOOL_OPTIONS="${PEGUARD_JAVA_OPTS:--Xmx1g} \
+  JAVA_TOOL_OPTIONS="${PEGUARD_JAVA_OPTS:--Xmx2g} \
  -Dpolyglot.engine.TraceCompilation=true \
  -Dpolyglot.engine.CompilationFailureAction=Print \
  -Dpolyglot.engine.BackgroundCompilation=false $*" \
     timeout 300 "$RUN" "$PROG" >"$out" 2>"$err" || status=$?
+  if grep -q 'uses a fallback runtime that does not support runtime compilation' "$err"; then
+    echo "peguard[$mode]: FAIL: the JVM has no optimizing Truffle runtime (fallback" >&2
+    echo "  interpreter-only runtime), so nothing can be compiled. Use the pinned" >&2
+    echo "  Oracle GraalVM JDK 25 (docs/dev/ENV.md) with JVMCI enabled. Truffle says:" >&2
+    grep -m1 'The following cause was found' "$err" | sed 's/^/  /' >&2 || true
+    exit 1
+  fi
   if [ "$status" -ne 0 ]; then
-    echo "peguard[$mode]: program exited $status" >&2
+    echo "peguard[$mode]: program exited $status; stderr tail:" >&2
+    grep -v '^\[engine\] opt \|^Picked up JAVA_TOOL_OPTIONS' "$err" | tail -n 15 | cut -c1-300 | sed 's/^/  /' >&2 || true
     fail=1
   fi
   if ! cmp -s "$out" "$HERE/peguard/expected.txt"; then
