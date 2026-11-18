@@ -127,11 +127,37 @@ Related: [Makefile](../Makefile) (root build entry point),
       [lib/](../internal/backend/truffle/lib/); the launchers
       [graalgo-run](../internal/backend/graalgo-run) and
       [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
+      The **new node package** (toolexec W4, decision D12) lives in the same
+      module under
+      [graalgo/go/](../internal/backend/truffle/src/main/java/graalgo/go/)
+      and shares only the runtime library with v1:
+      [loader/](../internal/backend/truffle/src/main/java/graalgo/go/loader/)
+      (bundle, package and lazily decoded function units, generic
+      instantiation),
+      [types/](../internal/backend/truffle/src/main/java/graalgo/go/types/)
+      (type descriptors interned by canonical key, flat layouts, method
+      sets, lazy itabs),
+      [values/](../internal/backend/truffle/src/main/java/graalgo/go/values/)
+      (the flat value model of SPEC §3.4: `Flat`, `Ptr`, `Slice`, `GoMap`,
+      `Iface`, `Closure`),
+      [nodes/](../internal/backend/truffle/src/main/java/graalgo/go/nodes/)
+      (typed node families, memory locations, DSL arithmetic, calls with
+      inline caches, open-coded defers),
+      [build/](../internal/backend/truffle/src/main/java/graalgo/go/build/)
+      (the node factory over decoded GIR) and
+      [runtime/](../internal/backend/truffle/src/main/java/graalgo/go/runtime/)
+      (panics, goroutine state, the adapter onto the scheduler). `GoLanguage`
+      parses a linked bundle (`application/x-graalgo-bundle`) with it; the
+      runner of linked executables is
+      [graalgo-bundle-run](../internal/backend/graalgo-bundle-run)
+      (`graalgo.launcher.BundleMain`). Design notes:
+      [truffle-design.md §15](arch/truffle-design.md).
     - [gir/](../internal/backend/gir/) — the Java GIR decoder/encoder
       (JDK-only, own [Makefile](../internal/backend/gir/Makefile));
       `Gir.java`/`GirCodec.java` are generated from
       [schema.txt](../internal/toolexec/ir/schema.txt). Tested by
-      `make test-gir`. The loader/node factory consuming it is W4.
+      `make test-gir`. Its sources are also compiled into the truffle
+      module, whose bundle loader (`graalgo.go.loader`) consumes them.
     - [fast-cycle/](../internal/backend/fast-cycle/) — fast debug cycle:
       [FastCycleDaemon.java](../internal/backend/fast-cycle/FastCycleDaemon.java)
       plus the [`fast-cycle`](../internal/backend/fast-cycle/fast-cycle)
@@ -225,6 +251,22 @@ Related: [Makefile](../Makefile) (root build entry point),
     `make test-ci`). [run_pe_check.sh](../test/jit/run_pe_check.sh)
     (`make pe-check`, TR-0) runs the whole benchmark set with
     `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
+  - [m1a/](../test/m1a/) — the differential gate of toolexec milestone M1a
+    (`make test-m1a`, ~2 min, not per-push): [run.sh](../test/m1a/run.sh)
+    builds every corpus program that imports nothing with the stock
+    `go build -toolexec graalgo-tool`, runs the linked bundle on the new
+    node package and compares stdout, normalized stderr and exit status
+    with gc. [transform.py](../test/m1a/transform.py) makes the phase-1
+    programs print their `// observe:` variables (both legs);
+    [programs/](../test/m1a/programs/) adds programs for areas the corpus
+    is thin on (open-coded and chained defers, the flat value model,
+    interfaces, generics, goroutines);
+    [multipkg/](../test/m1a/multipkg/) holds multi-package modules.
+    [bench.sh](../test/m1a/bench.sh) runs the [bench/](../test/bench/)
+    workloads on the new node package, rewritten by
+    [bench.py](../test/m1a/bench.py) to need no standard library
+    (`make bench-m1a`), and as the partial-evaluation gate of the new
+    nodes (`make pe-check-m1a`: zero failed compilations).
   - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output

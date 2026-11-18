@@ -1978,3 +1978,31 @@ Other decisions requested:
 2. Approve adding the tool and TCK jars to the pinned set (TR-0).
 3. Whether foreign (host) threads calling into Go should hold a GOMAXPROCS
    token; this design says no (§2.6, item 4).
+
+## 15. W4 as built: the new node package (2026-11-18)
+
+The first slice of toolexec W4 / TR-3 / TR-4:
+[graalgo/go/](../../internal/backend/truffle/src/main/java/graalgo/go/)
+loads a linked bundle through `GoLanguage` (`application/x-graalgo-bundle`)
+and runs programs that import no package outside the bundle. Gate:
+`make test-m1a` ([test/m1a/run.sh](../../test/m1a/run.sh)). What follows
+records where the implementation departs from the sections above, and why;
+[SPEC.md](SPEC.md) decided every case where the two disagreed.
+
+| Topic | As built | Section it changes |
+|---|---|---|
+| Package names | `graalgo.go.{loader,types,values,nodes,build,runtime}`: the names of §12 without the prefix are taken by v1 (`graalgo.values`, `graalgo.runtime`) until M3. | §12 |
+| Integer and float carriers | Every integer type is a `long` in canonical extended form, both float types a `double` (a float32 is a float-representable double; `+ - * /` computed in double and rounded once are correctly rounded). Four families: `I64`, `F64`, `Bool`, `Ref`. The `int`/`float` carriers of §3.1 are not introduced: this halves the arithmetic, comparison, conversion and location node surface, and a wrap node is one instruction after PE. To be revisited only if a benchmark shows a cost. | §3.1, §4.1 |
+| Value model | Flat, per SPEC §3.4 / GG-0061: one class `Flat { type, long[] prims, Object[] refs }` is every struct and array value, every slice backing store and the box of every escaping variable; nested structs and arrays are inlined, and the type's layout gives each field its (scalar, reference) slot offsets. The nested-`GoStruct` rows of §4.4's pointer table do not apply. | §4.4 |
+| Pointers | `*T` is the referent `Flat` when it points at the object's start, else `Ptr { Flat obj, int prim, int ref }` (GG-0062's "referent + offset", in slot units). One representation per location, so pointer equality is identity or field-wise. `ElemPtr`/`FieldPtr`/typed cells are not used. **W13 adds** the gc byte offset next to the slot offsets and the leaf table (byte offset → slot) on the type, `unsafe.Pointer` views and `uintptr` handles; `Mem.PtrLoc` is the node that gains the view shape. | §4.4 |
+| Memory access nodes | A location node (`Mem.Loc`: field path into an object, through a pointer, slice element, array element, map entry) evaluates its operands once and exposes object + two offsets (constants, or two `int` scratch frame slots); load, store and address-of nodes are shared by all shapes. Field offsets fold into the innermost location at build time. | §4.2 |
+| Slices | `Slice { Flat base, prim, ref, len, cap }`; elements occupy slots of the backing `Flat`, so `s.arr[:]` aliases a struct's inlined array. Typed primitive arrays (`byte[]` for `[]byte`) are **not** used yet: with inlined arrays a `[]byte` may alias `long` slots, so a typed backing needs a second slice shape; decide together with W13's byte-addressed views. Cost today: 8 bytes per `[]byte` element and a loop for string ↔ `[]byte`. | §4.2 |
+| Complex | An immutable `Complex` object in a reference slot (not two scalar slots): no gc-layout view of a complex yet (W13). | §3.1 |
+| Interfaces | One class `Iface { type, data }` for empty and non-empty interfaces (SPEC §3.4: "(dynamic type descriptor, data) + itab"); interface-to-interface conversion is the identity. The call site's inline cache guards on the dynamic type and holds the itab method as a PE constant; the megamorphic path is an itab lookup on the type (a hash lookup, which SPEC §3.3 allows) plus a constant method index. `GoIface`/`GoEface` with the itab in the value are not built. | §4.6 a |
+| Receiver adaptation | Method-set entries carry the embedding path from the frontend; `Receivers.adapt` turns the interface's data word into the declared receiver (identity, copy, or path walk). No promotion thunks are generated. Methods promoted from an embedded *interface* are not supported yet. | §4.6 a |
+| Closures | `Closure { RootCallTarget, MaterializedFrame }` as SPEC §3.4 writes it; the frame is a capture *environment* created per function literal evaluation and holding the boxes of the captured variables (needed for Go 1.22 per-iteration variables), never the creating function's activation frame. All access goes through `values.Env`, so typed cells can be swapped in for the A9 benchmark. | §4.4, T7 |
+| Defers | Open-coded (amendment A8) when no `defer` statement of the function can run twice (not in a loop, no `goto` in the function, at most 8 sites): per-site slots + a bit set, exit sequence with a per-site inline cache, goroutine state touched only while a panic unwinds. Otherwise the explicit per-goroutine chain (SPEC §3.5, GG-0019). `recover()` is effective in the frame whose argument array is the deferred call's — no per-call flag clearing (H2). | §4.5 |
+| Safepoints | `Safepoint.poll` at function entry and loop back-edges (SPEC §3.5, GG-SCHED-0001); T4 is not applied (pending P-B). | §2.7 |
+| Panics | `GoPanic extends AbstractTruffleException` in the new package; runtime errors reuse v1's value model (`GoErrors`/`GoErrorValue`) boxed as interface values of Java-defined `runtime.*Error` types until the facade `runtime` (toolexec W5) declares them. Channel panics of the shared runtime are re-raised. | §4.5 |
+| Loops | `range` and `switch` are lowered by the factory onto one `LoopNode`-based loop node and `If` chains (no per-form repeating node classes); `goto` blocks are merge-exploded. | §4.8 |
+| Not built in this slice | Source sections, tags and wrappers (§6, rule I3); `InteropLibrary` exports (§5); `cloneUninitialized` for splitting; `AllocationReporter` (P4); per-node unit and PE tests (T1–T4: the corpus gate and `make pe-check-m1a` stand in); context policy stays `EXCLUSIVE`; `G` lives in the TR-1 thread slot. Unsupported constructs fail loudly at first call: range-over-func, slice → array conversion, `unsafe` builtins, type switch/assertion on a type-parameter operand. | §5, §6, §11 |

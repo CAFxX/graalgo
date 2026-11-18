@@ -1,0 +1,768 @@
+package graalgo.go.nodes;
+
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.RootCallTarget;
+import com.oracle.truffle.api.dsl.Bind;
+import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.GenerateInline;
+import com.oracle.truffle.api.dsl.ReportPolymorphism;
+import com.oracle.truffle.api.dsl.Specialization;
+import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
+import com.oracle.truffle.api.nodes.IndirectCallNode;
+import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.profiles.BranchProfile;
+import graalgo.go.nodes.N.Expr;
+import graalgo.go.nodes.N.GoNode;
+import graalgo.go.nodes.N.Jump;
+import graalgo.go.nodes.N.Ref;
+import graalgo.go.nodes.N.Stmt;
+import graalgo.go.runtime.G;
+import graalgo.go.runtime.GoPanic;
+import graalgo.go.runtime.GoProcess;
+import graalgo.go.runtime.Panics;
+import graalgo.go.runtime.Receivers;
+import graalgo.go.types.GoType;
+import graalgo.go.types.Itab;
+import graalgo.go.types.Method;
+import graalgo.go.values.Closure;
+import graalgo.go.values.Env;
+import graalgo.go.values.Iface;
+import graalgo.language.GoLanguage;
+import graalgo.safepoint.Safepoint;
+import java.util.function.Supplier;
+
+/**
+ * Functions and calls (truffle-design §4.3, §4.5, §4.6).
+ *
+ * <p>Calling convention: {@code arguments[0]} is the callee's capture environment (a closure's
+ * {@code MaterializedFrame}, null otherwise), {@code arguments[1..]} the Go arguments in carrier
+ * form, boxed; a method's receiver is the first Go argument. One result is returned boxed,
+ * several as an {@code Object[]} tuple. Struct and array arguments are private copies made by
+ * the caller.
+ *
+ * <p>Defers: a function whose {@code defer} statements each run at most once is an
+ * {@link OpenDeferRoot} (open-coded, amendment A8); any other deferring function is a
+ * {@link DeferRoot} over the explicit per-goroutine chain of SPEC §3.5 (GG-0019). Both unwind a
+ * panic the same way. Functions without {@code defer} never touch goroutine state.
+ */
+public final class Calls {
+    private Calls() {}
+
+    /** A Go function body. */
+    public static class FuncRoot extends RootNode {
+        private final String name;
+        @Children private final Stmt[] prologue;
+        @Child private Stmt body;
+        @Child private Expr result;
+
+        public FuncRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
+                Expr result) {
+            super(language, descriptor);
+            this.name = name;
+            this.prologue = prologue;
+            this.body = body;
+            this.result = result;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Safepoint.poll(this);
+            enter(frame);
+            runBody(frame);
+            return result(frame);
+        }
+
+        @ExplodeLoop
+        final void enter(VirtualFrame frame) {
+            for (Stmt s : prologue) {
+                s.executeVoid(frame);
+            }
+        }
+
+        final void runBody(VirtualFrame frame) {
+            try {
+                body.executeVoid(frame);
+            } catch (Jump j) {
+                if (j != Jump.RETURN) {
+                    throw j;
+                }
+            }
+        }
+
+        final Object result(VirtualFrame frame) {
+            return result == null ? null : result.executeGeneric(frame);
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    /** Shared machinery of the two kinds of deferring function. */
+    abstract static class DeferringRoot extends FuncRoot {
+        final BranchProfile panicked = BranchProfile.create();
+
+        DeferringRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
+                Expr result) {
+            super(language, descriptor, name, prologue, body, result);
+        }
+
+        /**
+         * Runs one deferred call. Without a panic in flight it is a plain call. With one
+         * ({@code cur}) the goroutine state names the panic and the call's argument array, which
+         * is what makes {@code recover()} effective in exactly the function called here; the
+         * result is the panic still in flight afterwards (null once recovered).
+         */
+        final GoPanic callDeferred(Dispatch site, Object target, Object[] args, GoPanic cur) {
+            if (cur == null) {
+                try {
+                    invoke(site, target, args);
+                    return null;
+                } catch (GoPanic p) {
+                    panicked.enter();
+                    return p;
+                }
+            }
+            G g = G.current(this);
+            GoPanic outer = g.panic;
+            Object[] outerArgs = g.recoverArgs;
+            g.panic = cur;
+            g.recoverArgs = args;
+            try {
+                invoke(site, target, args);
+                return cur.recovered ? null : cur;
+            } catch (GoPanic p) {
+                return chain(p, cur);
+            } finally {
+                g.panic = outer;
+                g.recoverArgs = outerArgs;
+            }
+        }
+
+        private void invoke(Dispatch site, Object target, Object[] args) {
+            if (target == null) {
+                throw Panics.nilDeref(this);
+            }
+            site.execute((RootCallTarget) target, args);
+        }
+
+        /** Links a panic raised by a deferred call to the panic that call was running for. */
+        @TruffleBoundary
+        private static GoPanic chain(GoPanic raised, GoPanic running) {
+            if (raised != running) {
+                GoPanic tail = raised;
+                while (tail.link != null && tail.link != running) {
+                    tail = tail.link;
+                }
+                tail.link = running;
+            }
+            return raised;
+        }
+    }
+
+    /**
+     * A function whose {@code defer} statements can run more than once or are too many to
+     * open-code (in a loop, with {@code goto}, over the bit limit): its deferred calls are the
+     * records of the goroutine's defer chain above the mark taken at entry (SPEC §3.5).
+     */
+    public static final class DeferRoot extends DeferringRoot {
+        @Child private Dispatch site = CallsFactory.DispatchNodeGen.create();
+
+        public DeferRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
+                Expr result) {
+            super(language, descriptor, name, prologue, body, result);
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Safepoint.poll(this);
+            G g = G.current(this);
+            G.Defer mark = g.defers;
+            GoPanic cur = null;
+            try {
+                enter(frame);
+                runBody(frame);
+            } catch (GoPanic p) {
+                panicked.enter();
+                cur = p;
+            }
+            while (g.defers != mark) {
+                G.Defer d = g.defers;
+                g.defers = d.next;
+                cur = callDeferred(site, d.target, d.args, cur);
+            }
+            if (cur != null) {
+                throw cur;
+            }
+            return result(frame);
+        }
+    }
+
+    /**
+     * A function with open-coded defers (truffle-design §4.5, amendment A8; gc's design since
+     * Go 1.14): every {@code defer} statement runs at most once, so it stores its function and
+     * arguments in frame slots of its own and sets its bit; the exit sequence tests the bits in
+     * reverse order and calls through a per-site inline cache, so a deferred call to a known
+     * function is a direct, inlinable call. The goroutine state is touched only while a panic
+     * unwinds.
+     */
+    public static final class OpenDeferRoot extends DeferringRoot {
+        private final int bitsSlot;
+        @CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] targetSlots;
+        @CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] argsSlots;
+        @Children private final Dispatch[] sites;
+
+        public OpenDeferRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
+                Expr result, int bitsSlot, int[] targetSlots, int[] argsSlots) {
+            super(language, descriptor, name, prologue, body, result);
+            this.bitsSlot = bitsSlot;
+            this.targetSlots = targetSlots;
+            this.argsSlots = argsSlots;
+            this.sites = new Dispatch[targetSlots.length];
+            for (int i = 0; i < sites.length; i++) {
+                sites[i] = CallsFactory.DispatchNodeGen.create();
+            }
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Safepoint.poll(this);
+            frame.setInt(bitsSlot, 0);
+            GoPanic cur = null;
+            try {
+                enter(frame);
+                runBody(frame);
+            } catch (GoPanic p) {
+                panicked.enter();
+                cur = p;
+            }
+            cur = runDefers(frame, cur);
+            if (cur != null) {
+                throw cur;
+            }
+            return result(frame);
+        }
+
+        @ExplodeLoop
+        private GoPanic runDefers(VirtualFrame frame, GoPanic panic) {
+            GoPanic cur = panic;
+            for (int i = sites.length - 1; i >= 0; i--) {
+                int bits = frame.getInt(bitsSlot);
+                if ((bits & (1 << i)) != 0) {
+                    frame.setInt(bitsSlot, bits & ~(1 << i));
+                    Object target = frame.getObject(targetSlots[i]);
+                    Object[] args = (Object[]) frame.getObject(argsSlots[i]);
+                    cur = callDeferred(sites[i], target, args, cur);
+                }
+            }
+            return cur;
+        }
+    }
+
+    /** A generated wrapper (method value, method expression, deferred builtin): one expression. */
+    public static final class ThunkRoot extends RootNode {
+        private final String name;
+        @Child private Expr body;
+
+        public ThunkRoot(GoLanguage language, FrameDescriptor descriptor, String name, Expr body) {
+            super(language, descriptor);
+            this.name = name;
+            this.body = body;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return body.executeGeneric(frame);
+        }
+
+        @Override
+        public String getName() {
+            return name;
+        }
+
+        @Override
+        public boolean isInternal() {
+            return true;
+        }
+    }
+
+    // ---------------------------------------------------------------- calls
+
+    /** A call of a statically known function or method: a direct call, target built lazily. */
+    public static final class Call extends Ref {
+        private final Supplier<RootCallTarget> target;
+        @Children private final Expr[] args;
+        @Child private DirectCallNode call;
+
+        public Call(Supplier<RootCallTarget> target, Expr[] args) {
+            this.target = target;
+            this.args = args;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object executeGeneric(VirtualFrame frame) {
+            Object[] a = new Object[args.length + 1];
+            for (int i = 0; i < args.length; i++) {
+                a[i + 1] = args[i].executeGeneric(frame);
+            }
+            if (call == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                call = insert(DirectCallNode.create(target.get()));
+            }
+            return call.call(a);
+        }
+    }
+
+    /** The func-value inline cache: target identity, limit 3, then an indirect call. */
+    @ReportPolymorphism
+    @GenerateInline(false)
+    public abstract static class Dispatch extends GoNode {
+        public abstract Object execute(RootCallTarget target, Object[] args);
+
+        @Specialization(guards = "target == cached", limit = "3")
+        static Object direct(RootCallTarget target, Object[] args,
+                @Cached("target") RootCallTarget cached,
+                @Cached("create(cached)") DirectCallNode call) {
+            return call.call(args);
+        }
+
+        @Specialization(replaces = "direct")
+        static Object indirect(RootCallTarget target, Object[] args, @Cached IndirectCallNode call) {
+            return call.call(target, args);
+        }
+    }
+
+    /** A call of a func value. */
+    public static final class CallClosure extends Ref {
+        @Child private Expr fn;
+        @Children private final Expr[] args;
+        @Child private Dispatch dispatch = CallsFactory.DispatchNodeGen.create();
+        private final BranchProfile nil = BranchProfile.create();
+
+        public CallClosure(Expr fn, Expr[] args) {
+            this.fn = fn;
+            this.args = args;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object executeGeneric(VirtualFrame frame) {
+            Closure c = (Closure) fn.executeGeneric(frame);
+            Object[] a = new Object[args.length + 1];
+            for (int i = 0; i < args.length; i++) {
+                a[i + 1] = args[i].executeGeneric(frame);
+            }
+            if (c == null) {
+                nil.enter();
+                throw Panics.nilDeref(this);
+            }
+            a[0] = c.env;
+            return dispatch.execute(c.target, a);
+        }
+    }
+
+    /**
+     * Interface method dispatch, the central dynamic site (SPEC §3.3): an inline cache on the
+     * dynamic type's identity whose entry holds the itab method (a PE constant: itabs are
+     * immutable, no assumption) and a direct call; megamorphic sites load the method from the
+     * type's itab by the site's constant method index and call indirectly.
+     */
+    @ReportPolymorphism
+    @GenerateInline(false)
+    public abstract static class IfaceDispatch extends GoNode {
+        final GoType iface;
+        final int index;
+
+        IfaceDispatch(GoType iface, int index) {
+            this.iface = iface;
+            this.index = index;
+        }
+
+        public abstract Object execute(Iface recv, Object[] args);
+
+        @Specialization(guards = "recv.type == cachedType", limit = "3")
+        static Object cached(Iface recv, Object[] args,
+                @Bind Node node,
+                @Cached("recv.type") GoType cachedType,
+                @Cached("method(cachedType)") Method method,
+                @Cached("create(method.target())") DirectCallNode call) {
+            args[1] = Receivers.adapt(method, recv.data, node);
+            return call.call(args);
+        }
+
+        @Specialization(replaces = "cached")
+        Object megamorphic(Iface recv, Object[] args, @Cached IndirectCallNode call) {
+            Method m = method(recv.type);
+            args[1] = Receivers.adapt(m, recv.data, this);
+            return call.call(m.target(), args);
+        }
+
+        Method method(GoType dyn) {
+            Itab itab = dyn.itab(iface);
+            return itab.methods[index];
+        }
+    }
+
+    /** {@code recv.M(args)} on an interface value. */
+    public static final class IfaceCall extends Ref {
+        @Child private Expr recv;
+        @Children private final Expr[] args;
+        @Child private IfaceDispatch dispatch;
+        private final BranchProfile nil = BranchProfile.create();
+
+        public IfaceCall(Expr recv, GoType iface, int index, Expr[] args) {
+            this.recv = recv;
+            this.args = args;
+            this.dispatch = CallsFactory.IfaceDispatchNodeGen.create(iface, index);
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object executeGeneric(VirtualFrame frame) {
+            Iface r = (Iface) recv.executeGeneric(frame);
+            Object[] a = new Object[args.length + 2];
+            for (int i = 0; i < args.length; i++) {
+                a[i + 2] = args[i].executeGeneric(frame);
+            }
+            if (r == null) {
+                nil.enter();
+                throw Panics.nilDeref(this);
+            }
+            return dispatch.execute(r, a);
+        }
+    }
+
+    /** The receiver a method-set entry's function expects, from a value of the dynamic type. */
+    public static final class Adapt extends Ref {
+        private final Method method;
+        @Child private Expr recv;
+
+        public Adapt(Method method, Expr recv) {
+            this.method = method;
+            this.recv = recv;
+        }
+
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            return Receivers.adapt(method, recv.executeGeneric(frame), this);
+        }
+    }
+
+    /** Several results as the call boundary's tuple. */
+    public static final class Tuple extends Ref {
+        @Children private final Expr[] elems;
+
+        public Tuple(Expr[] elems) {
+            this.elems = elems;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object executeGeneric(VirtualFrame frame) {
+            Object[] t = new Object[elems.length];
+            for (int i = 0; i < elems.length; i++) {
+                t[i] = elems[i].executeGeneric(frame);
+            }
+            return t;
+        }
+    }
+
+    public static final class TupleGet extends Ref {
+        @Child private Expr tuple;
+        private final int index;
+
+        public TupleGet(Expr tuple, int index) {
+            this.tuple = tuple;
+            this.index = index;
+        }
+
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            return ((Object[]) tuple.executeGeneric(frame))[index];
+        }
+    }
+
+    // ---------------------------------------------------------------- closures
+
+    /**
+     * A function literal: the func value {@code {target, environment frame}} (SPEC §3.4). The
+     * environment is a new frame holding the boxes of the captured variables, read from this
+     * frame's slots now — so a per-iteration loop variable is captured per iteration.
+     */
+    public static final class MakeClosure extends Ref {
+        private final Supplier<RootCallTarget> target;
+        private final FrameDescriptor envDescriptor;
+        @CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] slots;
+        @CompilerDirectives.CompilationFinal private RootCallTarget resolved;
+
+        public MakeClosure(Supplier<RootCallTarget> target, FrameDescriptor envDescriptor, int[] slots) {
+            this.target = target;
+            this.envDescriptor = envDescriptor;
+            this.slots = slots;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object executeGeneric(VirtualFrame frame) {
+            if (resolved == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                resolved = target.get();
+            }
+            MaterializedFrame env = Env.create(envDescriptor);
+            for (int i = 0; i < slots.length; i++) {
+                Env.set(env, i, frame.getObject(slots[i]));
+            }
+            return new Closure(resolved, env);
+        }
+    }
+
+    /** A top-level function or instantiation as a func value; resolved on first evaluation. */
+    public static final class FuncConst extends Ref {
+        private final Supplier<Closure> closure;
+        @CompilerDirectives.CompilationFinal private Closure resolved;
+
+        public FuncConst(Supplier<Closure> closure) {
+            this.closure = closure;
+        }
+
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            if (resolved == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                resolved = closure.get();
+            }
+            return resolved;
+        }
+    }
+
+    /** A bound value (method value receiver) as a closure over a one-slot environment. */
+    public static final class Bind1 extends Ref {
+        private final RootCallTarget target;
+        private final FrameDescriptor envDescriptor;
+        @Child private Expr value;
+        private final boolean nilCheck;
+
+        public Bind1(RootCallTarget target, FrameDescriptor envDescriptor, Expr value, boolean nilCheck) {
+            this.target = target;
+            this.envDescriptor = envDescriptor;
+            this.value = value;
+            this.nilCheck = nilCheck;
+        }
+
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            Object v = value.executeGeneric(frame);
+            if (nilCheck && v == null) {
+                throw Panics.nilDeref(this);
+            }
+            MaterializedFrame env = Env.create(envDescriptor);
+            Env.set(env, 0, v);
+            return new Closure(target, env);
+        }
+    }
+
+    /** Slot {@code index} of the running closure's environment. */
+    public static final class EnvRead extends Ref {
+        private final int index;
+
+        public EnvRead(int index) {
+            this.index = index;
+        }
+
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            return Env.get(frame.getArguments()[0], index);
+        }
+    }
+
+    // ---------------------------------------------------------------- defer, go, panic, recover
+
+    /** Evaluates the function and arguments of a {@code defer} or {@code go} call now. */
+    public abstract static class Prepared extends GoNode {
+        /** {@code {RootCallTarget (null: nil func), Object[] arguments}}. */
+        public abstract Object[] prepare(VirtualFrame frame);
+    }
+
+    public static final class PrepStatic extends Prepared {
+        private final Supplier<RootCallTarget> target;
+        @Children private final Expr[] args;
+
+        public PrepStatic(Supplier<RootCallTarget> target, Expr[] args) {
+            this.target = target;
+            this.args = args;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object[] prepare(VirtualFrame frame) {
+            Object[] a = new Object[args.length + 1];
+            for (int i = 0; i < args.length; i++) {
+                a[i + 1] = args[i].executeGeneric(frame);
+            }
+            return new Object[] {resolve(), a};
+        }
+
+        @TruffleBoundary
+        private RootCallTarget resolve() {
+            return target.get();
+        }
+    }
+
+    public static final class PrepClosure extends Prepared {
+        @Child private Expr fn;
+        @Children private final Expr[] args;
+
+        public PrepClosure(Expr fn, Expr[] args) {
+            this.fn = fn;
+            this.args = args;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object[] prepare(VirtualFrame frame) {
+            Closure c = (Closure) fn.executeGeneric(frame);
+            Object[] a = new Object[args.length + 1];
+            for (int i = 0; i < args.length; i++) {
+                a[i + 1] = args[i].executeGeneric(frame);
+            }
+            if (c == null) {
+                return new Object[] {null, a};
+            }
+            a[0] = c.env;
+            return new Object[] {c.target, a};
+        }
+    }
+
+    /** An interface method call resolved when the statement runs, so the record is direct. */
+    public static final class PrepIface extends Prepared {
+        @Child private Expr recv;
+        @Children private final Expr[] args;
+        private final GoType iface;
+        private final int index;
+
+        public PrepIface(Expr recv, GoType iface, int index, Expr[] args) {
+            this.recv = recv;
+            this.iface = iface;
+            this.index = index;
+            this.args = args;
+        }
+
+        @Override
+        @ExplodeLoop
+        public Object[] prepare(VirtualFrame frame) {
+            Iface r = (Iface) recv.executeGeneric(frame);
+            Object[] a = new Object[args.length + 2];
+            for (int i = 0; i < args.length; i++) {
+                a[i + 2] = args[i].executeGeneric(frame);
+            }
+            if (r == null) {
+                throw Panics.nilDeref(this);
+            }
+            Method m = r.type.itab(iface).methods[index];
+            a[1] = Receivers.adapt(m, r.data, this);
+            return new Object[] {m.target(), a};
+        }
+    }
+
+    /** {@code defer} in a function that is not open-coded: a record on the goroutine's defer chain. */
+    public static final class Defer extends Stmt {
+        @Child private Prepared call;
+
+        public Defer(Prepared call) {
+            this.call = call;
+        }
+
+        @Override
+        public void executeVoid(VirtualFrame frame) {
+            Object[] p = call.prepare(frame);
+            G g = G.current(this);
+            g.defers = new G.Defer(p[0], (Object[]) p[1], g.defers);
+        }
+    }
+
+    /** An open-coded {@code defer}: function and arguments into the site's slots, bit set. */
+    public static final class OpenDefer extends Stmt {
+        @Child private Prepared call;
+        private final int bit;
+        private final int bitsSlot;
+        private final int targetSlot;
+        private final int argsSlot;
+
+        public OpenDefer(Prepared call, int bit, int bitsSlot, int targetSlot, int argsSlot) {
+            this.call = call;
+            this.bit = bit;
+            this.bitsSlot = bitsSlot;
+            this.targetSlot = targetSlot;
+            this.argsSlot = argsSlot;
+        }
+
+        @Override
+        public void executeVoid(VirtualFrame frame) {
+            Object[] p = call.prepare(frame);
+            frame.setObject(targetSlot, p[0]);
+            frame.setObject(argsSlot, p[1]);
+            frame.setInt(bitsSlot, frame.getInt(bitsSlot) | (1 << bit));
+        }
+    }
+
+    /** {@code go}: starts a goroutine on the scheduler. */
+    public static final class Go extends Stmt {
+        @Child private Prepared call;
+
+        public Go(Prepared call) {
+            this.call = call;
+        }
+
+        @Override
+        public void executeVoid(VirtualFrame frame) {
+            Object[] p = call.prepare(frame);
+            if (p[0] == null) {
+                throw Panics.plain(this, "go of nil func value");
+            }
+            GoProcess.get(this).go((RootCallTarget) p[0], (Object[]) p[1]);
+        }
+    }
+
+    public static final class Panic extends Stmt {
+        @Child private Expr value;
+
+        public Panic(Expr value) {
+            this.value = value;
+        }
+
+        @Override
+        public void executeVoid(VirtualFrame frame) {
+            throw Panics.user(this, value.executeGeneric(frame));
+        }
+    }
+
+    /**
+     * {@code recover()}: effective only in the function the deferring function called directly
+     * for the panic being unwound — the frame whose argument array is the defer record's.
+     */
+    public static final class Recover extends Ref {
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            G g = G.current(this);
+            GoPanic p = g.panic;
+            if (p != null && !p.recovered && g.recoverArgs == frame.getArguments()) {
+                p.recovered = true;
+                return p.value;
+            }
+            return null;
+        }
+    }
+}

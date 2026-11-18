@@ -1026,6 +1026,32 @@ in-place rewriting (§2.2 step 1); `-chain`; tracked-release checks;
 for `vet`/`asm`/`cgo`/`cover`/`preprofile` pass-through and for `-V=full`
 cache invalidation when graalgo-tool changes.
 
+**Since the skeleton (W4, first slice):** linked programs execute. The
+runner is [graalgo-bundle-run](../../internal/backend/graalgo-bundle-run);
+the loader, type table, flat value classes, node factory and nodes are
+[graalgo/go/](../../internal/backend/truffle/src/main/java/graalgo/go/)
+(as built: [truffle-design.md §15](truffle-design.md)). Gate:
+`make test-m1a`. Refinements of §4.3 and findings for the other work
+packages:
+
+- Package identity is the `-p` path recorded in each GIR (`main` for the
+  main package); the bundle's import-path key only selects the main package.
+- The bundle has no manifest init order yet (W7): the loader computes gc's
+  order from each package's import list.
+- Canonical keys are **recomputed in the backend** from the structure of
+  every unnamed type, so that types reached through an instantiation intern
+  with the same types written out elsewhere; the keys in TYPES are used for
+  type parameters and named types only.
+- A method of a generic type is instantiated with the receiver's type
+  arguments bound to the method's own type-parameter list (`Func.tparams`),
+  followed by the method's own type arguments.
+- Body-less functions resolve through a (so far one-entry) intrinsic table
+  by `//go:linkname` remote name: `runtime.nanotime`, used by the M1a
+  benchmarks. The registry of §5.3 is W6.
+- Emitter gap found by the gate (W3): a type name used as a value inside a
+  generic method body (`gn04_generic_method_targs`) is rejected as
+  "identifier (*types.TypeName)".
+
 ## 14. Amendments (2026-11-18)
 
 Applied from the owner's decisions of 2026-11-18 and

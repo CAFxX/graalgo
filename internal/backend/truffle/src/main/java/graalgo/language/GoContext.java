@@ -182,6 +182,50 @@ public final class GoContext {
         }
     }
 
+    /** The bundle run of this context (package variables, scheduler adapter), or null. */
+    private graalgo.go.runtime.GoProcess process;
+
+    /** The running bundle's context-level state; only valid while a bundle runs. */
+    public graalgo.go.runtime.GoProcess process() {
+        return process;
+    }
+
+    /**
+     * Runs a linked bundle (toolexec-design §4.2) on the new node package: package
+     * initialization in order, then {@code main.main} as the first goroutine; returns the exit
+     * status with the same contract as {@link #run}. The os surface of v1 is not initialized:
+     * a bundle reaches the OS only through its own packages.
+     */
+    @TruffleBoundary
+    int runBundle(graalgo.go.loader.Program program) {
+        running = true;
+        try {
+            int gmp = env.getOptions().get(GoLanguage.Gomaxprocs);
+            if (gmp <= 0) {
+                gmp = Runtime.getRuntime().availableProcessors();
+            }
+            SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS,
+                    goroutineThreads());
+            scheduler = sched;
+            graalgo.go.runtime.GoProcess p =
+                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err());
+            process = p;
+            SchedulerCore prev = SchedulerCore.install(sched);
+            sched.start();
+            try {
+                sched.spawnMain(() -> p.run(() -> program.run(p)));
+                return sched.awaitExit();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted while awaiting program exit", e);
+            } finally {
+                SchedulerCore.install(prev);
+            }
+        } finally {
+            running = false;
+        }
+    }
+
     private int runProgram(NodeFactory.Program program) {
         initializeOsSurface(env.getApplicationArguments());
         int gmp = env.getOptions().get(GoLanguage.Gomaxprocs);

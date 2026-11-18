@@ -13,6 +13,9 @@
 #                             polyglot embedding helper (GoPolyglot)
 #   graalgo.language          the Truffle language: GoLanguage (id "go"),
 #                             GoContext, the program root (TR-1)
+#   graalgo.go.*              the new node package (toolexec W4): bundle
+#                             loader, type table, flat value model, node
+#                             factory and nodes that run linked GIR bundles
 #
 # The AST nodes and the runtime call each other (a genuine compile cycle),
 # so they are one module compiled in one javac round. (Until T0.D,
@@ -36,6 +39,9 @@ LIB := $(wildcard lib/*.jar)
 CP  := $(subst $(eval) ,:,$(strip $(LIB)))
 
 SRC_MAIN := $(shell find src/main/java -name '*.java')
+# The generated GIR decoder (../gir, JDK-only; its own Makefile tests it) is
+# compiled into this module: the bundle loader (graalgo.go.loader) reads GIR.
+SRC_GIR := $(shell find ../gir/src/main/java -name '*.java')
 SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
 SRC_TEST := $(shell find src/test/java -name '*.java')
 SRC_SMOKE := $(shell find src/smoke -name '*.java')
@@ -86,11 +92,11 @@ JAVAC_FLAGS := -Xlint:deprecation -Werror
 all: main
 
 main: $(OUT_MAIN)/.built $(GOFRONTEND)
-$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES) lib/SHA256SUMS.txt
+$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_GIR) $(SRC_RES) lib/SHA256SUMS.txt
 	mkdir -p $(OUT_MAIN)
 	$(JAVAC) -version
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(CP)" -processorpath "$(CP)" \
-		-d $(OUT_MAIN) $(SRC_MAIN)
+		-d $(OUT_MAIN) $(SRC_MAIN) $(SRC_GIR)
 	@if [ -d src/main/resources ]; then \
 		cp -r src/main/resources/. $(OUT_MAIN)/; fi
 	touch $(OUT_MAIN)/.built
