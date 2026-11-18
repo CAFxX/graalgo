@@ -200,6 +200,18 @@ public final class GirFile {
         return Arrays.copyOfRange(data, dataOff, dataOff + dataLen);
     }
 
+    /**
+     * Bytes {@code [off, off+len)} of the DATA section — a copy of just that range (a Data
+     * expression's embedded file), never of the whole section; null when the range is outside
+     * it (the decoders do not cross-check Data ranges, schema.txt).
+     */
+    public byte[] dataRange(long off, long len) {
+        if (off < 0 || len < 0 || off > dataLen || len > dataLen - off) {
+            return null;
+        }
+        return Arrays.copyOfRange(data, dataOff + (int) off, dataOff + (int) (off + len));
+    }
+
     /** Decodes (once) the body of function i; null for a bodyless function. */
     public Gir.FuncBody body(int i) {
         Gir.FuncBody b = bodies[i];

@@ -30,13 +30,14 @@ public final class Panics {
     }
 
     @TruffleBoundary
-    public static GoPanic index(Node n, long i, long len) {
-        return of(n, GoErrors.bounds(BoundsCode.INDEX, i, len, true));
+    public static GoPanic index(Node n, long i, long len, boolean signed) {
+        return of(n, GoErrors.bounds(BoundsCode.INDEX, i, len, signed));
     }
 
+    /** {@code signed}: the type of the index {@code x} reported (gc prints an unsigned one ≥ 2^63 as is). */
     @TruffleBoundary
-    public static GoPanic bounds(Node n, BoundsCode code, long x, long y) {
-        return of(n, GoErrors.bounds(code, x, y, true));
+    public static GoPanic bounds(Node n, BoundsCode code, long x, long y, boolean signed) {
+        return of(n, GoErrors.bounds(code, x, y, signed));
     }
 
     @TruffleBoundary

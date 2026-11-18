@@ -150,6 +150,10 @@ for prog in "${programs[@]}"; do
 done
 
 echo "m1a: $pass passed, $fail failed of $((pass + fail))"
+if [ $((pass + fail)) -eq 0 ]; then
+    echo "m1a: no program ran (zero cases is not a pass)" >&2
+    exit "$INFRA_EXIT"
+fi
 for c in "${!failed_by_category[@]}"; do
     echo "m1a: failing category $c: ${failed_by_category[$c]}"
 done | sort

@@ -466,12 +466,20 @@ func (in *Interp) indexExpr(fr *frame, x *ir.IndexExpr) Value {
 func (in *Interp) sliceExpr(fr *frame, x *ir.SliceExpr) Value {
 	xt := in.typeOf(fr, x.X).Under()
 	v := in.eval(fr, x.X)
-	bound := func(e ir.Expr, def int) (int, bool) {
+	// One index operand: its value, whether it was given, and its type's
+	// signedness (gc's boundsError.signed: an unsigned index prints as is).
+	type operand struct {
+		n        int64
+		has      bool
+		unsigned bool
+	}
+	bound := func(e ir.Expr, def int) operand {
 		if e == nil {
-			return def, false
+			return operand{n: int64(def)}
 		}
-		n, _ := asInt64(in.eval(fr, e))
-		return int(n), true
+		val := in.eval(fr, e)
+		n, _ := asInt64(val)
+		return operand{n: n, has: true, unsigned: isUnsignedVal(val)}
 	}
 	var length, capacity int
 	var base []Value
@@ -496,43 +504,67 @@ func (in *Interp) sliceExpr(fr *frame, x *ir.SliceExpr) Value {
 		s := v.(Slice)
 		base, off, length, capacity = s.A, s.Off, s.Len, s.Cap
 	}
-	lo, _ := bound(x.Lo, 0)
-	hi, hasHi := bound(x.Hi, length)
-	mx, hasMax := bound(x.Max, capacity)
+	lo := bound(x.Lo, 0)
+	hi := bound(x.Hi, length)
+	mx := bound(x.Max, capacity)
 	fr.pos = x.Pos
-	str := strconv.Itoa
+	text := func(o operand) string {
+		if o.unsigned {
+			return strconv.FormatUint(uint64(o.n), 10)
+		}
+		return strconv.FormatInt(o.n, 10)
+	}
+	// above: o > limit, with a negative signed operand out of range too.
+	above := func(o operand, limit int64) bool {
+		if o.unsigned {
+			return uint64(o.n) > uint64(limit)
+		}
+		return o.n < 0 || o.n > limit
+	}
+	neg := func(o operand) bool { return !o.unsigned && o.n < 0 }
+	str := strconv.FormatInt
 	isStr := xt.Kind == KString
-	switch {
-	case hasMax:
-		if mx < 0 || mx > capacity {
-			in.runtimePanic("slice bounds out of range [::" + str(mx) + "] with capacity " + str(capacity))
-		}
-		if hi < 0 || hi > mx {
-			in.runtimePanic("slice bounds out of range [:" + str(hi) + ":" + str(mx) + "]")
-		}
-		if lo < 0 || lo > hi {
-			in.runtimePanic("slice bounds out of range [" + str(lo) + ":" + str(hi) + ":]")
-		}
-	default:
-		limit, what := capacity, "capacity"
-		if isStr || xt.Kind == KArray || xt.Kind == KPointer {
-			what = "length"
-		}
-		if hasHi && (hi < 0 || hi > limit) {
-			in.runtimePanic("slice bounds out of range [:" + str(hi) + "] with " + what + " " + str(limit))
-		}
-		if lo < 0 || lo > hi {
-			if !hasHi && lo > limit {
-				in.runtimePanic("slice bounds out of range [" + str(lo) + ":" + str(hi) + "]")
+	what := "capacity"
+	if isStr || xt.Kind == KArray || xt.Kind == KPointer {
+		what = "length"
+	}
+	// gc's boundsErrorFmt / boundsNegErrorFmt, checked in gc's order.
+	if mx.has {
+		switch {
+		case above(mx, int64(capacity)):
+			in.runtimePanic("slice bounds out of range [::" + text(mx) + "]" + cond(!neg(mx), " with "+what+" "+str(int64(capacity), 10)))
+		case above(hi, mx.n):
+			if neg(hi) {
+				in.runtimePanic("slice bounds out of range [:" + text(hi) + ":]")
 			}
-			in.runtimePanic("slice bounds out of range [" + str(lo) + ":" + str(hi) + "]")
+			in.runtimePanic("slice bounds out of range [:" + text(hi) + ":" + text(mx) + "]")
+		case above(lo, hi.n):
+			if neg(lo) {
+				in.runtimePanic("slice bounds out of range [" + text(lo) + "::]")
+			}
+			in.runtimePanic("slice bounds out of range [" + text(lo) + ":" + text(hi) + ":]")
 		}
-		mx = capacity
+	} else {
+		limit := int64(capacity)
+		if isStr || xt.Kind != KSlice {
+			limit = int64(length)
+		}
+		switch {
+		case above(hi, limit):
+			in.runtimePanic("slice bounds out of range [:" + text(hi) + "]" + cond(!neg(hi), " with "+what+" "+str(limit, 10)))
+		case above(lo, hi.n):
+			if neg(lo) {
+				in.runtimePanic("slice bounds out of range [" + text(lo) + ":]")
+			}
+			in.runtimePanic("slice bounds out of range [" + text(lo) + ":" + text(hi) + "]")
+		}
+		mx.n = int64(capacity)
 	}
+	l, h, m := int(lo.n), int(hi.n), int(mx.n)
 	if isStr {
-		return v.(string)[lo:hi]
+		return v.(string)[l:h]
 	}
-	return Slice{A: base, Off: off + lo, Len: hi - lo, Cap: mx - lo}
+	return Slice{A: base, Off: off + l, Len: h - l, Cap: m - l}
 }
 
 // assertPanic reports a failed x.(T).
@@ -935,6 +967,14 @@ func floatMinMax(r, x float64, isMin, f32 bool) Value {
 		return float32(v)
 	}
 	return v
+}
+
+// cond is s when b holds, else "".
+func cond(b bool, s string) string {
+	if b {
+		return s
+	}
+	return ""
 }
 
 // addrOf renders the address a gc program would print for a reference-like

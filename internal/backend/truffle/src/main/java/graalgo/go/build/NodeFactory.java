@@ -722,7 +722,8 @@ public final class NodeFactory {
                 Supplier<Expr> i = operand(ix.index(), pre);
                 int np = xt.elem.nPrim();
                 int nr = xt.elem.nRef();
-                return (p, r) -> new Mem.SliceLoc(asRef(s.get()), asI64(i.get()), np, nr, p, r, auxP, auxR);
+                boolean signed = !ty(ix.index()).u().isUnsigned();
+                return (p, r) -> new Mem.SliceLoc(asRef(s.get()), asI64(i.get()), np, nr, p, r, auxP, auxR, signed);
             }
             case GoType.ARRAY, GoType.POINTER: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
@@ -731,7 +732,9 @@ public final class NodeFactory {
                 int np = at.elem.nPrim();
                 int nr = at.elem.nRef();
                 long len = at.len;
-                return (p, r) -> new Mem.IndexLoc(base.make(0, 0), asI64(i.get()), len, np, nr, p, r, auxP, auxR);
+                boolean signed = !ty(ix.index()).u().isUnsigned();
+                return (p, r) -> new Mem.IndexLoc(base.make(0, 0), asI64(i.get()), len, np, nr, p, r, auxP, auxR,
+                        signed);
             }
             case GoType.MAP: {
                 Supplier<Expr> m = operand(ix.x(), pre);
@@ -926,12 +929,11 @@ public final class NodeFactory {
                 return tupleConvert(tc);
             case Gir.Expr.Data d: {
                 // An embedded file: bytes of the package's DATA section (range checked here).
-                byte[] data = pkg.gir.data();
-                if (d.off() < 0 || d.len() < 0 || d.off() > data.length || d.len() > data.length - d.off()) {
+                byte[] bytes = pkg.gir.dataRange(d.off(), d.len());
+                if (bytes == null) {
                     throw new IllegalStateException("Data expression outside the DATA section of " + pkg.path);
                 }
-                return new N.ConstRef(new Str(java.util.Arrays.copyOfRange(data, (int) d.off(),
-                        (int) (d.off() + d.len()))));
+                return new N.ConstRef(new Str(bytes));
             }
         }
     }
@@ -1225,7 +1227,7 @@ public final class NodeFactory {
     private Expr index(Gir.Expr.Index ix) {
         GoType xt = ty(ix.x()).u();
         if (xt.kind == GoType.STRING) {
-            return new Data.StrIndex(expr(ix.x()), i64(ix.index()));
+            return new Data.StrIndex(expr(ix.x()), i64(ix.index()), !ty(ix.index()).u().isUnsigned());
         }
         if (xt.kind == GoType.MAP && ix.commaOk()) {
             return new Data.MapGetOk(expr(ix.x()), expr(ix.index()), xt.elem, primKey(xt.mapKey));
@@ -1234,20 +1236,27 @@ public final class NodeFactory {
         return load(elem, indexLoc(ix, null).make(0, 0));
     }
 
+    private boolean unsignedIndex(Gir.Expr index) {
+        return index != null && ty(index).u().isUnsigned();
+    }
+
     private Expr slice(Gir.Expr.Slice s) {
         GoType xt = ty(s.x()).u();
         I64 lo = s.lo() == null ? null : i64(s.lo());
         I64 hi = s.hi() == null ? null : i64(s.hi());
         I64 max = s.max() == null ? null : i64(s.max());
+        int unsigned = (unsignedIndex(s.lo()) ? Data.UNSIGNED_LO : 0) | (unsignedIndex(s.hi()) ? Data.UNSIGNED_HI : 0)
+                | (unsignedIndex(s.max()) ? Data.UNSIGNED_MAX : 0);
         switch (xt.kind) {
             case GoType.STRING:
-                return new Data.StrSlice(expr(s.x()), lo, hi);
+                return new Data.StrSlice(expr(s.x()), lo, hi, unsigned);
             case GoType.SLICE:
-                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem.nPrim(), xt.elem.nRef());
+                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem.nPrim(), xt.elem.nRef(), unsigned);
             default: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
                 LocMk base = structBase(s.x(), null);
-                return new Data.SliceOfArray(base.make(0, 0), at.len, lo, hi, max, at.elem.nPrim(), at.elem.nRef());
+                return new Data.SliceOfArray(base.make(0, 0), at.len, lo, hi, max, at.elem.nPrim(), at.elem.nRef(),
+                        unsigned);
             }
         }
     }
@@ -1287,7 +1296,9 @@ public final class NodeFactory {
                     return new Arith.F64ToU64(d);
                 } else if (t.bits() == 64) {
                     return new Arith.F64ToI64(d);
-                } else if (t.isUnsigned()) {
+                } else if (t.kind == GoType.UINT32) {
+                    // gc/amd64: uint32 takes the 64-bit conversion, every narrower target the
+                    // 32-bit one (0x80000000 out of int32 range), then truncation.
                     return wrap(t, new Arith.F64ToI64(d));
                 }
                 return wrap(t, new Arith.F64ToI32(d));
@@ -2588,7 +2599,7 @@ public final class NodeFactory {
                 }
                 if (used(r.value())) {
                     Loc loc = new Mem.SliceLoc(new N.ReadRef(s), readIdx.get(), xt.elem.nPrim(), xt.elem.nRef(), 0, 0,
-                            auxP, auxR);
+                            auxP, auxR, true);
                     pre.add(rangeVar(r, r.value(), load(xt.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ReadI64(len)), pre,
@@ -2611,7 +2622,7 @@ public final class NodeFactory {
                     Loc base = xt.kind == GoType.ARRAY ? new Mem.FlatLoc(new N.ReadRef(a), 0, 0)
                             : new Mem.PtrLoc(new N.ReadRef(a), 0, 0, auxP, auxR);
                     Loc loc = new Mem.IndexLoc(base, readIdx.get(), at.len, at.elem.nPrim(), at.elem.nRef(), 0, 0,
-                            auxP, auxR);
+                            auxP, auxR, true);
                     pre.add(rangeVar(r, r.value(), load(at.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ConstI64(at.len)), pre,

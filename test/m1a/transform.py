@@ -13,7 +13,9 @@ to BOTH legs of the differential, so the program itself prints the values:
 - a `// probe` anchor line becomes `defer func() { println(v1, v2, ...) }()`
   (the panic corpus: the probe is main's first-registered defer);
 - otherwise `println(v1, v2, ...)` is inserted before every bare `return`
-  and before the last line that is exactly `}` (main's closing brace).
+  of main and before main's closing brace (the first line that is exactly
+  `}` after `func main() {`: gofmt'd source) — never into a function that
+  follows main.
 
 Programs without the trailer are copied unchanged.
 
@@ -44,14 +46,16 @@ def transform(text):
             else:
                 out.append(line)
         return '\n'.join(out)
-    for line in lines:
-        if line.strip() == 'return':
+    start = next((i for i, l in enumerate(lines) if l.startswith('func main() {')), -1)
+    end = next((i for i in range(start + 1, len(lines)) if lines[i] == '}'), -1) if start >= 0 else -1
+    if end < 0:
+        raise SystemExit('transform.py: no main function (or no closing brace) for the println injection')
+    for i, line in enumerate(lines):
+        if start < i < end and line.strip() == 'return':
+            out.append('\t' + probe)
+        if i == end:
             out.append('\t' + probe)
         out.append(line)
-    last = max((i for i, l in enumerate(out) if l == '}'), default=-1)
-    if last < 0:
-        raise SystemExit('transform.py: no closing brace for the println injection')
-    out.insert(last, '\t' + probe)
     return '\n'.join(out)
 
 

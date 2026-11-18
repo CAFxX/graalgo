@@ -107,7 +107,43 @@ public final class Values {
         }
         Iface x = (Iface) a;
         Iface y = (Iface) b;
-        return x.type == y.type && equal(x.type, x.data, y.data);
+        if (x.type != y.type) {
+            return false;
+        }
+        try {
+            return equal(x.type, x.data, y.data);
+        } catch (Uncomparable u) {
+            throw atInterface(u, x.type);
+        }
+    }
+
+    /**
+     * gc's efaceeq/typehash report the dynamic type of the interface value when that type is
+     * not comparable as a whole; a comparable type (a struct with an interface field) passes
+     * on the report of the interface value inside it.
+     */
+    private static Uncomparable atInterface(Uncomparable u, GoType dynamic) {
+        return comparable(dynamic) ? u : new Uncomparable(dynamic, u.hashing);
+    }
+
+    /** Whether values of type {@code t} support {@code ==} (Go spec, "Comparison operators"). */
+    public static boolean comparable(GoType t) {
+        GoType u = t.u();
+        switch (u.kind) {
+            case GoType.SLICE, GoType.MAP, GoType.FUNC:
+                return false;
+            case GoType.ARRAY:
+                return comparable(u.elem);
+            case GoType.STRUCT:
+                for (Field f : u.fields) {
+                    if (!comparable(f.type)) {
+                        return false;
+                    }
+                }
+                return true;
+            default:
+                return true;
+        }
     }
 
     /** Slot-wise {@code ==} of two values of structural type {@code u} at the given locations. */
@@ -160,7 +196,11 @@ public final class Values {
                     return 0;
                 }
                 Iface i = (Iface) v;
-                return i.type.key.hashCode() * 31 + hash(i.type, i.data);
+                try {
+                    return i.type.key.hashCode() * 31 + hash(i.type, i.data);
+                } catch (Uncomparable x) {
+                    throw atInterface(x, i.type);
+                }
             case GoType.STRUCT, GoType.ARRAY:
                 return flatHash(u, (Flat) v, 0, 0);
             case GoType.SLICE, GoType.MAP, GoType.FUNC:

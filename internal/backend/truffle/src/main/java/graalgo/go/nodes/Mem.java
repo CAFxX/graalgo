@@ -136,9 +136,12 @@ public final class Mem {
         private final int p;
         private final int r;
         private final BranchProfile outOfRange = BranchProfile.create();
+        private final boolean signed;
 
-        public SliceLoc(Ref slice, I64 index, int np, int nr, int p, int r, int auxP, int auxR) {
+        /** {@code signed}: whether the index's type is signed (the panic's text). */
+        public SliceLoc(Ref slice, I64 index, int np, int nr, int p, int r, int auxP, int auxR, boolean signed) {
             super(auxP, auxR);
+            this.signed = signed;
             this.slice = slice;
             this.index = index;
             this.np = np;
@@ -153,7 +156,7 @@ public final class Mem {
             long i = index.executeLong(frame);
             if (Long.compareUnsigned(i, s.len) >= 0) {
                 outOfRange.enter();
-                throw Panics.index(this, i, s.len);
+                throw Panics.index(this, i, s.len, signed);
             }
             frame.setInt(auxP, s.prim + (int) i * np + p);
             frame.setInt(auxR, s.ref + (int) i * nr + r);
@@ -171,9 +174,13 @@ public final class Mem {
         private final int p;
         private final int r;
         private final BranchProfile outOfRange = BranchProfile.create();
+        private final boolean signed;
 
-        public IndexLoc(Loc parent, I64 index, long len, int np, int nr, int p, int r, int auxP, int auxR) {
+        /** {@code signed}: whether the index's type is signed (the panic's text). */
+        public IndexLoc(Loc parent, I64 index, long len, int np, int nr, int p, int r, int auxP, int auxR,
+                boolean signed) {
             super(auxP, auxR);
+            this.signed = signed;
             this.parent = parent;
             this.index = index;
             this.len = len;
@@ -191,7 +198,7 @@ public final class Mem {
             long i = index.executeLong(frame);
             if (Long.compareUnsigned(i, len) >= 0) {
                 outOfRange.enter();
-                throw Panics.index(this, i, len);
+                throw Panics.index(this, i, len, signed);
             }
             frame.setInt(auxP, bp + (int) i * np + p);
             frame.setInt(auxR, br + (int) i * nr + r);
