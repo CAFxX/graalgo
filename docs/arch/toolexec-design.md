@@ -863,23 +863,64 @@ estimate; ranges reflect the uncertainty named in §12.
 |---|---|---|---|
 | **M0** | Walking skeleton of the build side: `graalgo-tool` shadow compile + IR member + link to stub + bundle (prototype of this lane, §13). JVM execution of the bundle is **not** part of what was built. | protocol tests of §13: warm rebuild runs zero tools, cache separation, build ID, gc-identical diagnostics | done in this lane |
 | **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory over the **new node package** (D12; flat value classes of §3.4); multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate); per node class the unit and PE tests of truffle-design §11 (T1–T4), `pe-check` bailouts = 0 on the corpus | 21–35 (15–25 + 6–10 for the new node package) |
-| **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (verbatim, P1), `iter`, `time`; intrinsic registry + link-time resolution and reachability | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs | 10–15 |
-| **M1c** | `syscall` raw-entry intrinsic with the role table for the 70 numbers `os` reaches (write/read/open/close/fstat/fcntl/getpid first) and the table-vs-source gate (R15), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes; the syscall table-vs-source check green | 8–12 (W8's M1c share: 5–7) |
-| **M1d** | `internal/abi` + `internal/reflectlite` verbatim + `reflect` with the 4-function patch (P1) + `internal/fmtsort` + `fmt` → **hello world with `fmt` from the real stdlib** | every corpus program that imports only `fmt`, `os`, `strings`, `strconv`, `errors`, `sort`, `time`, `sync`; `fmt` verb matrix differential; imgcheck (descriptor images judged by gc's own reflect) over a ≥ 300-type corpus; reflectprobe 126/126 | 16–24 (W9 14–20 incl. W13, + `fmtsort`/`fmt` 2–4) |
+| **M1r** (new 2026-11-18, §8.1) | The floor every M1b package stands on: intrinsic registry + link-time resolution and reachability (W6, moved from M1b); the pointer model (W13); descriptor images + imgcheck gate + the `internal/reflectlite` intrinsics (W9a); `internal/abi` + `internal/reflectlite` verbatim; `syscall` raw entry + executor + role-table entries for `openat`, `read`, `lseek`, `close` with the table-vs-source gate on them (W8a) | `errors.Is`/`errors.As`/`errors.New` (package init runs `reflectlite.TypeOf((*error)(nil)).Elem()`), `sort.Slice` (`reflectlite.Swapper`) and `time.Now().Format` with `Local` loaded from `/etc/localtime` (and with `TZ=Europe/Rome`) differential vs gc; imgcheck over a ≥ 300-type corpus; the syscall table-vs-source check green for the M1r entries | 13–20 (W6 registry 2–4, W13 4–6, W9a 4–6, W8a 3–4) |
+| **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (verbatim, P1), `iter`, `time` | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs; `sync.Map` (`internal/sync.HashTrieMap` reads the map type's hasher from its descriptor) std tests (P5) | 8–11 (registry moved to M1r) |
+| **M1c** | `syscall` role table for the remaining numbers `os` reaches (write/fstat/fcntl/getpid first) and the table-vs-source gate (R15), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes; the syscall table-vs-source check green | 5–9 (W8's M1c share: 2–4; executor moved to M1r) |
+| **M1d** | `reflect` with the 4-function patch (P1) + `internal/fmtsort` + `fmt` → **hello world with `fmt` from the real stdlib** | every corpus program that imports only `fmt`, `os`, `strings`, `strconv`, `errors`, `sort`, `time`, `sync`; `fmt` verb matrix differential; reflectprobe 126/126 | 8–13 (W9b 6–9, + `fmtsort`/`fmt` 2–4; W13 and descriptor images moved to M1r) |
 | **M2** | `testing`, `flag`, `runtime/debug`, `internal/testlog`, `testdeps`; `go test` on user packages incl. `-run`, `-v`, `-json`, `-count`, caching, `-timeout` | cmd/go test-protocol scripts from the txtar suite; then **std's own tests** become the oracle: `go test` green for the M1 packages with a versioned exclusion list (GG-0009's verification plan) | 10–15 |
 | **M3 — cutover** | the full differential corpus (591 programs) and snapshots pass through the new path at ≥ v1's pass rate; `cmd/graalgo` becomes the §1 launcher; **delete** `internal/frontend` v1, all 140 `synth_*.go`, the generators, the import overlay, JSON `NodeFactory`, `NodeFactoryV2`, **v1's ~110 node classes and nested-`GoStruct` value classes** (D11/D12), `p3reflect`/`p3unsafe`/`p3net`, the bridge inventory entries | zero regressions vs the v1 baseline per program, each remaining failure triaged; `check_no_bridges.py` grandfather list empty | 10–20 (dominated by triage) |
 | **M4** | `encoding/*`, `bufio`, `regexp`, `text/template`, `os/exec` (spawn helper, GG-0064), `os/signal`, `net` (runtime epoll poller, GG-0063), `net/http`, `crypto/*` (purego), `context`, `log/slog` | std tests per package with exclusion list; `net/http` client/server differential; fd-blocked goroutines at cap = GOMAXPROCS never starve a runnable one (the `CapExhaustion` falsifier, ported to the poller) | 20–35 (incl. W8's remaining 5–8) |
 | **M5** | `-cover`; build modes; the 929-script txtar matrix through the launcher as the GG-0001/0002 conformance gate; the linkname-diff and intrinsic-coverage audits (GG-0020/0021) wired into the upgrade runbook | txtar pass list with explained exclusions | 15–25 |
 
 M1 in the task's sense (hello world with `fmt` from real std) is
-M1a + M1b + M1c + M1d: **55–86 agent-days of work** (was 48–82: +6–10 for the
-new node package on M1a, M1d re-sized from 15–30 to 16–24 by P1), **3–4
-calendar weeks with the parallelism of §9**. It is hard for the reasons §5.5 lists — not because
+M1a + M1r + M1b + M1c + M1d: **55–88 agent-days of work** (was 55–86 before
+the 2026-11-18 re-sequencing of §8.1, which moves work forward and adds up to
+2 agent-days of split overhead; was 48–82 before the new node package),
+**3–4 calendar weeks with the parallelism of §9**. It is hard for the reasons §5.5 lists — not because
 of `fmt`, which is 25 executed functions, but because reaching it requires
 the complete language in the emitter and factory, the runtime boundary, the
 `sync` family, real system calls, and `reflect`'s view of type descriptors.
 There is no shortcut that keeps GG-0009: every earlier attempt to get there
 faster produced a synthetic package.
+
+### 8.1 Sequencing of M1 (re-measured 2026-11-18)
+
+The first plan put the leaf packages (M1b) before `internal/reflectlite`,
+descriptor images and system calls (M1c/M1d). Their real import graph does
+not allow that. Measured with `go list -deps` / `go list -f '{{.Imports}}'`
+on go1.27.1 linux/amd64:
+
+| M1b package | needs | where it is reached |
+|---|---|---|
+| `errors` | `internal/reflectlite` → `internal/abi` | `errors/wrap.go`: `var errorType = reflectlite.TypeOf((*error)(nil)).Elem()` runs at package init; `Is`/`As` call `reflectlite.TypeOf`/`ValueOf` |
+| `strconv`, `strings`, `bytes` | `errors` (direct import) | the `errors` init above |
+| `sort` | `internal/reflectlite` (direct import) | `sort.Slice`/`SliceStable`/`SliceIsSorted` use `reflectlite.ValueOf` and `reflectlite.Swapper` |
+| `sync` (`sync.Map`), `internal/sync` | `internal/abi` | `HashTrieMap.init` calls `abi.TypeOf(m).MapType()` and hashes keys with the descriptor's hasher |
+| `time` | `syscall` (direct import) | `Local` is loaded lazily from `/etc/localtime` / `$ZONEINFO` with `syscall.Open`/`Read`/`Seek`/`Close` (`time/sys_unix.go`), i.e. `openat`, `read`, `lseek`, `close` |
+
+`internal/reflectlite`'s seven body-less functions (`resolveNameOff`,
+`resolveTypeOff`, `chanlen`, `maplen`, `unsafe_New`, `ifaceE2I`,
+`typedmemmove`) are runtime-provided intrinsics over the pointer model and
+the descriptor images; with the reachability rule of §5.3
+an M1b program that imports `errors` fails to link without them.
+
+So M1r takes, ahead of M1b: the registry and resolution of W6, the pointer
+model W13 (unchanged scope), the descriptor-image half of W9 (W9a) and the
+executor half of W8 for four numbers (W8a). Dependency graph (→ = must
+finish first):
+
+```
+M1a (W2, W3, W4) ──→ M1r (W6 registry, W13, W9a, W8a) ──┬──→ M1b ──┐
+                                                       └──→ M1c ──┴──→ M1d (W9b, fmt) ──→ M2 ──→ M3
+W5 (fork, facade runtime) feeds M1a onward; W7 (linker) feeds M1a; W10 (test infra) runs throughout
+```
+
+M1b and M1c become parallel after M1r. Gates moved with the work: imgcheck
+from M1d to M1r; the table-vs-source check starts in M1r on its four
+entries and covers `os`'s numbers in M1c. Effort moves, it does not shrink:
+M1r 13–20 = W6 registry 2–4 (out of M1b) + W13 4–6 + W9a 4–6 + W8a 3–4 (out
+of M1c/M1d); the sum over M1 rises by at most 2 agent-days of split overhead
+`[EST]`.
 
 v1 stays untouched and green until M3. Nothing in M0–M2 modifies v1 code
 paths; new code lives in new directories, including the new node package
@@ -894,11 +935,11 @@ paths; new code lives in new directories, including the new node package
 | W3 | Emitter: all node kinds, selections, constants, closures/captures, method sets, init order, embed, linkname, trimpath (§3) | W2 schema (can start on a draft) | W4 |
 | W4 | Backend loader, lazy function units, new node factory, type interning, lazy itabs, generic instantiation (§4.3, §3.5); **the new node package and flat value classes** (D12, §3.4; truffle-design TR-3/TR-4 are this work done to its §11) | W2 | W3 |
 | W5 | Fork: facade `runtime` + `internal/runtime/*`, patch stack, GOROOT assembly + overlay generator, fork-size audit (§5.1, §5.6) | — (API list from §5.4 measurements) | all |
-| W6 | Intrinsic registry and link-time resolution/reachability (§5.3); atomics, bytealg, math, sync semaphores, time | W4 for execution; registry format independent | W5 |
+| W6 | Intrinsic registry and link-time resolution/reachability (§5.3) — **in M1r** (2–4), because `internal/reflectlite` and `syscall` are reached by M1b's packages; then atomics, bytealg, math, sync semaphores, time (M1b) | W4 for execution; registry format independent | W5 |
 | W7 | Linker: bundle, manifest, init order, `-X`, ELF stub + build-ID patch (§2.4, §4.2) | W2 | W3, W4 |
-| W8 | Syscall executor (§5.6): role table for all 148 numbers from the generated sysscan skeleton + table-vs-source gate (2–3); executor in the backend incl. slot release, `EINTR`, errno, `AllThreads*` (2–3); raw-fd epoll poller, GG-0063 (2–3); spawn helper + `forkExec` patch, GG-0064 (3–4); foreign memory for `mmap`, signals glue (1–2). **10–15 agent-days**; M1c needs the first two items only (5–7) | W6, W13 | W9 |
-| W9 | `reflect`/`abi` (§5.6): descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); runtime intrinsics over the pointer model — `typedmemmove` family, `unsafe_New*`, `ifaceE2I`, `resolve*Off`, `addReflectOff`, `typelinks`, map/chan helpers (3–4); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–14 agent-days**, 14–20 with W13 | W4, W13 | W8 |
-| W13 | Pointer model (§3.4), scheduled **once, before both W8 and W9**: view pointers for `(*T)(unsafe.Pointer)`, offset → slot leaf tables, header views with stores, range-allocating `uintptr` handle table, `checkptr` traps. Part of the new node package | W4 | W5, W6 |
+| W8 | Syscall executor (§5.6), in two parts. **W8a (M1r, 3–4):** executor in the backend incl. slot release (GG-SCHED-0005), `EINTR`, errno; raw entry; role-table entries for `openat`, `read`, `lseek`, `close` from the generated sysscan skeleton with the table-vs-source gate on them. **W8b (M1c/M4, 7–11):** the remaining entries of the 148 numbers + gate (2–3, M1c), `AllThreads*`, raw-fd epoll poller, GG-0063 (2–3); spawn helper + `forkExec` patch, GG-0064 (3–4); foreign memory for `mmap`, signals glue (1–2). **10–15 agent-days** in total | W6, W13 | W9 |
+| W9 | `reflect`/`abi` (§5.6), in two parts. **W9a (M1r, 4–6):** descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); the `internal/reflectlite` intrinsics over the pointer model — `resolveNameOff`/`resolveTypeOff`, `unsafe_New`, `typedmemmove`, `ifaceE2I`, `chanlen`/`maplen` (1–2). **W9b (M1d, 6–9):** the remaining runtime intrinsics — `typedmemmove` family, `unsafe_New*`, `addReflectOff`, `typelinks`, map/chan helpers (2–3); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–15 agent-days**, 14–21 with W13 | W4, W13 | W8 |
+| W13 | Pointer model (§3.4), scheduled **once, in M1r, before W8a, W9a and every M1b package** (4–6): view pointers for `(*T)(unsafe.Pointer)`, offset → slot leaf tables, header views with stores, range-allocating `uintptr` handle table, `checkptr` traps. Part of the new node package | W4 | W5, W6 |
 | W10 | Test infrastructure for the new path: corpus runner through the launcher, package-splitting transform, compile-only std gate, std-test runner with exclusion list | W1 | all |
 | W11 | Cutover and deletion (M3) | M2 | — |
 | W12 (optional) | unified-IR export writer from `go/types` to drop the shadow compile | — | any time after M3 |
@@ -915,7 +956,7 @@ is fixed.
 
 | # | Risk | Likelihood | Impact | Mitigation / trigger |
 |---|---|---|---|---|
-| R1 | `reflect`/`internal/abi` on descriptor images and the pointer model are not faithful or too slow | low (P1: **GO**, 607/607 and 427/427 answers identical to gc) | M1d slips | residual risks of [abi-spike.md](abi-spike.md) §1.5: run-time-built descriptors (inverse reader; 7-function patch fallback), header-view writes, `typedmemmove` over leaf tables, `uintptr` tokens, `MapIter`, performance under Truffle (15–20× gc before inline caching, measured in W9's first week). The 150–200-function patch fallback is dropped. |
+| R1 | `reflect`/`internal/abi` on descriptor images and the pointer model are not faithful or too slow | low (P1: **GO**, 607/607 and 427/427 answers identical to gc) | M1r/M1d slip | residual risks of [abi-spike.md](abi-spike.md) §1.5: run-time-built descriptors (inverse reader; 7-function patch fallback), header-view writes, `typedmemmove` over leaf tables, `uintptr` tokens, `MapIter`, performance under Truffle (15–20× gc before inline caching, measured in W9's first week). The 150–200-function patch fallback is dropped. |
 | R2 | Raw-syscall marshalling: pointer arguments nested inside structs (`iovec`, `msghdr`, `epoll_event` arrays) | low (P2: **GO**, 48/48 checks; nested pointers exist only in `Iovec` and `Msghdr`) | `net`, `os/exec` slip (M4), not M1 | role model with per-type nested rules (§5.6); residual risks of [abi-spike.md](abi-spike.md) §2.6: `ioctl`/`fcntl`/`ptrace` second key, third-party numbers outside the table (fail loudly), thread-directed syscalls (correct only under `LockOSThread`), copy cost, carrier pinning in blocking downcalls; memory unsafety is R15 |
 | R3 | go/types and types2 disagree on some input (gc accepts, IR pass rejects, or constant values differ) | low | internal error on that package | compile-only gate over all of std in M1a; report upstream-identical cases |
 | R4 | JVM startup makes `go test ./...` on many packages unusably slow (one JVM per test binary) | high | drop-in is correct but painful | generic runtime image (§4.2) prioritized in T3; measure at M2 |
@@ -1044,3 +1085,4 @@ Applied from the owner's decisions of 2026-11-18 and
 | R15: syscall-table errors are memory-unsafe; table-vs-source gate [8] | §10 |
 | W8 10–15 (M1c 5–7), W9 14–20; shared pointer model W13 scheduled once; descview and table-vs-source promoted to gates [9] | §8, §9 |
 | Experiments E11–E15 [10] | §11 |
+| M1 re-sequenced (spec reconciliation, review item A3): new milestone M1r ahead of M1b carries W6's registry, W13, W9a (descriptor images + `reflectlite` intrinsics) and W8a (executor + four syscalls for `time`); measured with `go list -deps` (§8.1); M1 55–88 agent-days | §8, §8.1, §9 W6/W8/W9/W13 |
