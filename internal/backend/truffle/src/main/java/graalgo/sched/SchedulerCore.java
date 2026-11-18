@@ -93,10 +93,23 @@ public final class SchedulerCore {
      * Installs the launcher-wide scheduler. Returns the previous one.
      */
     public static SchedulerCore install(SchedulerCore next) {
-        SchedulerCore prev = installed;
-        installed = next;
-        return prev;
+        synchronized (SchedulerCore.class) {
+            SchedulerCore prev = installed;
+            installed = next;
+            // The fast-path exit flag mirrors the INSTALLED scheduler.
+            exitPending = next != null && next.exiting;
+            return prev;
+        }
     }
+
+    /**
+     * The scheduler whose goroutine runs on the calling thread (null off
+     * goroutine threads). Safepoints poll their OWN scheduler, not the
+     * installed one: a goroutine left behind by an earlier program (whose
+     * scheduler is no longer installed) must still freeze and unwind when
+     * that scheduler exits or is torn down.
+     */
+    private static final ThreadLocal<SchedulerCore> GOROUTINE_SCHEDULER = new ThreadLocal<>();
 
     /**
      * The installed scheduler; fail-fast when none (a loud error beats
@@ -123,7 +136,7 @@ public final class SchedulerCore {
      * runs), otherwise the quantum check for the current vthread.
      */
     public static void pollCurrentThreadStatic() {
-        SchedulerCore sc = installed;
+        SchedulerCore sc = GOROUTINE_SCHEDULER.get();
         if (sc == null) {
             return;
         }
@@ -227,9 +240,6 @@ public final class SchedulerCore {
 
     /** Starts the drainer. Must precede the first spawn. */
     public void start() {
-        // A new program run in this process (an embedder's next context):
-        // the previous run's exit no longer applies.
-        exitPending = false;
         drainer.start();
         timerHeap.start();
     }
@@ -557,6 +567,7 @@ public final class SchedulerCore {
         long t = armPark(h);
         Thread vthread = goroutineThreads.apply(() -> {
             currentHandle.set(h);
+            GOROUTINE_SCHEDULER.set(this);
             h.thread = Thread.currentThread();
             GoroutineState state = new GoroutineState();
             h.state = state;
@@ -612,6 +623,7 @@ public final class SchedulerCore {
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
                 GoroutineState.restore(prev);
                 currentHandle.remove();
+                GOROUTINE_SCHEDULER.remove();
                 if (!h.system) {
                     liveUser.decrementAndGet();
                 }
@@ -777,20 +789,33 @@ public final class SchedulerCore {
     /** Set once the process is exiting: admissions stop, safepoints freeze. */
     private volatile boolean exiting;
     /**
-     * Process-wide mirror of {@link #exiting} for the strided
-     * {@code Safepoint.poll()} fast path: the poll countdown skips the
-     * full quantum check for up to {@code STRIDE - 1} polls, but a
-     * pending exit must still freeze a running goroutine at its very next
-     * safepoint (no extra output after exit/fatal begins), so the fast
-     * path reads this flag on every poll. Set together with
-     * {@link #exiting}; cleared when the next scheduler starts (a later
-     * program run in the same process, e.g. an embedder's next context).
+     * Mirror of the INSTALLED scheduler's {@link #exiting} for the strided
+     * {@code Safepoint.poll()} fast path (one static volatile read per
+     * poll): the poll countdown skips the full quantum check for up to
+     * {@code STRIDE - 1} polls, but a pending exit must still freeze a
+     * running goroutine at its very next safepoint (no extra output after
+     * exit/fatal begins). Written only under the class lock, by
+     * {@link #install} and by the installed scheduler's exit — so tearing
+     * down or exiting some other scheduler (an embedder's finished
+     * context) never sends the running program's polls down the slow
+     * path, and a newly installed scheduler starts clear. A goroutine of a
+     * non-installed scheduler still freezes, at its next full poll.
      */
     private static volatile boolean exitPending;
 
-    /** True once any installed scheduler began process exit. */
+    /** True once the installed scheduler began process exit. */
     public static boolean exitPending() {
         return exitPending;
+    }
+
+    /** Sets {@link #exiting}, mirroring it to the fast-path flag if installed. */
+    private void markExiting() {
+        exiting = true;
+        synchronized (SchedulerCore.class) {
+            if (installed == this) {
+                exitPending = true;
+            }
+        }
     }
     /** First fatal reporter wins the right to print (gc: one fatal trace). */
     private final java.util.concurrent.atomic.AtomicBoolean fatal =
@@ -849,8 +874,7 @@ public final class SchedulerCore {
             // The reporting goroutine keeps running to print; everyone
             // else freezes at its next safepoint.
             fatalOwner = currentHandle.get();
-            exiting = true;
-            exitPending = true;
+            markExiting();
             return true;
         }
     }
@@ -889,8 +913,7 @@ public final class SchedulerCore {
      */
     public void requestExit(int code) {
         synchronized (lifecycleLock) {
-            exiting = true;
-            exitPending = true;
+            markExiting();
             exitCode.complete(code);
         }
     }
@@ -930,8 +953,7 @@ public final class SchedulerCore {
      */
     public java.util.List<Thread> terminate(long timeoutMillis) throws InterruptedException {
         terminated = true;
-        exiting = true;
-        exitPending = true;
+        markExiting();
         drainer.stop();
         timerHeap.stop();
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;

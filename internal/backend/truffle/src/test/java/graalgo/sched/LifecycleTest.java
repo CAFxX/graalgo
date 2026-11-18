@@ -297,6 +297,67 @@ public final class LifecycleTest {
         assertEquals(0, printedZero, "runs printing the panic yet exiting 0 (reports=" + reports + ")");
     }
 
+    // ---------- several schedulers in one process (embedding) ----------
+
+    /**
+     * Tearing down a scheduler that is not the installed one (an
+     * embedder's finished context) must not set the fast-path exit flag
+     * the RUNNING program's polls read: pre-fix terminate() set the static
+     * flag unconditionally, sending every poll of the other program down
+     * the slow path for good.
+     */
+    public void testTerminatingOtherSchedulerLeavesFastPathClear() throws Exception {
+        SchedulerCore running = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        running.start();
+        SchedulerCore prev = SchedulerCore.install(running);
+        try {
+            SchedulerCore old = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+            old.start();
+            old.requestExit(0);
+            assertTrue(old.terminate(1000).isEmpty(), "old scheduler torn down");
+            assertTrue(!SchedulerCore.exitPending(), "fast-path exit flag set by another scheduler");
+            running.requestExit(0);
+            assertTrue(SchedulerCore.exitPending(), "installed scheduler's exit sets the flag");
+        } finally {
+            SchedulerCore.install(prev);
+            running.terminate(1000);
+        }
+        assertTrue(!SchedulerCore.exitPending() || prev != null && prev.isExiting(),
+                "install mirrors the newly installed scheduler");
+    }
+
+    /**
+     * A goroutine left running by an earlier program whose scheduler is no
+     * longer installed still freezes at its safepoint once its own
+     * scheduler exits, and unwinds on teardown: pre-fix the poll consulted
+     * the INSTALLED scheduler (where the goroutine has no handle), so a
+     * spinning leftover never stopped and teardown reported it stuck.
+     */
+    public void testLeftoverGoroutineOfUninstalledSchedulerUnwinds() throws Exception {
+        SchedulerCore old = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        old.start();
+        SchedulerCore prev = SchedulerCore.install(old);
+        CountDownLatch spinning = new CountDownLatch(1);
+        old.spawn(() -> {
+            spinning.countDown();
+            for (;;) {
+                graalgo.safepoint.Safepoint.poll();
+            }
+        });
+        assertTrue(spinning.await(10, TimeUnit.SECONDS), "spinner admitted");
+        SchedulerCore next = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        next.start();
+        SchedulerCore.install(next); // a later program is now installed
+        try {
+            old.requestExit(0);
+            java.util.List<Thread> stuck = old.terminate(3000);
+            assertTrue(stuck.isEmpty(), "leftover spinner did not unwind: " + stuck);
+        } finally {
+            SchedulerCore.install(prev);
+            next.terminate(1000);
+        }
+    }
+
     // ---------- deadlock detection ----------
 
     /** Main blocked with no possible waker: gc's fatal deadlock, exit 2. */

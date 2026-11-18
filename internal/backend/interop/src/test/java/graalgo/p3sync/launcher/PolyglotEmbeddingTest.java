@@ -137,4 +137,94 @@ public final class PolyglotEmbeddingTest {
         assertEquals(0, ctx.eval(source(w, "leftover")).asInt(), "exit status");
         ctx.close();
     }
+
+    /** Runs {@code body} on a daemon thread; fails if it does not finish in time. */
+    private static void within(long millis, String what, ThrowingRunnable body) throws Exception {
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread t = Thread.ofPlatform().daemon(true).start(() -> {
+            try {
+                body.run();
+            } catch (Throwable e) {
+                failure.set(e);
+            }
+        });
+        t.join(millis);
+        if (t.isAlive()) {
+            throw new AssertionError(what + " did not finish within " + millis + " ms (hang)");
+        }
+        if (failure.get() instanceof Exception e) {
+            throw e;
+        }
+        if (failure.get() instanceof Error e) {
+            throw e;
+        }
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
+    /**
+     * A second eval in the same context: the first run's leftover
+     * goroutines (one blocked on a channel, one spinning) are torn down
+     * before the next run, and close() still completes. Pre-fix the first
+     * run's scheduler was overwritten without teardown: its goroutine
+     * threads stayed alive and close() hung/failed on them.
+     */
+    public void testSecondEvalTearsDownFirstRunsGoroutines() throws Exception {
+        byte[] w = wire("leftover2", "package main\n\nvar n int\n\nfunc main() {\n"
+                + "\tblock := make(chan int)\n\tgo func() { <-block }()\n"
+                + "\tgo func() {\n\t\tfor {\n\t\t\tn++\n\t\t}\n\t}()\n}\n");
+        within(60_000, "two evals + close", () -> {
+            Context ctx = newContext();
+            assertEquals(0, ctx.eval(source(w, "leftover2a")).asInt(), "first exit status");
+            assertEquals(0, ctx.eval(source(w, "leftover2b")).asInt(), "second exit status");
+            ctx.close();
+        });
+    }
+
+    /**
+     * One Go program per process at a time (until TR-5): with two
+     * contexts both initialized, evaluating the second while the first
+     * still runs fails instead of sharing the process-global scheduler.
+     * Pre-fix the guard ran only at context initialization, so the second
+     * eval ran concurrently on the first's runtime state.
+     */
+    public void testConcurrentProgramsInTwoContextsRejected() throws Exception {
+        byte[] slow = wire("slow", "package main\n\nimport \"time\"\n\n"
+                + "func main() {\n\ttime.Sleep(3 * time.Second)\n}\n");
+        byte[] quick = wire("quick", "package main\n\nfunc main() {}\n");
+        Context a = newContext();
+        Context b = newContext();
+        a.initialize("go");
+        b.initialize("go");
+        java.util.concurrent.atomic.AtomicReference<Object> first =
+                new java.util.concurrent.atomic.AtomicReference<>();
+        Thread runner = Thread.ofPlatform().daemon(true).start(() -> {
+            try {
+                first.set(a.eval(source(slow, "slow")).asInt());
+            } catch (Throwable e) {
+                first.set(e);
+            }
+        });
+        try {
+            Thread.sleep(1000); // the first program is sleeping in main
+            try {
+                b.eval(source(quick, "quick"));
+                throw new AssertionError("second context ran a program concurrently");
+            } catch (PolyglotException e) {
+                assertTrue(String.valueOf(e.getMessage()).contains("one Go program per process"),
+                        "rejection message: " + e.getMessage());
+            }
+            runner.join(30_000);
+            assertEquals(0, first.get(), "first program unaffected");
+            // Once the first program finished, the second context may run.
+            assertEquals(0, b.eval(source(quick, "quick2")).asInt(), "sequential run");
+        } finally {
+            runner.join(30_000); // a context closes only once its eval returned
+            a.close();
+            b.close();
+        }
+    }
 }
