@@ -315,3 +315,28 @@ func F(s []int, d int) {
 		t.Errorf("no trailing return at the closing brace: %#v", body.Body[len(body.Body)-1])
 	}
 }
+
+// T.M where M is promoted through an embedded field lowers to a function
+// literal that calls the method on the embedded receiver (W2: unsupported).
+func TestPromotedMethodExpr(t *testing.T) {
+	f := emitSrc(t, `package p
+type In struct{ n int }
+func (i In) Get(d int) int { return i.n + d }
+func (i *In) Ptr() int { return i.n }
+type Out struct{ In }
+type POut struct{ *In }
+type I interface{ Get(int) int }
+type HasI struct{ I }
+func F() (func(Out, int) int, func(*Out) int, func(POut) int, func(HasI, int) int) {
+	return Out.Get, (*Out).Ptr, POut.Ptr, HasI.Get
+}
+`)
+	body := funcBody(t, f, "F")
+	lits := nodesOf[*ir.FuncLitExpr](body)
+	if len(lits) != 4 {
+		t.Fatalf("%d function literals, want 4", len(lits))
+	}
+	if len(nodesOf[*ir.MethodCallExpr](lits[0].Body)) != 1 || len(nodesOf[*ir.IfaceCallExpr](lits[3].Body)) != 1 {
+		t.Errorf("wrappers do not call the method")
+	}
+}

@@ -315,7 +315,7 @@ func (fs *fnState) selector(x *ast.SelectorExpr) ir.Expr {
 			return &ir.IfaceMethodExprExpr{Type: typ, Pos: fs.pos(x), Iface: e.typeID(recvT), Name: name, Pkg: pkg}
 		}
 		if len(sel.Index()) > 1 {
-			e.unsupportedf(x.Pos(), "method expression through an embedded field")
+			return fs.promotedMethodExpr(x, sel)
 		}
 		return &ir.MethodExprExpr{Type: typ, Pos: fs.pos(x), Method: fs.methodSymRef(m), RecvType: e.typeID(recvT), Targs: fs.methodTargs(x)}
 	}
@@ -380,10 +380,22 @@ func (fs *fnState) methodRecv(x *ast.SelectorExpr, sel *types.Selection) (ir.Exp
 			fs.markAddrTaken(x.X)
 		}
 	}
-	r := fs.expr(x.X)
+	return fs.adjustRecv(fs.expr(x.X), base, path, m, func() ir.PosID { return fs.pos(x.X) })
+}
+
+// adjustRecv adjusts receiver r of type base to method m's receiver:
+// through the embedding path, then & or *.
+func (fs *fnState) adjustRecv(r ir.Expr, base types.Type, path []int, m *types.Func, pos func() ir.PosID) (ir.Expr, bool) {
+	e := fs.e
+	have := base
 	if len(path) > 0 {
-		r = &ir.FieldExpr{Type: e.typeID(have), Pos: fs.pos(x.X), X: r, Path: ints(path)}
+		have = fieldPathType(base, path)
+		r = &ir.FieldExpr{Type: e.typeID(have), Pos: pos(), X: r, Path: ints(path)}
 	}
+	recvDecl := m.Signature().Recv().Type()
+	isIface := types.IsInterface(recvDecl)
+	_, wantPtr := types.Unalias(recvDecl).(*types.Pointer)
+	_, havePtr := types.Unalias(have).Underlying().(*types.Pointer)
 	if _, isTP := types.Unalias(have).(*types.TypeParam); isTP {
 		return r, true // dispatch through the type parameter's constraint
 	}
@@ -392,11 +404,63 @@ func (fs *fnState) methodRecv(x *ast.SelectorExpr, sel *types.Selection) (ir.Exp
 	}
 	switch {
 	case wantPtr && !havePtr:
-		r = &ir.AddrExpr{Type: e.typeID(types.NewPointer(have)), Pos: fs.pos(x.X), X: r}
+		r = &ir.AddrExpr{Type: e.typeID(types.NewPointer(have)), Pos: pos(), X: r}
 	case !wantPtr && havePtr:
-		r = &ir.DerefExpr{Type: e.typeID(have.Underlying().(*types.Pointer).Elem()), Pos: fs.pos(x.X), X: r}
+		r = &ir.DerefExpr{Type: e.typeID(have.Underlying().(*types.Pointer).Elem()), Pos: pos(), X: r}
 	}
 	return r, false
+}
+
+// promotedMethodExpr lowers T.M, M promoted through an embedded field, to
+// func(recv T, params...) results { return recv.<path>.M(params...) }:
+// the IR's MethodExpr names a declared method of T itself.
+func (fs *fnState) promotedMethodExpr(x *ast.SelectorExpr, sel *types.Selection) ir.Expr {
+	e := fs.e
+	sig := e.cfg.Info.Types[x].Type.(*types.Signature)
+	m := sel.Obj().(*types.Func)
+	pos := fs.pos(x)
+	e.stats.Funcs++
+	child := e.newFunc(fs, sig, x.Pos())
+	lit := &ir.FuncLitExpr{Type: e.typeID(sig), Pos: pos}
+	var args []ir.Expr
+	var recv ir.Expr
+	for i := range sig.Params().Len() {
+		v := sig.Params().At(i)
+		id := child.declare(types.NewVar(token.NoPos, e.cfg.Pkg, v.Name(), v.Type()), 1)
+		child.body.Params = append(child.body.Params, id)
+		ref := &ir.LocalExpr{Type: e.typeID(v.Type()), Pos: child.posAt(x.Pos(), 0), Local: id}
+		if i == 0 {
+			recv = ref
+		} else {
+			args = append(args, ref)
+		}
+	}
+	for i := range sig.Results().Len() {
+		v := sig.Results().At(i)
+		child.body.Results = append(child.body.Results, child.declare(types.NewVar(token.NoPos, e.cfg.Pkg, "", v.Type()), 2))
+	}
+	cpos := child.posAt(x.Pos(), 0)
+	idx := sel.Index()
+	r, isIface := child.adjustRecv(recv, sel.Recv(), idx[:len(idx)-1], m, func() ir.PosID { return cpos })
+	var rt types.Type = sig.Results()
+	if sig.Results().Len() == 1 {
+		rt = sig.Results().At(0).Type()
+	}
+	var call ir.Expr
+	if isIface {
+		name, pkg := methodName(m)
+		call = &ir.IfaceCallExpr{Type: e.typeID(rt), Pos: cpos, Recv: r, Name: name, Pkg: pkg, Args: args, Spread: sig.Variadic()}
+	} else {
+		call = &ir.MethodCallExpr{Type: e.typeID(rt), Pos: cpos, Recv: r, Method: child.methodSymRef(m), RecvType: child.recvTypeID(r), Targs: fs.methodTargs(x), Args: args, Spread: sig.Variadic()}
+	}
+	if sig.Results().Len() > 0 {
+		child.body.Body = []ir.Stmt{&ir.ReturnStmt{Pos: cpos, Results: []ir.Expr{call}}}
+	} else {
+		child.body.Body = []ir.Stmt{&ir.ExprStmt{Pos: cpos, X: call}}
+	}
+	e.stats.FuncsOK++
+	lit.Body = *child.body
+	return lit
 }
 
 func exprType(x ir.Expr) ir.TypeID {
