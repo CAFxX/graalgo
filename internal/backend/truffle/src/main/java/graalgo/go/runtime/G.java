@@ -6,7 +6,7 @@ import graalgo.language.GoThreadSlot;
 
 /**
  * Per-goroutine state of the new node package (truffle-design §2.5): the explicit defer chain
- * (SPEC §3.5, GG-0019) and the panic being unwound. Reached through the language's
+ * (SPEC §3.5, GG-0071) and the panic being unwound. Reached through the language's
  * {@code ContextThreadLocal} slot — never a host {@code ThreadLocal} — and only by functions
  * that defer, recover, or start a goroutine.
  */

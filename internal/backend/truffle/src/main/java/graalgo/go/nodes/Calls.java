@@ -47,8 +47,8 @@ import java.util.function.Supplier;
  * the caller.
  *
  * <p>Defers: a function whose {@code defer} statements each run at most once is an
- * {@link OpenDeferRoot} (open-coded, amendment A8); any other deferring function is a
- * {@link DeferRoot} over the explicit per-goroutine chain of SPEC §3.5 (GG-0019). Both unwind a
+ * {@link OpenDeferRoot} (open-coded, amendment A8, GG-0071); any other deferring function is a
+ * {@link DeferRoot} over the explicit per-goroutine chain of SPEC §3.5 (GG-0071). Both unwind a
  * panic the same way. Functions without {@code defer} never touch goroutine state.
  */
 public final class Calls {
