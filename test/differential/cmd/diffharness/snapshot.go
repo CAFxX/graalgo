@@ -62,8 +62,9 @@ import (
 const snapshotFormat = "graalgo-behavior-snapshot/v2"
 
 // snapshotNormalizer identifies the normalization rule set applied at
-// record time. Bump on any rule change: an old snapshot then fails loudly.
-const snapshotNormalizer = "harness.Normalize/v2(trace-addresses-only)+NORMALIZE-opt-in+noiseSets"
+// record time, derived from the rules' content (harness.NormalizerID): any
+// rule change makes an old snapshot fail loudly until re-recorded.
+var snapshotNormalizer = harness.NormalizerID() + "+NORMALIZE-opt-in"
 
 // SnapshotEntry is the recorded observable behavior of one program.
 type SnapshotEntry struct {
