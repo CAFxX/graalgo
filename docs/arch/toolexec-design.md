@@ -1,7 +1,9 @@
 # The `-toolexec` compile/link path — design (lane T1)
 
 **Status:** design, decision-complete except where §12 says a prototype is
-needed. Written 2026-11-17 for track T1 of [RECOVERY.md](RECOVERY.md).
+needed. Written 2026-11-17 for track T1 of [RECOVERY.md](RECOVERY.md);
+amended 2026-11-18 with the owner's decisions and the results of the two
+prototypes of §12 ([abi-spike.md](abi-spike.md)) — the change list is §14.
 [SPEC.md](SPEC.md) is authoritative; this document implements SPEC §3.1–3.3,
 §3.6, §4.1–4.2, §4.4 and requirements GG-0001/0002/0009/0011/0012/0013/0014/
 0020/0021/0028/0059. Every number below was measured on this box against
@@ -19,10 +21,11 @@ the measurement programs are described in §11.
 | D5 | The IR is a **resolved typed AST** (not SSA, not gc's unified IR), one independently decodable blob per function, in a schema-driven binary container that evolves v2's `g2bi` encoding. | SPEC §3.2/§3.3: the node factory walks the typed AST. Lazy per-function decoding keeps startup proportional to executed code. |
 | D6 | Generics: generic bodies are serialized **once, uninstantiated**; the backend instantiates per distinct type-argument tuple at first use (full monomorphization in the JVM). AOT modes run the same instantiation as a link-time closure. | A Truffle tree per instantiation is what the JIT wants; no cross-package duplicate bodies; no dictionaries. |
 | D7 | Types cross package boundaries by **canonical type key**; descriptors are interned at load; itabs are computed lazily at run time. No link-time itab or method-set generation. | Itabs are immutable (SPEC §3.3); the JVM is the linker. |
-| D8 | The runtime boundary is the **source tree**: graalgo ships a `GOROOT` whose `src` is upstream go1.27.1 plus the fork patch stack. `runtime` and `internal/runtime/*` are replaced by facade packages whose body-less functions are the intrinsic surface; a small set of coupled packages carries minimal patches; everything else is verbatim. | GG-0009. No package is name-keyed inside the tool: the tool compiles whatever `cmd/go` hands it. Verified: stock `cmd/go` + gc `compile` + `vet` accept a facade `runtime` (§5.2). |
+| D8 | The runtime boundary is the **source tree**: graalgo ships a `GOROOT` whose `src` is upstream go1.27.1 plus the fork patch stack. `runtime` and `internal/runtime/*` are replaced by facade packages whose body-less functions are the intrinsic surface; a small set of coupled packages carries minimal patches; everything else is verbatim. `internal/abi` and `internal/reflectlite` are verbatim and `reflect` is verbatim except a 4-function call-path patch, on byte-exact descriptor images and the pointer model of §3.4 (P1, answered). | GG-0009. No package is name-keyed inside the tool: the tool compiles whatever `cmd/go` hands it. Verified: stock `cmd/go` + gc `compile` + `vet` accept a facade `runtime` (§5.2); verbatim reflect on synthesized descriptors: 607/607 answers identical to gc ([abi-spike.md](abi-spike.md) §1.4). |
 | D9 | Body-less functions resolve at link time, by symbol name, to (a) a Go body named by `//go:linkname`, or (b) a Java intrinsic registered under that symbol name; otherwise the link fails if the function is reachable. | GG-0020/GG-0021. Same rule for std, the fork and third-party modules. |
 | D10 | The frontend is `go/parser` + `go/types` from the toolchain that builds `graalgo-tool`, with a build-time assertion that this is the tracked release. | GG-0012/GG-0013 by construction; the vendored copy under `internal/frontend/go` retires with v1. |
-| D11 | v1 (`gofrontend`, JSON, `synth_*.go`, the custom `cmd/graalgo` commands) is deleted at one cutover gate (§9, M3), not migrated piecemeal. | The two paths share only the Java node classes and runtime; a hybrid would need the import overlay the recovery is removing. |
+| D11 | v1 (`gofrontend`, JSON, `synth_*.go`, the custom `cmd/graalgo` commands, **and v1's node classes**) is deleted at one cutover gate (§9, M3), not migrated piecemeal. | The two paths share only the runtime library (scheduler, channels, timers); a hybrid would need the import overlay the recovery is removing. |
+| D12 | The node factory of W4 targets a **new node package** written to the Truffle conventions of [truffle-design.md](truffle-design.md) §11–§12 (statically typed node families, DSL specializations only at dynamic sites, `TruffleLanguage`-native); the existing ~110 node classes are the semantic reference, not reused, and are deleted at M3. | Owner decision 2026-11-18 (truffle-design T13). Reusing them would carry every PE-hostile pattern of truffle-design §1.2 and the nested-`GoStruct` value model (§3.4) into the new path and force a second rewrite. Cost: +6–10 agent-days on M1a. |
 
 ## 1. The launcher (`graalgo`)
 
@@ -226,8 +229,9 @@ IR. Reasons:
   walks the typed AST. Truffle wants structured control flow; lowering in
   the frontend would be undone in the backend.
 - The existing Java [NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
-  (6,100 lines) and its ~110 node classes already consume this level; the
-  work is to feed them from a new container, not to redesign them.
+  (6,100 lines) and its ~110 node classes already consume this level, which
+  proves the level is sufficient; the new node package of D12 consumes the
+  same level and uses them as the semantic reference.
 - gc's unified IR is private to `cmd/compile`, changes every release and
   encodes gc-specific decisions (shapes, dictionaries, inlining bodies).
 
@@ -273,7 +277,8 @@ sections:
   PKG       import path, package name, files (trimpath-applied), direct imports,
             flags (-std, has cgo), linkname directives, embed data index
   SYMREFS   symbols this package references: (import path, name, kind)
-  TYPES     structural type table; named types are (symref, type-args)
+  TYPES     structural type table; named types are (symref, type-args);
+            per type (named or not) the descriptor facts of §3.4
   TYPEDEFS  for named types DECLARED here: underlying type, type parameters,
             declared methods (name -> func index), full method sets with
             embedding paths, gc layout (size, align, field offsets)
@@ -341,8 +346,36 @@ programs gc rejects are rejected here too.
   time.
 - gc layout numbers (`unsafe.Sizeof/Offsetof/Alignof`) come from
   `types.SizesFor("gc", GOARCH)` and are folded into constants by the
-  frontend; the layout table in `TYPEDEFS` exists for `reflect` and the
-  handle-table `unsafe.Pointer` emulation (SPEC §3.4).
+  frontend.
+- **Descriptor facts, for every type** (not only named ones), so that the
+  backend can build gc's descriptor image without a compiler run
+  ([typetab](../../test/spikes/abi/descview/typetab/main.go) is the
+  reference): gc type string and link string, kind, size, alignment and
+  field alignment, pointer bitmap (`PtrBytes`, GC mask), comparable /
+  regular-memory / direct-interface flags, struct package path, field
+  names, offsets, tags, embedded and exported bits, and the complete sorted
+  method sets with the receiver-less signature type of each method. The
+  layout of `internal/abi`'s own structs (`Type`, `UncommonType`, `Method`,
+  `Name`, …) comes from the same table applied to `internal/abi`; **the
+  backend hard-codes no descriptor offset**, so a Go release that moves a
+  field needs no backend change.
+- **Pointer model** (SPEC §3.4, GG-0061/GG-0062). Values are flat: a
+  struct or array is one `long[]` of scalar leaves plus one `Object[]` of
+  reference leaves, with nested structs and arrays inlined; a per-type
+  **leaf table** derived from the gc layout maps a gc byte offset to a slot.
+  An `unsafe.Pointer`, and every `*T` obtained from one by conversion, is
+  `(referent object, gc byte offset)`. Every addressable object kind —
+  flat values, arrays, descriptor images, cells, and the three header shapes
+  (interface: type word + data word; string: data + len; slice: data + len
+  + cap) — implements load/store of an N-byte scalar and load/store of a
+  pointer word at a byte offset. A field access through a view pointer is a
+  load at `ptr.offset + Offsetof(field)`. `uintptr(p)` is a stable integer
+  from a range-allocating handle table (each address-taken object gets a
+  range above any real user address; integer → pointer is a floor lookup).
+  Leaving the referent traps with gc's `checkptr` fatal errors (SPEC §3.4).
+  v1's nested-`GoStruct` model is **not** carried into W4: it is the
+  measured cause of 20 of the 50 reflect-probe failures
+  ([abi-spike.md](abi-spike.md) §1.2).
 
 ### 3.5 Generics
 
@@ -479,13 +512,17 @@ NodeFactory       builds Truffle nodes from decoded IR nodes under a type
                   environment
 ```
 
-The node classes are the existing ones. The factory is a new class fed by
-the generated decoder (typed records, not `Map<String,Object>`); the JSON
-[NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java)
-and the map-based
+The node classes are a **new package** (D12), laid out as
+[truffle-design.md](truffle-design.md) §12 proposes and reviewed against its
+§11 checklist; the value classes follow the flat model of §3.4. The factory
+is a new class fed by the generated decoder (typed records, not
+`Map<String,Object>`); the JSON
+[NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java),
+the map-based
 [NodeFactoryV2.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
-are its reference for *which node class implements which construct*, and are
-deleted at cutover. Call sites hold a direct reference to the callee's
+and the existing node classes are its *semantic* reference (which construct
+needs which edge cases; their tests are ported, their structure is not), and
+are deleted at cutover (M3). Call sites hold a direct reference to the callee's
 `FunctionUnit`, so a not-yet-decoded callee costs one branch.
 
 Class-path layout: one backend jar set under `$GRAALGO_HOME/lib`
@@ -509,7 +546,7 @@ with the fork applied. The stock distribution itself is never modified
 | Class | Packages | Source |
 |---|---|---|
 | **Replaced** | `runtime`, `internal/runtime/*` (15 packages in std's closure), `runtime/cgo`, `runtime/race` | facade packages: the exported API and linkname targets, bodies either pure Go kept from upstream or body-less (§5.3) |
-| **Patched** | expected: `reflect`, `internal/reflectlite`, `internal/abi`, `sync` (pool), `syscall`, `os/signal`, `runtime/debug`, `runtime/pprof`, `runtime/trace`, `runtime/metrics`, `internal/godebug`, `internal/cpu`, `unique`, `weak`, `iter` | upstream file + diff in `stdlib/patches` |
+| **Patched** | expected: `reflect` (4 call-path functions), `syscall` (fork/exec glue), `os/signal`, `runtime/debug`, `runtime/pprof`, `runtime/trace`, `runtime/metrics`, `internal/godebug`, `internal/cpu`, `unique`, `weak`, `iter` | upstream file + diff in `stdlib/patches` |
 | **Verbatim** | everything else (target: ≥ 350 of 383) | upstream, byte-identical |
 
 `graalgo-tool` has no list of these packages. It compiles the files `cmd/go`
@@ -645,12 +682,13 @@ writer itself. **About 300 functions outside the runtime family execute**
 The executed set names the hard spots of milestone M1 precisely:
 
 - `sync.Pool` (`pin`, `pinSlow`, `indexLocal`): per-P arrays indexed with
-  `unsafe` pointer arithmetic. Patch: `indexLocal` uses a slice.
+  `unsafe` pointer arithmetic. This is in-array arithmetic that the pointer
+  model of §3.4 handles: **verbatim, no patch** (P1).
 - `internal/abi.TypeOf`, `(*Type).Kind/Size/Elem`, `Name.ReadVarint`,
   `reflect.unpackEface`, `(*rtype).Field`: type descriptors read as memory
   through `unsafe` casts of interface headers. This is the `rtype` layout
-  question of SPEC §3.6 and the one item this design cannot settle on paper
-  (§12 P1).
+  question of SPEC §3.6, answered by P1: byte-exact descriptor images plus
+  the pointer model of §3.4, verbatim source.
 - `syscall.Syscall`/`RawSyscall6`/`fcntl`/`write`: raw system calls with
   pointer arguments (§5.6).
 - `sync.Mutex`/`Once`/`RWMutex`/`Map`: semaphore intrinsics and atomics;
@@ -662,15 +700,15 @@ The executed set names the hard spots of milestone M1 precisely:
 |---|---|---|
 | `runtime` | **Replaced.** Kept from upstream as pure Go: `error.go` types (`Error`, `TypeAssertionError`, bounds errors — the T0.A panic-model work needs exactly these), `Frames` iteration, `MemStats` struct, constants. Everything else is body-less. `runtime.Compiler` stays `"gc"` so that build-tag-like checks in libraries behave as under gc. | exported API (≈45 functions) + the 194 linkname targets, all as Java methods |
 | `internal/runtime/atomic`, `internal/runtime/sys`, `internal/runtime/math`, `internal/runtime/maps`, `internal/runtime/exithook`, `internal/runtime/cgroup`, `internal/runtime/pprof/label`, `internal/runtime/syscall/linux`, others | **Replaced** by facades that keep only what code outside the family references (54 objects in total, §5.4). `internal/runtime/maps` keeps only the exported type names `reflect` mentions; Go maps are `GoMap` (SPEC §3.4) and the Swiss-table code is never compiled. | atomics; `sys.GetCallerPC`; `linux.Syscall6` |
-| `unsafe` | no source; `Sizeof/Offsetof/Alignof` folded by the frontend, `Add/Slice/String/SliceData/StringData` are node kinds, `Pointer` conversions follow SPEC §3.4 (handle table) | — |
+| `unsafe` | no source; `Sizeof/Offsetof/Alignof` folded by the frontend, `Add/Slice/String/SliceData/StringData` are node kinds, `Pointer` conversions follow the pointer model of §3.4 (`(object, gc byte offset)`, leaf tables, range-allocated `uintptr` handles, `checkptr` traps; SPEC §3.4, GG-0062) | — |
 | `sync/atomic` | **Verbatim.** 36 assembly functions + 5 linknames become intrinsics; the typed wrappers (`atomic.Int64`, `atomic.Pointer[T]`) compile as written. Intrinsics operate on the addressed field through the backend's existing cell/pointer representation. | 41 |
-| `internal/sync`, `sync` | **Verbatim** except `sync/pool.go` (one function patched) and possibly `internal/sync/hashtriemap.go` if its `unsafe.Pointer` atomics exceed the handle emulation (decided by P1). | semaphores, notify list, `procPin`, `canSpin`, `fatal`, `throw`: 24 |
+| `internal/sync`, `sync` | **Verbatim**, `sync.Pool` included (P1: in-array arithmetic). `internal/sync.HashTrieMap` and `sync.Map` are expected verbatim for the same reason (39 handle-only functions, no view, no patch); P5 confirms with their std tests. | semaphores, notify list, `procPin`, `canSpin`, `fatal`, `throw`: 24 |
 | `internal/bytealg` | **Verbatim Go**, 10 assembly functions as intrinsics over `byte[]`/`GoString` | 10 |
 | `math`, `math/bits`, `math/big` | **Verbatim.** `math` 8 intrinsics → `java.lang.Math`; `math/bits` is pure Go (the JIT recognizes the patterns; intrinsic nodes are a later optimization); `math/big` 6 kernels as intrinsics over `long[]`-backed word slices | 14 |
 | `internal/cpu`, vendored `x/sys/cpu` | **Patched**: feature detection returns "none"; removes `cpuid`/`xgetbv` | 0 |
-| `syscall`, `internal/syscall/unix`, `internal/poll`, `os` | **Verbatim** apart from fork/exec glue in `syscall`. All OS access funnels into the raw syscall intrinsics. The intrinsic dispatches on the syscall number through a table that states, per number, which arguments are pointers and how many bytes are read and written; pointer arguments are handle-table references (SPEC §3.4) that the intrinsic pins or copies around a Panama downcall to libc `syscall(2)`. A syscall number missing from the table fails loudly. The table is what makes `golang.org/x/sys/unix`, which calls `syscall.Syscall` directly, work without a fork. `internal/poll`'s 12 `runtime_poll*` functions bind to the existing blocking-NIO netpoll contract (SPEC §3.5/§7.4). | 3 raw entries + ~18 glue + 12 poll |
+| `syscall`, `internal/syscall/unix`, `internal/poll`, `os` | **Verbatim** apart from the fork/exec glue in `syscall`. All OS access funnels into the raw syscall intrinsics, which dispatch on the syscall number through a **role table** ([abi-spike.md](abi-spike.md) §2.3): one entry per number with a "may block" bit and up to six argument roles — `Val`, `CStr`, `Bytes(lenArg, dir, filled)`, `Struct(type, dir, nestedDir, nullable)`, `Array(elemType, countArg, dir, nestedDir, filled)` — plus per-*type* nested rules (`Iovec.Base/Len`; `Msghdr.Iov/Iovlen`, `Name/Namelen`, `Control/Controllen`), a second key for `ioctl` (request), `fcntl` (command) and `ptrace` (request), and libc wrappers instead of raw `syscall(2)` for the `AllThreadsSyscall` credential numbers. **A role names a Go type and never states a size or offset**: sizes, offsets and pointer leaves come from the type table of §3.4. Pointer arguments arrive as `uintptr` handles (§3.4) and are copied in/out through a call-scoped arena around one Panama downcall to libc `syscall(2)`; no Go object is pinned and no native address outlives the call. A number missing from the table, an integer that is not inside a live object, or a length past the Go object fails loudly. The table is what makes `golang.org/x/sys/unix`, which calls `syscall.Syscall` directly, work without a fork. Measured scope: 148 distinct syscalls issued by `syscall` + `internal/syscall/unix`, 70 reachable from `os` (17 of them only in the fork/exec child), 47 from `net`. Blocking calls release the scheduler slot around the downcall (GG-SCHED-0004). **Readiness** (`internal/poll`'s 12 `runtime_poll*` functions) is a small epoll-based poller in the runtime over raw fds, driven through the same executor (`epoll_create1/ctl/wait`); goroutines waiting on it park through the scheduler's slot-releasing path and are woken through the wake lane, deadlines on the runtime timer heap (SPEC §3.5, GG-0063 — this replaces the blocking-NIO netpoll contract, which cannot accept raw fds). **Process creation** (`forkExec`): the fork/exec child path cannot run in a JVM; the glue is patched to `posix_spawn` a small helper binary shipped under `$GRAALGO_HOME/libexec` that applies `SysProcAttr` and `exec`s the target (the JDK's `jspawnhelper` pattern; SPEC §3.8, GG-0064). | 3 raw entries + ~18 glue + 12 poll |
 | `time` | **Verbatim.** `now`, `runtimeNano`, `Sleep`, timer start/stop/reset bind to the existing `Timers` | 8 |
-| `reflect`, `internal/reflectlite`, `internal/abi` | SPEC §3.6 decides "exact `rtype`/itab layouts" and spike 4 found all 302 `unsafe` uses expressible under the handle table. Design: `internal/abi` stays **verbatim** (it is declarations and accessors); the backend exposes each type descriptor as an object that the handle emulation presents with `abi.Type`'s gc layout, including the trailing `UncommonType`/method arrays reached by `add(unsafe.Pointer(t), …)`. `reflect` is verbatim on top of that plus its 37 support intrinsics. If P1 shows the view cannot be made faithful at acceptable cost, the fallback is to patch `reflect/type.go`, `reflect/value.go` and `internal/reflectlite` so that `rtype` and `Value` accessors are intrinsics (estimated 150–200 patched functions) — larger fork, no layout emulation. | 37–200 |
+| `reflect`, `internal/reflectlite`, `internal/abi` | SPEC §3.6 decides "exact `rtype`/itab layouts"; P1 answered how ([abi-spike.md](abi-spike.md) §1). `internal/abi` and `internal/reflectlite` are **verbatim**; `reflect` is **verbatim except a 4-function patch** (`Value.call`, `callReflect`, `callMethod`, `makeMethodValue` call one invoke intrinsic with `[]Value`; the other 19 functions that manufacture gc call frames become unreachable and stay verbatim). Mechanism: (1) the backend builds, per type, the **descriptor image** gc's compiler would emit — kind-specific `internal/abi` struct, trailing `UncommonType`, parameter and method arrays, names — as bytes plus a parallel reference array, from the type table of §3.4 alone; `NameOff`/`TypeOff`/`TextOff` are IDs in a process-wide table with gc's `reflectOffs` numbering; (2) every descriptor access goes through the pointer model of §3.4. The intrinsics are exactly the body-less functions (34 runtime linknames + 3 assembly → 37 that need Java code) plus the invoke intrinsic. Residual risks, in decreasing order: descriptors built at run time by `StructOf`/`FuncOf`/`MapOf`/… (an inverse descriptor reader interns them; patching 7 constructor tails is the fallback), writes through header views (`packEface`, `atomic.Value`, `SetLen`), `typedmemmove` over leaf tables, `uintptr` tokens, `MapIter`'s embedded `maps.Iter` (W5 facade), and performance under Truffle (needs a PE-friendly addressable dispatch; measured in W9's first week). | 37 + 1 invoke |
 | `iter` | **Patched**: `Pull`/`Pull2` on the scheduler's goroutine parking instead of `coroswitch` | 2 |
 | `unique`, `weak`, `runtime.AddCleanup`, `SetFinalizer` | bind to `java.lang.ref` (`WeakReference`, `Cleaner`) | 6 |
 | `os/signal`, `runtime/debug`, `runtime/pprof`, `runtime/trace`, `runtime/metrics`, `internal/godebug` | **Patched** thin: each has 4–17 runtime linknames; first implementation returns empty profiles/zero metrics (the API works, the data is honest-empty and documented in [limitations.md](limitations.md)); GODEBUG registration is real because std reads settings at init | ~50 |
@@ -755,18 +793,19 @@ estimate; ranges reflect the uncertainty named in §12.
 | M | Deliverable | Gate (differential vs gc) | Effort |
 |---|---|---|---|
 | **M0** | Walking skeleton of the build side: `graalgo-tool` shadow compile + IR member + link to stub + bundle (prototype of this lane, §13). JVM execution of the bundle is **not** part of what was built. | protocol tests of §13: warm rebuild runs zero tools, cache separation, build ID, gc-identical diagnostics | done in this lane |
-| **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory; multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate) | 15–25 |
-| **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (with the pool patch), `iter`, `time`; intrinsic registry + link-time resolution and reachability | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs | 10–15 |
-| **M1c** | `syscall` raw-entry intrinsic with the syscall table (write/read/open/close/fstat/fcntl/getpid first), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes | 8–12 |
-| **M1d** | `internal/abi` + `internal/reflectlite` + `reflect` (per P1 outcome) + `internal/fmtsort` + `fmt` → **hello world with `fmt` from the real stdlib** | every corpus program that imports only `fmt`, `os`, `strings`, `strconv`, `errors`, `sort`, `time`, `sync`; `fmt` verb matrix differential | 15–30 |
+| **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory over the **new node package** (D12; flat value classes of §3.4); multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate); per node class the unit and PE tests of truffle-design §11 (T1–T4), `pe-check` bailouts = 0 on the corpus | 21–35 (15–25 + 6–10 for the new node package) |
+| **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (verbatim, P1), `iter`, `time`; intrinsic registry + link-time resolution and reachability | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs | 10–15 |
+| **M1c** | `syscall` raw-entry intrinsic with the role table for the 70 numbers `os` reaches (write/read/open/close/fstat/fcntl/getpid first) and the table-vs-source gate (R15), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes; the syscall table-vs-source check green | 8–12 (W8's M1c share: 5–7) |
+| **M1d** | `internal/abi` + `internal/reflectlite` verbatim + `reflect` with the 4-function patch (P1) + `internal/fmtsort` + `fmt` → **hello world with `fmt` from the real stdlib** | every corpus program that imports only `fmt`, `os`, `strings`, `strconv`, `errors`, `sort`, `time`, `sync`; `fmt` verb matrix differential; imgcheck (descriptor images judged by gc's own reflect) over a ≥ 300-type corpus; reflectprobe 126/126 | 16–24 (W9 14–20 incl. W13, + `fmtsort`/`fmt` 2–4) |
 | **M2** | `testing`, `flag`, `runtime/debug`, `internal/testlog`, `testdeps`; `go test` on user packages incl. `-run`, `-v`, `-json`, `-count`, caching, `-timeout` | cmd/go test-protocol scripts from the txtar suite; then **std's own tests** become the oracle: `go test` green for the M1 packages with a versioned exclusion list (GG-0009's verification plan) | 10–15 |
-| **M3 — cutover** | the full differential corpus (591 programs) and snapshots pass through the new path at ≥ v1's pass rate; `cmd/graalgo` becomes the §1 launcher; **delete** `internal/frontend` v1, all 140 `synth_*.go`, the generators, the import overlay, JSON `NodeFactory`, `NodeFactoryV2`, the bridge inventory entries | zero regressions vs the v1 baseline per program, each remaining failure triaged; `check_no_bridges.py` grandfather list empty | 10–20 (dominated by triage) |
-| **M4** | `encoding/*`, `bufio`, `regexp`, `text/template`, `os/exec`, `os/signal`, `net`, `net/http`, `crypto/*` (purego), `context`, `log/slog` | std tests per package with exclusion list; `net/http` client/server differential | 20–35 |
+| **M3 — cutover** | the full differential corpus (591 programs) and snapshots pass through the new path at ≥ v1's pass rate; `cmd/graalgo` becomes the §1 launcher; **delete** `internal/frontend` v1, all 140 `synth_*.go`, the generators, the import overlay, JSON `NodeFactory`, `NodeFactoryV2`, **v1's ~110 node classes and nested-`GoStruct` value classes** (D11/D12), `p3reflect`/`p3unsafe`/`p3net`, the bridge inventory entries | zero regressions vs the v1 baseline per program, each remaining failure triaged; `check_no_bridges.py` grandfather list empty | 10–20 (dominated by triage) |
+| **M4** | `encoding/*`, `bufio`, `regexp`, `text/template`, `os/exec` (spawn helper, GG-0064), `os/signal`, `net` (runtime epoll poller, GG-0063), `net/http`, `crypto/*` (purego), `context`, `log/slog` | std tests per package with exclusion list; `net/http` client/server differential; fd-blocked goroutines at cap = GOMAXPROCS never starve a runnable one (the `CapExhaustion` falsifier, ported to the poller) | 20–35 (incl. W8's remaining 5–8) |
 | **M5** | `-cover`; build modes; the 929-script txtar matrix through the launcher as the GG-0001/0002 conformance gate; the linkname-diff and intrinsic-coverage audits (GG-0020/0021) wired into the upgrade runbook | txtar pass list with explained exclusions | 15–25 |
 
 M1 in the task's sense (hello world with `fmt` from real std) is
-M1a + M1b + M1c + M1d: **48–82 agent-days of work, 3–4 calendar weeks with
-the parallelism of §9**. It is hard for the reasons §5.5 lists — not because
+M1a + M1b + M1c + M1d: **55–86 agent-days of work** (was 48–82: +6–10 for the
+new node package on M1a, M1d re-sized from 15–30 to 16–24 by P1), **3–4
+calendar weeks with the parallelism of §9**. It is hard for the reasons §5.5 lists — not because
 of `fmt`, which is 25 executed functions, but because reaching it requires
 the complete language in the emitter and factory, the runtime boundary, the
 `sync` family, real system calls, and `reflect`'s view of type descriptors.
@@ -774,7 +813,8 @@ There is no shortcut that keeps GG-0009: every earlier attempt to get there
 faster produced a synthetic package.
 
 v1 stays untouched and green until M3. Nothing in M0–M2 modifies v1 code
-paths; new code lives in new directories.
+paths; new code lives in new directories, including the new node package
+(D12) — the runtime library is the only code both paths execute.
 
 ## 9. Work packages (parallelizable)
 
@@ -783,17 +823,21 @@ paths; new code lives in new directories.
 | W1 | `graalgo-tool` protocol: argv, response files, `-chain`, `-V=full`, archive member, shadow exec, launcher (§1–§2); cache-behaviour tests (warm rebuild = 0 tools, shared GOCACHE with gc) | — | all |
 | W2 | GIR schema, generator for Go encoder + Java decoder, golden vectors, canonical type keys (§3.2–3.4) | — | W1, W5, W6 |
 | W3 | Emitter: all node kinds, selections, constants, closures/captures, method sets, init order, embed, linkname, trimpath (§3) | W2 schema (can start on a draft) | W4 |
-| W4 | Backend loader, lazy function units, new node factory, type interning, lazy itabs, generic instantiation (§4.3, §3.5) | W2 | W3 |
+| W4 | Backend loader, lazy function units, new node factory, type interning, lazy itabs, generic instantiation (§4.3, §3.5); **the new node package and flat value classes** (D12, §3.4; truffle-design TR-3/TR-4 are this work done to its §11) | W2 | W3 |
 | W5 | Fork: facade `runtime` + `internal/runtime/*`, patch stack, GOROOT assembly + overlay generator, fork-size audit (§5.1, §5.6) | — (API list from §5.4 measurements) | all |
 | W6 | Intrinsic registry and link-time resolution/reachability (§5.3); atomics, bytealg, math, sync semaphores, time | W4 for execution; registry format independent | W5 |
 | W7 | Linker: bundle, manifest, init order, `-X`, ELF stub + build-ID patch (§2.4, §4.2) | W2 | W3, W4 |
-| W8 | Syscall table intrinsic + handle-table marshalling (§5.6) | W6, P2 | W9 |
-| W9 | `reflect`/`abi` descriptor views (§5.6) | P1, W4 | W8 |
+| W8 | Syscall executor (§5.6): role table for all 148 numbers from the generated sysscan skeleton + table-vs-source gate (2–3); executor in the backend incl. slot release, `EINTR`, errno, `AllThreads*` (2–3); raw-fd epoll poller, GG-0063 (2–3); spawn helper + `forkExec` patch, GG-0064 (3–4); foreign memory for `mmap`, signals glue (1–2). **10–15 agent-days**; M1c needs the first two items only (5–7) | W6, W13 | W9 |
+| W9 | `reflect`/`abi` (§5.6): descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); runtime intrinsics over the pointer model — `typedmemmove` family, `unsafe_New*`, `ifaceE2I`, `resolve*Off`, `addReflectOff`, `typelinks`, map/chan helpers (3–4); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–14 agent-days**, 14–20 with W13 | W4, W13 | W8 |
+| W13 | Pointer model (§3.4), scheduled **once, before both W8 and W9**: view pointers for `(*T)(unsafe.Pointer)`, offset → slot leaf tables, header views with stores, range-allocating `uintptr` handle table, `checkptr` traps. Part of the new node package | W4 | W5, W6 |
 | W10 | Test infrastructure for the new path: corpus runner through the launcher, package-splitting transform, compile-only std gate, std-test runner with exclusion list | W1 | all |
 | W11 | Cutover and deletion (M3) | M2 | — |
 | W12 (optional) | unified-IR export writer from `go/types` to drop the shadow compile | — | any time after M3 |
 
-W1, W2, W5 and W10 can start immediately and in parallel. W3 and W4 are the
+W1, W2, W5 and W10 can start immediately and in parallel. When W8 and W9
+start, the two prototypes become gates: imgcheck
+([descview](../../test/spikes/abi/descview/)) and the syscall
+table-vs-source check ([sysscan](../../test/spikes/abi/sysscan/)) run in CI. W3 and W4 are the
 two largest packages and split further by node family (expressions,
 statements, declarations/types, closures+defer, concurrency) once the schema
 is fixed.
@@ -802,8 +846,8 @@ is fixed.
 
 | # | Risk | Likelihood | Impact | Mitigation / trigger |
 |---|---|---|---|---|
-| R1 | `reflect`/`internal/abi` descriptor views under the handle table are not faithful or too slow | medium | M1d slips; fork grows by 150–200 functions | P1 before W9; fallback is specified (§5.6) |
-| R2 | Raw-syscall marshalling: pointer arguments nested inside structs (`iovec`, `msghdr`, `epoll_event` arrays) | medium | `net`, `os/exec` slip (M4), not M1 | P2; table entries describe nested pointers; unsupported number fails loudly |
+| R1 | `reflect`/`internal/abi` on descriptor images and the pointer model are not faithful or too slow | low (P1: **GO**, 607/607 and 427/427 answers identical to gc) | M1d slips | residual risks of [abi-spike.md](abi-spike.md) §1.5: run-time-built descriptors (inverse reader; 7-function patch fallback), header-view writes, `typedmemmove` over leaf tables, `uintptr` tokens, `MapIter`, performance under Truffle (15–20× gc before inline caching, measured in W9's first week). The 150–200-function patch fallback is dropped. |
+| R2 | Raw-syscall marshalling: pointer arguments nested inside structs (`iovec`, `msghdr`, `epoll_event` arrays) | low (P2: **GO**, 48/48 checks; nested pointers exist only in `Iovec` and `Msghdr`) | `net`, `os/exec` slip (M4), not M1 | role model with per-type nested rules (§5.6); residual risks of [abi-spike.md](abi-spike.md) §2.6: `ioctl`/`fcntl`/`ptrace` second key, third-party numbers outside the table (fail loudly), thread-directed syscalls (correct only under `LockOSThread`), copy cost, carrier pinning in blocking downcalls; memory unsafety is R15 |
 | R3 | go/types and types2 disagree on some input (gc accepts, IR pass rejects, or constant values differ) | low | internal error on that package | compile-only gate over all of std in M1a; report upstream-identical cases |
 | R4 | JVM startup makes `go test ./...` on many packages unusably slow (one JVM per test binary) | high | drop-in is correct but painful | generic runtime image (§4.2) prioritized in T3; measure at M2 |
 | R5 | Lazy instantiation and lazy body decoding hide backend gaps until run time | medium | late failures | "strict" link option decodes and builds every reachable function; on in CI |
@@ -815,7 +859,9 @@ is fixed.
 | R11 | Per-release churn of the 194 linkname edges and ~45 exported runtime functions | certain, bounded | upgrade toil | GG-0021 linkname-diff over the §11 E2 tool's output; spike 3 measured 2 changed items across 1.26→1.27 |
 | R12 | cmd/go behaviour that depends on properties of a real gc binary (`go version -m`, `debug/buildinfo` on the artifact, `go install` staleness) | medium | cosmetic divergences | build ID handled (§2.4); `.go.buildinfo` patching in the stub is M5 |
 | R13 | Coverage and fuzz instrumentation are compiler features | certain | `-cover` late (M5), fuzz unsupported | loud failure until implemented |
-| R14 | The T0.D module flattening and T0.A lifecycle fixes land late | medium | W4 builds on a moving base | W4 touches only new packages plus node-class constructors; rebases are mechanical |
+| R14 | The T0.D module flattening and T0.A lifecycle fixes land late | medium | W4 builds on a moving base | W4 touches only new packages (D12); rebases are mechanical |
+| R15 | **A wrong syscall-table entry is memory-unsafe**: the kernel writes by its own notion of the struct (demonstrated: `fstat` declared with `Timespec` instead of `Stat_t` → 144 bytes into a 16-byte allocation → JVM SIGSEGV) | medium | JVM crash, silent heap corruption | (a) a **gate** comparing each entry's Go type with the pointee type sysscan derives from std's call sites (table-vs-source, CI from W8 start); (b) roles never state sizes; (c) a debug mode with guard pages after each arena allocation; (d) unknown numbers fail |
+| R16 | The new node package (D12) slips M1a | medium | M1 later by up to 10 agent-days | sized (+6–10); the v1 classes are the semantic reference and their tests port; truffle-design §11 makes review mechanical |
 
 ## 11. Experiments (all on go1.27.1, linux/amd64, this box)
 
@@ -831,16 +877,21 @@ is fixed.
 | E8 | Does stock cmd/go + gc accept a replaced `runtime`? | Yes (§5.2). |
 | E9 | Dynamic footprint of hello-`fmt` | §5.5: 1,175 functions execute, ~300 outside the runtime family. |
 | E10 | Where does cmd/go read a binary's build ID? | ELF: `.note.go.buildid` only; non-ELF: raw scan of the first 32 kB; after link it rewrites every raw occurrence of the ID (`cmd/internal/buildid`, `cmd/go/internal/work/buildid.go`). |
+| E11 | Static `unsafe` inventory of `internal/abi`, `internal/reflectlite`, `reflect`, `sync*` and 7 more packages ([unsafescan](../../test/spikes/abi/unsafescan/main.go)) | layout-dependent arithmetic leaving a descriptor struct: 7 sites in 7 functions; 569 field selections and 132 pointer conversions between descriptor types; reflect: 389 of 393 functions verbatim ([abi-spike.md](abi-spike.md) §1.1) |
+| E12 | Verbatim reflect on v1's object-graph model ([reflectprobe](../../test/spikes/abi/reflectprobe/main.go)) | 76 / 126 checks agree with gc; failures: byte-offset addressing (20), descriptor content (18), identity, linkname arity, other (§1.2) |
+| E13 | Byte-exact descriptor images judged by gc's own reflect ([descview](../../test/spikes/abi/descview/)) | 607 / 607 answers identical; fixed `abi.Type` header byte-identical for 25 / 25 root types; transliterated reflect on the Java pointer model 427 / 427 (§1.4) |
+| E14 | Syscall inventory of `os`/`net`/`os/exec` ([sysscan](../../test/spikes/abi/sysscan/main.go)) | 148 distinct syscalls, 70 from `os`, 47 from `net`; nested pointers only in `Iovec`/`Msghdr` (+ `execve` vectors in the child path) (§2.1) |
+| E15 | Role-table executor through one Panama downcall ([sysexec](../../test/spikes/abi/sysexec/)) | 48 / 48 checks incl. two-level nested `sendmsg`/`recvmsg`, epoll, errno paths; 45–215 ns added per call (§2.4) |
 
 ## 12. Not decided here — needs a prototype
 
 | # | Question | Prototype | Blocks |
 |---|---|---|---|
-| P1 | Can the backend present type descriptors and interface headers with gc's `abi.Type` layout through the handle table so that verbatim `internal/abi` + `reflect` work (SPEC §3.6), at acceptable cost? | Implement views for `abi.Type`, `PtrType`, `StructType`, `Name` and run `reflect.TypeOf(x).String()/Kind()/Field(i)` for 20 types verbatim. Two days. | W9, M1d sizing |
-| P2 | Syscall table: is "per syscall number, argument roles" enough for std's ~110 distinct syscalls, including nested pointers? | Classify every `SYS_*` used by `syscall` + `internal/syscall/unix` + `x/sys/unix` core; implement `write`, `fstat`, `openat`, `writev`, `epoll_wait`. Two days. | W8 |
+| P1 | Can the backend present type descriptors and interface headers with gc's `abi.Type` layout through the handle table so that verbatim `internal/abi` + `reflect` work (SPEC §3.6), at acceptable cost? | **Answered 2026-11-18: GO** ([abi-spike.md](abi-spike.md) §1; E11–E13). Mechanism in §3.4/§5.6; W9 sized 14–20. | — |
+| P2 | Syscall table: is "per syscall number, argument roles" enough for std's syscalls, including nested pointers? | **Answered 2026-11-18: GO** ([abi-spike.md](abi-spike.md) §2; E14–E15): 148 numbers (not ~110), role model of §5.6. The readiness question it raised is decided (GG-0063). | — |
 | P3 | Actual GIR size and decode time per function for std; whether body blobs need compression | falls out of W2/W3 on the compile-only std gate | bundle layout details only |
 | P4 | Truffle tree build cost for generic instantiation at first call (warm-up spikes) | measure on `slices`/`maps`/`sync/atomic.Pointer[T]` once W4 exists | none (optimization) |
-| P5 | Whether `internal/sync.HashTrieMap` and `sync.Map` run verbatim on the handle emulation | run their std tests in M1b | patch-stack size |
+| P5 | Whether `internal/sync.HashTrieMap` and `sync.Map` run verbatim on the pointer model (expected yes: handle-only, P1) | run their std tests in M1b | patch-stack size |
 | P6 | How much of `runtime`'s exported API can be pure Go kept from upstream versus intrinsic | W5 first pass | fork size audit |
 
 ## 13. Prototype status (this lane)
@@ -889,3 +940,22 @@ stock `go build -toolexec` over a two-package module:
   "compile whatever cmd/go hands over", and it disappears with W5.
 - No launcher (§1), no response-file expansion, no `-chain`, no symbol
   resolution, init order or `-X` at link.
+
+## 14. Amendments (2026-11-18)
+
+Applied from the owner's decisions of 2026-11-18 and
+[abi-spike.md](abi-spike.md) §3 (numbering of that list in brackets):
+
+| Change | Where |
+|---|---|
+| W4 builds a new idiomatic node package; v1 node classes deleted at M3; M1a +6–10 agent-days (owner decision 1; truffle-design T13) | D11, D12, §3.1, §4.3, §8 M1a/M3, §9 W4, R14, R16 |
+| P1 answered: `internal/abi`/`internal/reflectlite` verbatim, `reflect` verbatim except 4 call-path functions; the 150–200-function fallback and "37–200 intrinsics" removed [1] | D8, §5.6, R1, §12 |
+| Patched list without `internal/abi`, `internal/reflectlite`, `sync` (pool); P5 expected verbatim [2] | §5.1, §5.5, §5.6, §12 |
+| Descriptor facts for every type; no hard-coded descriptor offset [3] | §3.2, §3.4 |
+| Pointer model: `(object, gc byte offset)`, leaf tables, range-allocated `uintptr` handles; flat values, no nested `GoStruct` (SPEC §3.4, GG-0061/GG-0062) [4] | §3.4, §5.6 `unsafe` |
+| Syscall table → role model; measured counts 148/70/47; R2 → low [5] | §5.6, R2, §12 |
+| Readiness: runtime epoll poller through the executor (SPEC §3.5, GG-0063) replaces the blocking-NIO contract [6] | §5.6, M4 |
+| fork/exec: `posix_spawn` + helper under `$GRAALGO_HOME/libexec` (SPEC §3.8, GG-0064) [7] | §5.6, M4, W8 |
+| R15: syscall-table errors are memory-unsafe; table-vs-source gate [8] | §10 |
+| W8 10–15 (M1c 5–7), W9 14–20; shared pointer model W13 scheduled once; descview and table-vs-source promoted to gates [9] | §8, §9 |
+| Experiments E11–E15 [10] | §11 |
