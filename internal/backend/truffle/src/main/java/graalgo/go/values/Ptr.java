@@ -7,7 +7,8 @@ package graalgo.go.values;
  * offsets zero), so every location has exactly one representation per static pointee type and
  * pointer equality is {@link #same}.
  *
- * <p>W13 adds the gc byte offset next to the slot offsets (unsafe arithmetic, {@code uintptr}).
+ * <p>Not yet: toolexec work package W13 (the pointer model, milestone M1r, GG-0062) adds the gc
+ * byte offset next to the slot offsets (unsafe arithmetic, {@code uintptr}).
  */
 public final class Ptr {
     public final Flat obj;

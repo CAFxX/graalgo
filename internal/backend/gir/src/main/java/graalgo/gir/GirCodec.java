@@ -1674,7 +1674,8 @@ final class GirCodec {
                         f_captures[f_captures_i] = f_captures_e;
                     }
                     Gir.FuncBody f_body = readFuncBody(r);
-                    return new Gir.Expr.FuncLit(f_type, f_pos, f_captures, f_body);
+                    boolean f_wrapper = r.bool();
+                    return new Gir.Expr.FuncLit(f_type, f_pos, f_captures, f_body, f_wrapper);
                 }
                 case 30: {
                     int f_type = r.typeRef();
@@ -1947,6 +1948,7 @@ final class GirCodec {
                     w.uvarint(e68);
                 }
                 writeFuncBody(w, v.body());
+                w.bool(v.wrapper());
             }
             case Gir.Expr.TupleConvert v -> {
                 w.uvarint(30);

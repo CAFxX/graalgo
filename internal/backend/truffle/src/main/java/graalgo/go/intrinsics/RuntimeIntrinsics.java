@@ -34,6 +34,26 @@ final class RuntimeIntrinsics {
         return Runtime.getRuntime().availableProcessors();
     }
 
+    /** Terminates the calling goroutine after running its deferred calls (GG-0070). */
+    static void runtime_Goexit(Node node) {
+        graalgo.runtime.Goexit.goexit();
+    }
+
+    /**
+     * {@code syscall.Exit}, which upstream's runtime provides by {@code //go:linkname} and
+     * {@code os.Exit} ends in: the scheduler's exit request; the calling goroutine never returns.
+     */
+    @TruffleBoundary
+    static void syscall_Exit(Node node, long code) {
+        SchedulerCore sc = SchedulerCore.installedOrNull();
+        if (sc == null || !sc.onGoroutine()) {
+            throw new IllegalStateException("syscall.Exit outside a goroutine");
+        }
+        sc.requestExit((int) code);
+        sc.freezeForExit();
+        throw new IllegalStateException("syscall.Exit returned");
+    }
+
     static long runtime_nanotime(Node node) {
         return System.nanoTime();
     }

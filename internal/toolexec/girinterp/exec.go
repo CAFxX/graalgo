@@ -354,13 +354,26 @@ func (in *Interp) execRange(fr *frame, s *ir.RangeStmt, label int32) flow {
 	return normal
 }
 
-// rangeFunc runs a range-over-func loop: the body runs inside yield.
+// rangeFunc runs a range-over-func loop: the body runs inside yield, under
+// gc's #state machine (abi.RF_*: misuse of yield panics with
+// runtime.panicrangestate's errors).
 func (in *Interp) rangeFunc(fr *frame, seq *Closure, sig *RType, iter func(k, v Value) (bool, flow)) flow {
+	const (
+		rfDone = iota
+		rfReady
+		rfPanic
+		rfExhausted
+	)
 	exit := normal
-	done := false
+	state := rfReady
 	yield := &Closure{native: func(in *Interp, args []Value) []Value {
-		if done {
+		switch state {
+		case rfDone:
 			in.runtimePanic("range function continued iteration after function for loop body returned false")
+		case rfPanic:
+			in.runtimePanic("range function continued iteration after loop body panic")
+		case rfExhausted:
+			in.runtimePanic("range function continued iteration after whole loop exit")
 		}
 		var k, v Value
 		if len(args) > 0 {
@@ -369,15 +382,27 @@ func (in *Interp) rangeFunc(fr *frame, seq *Closure, sig *RType, iter func(k, v 
 		if len(args) > 1 {
 			v = args[1]
 		}
-		cont, out := iter(k, v)
+		state = rfPanic // until the body completes
+		cont, out := func() (bool, flow) {
+			fr.rangeBody++
+			defer func() { fr.rangeBody-- }()
+			return iter(k, v)
+		}()
+		state = rfReady
 		if !cont {
-			done = true
+			state = rfDone
 			exit = out
 		}
 		return []Value{cont}
 	}}
+	if seq == nil {
+		in.runtimeNilDeref()
+	}
 	in.call(seq, []Value{yield})
-	done = true
+	if state == rfPanic {
+		in.runtimePanic("range function recovered a loop body panic and did not resume panicking")
+	}
+	state = rfExhausted
 	return exit
 }
 

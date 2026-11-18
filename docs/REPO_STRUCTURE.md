@@ -326,21 +326,26 @@ Related: [Makefile](../Makefile) (root build entry point),
     (`make pe-check`, TR-0) runs the whole benchmark set with
     `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
   - [m1a/](../test/m1a/) — the differential gate of toolexec milestone M1a
-    (`make test-m1a`, ~2 min, not per-push): [run.sh](../test/m1a/run.sh)
+    (`make test-m1a`, ~2.5 min, per-push in `make all`): [run.sh](../test/m1a/run.sh)
     builds every corpus program that imports nothing with the stock
     `go build -toolexec graalgo-tool`, runs the linked bundle on the new
     node package and compares stdout, normalized stderr and exit status
     with gc. [transform.py](../test/m1a/transform.py) makes the phase-1
-    programs print their `// observe:` variables (both legs);
+    programs print their `// observe:` variables (both legs; tested by
+    [test_transform.py](../test/m1a/test_transform.py));
     [programs/](../test/m1a/programs/) adds programs for areas the corpus
-    is thin on (open-coded and chained defers, the flat value model,
-    interfaces, generics, goroutines);
+    is thin on (open-coded and chained defers, Goexit, recover through
+    wrappers, range-over-func, the flat value model, interfaces, generics,
+    goroutines, bounds and conversion edge cases);
     [multipkg/](../test/m1a/multipkg/) holds multi-package modules.
+    [defer_path.sh](../test/m1a/defer_path.sh) pins GG-0071's open-coding
+    limit and runs the defer programs with every function forced onto the
+    chain.
     [bench.sh](../test/m1a/bench.sh) runs the [bench/](../test/bench/)
     workloads on the new node package, rewritten by
     [bench.py](../test/m1a/bench.py) to need no standard library
     (`make bench-m1a`), and as the partial-evaluation gate of the new
-    nodes (`make pe-check-m1a`: zero failed compilations).
+    nodes (`make pe-check-m1a`, per-push: zero failed compilations).
   - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output

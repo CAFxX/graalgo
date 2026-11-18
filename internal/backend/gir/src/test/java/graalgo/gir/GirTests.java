@@ -85,6 +85,7 @@ public final class GirTests {
             decodeNanos += System.nanoTime() - d0;
             funcs += f.sections().funcs.length;
             roundTrip(p, f, data);
+            checkDataRange(p, f);
         }
         long wall = System.nanoTime() - t0;
         if (stats) {
@@ -116,6 +117,22 @@ public final class GirTests {
             System.exit(1);
         }
         System.out.println("ok: " + files.size() + " GIR files");
+    }
+
+    /** dataRange is exactly the slice of data() and refuses ranges outside it. */
+    private static void checkDataRange(Path p, GirFile f) {
+        byte[] all = f.data();
+        int n = all.length;
+        if (!Arrays.equals(f.dataRange(0, n), all)) {
+            fail(p + ": dataRange(0, len) differs from data()");
+        }
+        if (n > 1 && !Arrays.equals(f.dataRange(1, n - 1), Arrays.copyOfRange(all, 1, n))) {
+            fail(p + ": dataRange(1, len-1) differs from data()[1:]");
+        }
+        if (f.dataRange(0, n + 1) != null || f.dataRange(n + 1, 0) != null || f.dataRange(-1, 1) != null
+                || f.dataRange(1, Long.MAX_VALUE) != null) {
+            fail(p + ": dataRange accepted a range outside the DATA section");
+        }
     }
 
     private static void collect(Path p, List<Path> out) throws IOException {

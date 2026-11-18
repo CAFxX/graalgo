@@ -355,8 +355,10 @@ union Expr
   27 ArrayLit type:type pos:pos elems:[]Elem
   28 MapLit type:type pos:pos entries:[]MapEntry
   # function literal: captures are locals of the enclosing scope, bound to
-  # the first len(captures) locals of body
-  29 FuncLit type:type pos:pos captures:[]local body:FuncBody
+  # the first len(captures) locals of body. wrapper: a literal the emitter
+  # generates to forward to one method (a promoted method expression), gc's
+  # WRAPPER frame — recover() eligibility passes through it to the callee
+  29 FuncLit type:type pos:pos captures:[]local body:FuncBody wrapper:bool
   # a multi-value x (call or comma-ok form) converted element-wise to the
   # tuple type `type`: f(g()), return g(), a, b = g() where some element
   # needs an implicit conversion (to interface or channel direction)

@@ -111,6 +111,7 @@ into `GOFLAGS` and therefore visible in `go env`. Each is temporary, is
 reported as a failure against GG-0001/GG-0002 (never as an exclusion), and
 has a retirement trigger in
 [ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md).
+`[DEVIATION, ADR-0010]` (DV6): `-race`, `-msan`, `-asan`, `-cover` (`-coveragecfg`) and fuzzing instrumentation are refused by graalgo-tool (GG-0002).
 
 What drop-in does **not** require `[DECIDED]`: byte-identical binaries, or
 byte-identical cross-backend build-cache sharing. Action IDs hash tool identity

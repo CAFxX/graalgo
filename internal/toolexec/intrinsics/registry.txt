@@ -41,7 +41,12 @@ intrinsic runtime.GC           RuntimeIntrinsics func()
 intrinsic runtime.GOMAXPROCS   RuntimeIntrinsics func(int) int
 intrinsic runtime.NumCPU       RuntimeIntrinsics func() int
 intrinsic runtime.nanotime     RuntimeIntrinsics func() int64
+intrinsic runtime.Goexit       RuntimeIntrinsics func()
 intrinsic runtime.runtimeError RuntimeIntrinsics func(int) error
+
+# --- syscall: provided by the runtime through //go:linkname (upstream
+# runtime/runtime.go syscall_Exit) -------------------------------------------
+intrinsic syscall.Exit RuntimeIntrinsics func(int)
 
 # --- maps: provided by the runtime through //go:linkname (upstream
 # runtime/map.go maps_clone) ------------------------------------------------

@@ -16,7 +16,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "a30e864850a67f31";
+    public static final String HASH = "3aa07de7982167a8";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -51,6 +51,8 @@ public final class IntrinsicTable {
                 return new R_runtime_GC(language);
             case "runtime.GOMAXPROCS":
                 return new R_runtime_GOMAXPROCS(language);
+            case "runtime.Goexit":
+                return new R_runtime_Goexit(language);
             case "runtime.Gosched":
                 return new R_runtime_Gosched(language);
             case "runtime.NumCPU":
@@ -137,6 +139,8 @@ public final class IntrinsicTable {
                 return new R_sync_atomic_SwapUint64(language);
             case "sync/atomic.SwapUintptr":
                 return new R_sync_atomic_SwapUintptr(language);
+            case "syscall.Exit":
+                return new R_syscall_Exit(language);
             default:
                 return null;
         }
@@ -353,6 +357,19 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_GOMAXPROCS(this, (long) a[1]);
+        }
+    }
+
+    /** {@code runtime.Goexit}: {@code func()}. */
+    static final class R_runtime_Goexit extends Root {
+        R_runtime_Goexit(GoLanguage language) {
+            super(language, "runtime.Goexit");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            RuntimeIntrinsics.runtime_Goexit(this);
+            return null;
         }
     }
 
@@ -916,6 +933,20 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return AtomicIntrinsics.sync_atomic_SwapUintptr(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code syscall.Exit}: {@code func(int)}. */
+    static final class R_syscall_Exit extends Root {
+        R_syscall_Exit(GoLanguage language) {
+            super(language, "syscall.Exit");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.syscall_Exit(this, (long) a[1]);
+            return null;
         }
     }
 }

@@ -870,7 +870,7 @@ estimate; ranges reflect the uncertainty named in §12.
 | M | Deliverable | Gate (differential vs gc) | Effort |
 |---|---|---|---|
 | **M0** | Walking skeleton of the build side: `graalgo-tool` shadow compile + IR member + link to stub + bundle (prototype of this lane, §13). JVM execution of the bundle is **not** part of what was built. | protocol tests of §13: warm rebuild runs zero tools, cache separation, build ID, gc-identical diagnostics | done in this lane |
-| **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory over the **new node package** (D12; flat value classes of §3.4); multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate); per node class the unit and PE tests of truffle-design §11 (T1–T4), `pe-check` bailouts = 0 on the corpus | 21–35 (15–25 + 6–10 for the new node package) |
+| **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory over the **new node package** (D12; flat value classes of §3.4); multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate); per node class the unit and PE tests of truffle-design §11 (T1–T4) — waived for M1a by [ADR-0014](../dev/adr/ADR-0014-node-tests-waived-m1a.md) (WP-NODETEST), `pe-check` bailouts = 0 on the corpus | 21–35 (15–25 + 6–10 for the new node package) |
 | **M1r** (new 2026-11-18, §8.1) | The floor every M1b package stands on: intrinsic registry + link-time resolution and reachability (W6, moved from M1b); the pointer model (W13); descriptor images + imgcheck gate + the `internal/reflectlite` intrinsics (W9a); `internal/abi` + `internal/reflectlite` verbatim; `syscall` raw entry + executor + role-table entries for `openat`, `read`, `lseek`, `close` with the table-vs-source gate on them (W8a) | `errors.Is`/`errors.As`/`errors.New` (package init runs `reflectlite.TypeOf((*error)(nil)).Elem()`), `sort.Slice` (`reflectlite.Swapper`) and `time.Now().Format` with `Local` loaded from `/etc/localtime` (and with `TZ=Europe/Rome`) differential vs gc; imgcheck over a ≥ 300-type corpus; the syscall table-vs-source check green for the M1r entries | 13–20 (W6 registry 2–4, W13 4–6, W9a 4–6, W8a 3–4) |
 | **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (verbatim, P1), `iter`, `time` | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs; `sync.Map` (`internal/sync.HashTrieMap` reads the map type's hasher from its descriptor) std tests (P5) | 8–11 (registry moved to M1r) |
 | **M1c** | `syscall` role table for the remaining numbers `os` reaches (write/fstat/fcntl/getpid first) and the table-vs-source gate (R15), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes; the syscall table-vs-source check green | 5–9 (W8's M1c share: 2–4; executor moved to M1r) |
@@ -1276,7 +1276,7 @@ bundle of another registry, and initializes `runtime` first. A build against
 an **unforked** runtime now fails at link with the runtime's own undefined
 assembly symbols, instead of producing a program that cannot start.
 
-*What runs.* Fifty-eight registry entries (facade `runtime` 6, `math`
+*What runs.* Registry entries (facade `runtime` 6 at first, `math`
 assembly 8, `math` bit casts 4, `maps.clone`, `sync/atomic` 39) carry these
 importable packages, compiled from upstream's source: `unicode/utf8`,
 `unicode/utf16`, `unicode`, `math/bits`, `math`, `math/cmplx`, `cmp`,
@@ -1290,9 +1290,11 @@ sweep of the package's functions over 23 arguments (322 output lines) is
 bit-identical to gc. The atomics are `VarHandle` accesses to the addressed
 slot of the referent's scalar or reference array; 32-bit additions
 re-normalize the canonical extended form in a compare-and-set loop, and
-pointer compare-and-swap compares locations, not Java identity. Not yet:
-anything that ranges over a function iterator inside std (`maps.Keys`,
-`slices.Sorted`, …), which the node package does not build.
+pointer compare-and-swap compares locations, not Java identity. Since the
+merge of the M1a close-out (range-over-func in the node package), the
+iterator functions of `slices` and `maps` run as well, and `runtime.Goexit`
+and `syscall.Exit` — what `os.Exit` ends in — are registry entries (60 in
+all) in place of the loader's interim table; `os` itself does not link yet.
 
 *Found by the gate, outside its subject* (reported to the owning lanes, not
 fixed here): (1) a conversion between `unsafe.Pointer` and `*T` is the

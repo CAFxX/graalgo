@@ -149,7 +149,8 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # finalizer-panicked message: a panicking Go finalizer must be loud (gc
 # crashes the program). SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's
 # per-cycle lines ARE the GODEBUG=schedtrace/gctrace feature (P2-M5).
-# PinAudit is a reporting tool.
+# PinAudit is a reporting tool. DeferPathTrace is GG-0071's test hook (the
+# defer-path trace of test/m1a/defer_path.sh, off unless enabled).
 check: main $(OUT_TEST)/.built
 	@echo "== pinned-jar checksum gate (lib/LIB.md) =="
 	@cd lib && sha256sum --quiet --strict -c SHA256SUMS.txt || { echo "PINNED-JAR GATE FAILED: checksum mismatch"; exit 1; }
@@ -160,7 +161,7 @@ check: main $(OUT_TEST)/.built
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java' | grep -v 'src/main/java/graalgo/go/build/DeferPathTrace.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== v1 netpoller-deletion gate (P2-M3; updated P3-M9; GG-0063 poller replaces it in W8) =="

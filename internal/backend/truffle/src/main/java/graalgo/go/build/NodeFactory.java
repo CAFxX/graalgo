@@ -115,9 +115,32 @@ public final class NodeFactory {
     private boolean openDefers;
     private int deferBits = -1;
     private final List<int[]> deferSites = new ArrayList<>();
-    private static final int MAX_OPEN_DEFERS = 8;
+    /**
+     * The open-coding limit L of GG-0071: a function with at most this many {@code defer}
+     * statements, none of which can run twice, is open-coded (gc's maxOpenDefers is also 8).
+     * Pinned by test/m1a/defer_path.sh at L and L+1.
+     */
+    public static final int MAX_OPEN_DEFERS = 8;
+    /**
+     * Test hooks of GG-0071's verification plan, read once: {@code graalgo.go.traceDeferPath}
+     * prints which path each deferring function takes when its tree is built
+     * ({@link DeferPathTrace}); {@code graalgo.go.forceDeferChain}
+     * puts every deferring function on the chain, to show the choice is unobservable.
+     */
+    private static final boolean FORCE_DEFER_CHAIN = Boolean.getBoolean("graalgo.go.forceDeferChain");
     private boolean inThunk;
+    /** Nesting depth of range-over-func bodies being built (their defers and recover differ). */
+    private int rangeFuncDepth;
+    /** The frame slot of the running range-over-func loop's defer record; -1 until needed. */
+    private int rangeDeferSlot = -1;
+    /**
+     * The body is a generated forwarding literal (GIR {@code FuncLit.wrapper}, gc's WRAPPER):
+     * its calls pass {@code recover()} eligibility on ({@link Calls#passRecover}).
+     */
+    private boolean wrapper;
     private int litCount;
+    /** gc names a range-over-func body {@code f-rangeN}, numbered apart from literals. */
+    private int rangeCount;
 
     private NodeFactory(FunctionUnit.Instance inst, Gir.FuncBody body, String name) {
         this.inst = inst;
@@ -158,7 +181,7 @@ public final class NodeFactory {
             }
         });
         // gc's rule: open-code only when no defer statement can execute twice.
-        this.openDefers = hasDefer && !repeatable[0] && defers[0] <= MAX_OPEN_DEFERS;
+        this.openDefers = hasDefer && !repeatable[0] && defers[0] <= MAX_OPEN_DEFERS && !FORCE_DEFER_CHAIN;
         if (openDefers) {
             deferBits = fdb.addSlot(FrameSlotKind.Int, null, null);
         }
@@ -178,7 +201,7 @@ public final class NodeFactory {
     public static RootCallTarget ifaceForwarder(GoLanguage lang, GoType iface, String key) {
         int index = methodIndex(iface, key);
         int params = iface.u().imethods[index].sig.params.length;
-        Expr call = new Calls.IfaceCall(new N.Arg(1), iface, index, argNodes(2, params));
+        Expr call = new Calls.IfaceCall(new N.Arg(1), iface, index, argNodes(2, params), true);
         return new Calls.ThunkRoot(lang, FrameDescriptor.newBuilder().build(), iface.str() + "." + key, call)
                 .getCallTarget();
     }
@@ -213,6 +236,9 @@ public final class NodeFactory {
         Stmt[] prologue = pro.toArray(new Stmt[0]);
         FrameDescriptor fd = fdb.build();
         Calls.FuncRoot root;
+        if (DeferPathTrace.ENABLED && hasDefer) {
+            DeferPathTrace.report(name, openDefers);
+        }
         if (openDefers) {
             int[] targetSlots = new int[deferSites.size()];
             int[] argsSlots = new int[deferSites.size()];
@@ -696,7 +722,8 @@ public final class NodeFactory {
                 Supplier<Expr> i = operand(ix.index(), pre);
                 int np = xt.elem.nPrim();
                 int nr = xt.elem.nRef();
-                return (p, r) -> new Mem.SliceLoc(asRef(s.get()), asI64(i.get()), np, nr, p, r, auxP, auxR);
+                boolean signed = !ty(ix.index()).u().isUnsigned();
+                return (p, r) -> new Mem.SliceLoc(asRef(s.get()), asI64(i.get()), np, nr, p, r, auxP, auxR, signed);
             }
             case GoType.ARRAY, GoType.POINTER: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
@@ -705,7 +732,9 @@ public final class NodeFactory {
                 int np = at.elem.nPrim();
                 int nr = at.elem.nRef();
                 long len = at.len;
-                return (p, r) -> new Mem.IndexLoc(base.make(0, 0), asI64(i.get()), len, np, nr, p, r, auxP, auxR);
+                boolean signed = !ty(ix.index()).u().isUnsigned();
+                return (p, r) -> new Mem.IndexLoc(base.make(0, 0), asI64(i.get()), len, np, nr, p, r, auxP, auxR,
+                        signed);
             }
             case GoType.MAP: {
                 Supplier<Expr> m = operand(ix.x(), pre);
@@ -871,7 +900,7 @@ public final class NodeFactory {
             case Gir.Expr.MethodCall mc:
                 return typed(ty(mc.type()), new Calls.Call(methodInstance(mc.method(), mc.recvType(), mc.targs()),
                         withRecv(value(mc.recv()), args(mc.args(), methodSig(mc.method(), mc.recvType(), mc.targs()),
-                                mc.spread()))));
+                                mc.spread())), wrapper));
             case Gir.Expr.IfaceCall ic:
                 return ifaceCall(ic);
             case Gir.Expr.BuiltinCall bc:
@@ -896,12 +925,11 @@ public final class NodeFactory {
                 return tupleConvert(tc);
             case Gir.Expr.Data d: {
                 // An embedded file: bytes of the package's DATA section (range checked here).
-                byte[] data = pkg.gir.data();
-                if (d.off() < 0 || d.len() < 0 || d.off() > data.length || d.len() > data.length - d.off()) {
+                byte[] bytes = pkg.gir.dataRange(d.off(), d.len());
+                if (bytes == null) {
                     throw new IllegalStateException("Data expression outside the DATA section of " + pkg.path);
                 }
-                return new N.ConstRef(new Str(java.util.Arrays.copyOfRange(data, (int) d.off(),
-                        (int) (d.off() + d.len()))));
+                return new N.ConstRef(new Str(bytes));
             }
         }
     }
@@ -1195,7 +1223,7 @@ public final class NodeFactory {
     private Expr index(Gir.Expr.Index ix) {
         GoType xt = ty(ix.x()).u();
         if (xt.kind == GoType.STRING) {
-            return new Data.StrIndex(expr(ix.x()), i64(ix.index()));
+            return new Data.StrIndex(expr(ix.x()), i64(ix.index()), !ty(ix.index()).u().isUnsigned());
         }
         if (xt.kind == GoType.MAP && ix.commaOk()) {
             return new Data.MapGetOk(expr(ix.x()), expr(ix.index()), xt.elem, primKey(xt.mapKey));
@@ -1204,20 +1232,27 @@ public final class NodeFactory {
         return load(elem, indexLoc(ix, null).make(0, 0));
     }
 
+    private boolean unsignedIndex(Gir.Expr index) {
+        return index != null && ty(index).u().isUnsigned();
+    }
+
     private Expr slice(Gir.Expr.Slice s) {
         GoType xt = ty(s.x()).u();
         I64 lo = s.lo() == null ? null : i64(s.lo());
         I64 hi = s.hi() == null ? null : i64(s.hi());
         I64 max = s.max() == null ? null : i64(s.max());
+        int unsigned = (unsignedIndex(s.lo()) ? Data.UNSIGNED_LO : 0) | (unsignedIndex(s.hi()) ? Data.UNSIGNED_HI : 0)
+                | (unsignedIndex(s.max()) ? Data.UNSIGNED_MAX : 0);
         switch (xt.kind) {
             case GoType.STRING:
-                return new Data.StrSlice(expr(s.x()), lo, hi);
+                return new Data.StrSlice(expr(s.x()), lo, hi, unsigned);
             case GoType.SLICE:
-                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem.nPrim(), xt.elem.nRef());
+                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem.nPrim(), xt.elem.nRef(), unsigned);
             default: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
                 LocMk base = structBase(s.x(), null);
-                return new Data.SliceOfArray(base.make(0, 0), at.len, lo, hi, max, at.elem.nPrim(), at.elem.nRef());
+                return new Data.SliceOfArray(base.make(0, 0), at.len, lo, hi, max, at.elem.nPrim(), at.elem.nRef(),
+                        unsigned);
             }
         }
     }
@@ -1257,7 +1292,9 @@ public final class NodeFactory {
                     return new Arith.F64ToU64(d);
                 } else if (t.bits() == 64) {
                     return new Arith.F64ToI64(d);
-                } else if (t.isUnsigned()) {
+                } else if (t.kind == GoType.UINT32) {
+                    // gc/amd64: uint32 takes the 64-bit conversion, every narrower target the
+                    // 32-bit one (0x80000000 out of int32 range), then truncation.
                     return wrap(t, new Arith.F64ToI64(d));
                 }
                 return wrap(t, new Arith.F64ToI32(d));
@@ -1435,7 +1472,7 @@ public final class NodeFactory {
         FunctionUnit.Instance callee = staticCallee(c.fn());
         Expr[] a = args(c.args(), sig, c.spread());
         if (callee != null) {
-            return typed(result, new Calls.Call(callee, a));
+            return typed(result, new Calls.Call(callee, a, wrapper));
         }
         return typed(result, new Calls.CallClosure(expr(c.fn()), a));
     }
@@ -1469,13 +1506,13 @@ public final class NodeFactory {
         if (rt.isInterface()) {
             int index = methodIndex(rt, key);
             Expr[] a = args(ic.args(), rt.u().imethods[index].sig, ic.spread());
-            return typed(result, new Calls.IfaceCall(expr(ic.recv()), rt, index, a));
+            return typed(result, new Calls.IfaceCall(expr(ic.recv()), rt, index, a, wrapper));
         }
         // A type parameter instantiated with a concrete type: the method is known now (D6).
         Method m = methodOf(rt, key);
         GoType sig = dynamicSig(rt, key, ic.args().length);
         Expr[] a = sig == null ? plainArgs(ic.args()) : args(ic.args(), sig, ic.spread());
-        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, expr(ic.recv())), a)));
+        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, expr(ic.recv())), a), wrapper));
     }
 
     /** No signature is recorded for a method reached through a type parameter. */
@@ -1516,7 +1553,7 @@ public final class NodeFactory {
         if (recvT.carrier() == GoType.C_FLAT) {
             recv = new Mem.Copy(recv);
         }
-        RootCallTarget t = thunk("fm", new Calls.Call(mi, withRecv(recv, argNodes(1, ft.params.length))));
+        RootCallTarget t = thunk("fm", new Calls.Call(mi, withRecv(recv, argNodes(1, ft.params.length)), true));
         return new Calls.Bind1(t, envDescriptor(1), value(mv.recv()), false);
     }
 
@@ -1526,12 +1563,13 @@ public final class NodeFactory {
         String key = methodKey(pkg.str(mv.name()), pkg.str(mv.pkg()));
         Expr[] a = argNodes(1, ft.params.length);
         if (rt.isInterface()) {
-            RootCallTarget t = thunk("fm", new Calls.IfaceCall(new Calls.EnvRead(0), rt, methodIndex(rt, key), a));
+            RootCallTarget t = thunk("fm",
+                    new Calls.IfaceCall(new Calls.EnvRead(0), rt, methodIndex(rt, key), a, true));
             return new Calls.Bind1(t, envDescriptor(1), expr(mv.recv()), true);
         }
         Method m = methodOf(rt, key);
         RootCallTarget t = thunk("fm",
-                new Calls.Call(m::target, withRecv(new Calls.Adapt(m, new Calls.EnvRead(0)), a)));
+                new Calls.Call(m::target, withRecv(new Calls.Adapt(m, new Calls.EnvRead(0)), a), true));
         return new Calls.Bind1(t, envDescriptor(1), value(mv.recv()), false);
     }
 
@@ -1550,10 +1588,10 @@ public final class NodeFactory {
             // set: bind the receiver's and the method's type arguments together.
             boolean pointer = recvT.kind == GoType.POINTER;
             m = new Method(mname, new int[0], symName.startsWith("(*"), pointer ? recvT.elem : recvT, pointer,
-                    methodInstance(me.method(), me.recvType(), me.targs()));
+                    methodInstance(me.method(), me.recvType(), me.targs()), null);
         }
         RootCallTarget t = thunk("me", new Calls.Call(m::target,
-                withRecv(new Calls.Adapt(m, new N.Arg(1)), argNodes(2, ft.params.length - 1))));
+                withRecv(new Calls.Adapt(m, new N.Arg(1)), argNodes(2, ft.params.length - 1)), true));
         return new N.ConstRef(new graalgo.go.values.Closure(t, null));
     }
 
@@ -1562,7 +1600,8 @@ public final class NodeFactory {
         GoType ft = ty(me.type()).u();
         String key = methodKey(pkg.str(me.name()), pkg.str(me.pkg()));
         RootCallTarget t = thunk("me",
-                new Calls.IfaceCall(new N.Arg(1), it, methodIndex(it, key), argNodes(2, ft.params.length - 1)));
+                new Calls.IfaceCall(new N.Arg(1), it, methodIndex(it, key), argNodes(2, ft.params.length - 1),
+                        true));
         return new N.ConstRef(new graalgo.go.values.Closure(t, null));
     }
 
@@ -1584,7 +1623,9 @@ public final class NodeFactory {
             @Override
             public synchronized RootCallTarget get() {
                 if (built == null) {
-                    built = new NodeFactory(inst, fl.body(), litName).buildRoot(caps.length);
+                    NodeFactory f = new NodeFactory(inst, fl.body(), litName);
+                    f.wrapper = fl.wrapper();
+                    built = f.buildRoot(caps.length);
                 }
                 return built;
             }
@@ -1781,7 +1822,8 @@ public final class NodeFactory {
             }
             case Gir.Builtin.RECOVER:
                 // `defer recover()` does not recover: recover is not called by a deferred function.
-                return inThunk ? new N.ConstRef(null) : new Calls.Recover();
+                // Nor does recover() in a range-over-func body: the body runs inside yield.
+                return inThunk || rangeFuncDepth > 0 ? new N.ConstRef(null) : new Calls.Recover();
             default: {
                 Stmt s = builtinStmt(c, given);
                 if (s != null) {
@@ -1798,6 +1840,17 @@ public final class NodeFactory {
         Supplier<Expr> a0 = () -> given != null ? given[0] : expr(a[0]);
         switch (c.builtin()) {
             case Gir.Builtin.PRINT, Gir.Builtin.PRINTLN: {
+                if (given == null && a.length == 1 && ty(a[0]).kind == GoType.TUPLE) {
+                    // println(f()) with a multi-valued f: the results are the operands.
+                    GoType[] ts = ty(a[0]).results;
+                    int tuple = tempObject();
+                    Expr[] xs = new Expr[ts.length];
+                    for (int i = 0; i < ts.length; i++) {
+                        xs[i] = new Calls.TupleGet(new N.ReadRef(tuple), i);
+                    }
+                    return new Ctl.Block(new Stmt[] {new N.WriteRef(tuple, expr(a[0])),
+                            new Data.Print(ts, xs, c.builtin() == Gir.Builtin.PRINTLN)});
+                }
                 GoType[] ts = new GoType[a.length];
                 Expr[] xs = new Expr[a.length];
                 for (int i = 0; i < a.length; i++) {
@@ -1892,14 +1945,18 @@ public final class NodeFactory {
             case Gir.Stmt.Send sn:
                 return new Chans.Send(expr(sn.ch()), value(sn.value()));
             case Gir.Stmt.Go g:
-                return new Calls.Go(prepared(g.call()));
+                return new Calls.Go(prepared(g.call(), tempObject()));
             case Gir.Stmt.Defer d: {
+                if (rangeFuncDepth > 0) {
+                    // Attaches to the enclosing function (never open-coded: see the constructor).
+                    return new graalgo.go.nodes.RangeFunc.Defer(prepared(d.call(), tempObject()), rangeDeferSlot);
+                }
                 if (!openDefers) {
-                    return new Calls.Defer(prepared(d.call()));
+                    return new Calls.Defer(prepared(d.call(), tempObject()));
                 }
                 int[] site = {tempObject(), tempObject()};
                 deferSites.add(site);
-                return new Calls.OpenDefer(prepared(d.call()), deferSites.size() - 1, deferBits, site[0], site[1]);
+                return new Calls.OpenDefer(prepared(d.call(), site[0]), deferSites.size() - 1, deferBits, site[1]);
             }
             case Gir.Stmt.Return r:
                 return ret(r);
@@ -2165,16 +2222,17 @@ public final class NodeFactory {
     }
 
     /** The function and arguments of a {@code defer}/{@code go} call, evaluated at the statement. */
-    private Calls.Prepared prepared(Gir.Expr call) {
+    private Calls.Prepared prepared(Gir.Expr call, int targetSlot) {
         switch (call) {
             case Gir.Expr.Call c: {
                 GoType sig = ty(c.fn());
                 Expr[] a = args(c.args(), sig, c.spread());
                 FunctionUnit.Instance callee = staticCallee(c.fn());
-                return callee != null ? new Calls.PrepStatic(callee, a) : new Calls.PrepClosure(expr(c.fn()), a);
+                return callee != null ? new Calls.PrepStatic(targetSlot, callee, a)
+                        : new Calls.PrepClosure(targetSlot, expr(c.fn()), a);
             }
             case Gir.Expr.MethodCall mc:
-                return new Calls.PrepStatic(methodInstance(mc.method(), mc.recvType(), mc.targs()),
+                return new Calls.PrepStatic(targetSlot, methodInstance(mc.method(), mc.recvType(), mc.targs()),
                         withRecv(value(mc.recv()),
                                 args(mc.args(), methodSig(mc.method(), mc.recvType(), mc.targs()), mc.spread())));
             case Gir.Expr.IfaceCall ic: {
@@ -2182,11 +2240,11 @@ public final class NodeFactory {
                 String key = methodKey(pkg.str(ic.name()), pkg.str(ic.pkg()));
                 if (rt.isInterface()) {
                     int index = methodIndex(rt, key);
-                    return new Calls.PrepIface(expr(ic.recv()), rt, index,
+                    return new Calls.PrepIface(targetSlot, expr(ic.recv()), rt, index,
                             args(ic.args(), rt.u().imethods[index].sig, ic.spread()));
                 }
                 Method m = methodOf(rt, key);
-                return new Calls.PrepStatic(m::target,
+                return new Calls.PrepStatic(targetSlot, m::target,
                         withRecv(new Calls.Adapt(m, expr(ic.recv())), plainArgs(ic.args())));
             }
             case Gir.Expr.BuiltinCall bc: {
@@ -2204,7 +2262,7 @@ public final class NodeFactory {
                 inThunk = true;
                 RootCallTarget t = thunk("defer", builtin(bc, later));
                 inThunk = saved;
-                return new Calls.PrepStatic(() -> t, now);
+                return new Calls.PrepStatic(targetSlot, () -> t, now);
             }
             default:
                 throw new IllegalStateException("defer/go of " + call.getClass().getSimpleName());
@@ -2461,6 +2519,39 @@ public final class NodeFactory {
         return e != null && !(e instanceof Gir.Expr.Blank);
     }
 
+    /** Range over a function: see {@link graalgo.go.nodes.RangeFunc}. */
+    private Stmt rangeFunc(Gir.Stmt.Range r, Target target, GoType seqType) {
+        GoType[] yp = seqType.params[0].u().params;
+        int keySlot = yp.length > 0 ? tempObject() : -1;
+        int valueSlot = yp.length > 1 ? tempObject() : -1;
+        List<Stmt> body = new ArrayList<>();
+        if (used(r.key())) {
+            body.add(rangeVar(r, r.key(), iterValue(yp[0], keySlot)));
+        }
+        if (used(r.value())) {
+            body.add(rangeVar(r, r.value(), iterValue(yp[1], valueSlot)));
+        }
+        boolean[] defers = new boolean[1];
+        walk(r.body(), s -> defers[0] |= s instanceof Gir.Stmt.Defer);
+        if (defers[0] && rangeDeferSlot < 0) {
+            rangeDeferSlot = tempObject();
+        }
+        rangeFuncDepth++;
+        targets.push(target);
+        body.add(block(r.body()));
+        targets.pop();
+        rangeFuncDepth--;
+        RootCallTarget yield = new graalgo.go.nodes.RangeFunc.YieldRoot(lang, name + "-range" + (++rangeCount),
+                seq(body), keySlot, valueSlot, target.brk, target.cont).getCallTarget();
+        return new graalgo.go.nodes.RangeFunc(expr(r.x()), yield, defers[0] ? rangeDeferSlot : -1);
+    }
+
+    /** A yield argument from its slot: a struct/array value is copied into the variable. */
+    private static Expr iterValue(GoType t, int slot) {
+        Expr e = new N.ReadRef(slot);
+        return t.carrier() == GoType.C_FLAT ? new Mem.Copy(e) : typed(t, e);
+    }
+
     private Stmt range(Gir.Stmt.Range r) {
         Target target = new Target(takeLabel(), true);
         GoType xt = ty(r.x()).u();
@@ -2482,7 +2573,7 @@ public final class NodeFactory {
                 }
                 if (used(r.value())) {
                     Loc loc = new Mem.SliceLoc(new N.ReadRef(s), readIdx.get(), xt.elem.nPrim(), xt.elem.nRef(), 0, 0,
-                            auxP, auxR);
+                            auxP, auxR, true);
                     pre.add(rangeVar(r, r.value(), load(xt.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ReadI64(len)), pre,
@@ -2505,7 +2596,7 @@ public final class NodeFactory {
                     Loc base = xt.kind == GoType.ARRAY ? new Mem.FlatLoc(new N.ReadRef(a), 0, 0)
                             : new Mem.PtrLoc(new N.ReadRef(a), 0, 0, auxP, auxR);
                     Loc loc = new Mem.IndexLoc(base, readIdx.get(), at.len, at.elem.nPrim(), at.elem.nRef(), 0, 0,
-                            auxP, auxR);
+                            auxP, auxR, true);
                     pre.add(rangeVar(r, r.value(), load(at.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ConstI64(at.len)), pre,
@@ -2574,7 +2665,7 @@ public final class NodeFactory {
                 return seq(out);
             }
             case GoType.FUNC:
-                throw new Unsupported("range over func");
+                return rangeFunc(r, target, xt);
             default: {
                 if (!xt.isInteger()) {
                     throw new Unsupported("range over " + xt.key);

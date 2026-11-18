@@ -29,6 +29,8 @@ public final class TypeTable {
     public final GoType emptyInterface;
     /** The universe type {@code error}. */
     public final GoType error;
+    /** {@code interface { String() string }}: gc's printpanicval {@code stringer} case. */
+    public final GoType stringer;
 
     public TypeTable() {
         for (int k = 1; k < BASIC_NAMES.length; k++) {
@@ -44,6 +46,7 @@ public final class TypeTable {
         GoType errorSig = func(NONE, new GoType[] {string}, false);
         GoType errorUnder = iface(new IMethod[] {new IMethod("Error", "", errorSig)}, "");
         error = named("", "error", NONE, () -> errorUnder, null, null);
+        stringer = iface(new IMethod[] {new IMethod("String", "", errorSig)}, "");
         named("", "comparable", NONE, () -> emptyInterface, null, null);
     }
 

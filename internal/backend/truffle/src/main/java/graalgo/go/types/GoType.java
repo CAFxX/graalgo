@@ -464,7 +464,7 @@ public final class GoType {
         Method[] impl = new Method[want.length];
         for (int i = 0; i < want.length; i++) {
             impl[i] = findMethod(want[i].key);
-            if (impl[i] == null) {
+            if (impl[i] == null || !impl[i].hasSig(want[i].sig)) {
                 return NO_ITAB;
             }
         }
@@ -475,7 +475,8 @@ public final class GoType {
     @TruffleBoundary
     public String missingMethod(GoType iface) {
         for (IMethod m : iface.u().imethods) {
-            if (findMethod(m.key) == null) {
+            Method have = findMethod(m.key);
+            if (have == null || !have.hasSig(m.sig)) {
                 return m.name;
             }
         }

@@ -82,8 +82,11 @@ public final class RuntimeTypes {
                 args -> Str.of(((GoErrorValue) args[1]).errorString())).getCallTarget();
         RootCallTarget marker = new NativeRoot(language, "runtime." + name + ".RuntimeError", args -> null)
                 .getCallTarget();
-        methods.put("Error", new Method("Error", new int[0], pointer, t, pointer, () -> error));
-        methods.put("RuntimeError", new Method("RuntimeError", new int[0], pointer, t, pointer, () -> marker));
+        GoType errorSig = table.func(new GoType[0], new GoType[] {table.string}, false);
+        GoType markerSig = table.func(new GoType[0], new GoType[0], false);
+        methods.put("Error", new Method("Error", new int[0], pointer, t, pointer, () -> error, () -> errorSig));
+        methods.put("RuntimeError", new Method("RuntimeError", new int[0], pointer, t, pointer, () -> marker,
+                () -> markerSig));
         return t;
     }
 

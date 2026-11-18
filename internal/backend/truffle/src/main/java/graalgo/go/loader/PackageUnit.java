@@ -343,7 +343,8 @@ public final class PackageUnit {
                 // interface value, and the method is a dynamic call on it.
                 GoType iface = type(e.recvType(), env);
                 out.put(key, new Method(key, path, false, owner, pointer,
-                        () -> graalgo.go.build.NodeFactory.ifaceForwarder(program.language, iface, key)));
+                        () -> graalgo.go.build.NodeFactory.ifaceForwarder(program.language, iface, key),
+                        () -> imethodSig(iface, key)));
                 continue;
             }
             Gir.SymRef msym = s.symRefs[e.method()];
@@ -351,8 +352,25 @@ public final class PackageUnit {
             PackageUnit mpkgUnit = packageOf(msym);
             GoType recv = type(e.recvType(), env);
             out.put(key, new Method(key, path, symName.startsWith("(*"), owner, pointer,
-                    () -> mpkgUnit.funcNamed(symName).instance(recv.targs).get()));
+                    () -> mpkgUnit.funcNamed(symName).instance(recv.targs).get(),
+                    () -> mpkgUnit.methodSig(symName, recv.targs)));
         }
         return out;
+    }
+
+    /** The receiver-less signature of method {@code symName} under the receiver's type arguments. */
+    private GoType methodSig(String symName, GoType[] recvTargs) {
+        FunctionUnit fu = funcNamed(symName);
+        FunctionUnit.Instance in = fu.func.tparams().length == 0 ? fu.instance(null) : fu.instance(recvTargs);
+        return type(fu.func.sig(), in.env);
+    }
+
+    private static GoType imethodSig(GoType iface, String key) {
+        for (GoType.IMethod m : iface.u().imethods) {
+            if (m.key.equals(key)) {
+                return m.sig;
+            }
+        }
+        throw new IllegalStateException("interface " + iface.key + " has no method " + key);
     }
 }

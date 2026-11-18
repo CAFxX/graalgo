@@ -77,6 +77,9 @@ type Closure struct {
 	native func(in *Interp, args []Value) []Value
 	sig    *RType
 	nlits  *int // closure counter of the enclosing top-level function
+	// wrapper: a generated forwarding literal (FuncLit.Wrapper), gc's
+	// WRAPPER frame: it leaves recover() eligibility to the frame it calls.
+	wrapper bool
 }
 
 type closureKey struct {
@@ -283,6 +286,7 @@ type frame struct {
 	deferOf    *goPanic // the panic whose deferred calls invoked this frame
 	pos        ir.PosID
 	inDefer    bool
+	rangeBody  int // > 0 while a range-over-func body runs (inside yield) on this frame
 	retDone    bool
 	litCounter *int
 }
@@ -347,7 +351,7 @@ func (in *Interp) call(cl *Closure, args []Value) []Value {
 	for i, c := range cl.caps {
 		fr.cells[i] = c
 	}
-	if in.pendingDefer {
+	if in.pendingDefer && !cl.wrapper {
 		fr.inDefer, fr.deferOf = true, in.deferPanic
 		in.pendingDefer, in.deferPanic = false, nil
 	}
@@ -532,7 +536,7 @@ func (in *Interp) panicText(v Iface) string {
 		}
 		return v.T.Str + "(" + s + ")"
 	}
-	return "(" + v.T.Str + ") 0xADDR"
+	return "(" + v.T.Str + ") " + addrOf(v.V)
 }
 
 func printIndented(s string) string { return strings.ReplaceAll(s, "\n", "\n\t") }
@@ -586,11 +590,16 @@ func (in *Interp) printFatal(p *goPanic) {
 			b.WriteString(" [recovered]")
 		}
 		b.WriteString("\n")
-		if q.val.T == in.rtErrType && q.val.V == nilDerefMsg {
-			b.WriteString("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n")
-		}
 	}
 	print(p)
+	// gc prints the signal line once, after the whole chain, when any panic
+	// of the goroutine came from a fault (gp.sig stays set).
+	for q := p; q != nil; q = q.link {
+		if q.val.T == in.rtErrType && q.val.V == nilDerefMsg {
+			b.WriteString("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n")
+			break
+		}
+	}
 	b.WriteString("\ngoroutine 1 [running]:\n")
 	io.Copy(in.stderr, &b)
 	in.printStack(p.stack)
