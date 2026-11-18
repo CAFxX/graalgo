@@ -132,7 +132,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check check-repo test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression
 
@@ -306,6 +306,27 @@ test-toolexec:
 # decoder. The Go side is in test-toolexec (ir/, emit/).
 test-gir:
 	$(MAKE) -C internal/backend/gir test
+
+# Toolexec milestone M1a differential gate (~2 min; not per-push yet): the
+# corpus programs that import nothing, built by the stock `go build` through
+# graalgo-tool and run as linked bundles on the new node package
+# (internal/backend/truffle/src/main/java/graalgo/go), compared with gc on
+# stdout, normalized stderr and exit status. See test/m1a/run.sh.
+# M1A_PROGRAMS narrows the run to the given programs.
+test-m1a: build
+	GO="$(GO)" test/m1a/run.sh $(M1A_PROGRAMS)
+M1A_PROGRAMS ?=
+
+# The test/bench workloads on the new node package (test/m1a/bench.sh):
+# bench-m1a prints best-round times against gc (not a gate); pe-check-m1a is
+# the partial-evaluation gate of the new nodes (CompilationFailureAction=
+# ExitVM, synchronous compilation): any failed compilation fails it.
+# M1A_BENCH narrows both to the given benchmarks.
+bench-m1a: build
+	GO="$(GO)" test/m1a/bench.sh $(M1A_BENCH)
+pe-check-m1a: build
+	GO="$(GO)" test/m1a/bench.sh --pe-check $(M1A_BENCH)
+M1A_BENCH ?=
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)

@@ -64,7 +64,29 @@ type Writer struct {
 	buf     []byte
 	strIdx  map[string]uint32
 	strList []string
+	depth   int
 }
+
+// encodeMaxDepth is MaxDepth; tests lift it to produce the malformed
+// too-deep vector the decoders must reject.
+var encodeMaxDepth = MaxDepth
+
+// EncodeError reports a File that cannot be encoded as valid GIR.
+type EncodeError struct{ Msg string }
+
+func (e *EncodeError) Error() string { return "gir: " + e.Msg }
+
+// enter bounds node nesting exactly as the decoders do (MaxDepth), so that
+// a file the decoders would reject is refused at encode (compile) time
+// instead of being cached and failing when the program runs.
+func (w *Writer) enter() {
+	w.depth++
+	if w.depth > encodeMaxDepth {
+		panic(&EncodeError{Msg: fmt.Sprintf("nesting deeper than %d", MaxDepth)})
+	}
+}
+
+func (w *Writer) leave() { w.depth-- }
 
 func newWriter() *Writer {
 	w := &Writer{strIdx: map[string]uint32{}}
@@ -128,7 +150,16 @@ func (w *Writer) take() []byte {
 
 // Encode serializes f. Every function that is not bodyless must have its
 // body in f.Bodies; Funcs[i].Body and Size are computed here.
-func Encode(f *File) ([]byte, error) {
+func Encode(f *File) (data []byte, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			ee, ok := p.(*EncodeError)
+			if !ok {
+				panic(p)
+			}
+			data, err = nil, ee
+		}
+	}()
 	if len(f.Bodies) != len(f.Funcs) {
 		return nil, fmt.Errorf("ir: %d bodies for %d funcs", len(f.Bodies), len(f.Funcs))
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"flag"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -33,6 +34,8 @@ func (g *goldenImporter) Import(path string) (*types.Package, error) {
 	switch path {
 	case "unsafe":
 		return types.Unsafe, nil
+	case "embed":
+		return importer.ForCompiler(g.fset, "gc", nil).Import(path)
 	case "example.com/dep":
 		if p := g.pkgs[path]; p != nil {
 			return p, nil
@@ -63,8 +66,10 @@ func emitGolden(t *testing.T, name string) *ir.File {
 	t.Helper()
 	g := &goldenImporter{t: t, fset: token.NewFileSet(), pkgs: map[string]*types.Package{}}
 	pkg, info, f := g.check(filepath.Join(vectors, "src", name+".go"), "example.com/"+name)
+	embed := &EmbedConfig{Patterns: map[string][]string{"embedded.txt": {"embedded.txt"}},
+		Files: map[string]string{"embedded.txt": filepath.Join(vectors, "src", "embedded.txt")}}
 	file, _, err := Emit(Config{Fset: g.fset, Pkg: pkg, Info: info, Files: []*ast.File{f}, Lang: "go1.27",
-		GOOS: "linux", GOARCH: "amd64", FileName: filepath.Base})
+		GOOS: "linux", GOARCH: "amd64", FileName: filepath.Base, Embed: embed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +205,7 @@ func TestLoweringSpotChecks(t *testing.T) {
 			order = append(order, f.Objects[g.Obj].Name)
 		}
 	}
-	if strings.Join(order, ",") != "a,b,pair,ch,recvCh" {
+	if strings.Join(order, ",") != "embedded,a,b,pair,ch,recvCh" {
 		t.Errorf("initializer order = %v", order)
 	}
 	// Closures: n is captured by inc and, transitively, by the inner literal.

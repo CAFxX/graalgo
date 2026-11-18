@@ -100,8 +100,8 @@ public final class PolyglotEmbeddingTest {
 
     /**
      * Go source text is refused (the language registers byte MIME types
-     * only), and the reserved bundle MIME type fails with the language's
-     * own message instead of being misread as a wire document.
+     * only), and a wire document under the bundle MIME type is rejected by
+     * the bundle loader (toolexec W4) instead of being misread.
      */
     public void testUnsupportedSourcesRejected() throws Exception {
         try (Context ctx = newContext()) {
@@ -119,7 +119,7 @@ public final class PolyglotEmbeddingTest {
                 throw new AssertionError("eval of a bundle did not fail");
             } catch (PolyglotException e) {
                 assertTrue(e.isGuestException(), "guest exception: " + e);
-                assertTrue(e.getMessage().contains("not supported yet"),
+                assertTrue(e.getMessage().contains("malformed bundle"),
                         "bundle message: " + e.getMessage());
             }
         }

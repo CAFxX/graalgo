@@ -22,6 +22,11 @@ import (
 type TypeKeyer struct {
 	LocalName      func(*types.TypeName) string // "" if not local
 	TypeParamOwner func(*types.TypeParam) string
+	// LocalTargs returns, for a type declared inside a generic function or
+	// method, the type parameters of that function (receiver's first): such
+	// a type is a different type per instantiation, so it is keyed like a
+	// generic type instantiated with them. nil for every other type.
+	LocalTargs func(*types.TypeName) []types.Type
 }
 
 // Key returns the canonical key of t.
@@ -122,15 +127,17 @@ func (k *TypeKeyer) write(b *strings.Builder, t types.Type) {
 			b.WriteByte(' ')
 			n++
 		}
-		for i := range t.NumEmbeddeds() {
-			e := t.EmbeddedType(i)
-			if _, isIface := e.Underlying().(*types.Interface); isIface {
-				if named, ok := e.(*types.Named); !ok || named.Obj().Pkg() != nil || named.Obj().Name() != "comparable" {
-					continue // its methods are in the method set below
-				}
-			}
+		// The type set (comparable flag, normalized terms), not the
+		// spelling of the embedded elements: two interfaces are identical
+		// exactly when type sets and methods are.
+		ts := InterfaceTypeSet(t)
+		if ts.Comparable {
 			sep()
-			k.write(b, e)
+			b.WriteString("comparable")
+		}
+		if !ts.All {
+			sep()
+			k.writeTerms(b, ts.Terms)
 		}
 		for i := range t.NumMethods() {
 			m := t.Method(i)
@@ -143,17 +150,11 @@ func (k *TypeKeyer) write(b *strings.Builder, t types.Type) {
 		}
 		b.WriteByte('}')
 	case *types.Union:
-		terms := make([]string, t.Len())
+		terms := make([]*types.Term, t.Len())
 		for i := range t.Len() {
-			tm := t.Term(i)
-			s := k.Key(tm.Type())
-			if tm.Tilde() {
-				s = "~" + s
-			}
-			terms[i] = s
+			terms[i] = t.Term(i)
 		}
-		slices.Sort(terms)
-		b.WriteString(strings.Join(terms, " | "))
+		k.writeTerms(b, terms)
 	case *types.Tuple:
 		b.WriteByte('(')
 		for i := range t.Len() {
@@ -178,13 +179,20 @@ func (k *TypeKeyer) write(b *strings.Builder, t types.Type) {
 			}
 			b.WriteString(obj.Pkg().Path() + "." + name)
 		}
-		if targs := t.TypeArgs(); targs.Len() > 0 {
+		var targs []types.Type
+		for i := range t.TypeArgs().Len() {
+			targs = append(targs, t.TypeArgs().At(i))
+		}
+		if len(targs) == 0 && k.LocalTargs != nil && obj.Pkg() != nil {
+			targs = k.LocalTargs(t.Origin().Obj())
+		}
+		if len(targs) > 0 {
 			b.WriteByte('[')
-			for i := range targs.Len() {
+			for i, ta := range targs {
 				if i > 0 {
 					b.WriteByte(',')
 				}
-				k.write(b, targs.At(i))
+				k.write(b, ta)
 			}
 			b.WriteByte(']')
 		}
@@ -193,6 +201,25 @@ func (k *TypeKeyer) write(b *strings.Builder, t types.Type) {
 	default:
 		panic("ir: no type key for " + t.String())
 	}
+}
+
+// writeTerms writes a term list in sorted order; the empty list (an
+// interface whose type set is empty) is "none".
+func (k *TypeKeyer) writeTerms(b *strings.Builder, list []*types.Term) {
+	if len(list) == 0 {
+		b.WriteString("none")
+		return
+	}
+	terms := make([]string, len(list))
+	for i, tm := range list {
+		s := k.Key(tm.Type())
+		if tm.Tilde() {
+			s = "~" + s
+		}
+		terms[i] = s
+	}
+	slices.Sort(terms)
+	b.WriteString(strings.Join(terms, " | "))
 }
 
 func (k *TypeKeyer) writeSig(b *strings.Builder, s *types.Signature) {

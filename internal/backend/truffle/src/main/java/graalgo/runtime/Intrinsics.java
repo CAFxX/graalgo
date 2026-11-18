@@ -268,7 +268,7 @@ public final class Intrinsics {
      * exposed for testing (the growth math is the falsifiable unit).
      */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
-    static int nextSliceCap(int newLen, int oldCap, long elemSizeBytes, boolean elemHasPointers) {
+    public static int nextSliceCap(int newLen, int oldCap, long elemSizeBytes, boolean elemHasPointers) {
         int newcap = oldCap;
         int doublecap = newcap + newcap;
         if (newLen > doublecap) {

@@ -108,3 +108,61 @@ func isTypeParam(tn *types.TypeName) bool {
 	_, ok := tn.Type().(*types.TypeParam)
 	return ok
 }
+
+// Constraint interfaces: keys are equal exactly when go/types says the
+// interfaces are identical (same type set: comparable flag, normalized
+// terms, methods), however the type set is spelled.
+func TestConstraintKeys(t *testing.T) {
+	src := `package c
+type Num interface{ ~int | ~float64 }
+type IntOnly interface{ ~int }
+type Str interface{ String() string }
+type MyInt int
+func F[
+	P0 interface{},
+	P1 interface{ ~int | ~float64 },
+	P2 interface{ ~float64 | ~int },
+	P3 interface{ Num },
+	P4 interface{ Num; IntOnly },
+	P5 interface{ ~int },
+	P6 interface{ ~int; int },
+	P7 interface{ int },
+	P8 interface{ MyInt | int },
+	P9 interface{ comparable },
+	P10 interface{ comparable; Str },
+	P11 interface{ Str },
+	P12 interface{ Num; comparable },
+	P13 interface{ int; string },
+	P14 interface{ int8; string },
+	P15 interface{ Num | string },
+	P16 interface{ ~string | ~int | ~float64 },
+	P17 interface{ ~[]byte | ~string },
+	P18 interface{ Num; Str },
+	P19 interface{ ~int | ~float64; String() string },
+]() {}
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "c.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}}
+	if _, err := (&types.Config{}).Check("c", fset, []*ast.File{f}, info); err != nil {
+		t.Fatal(err)
+	}
+	var ifaces []types.Type
+	pkg, _ := (&types.Config{}).Check("c", fset, []*ast.File{f}, info)
+	tps := pkg.Scope().Lookup("F").Type().(*types.Signature).TypeParams()
+	for i := range tps.Len() {
+		ifaces = append(ifaces, tps.At(i).Constraint().Underlying())
+	}
+	k := &TypeKeyer{TypeParamOwner: func(*types.TypeParam) string { return "c.F" }}
+	for i, a := range ifaces {
+		for _, b := range ifaces[i+1:] {
+			same := k.Key(a) == k.Key(b)
+			if same != types.Identical(a, b) {
+				t.Errorf("%s vs %s: keys %q, %q; identical %v", a, b, k.Key(a), k.Key(b), types.Identical(a, b))
+			}
+		}
+	}
+}

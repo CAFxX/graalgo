@@ -361,6 +361,11 @@ union Expr
   # tuple type `type`: f(g()), return g(), a, b = g() where some element
   # needs an implicit conversion (to interface or channel direction)
   30 TupleConvert type:type pos:pos x:Expr
+  # a string constant of type `type` whose bytes are DATA[off:off+len]: the
+  # contents of a //go:embed file (§3.6). The decoders do not cross-check
+  # the range (DATA is opaque to them); a consumer checks off+len <= len(DATA)
+  # when it materializes the string.
+  31 Data type:type pos:pos off:uint len:uint
 
 # path: field indices from the literal's struct type (more than one for a
 # promoted field of an embedded struct, go1.27)
@@ -379,4 +384,4 @@ section 6 OBJECTS objects []Object
 section 7 INIT init Init
 section 8 FUNCINDEX funcs []Func
 section 9 BODIES bodies raw
-section 10 DATA data raw
+section 10 DATA data raw     # bytes referenced by Data expressions

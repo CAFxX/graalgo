@@ -26,9 +26,9 @@ import org.graalvm.options.OptionStability;
  *   <li>{@link #WIRE_MIME} — the v1 frontend/v1 JSON wire document (what
  *       {@code gofrontend} prints and {@code graalgo build} artifacts embed).
  *       Temporary: deleted with v1 at toolexec M3 (§2.2).
- *   <li>{@link #BUNDLE_MIME} — the linked bundle of the toolexec design.
- *       Reserved; parsing it fails with a clear message until the bundle
- *       loader exists.
+ *   <li>{@link #BUNDLE_MIME} — the linked bundle of the toolexec design
+ *       (§4.2: per-package GIR), loaded by {@code graalgo.go.loader} and run
+ *       by the new node package {@code graalgo.go} (toolexec W4).
  * </ul>
  *
  * <p>Evaluating a program source initializes and runs it (package init,
@@ -131,9 +131,10 @@ public final class GoLanguage extends TruffleLanguage<GoContext> {
         Source source = request.getSource();
         String mime = source.getMimeType();
         if (BUNDLE_MIME.equals(mime)) {
-            throw new GoParseException("linked bundles (" + BUNDLE_MIME
-                    + ") are not supported yet: evaluate the frontend/v1 wire document ("
-                    + WIRE_MIME + ")");
+            if (!source.hasBytes()) {
+                throw new GoParseException("a linked bundle (" + BUNDLE_MIME + ") is a byte source");
+            }
+            return new GoBundleRootNode(this, loadBundle(source)).getCallTarget();
         }
         if (!source.hasBytes()) {
             throw new GoParseException("the go language does not accept Go source text; "
@@ -143,6 +144,40 @@ public final class GoLanguage extends TruffleLanguage<GoContext> {
         GoContext context = GoContext.get(null);
         NodeFactory.Program program = buildProgram(context, source);
         return new GoProgramRootNode(this, program).getCallTarget();
+    }
+
+    @TruffleBoundary
+    private graalgo.go.loader.Program loadBundle(Source source) {
+        try {
+            return graalgo.go.loader.Program.load(this, source.getBytes().toByteArray());
+        } catch (IllegalArgumentException | graalgo.gir.GirFormatException e) {
+            throw new GoParseException("malformed bundle: " + e.getMessage());
+        }
+    }
+
+    private volatile graalgo.go.runtime.RuntimeTypes runtimeTypes;
+
+    /**
+     * The language-level type universe of the bundle path (truffle-design §2.4): the interning
+     * table and the runtime's own types, shared by every bundle this language instance loads.
+     */
+    public graalgo.go.runtime.RuntimeTypes runtimeTypes() {
+        graalgo.go.runtime.RuntimeTypes t = runtimeTypes;
+        if (t == null) {
+            synchronized (this) {
+                t = runtimeTypes;
+                if (t == null) {
+                    t = new graalgo.go.runtime.RuntimeTypes(this);
+                    runtimeTypes = t;
+                }
+            }
+        }
+        return t;
+    }
+
+    /** The language of the node's (or, for null, the current thread's) Go context. */
+    public static GoLanguage get(com.oracle.truffle.api.nodes.Node node) {
+        return REFERENCE.get(node);
     }
 
     @TruffleBoundary

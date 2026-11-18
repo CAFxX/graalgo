@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# graalgo-bundle-run — the runner of programs linked by graalgo-tool
+# (docs/arch/toolexec-design.md §4.2): the launcher stub at the front of a
+# linked executable execs this script with the executable's path followed by
+# the program's arguments; graalgo.launcher.BundleMain loads the bundle from
+# the executable and runs it on the new node package (graalgo.go, toolexec
+# W4) through the polyglot API.
+#
+# Requires `make build`. GRAALGO_JAVA_OPTS: extra JVM flags (word-split),
+# e.g. "-Xmx2g -XX:ActiveProcessorCount=4" on shared hosts.
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+CP="$HERE/truffle/out/classes"
+for jar in "$HERE"/truffle/lib/*.jar; do
+  CP="$CP:$jar"
+done
+# Flags as in graalgo-sync-run (see there for the reasons), plus
+# -XX:G1HeapRegionSize=32m: a goroutine that is preempted deep in a recursion
+# has its virtual-thread stack frozen into one heap chunk; with G1's default
+# region size (1 MB under -Xmx2g) a chunk over half a region is refused
+# ("StackOverflowError: Humongous stack chunk") at a depth gc handles easily.
+# shellcheck disable=SC2086
+exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m -XX:-UsePerfData -XX:G1HeapRegionSize=32m ${GRAALGO_JAVA_OPTS:-} \
+  --sun-misc-unsafe-memory-access=allow \
+  -Djava.io.tmpdir="${TMPDIR:-/tmp}" \
+  -cp "$CP" graalgo.launcher.BundleMain "$@"
