@@ -10,14 +10,26 @@
 # version history:
 #   1 (2026-10-13): initial triage — 39 divergences from the 2026-10-13 differential.
 #       F-1..F-6 are graalgo bugs filed for the frontend/scheduler lanes.
-version: 1
+#   2 (2026-11-18): layer 2 moved to the product launcher (P3SyncMain) and
+#       lost its automatic exclusions; listed files now still run (STALE when
+#       they match gc). Sample of 10 verified: alg.go matches gc (pruned);
+#       append.go, chancap.go, cmp.go newly compared and diverging (added).
+#       The remaining ~120 newly-compared runnable files are NOT yet triaged:
+#       the first full run will list them as DIVERGE for triage.
+version: 2
 exclusions:
+- file: append.go
+  reason: deferred-parity
+  detail: graalgo build crash under P3SyncMain - IllegalArgumentException 'illegal conversion INT64 -> STRUCT'
+- file: chancap.go
+  reason: deferred-parity
+  detail: graalgo build fails - 'makechan type must be a chan, got named' (named channel types)
+- file: cmp.go
+  reason: deferred-parity
+  detail: graalgo build crash - 'illegal binary op/kind combination EQ operand=CHAN' (channel equality)
 - file: 235.go
   reason: backend-specific
   detail: F-2: named result assignment frontend bug (reference to unknown object id)
-- file: alg.go
-  reason: backend-specific
-  detail: map key of kind ARRAY not supported in Phase 1
 - file: bigmap.go
   reason: backend-specific
   detail: map key of kind ARRAY not supported in Phase 1
