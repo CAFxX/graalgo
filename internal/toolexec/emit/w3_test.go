@@ -378,3 +378,39 @@ var F = S[int].Map[string]
 		t.Errorf("method expression: %+v", me)
 	}
 }
+
+// The receiver's type parameters and a generic method's own type
+// parameters are both indexed from 0; they must not share a type key (and
+// so a TYPES entry), or T and U of S[T].Map[U] collapse into one type
+// (found by the node-package lane: gn04_generic_method_targs).
+func TestGenericMethodTparamsDistinct(t *testing.T) {
+	f := emitSrc(t, `package p
+type S[T any] struct{ v T }
+func (s S[T]) Map[U any](f func(T) U) U { return f(s.v) }
+func (s S[T]) Pair[U, V any](u U, v V) (T, U, V) { return s.v, u, v }
+func (s S[T]) Plain() T { return s.v }
+`)
+	for _, name := range []string{"S.Map", "S.Pair"} {
+		var fn *ir.Func
+		for i := range f.Funcs {
+			if f.Funcs[i].Name == name {
+				fn = &f.Funcs[i]
+			}
+		}
+		if fn == nil {
+			t.Fatalf("no function %q", name)
+		}
+		seen := map[ir.TypeID]bool{}
+		keys := map[string]bool{}
+		for _, id := range fn.Tparams {
+			if seen[id] {
+				t.Errorf("%s: type parameters share TYPES entry %d: %v", name, id, fn.Tparams)
+			}
+			seen[id] = true
+			keys[typeKey(f, id)] = true
+		}
+		if want := 1 + map[string]int{"S.Map": 1, "S.Pair": 2}[name]; len(fn.Tparams) != want || len(keys) != want {
+			t.Errorf("%s: tparams %v keys %v, want %d distinct", name, fn.Tparams, keys, want)
+		}
+	}
+}

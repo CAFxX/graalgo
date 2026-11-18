@@ -1119,7 +1119,7 @@ packages:
 - Body-less functions resolve through a (so far one-entry) intrinsic table
   by `//go:linkname` remote name: `runtime.nanotime`, used by the M1a
   benchmarks. The registry of §5.3 is W6.
-- Emitter bug found by the gate (W3, open): the receiver's type parameters
+- Emitter bug found by the gate (W3, fixed): the receiver's type parameters
   and a generic method's own type parameters are registered under one
   owner (`emit.registerFunc`), and both lists are indexed from 0, so `T` and
   `U` of `func (s Stack[T]) MapTo[U any]` get the same key `$main.Stack.MapTo.0`
@@ -1127,7 +1127,11 @@ packages:
   that selects nodes by type cannot run such a method
   (`gn04_generic_method_targs`, girinterp's `generics.go`); the reference
   interpreter does not notice because its values are dynamically typed.
-  Fix: a distinct owner for the receiver list.
+  Fixed in `emit.registerFunc`: a method's own list gets the owner
+  `<sym>·method` when the receiver has type parameters
+  (`TestGenericMethodTparamsDistinct`). Remaining for `generics.go` on the
+  node package: the method-expression lowering ignores the method's own
+  type arguments (`Stack[int].Fold[string]`).
 - Not built in the backend yet: range-over-func (the loop body must become
   a yield closure over the enclosing function's variables, which the IR
   does not flag as captured).

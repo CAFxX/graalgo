@@ -253,8 +253,13 @@ func (e *emitter) registerTypeParams(list *types.TypeParamList, owner string) {
 func (e *emitter) registerFunc(f *types.Func) {
 	sig := f.Signature()
 	owner := pkgPath(f.Pkg()) + "." + symbolName(f)
-	e.registerTypeParams(sig.TypeParams(), owner)
 	e.registerTypeParams(sig.RecvTypeParams(), owner)
+	// The receiver's list and a generic method's own list are both indexed
+	// from 0: a distinct owner keeps T and U of func (S[T]) M[U]() apart.
+	if sig.RecvTypeParams().Len() > 0 {
+		owner += "·method"
+	}
+	e.registerTypeParams(sig.TypeParams(), owner)
 }
 
 // ---------------------------------------------------------------- types
