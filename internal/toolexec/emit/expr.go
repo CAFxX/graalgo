@@ -40,9 +40,9 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 	info := e.cfg.Info
 	tv, hasTV := info.Types[x]
 	if hasTV && tv.Value != nil {
-		return &ir.ConstExpr{Type: e.typeID(tv.Type), Pos: fs.pos(x), Value: *constValueOf(tv.Value)}
+		return &ir.ConstExpr{Type: e.typeID(concrete(tv.Type)), Pos: fs.pos(x), Value: *constValueOf(tv.Value)}
 	}
-	typ := func() ir.TypeID { return e.typeID(tv.Type) }
+	typ := func() ir.TypeID { return e.typeID(concrete(tv.Type)) }
 	switch x := x.(type) {
 	case *ast.ParenExpr:
 		return fs.expr(x.X)
@@ -98,6 +98,9 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		default:
 			l, r = fs.expr(x.X), fs.expr(x.Y)
 		}
+		if op == ir.BinOpShl || op == ir.BinOpShr {
+			r = fs.shiftCount(x.Y, r)
+		}
 		if n, ok := l.(*ir.NilExpr); ok {
 			n.Type = e.typeID(rt)
 		}
@@ -114,6 +117,39 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 	}
 	e.unsupportedf(x.Pos(), "expression %T", x)
 	return nil
+}
+
+func isTypeParam(t types.Type) bool {
+	_, ok := types.Unalias(t).(*types.TypeParam)
+	return ok
+}
+
+// isUntyped reports whether t is an untyped basic type.
+func isUntyped(t types.Type) bool {
+	b, ok := t.(*types.Basic)
+	return ok && b.Info()&types.IsUntyped != 0
+}
+
+// concrete is the type an expression of type t has in the IR: untyped
+// types other than untyped nil become their default type (the type go/types
+// leaves recorded for print/println arguments, conditions and untyped
+// boolean results of comparisons). Contexts that give an untyped value
+// another type (shift counts, conversions to type parameters, nil) are
+// handled where they occur.
+func concrete(t types.Type) types.Type {
+	if isUntyped(t) && t.(*types.Basic).Kind() != types.UntypedNil {
+		return types.Default(t)
+	}
+	return t
+}
+
+// shiftCount types an untyped constant shift count as uint (spec: "an
+// untyped constant representable by a value of type uint").
+func (fs *fnState) shiftCount(y ast.Expr, r ir.Expr) ir.Expr {
+	if c, ok := r.(*ir.ConstExpr); ok && isUntyped(fs.e.cfg.Info.Types[y].Type) {
+		c.Type = fs.e.typeID(types.Typ[types.Uint])
+	}
+	return r
 }
 
 func (fs *fnState) optExpr(x ast.Expr) ir.Expr {
@@ -376,6 +412,20 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 	switch {
 	case funTV.IsType():
 		to := funTV.Type
+		arg := info.Types[x.Args[0]]
+		switch {
+		case arg.IsNil():
+			// T(nil) is the nil value of T
+			return &ir.NilExpr{Type: e.typeID(to), Pos: fs.pos(x)}
+		case arg.Value != nil && isTypeParam(to):
+			// Conversions of a constant to a type parameter are the only
+			// ones go/types does not fold (it records the operand with its
+			// default type, which may not hold the value): spec "yields a
+			// non-constant value of that type, with the value represented
+			// as a value of the type argument" — so the IR constant has the
+			// type parameter's type and is materialized per instantiation.
+			return &ir.ConstExpr{Type: e.typeID(to), Pos: fs.pos(x), Value: *constValueOf(arg.Value)}
+		}
 		return &ir.ConvertExpr{Type: e.typeID(to), Pos: fs.pos(x), X: fs.expr(x.Args[0])}
 	case funTV.IsBuiltin():
 		return fs.builtinCall(x, typ)

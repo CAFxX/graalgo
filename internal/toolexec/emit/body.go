@@ -351,26 +351,7 @@ func (fs *fnState) stmt(s ast.Stmt) ir.Stmt {
 	case *ast.IfStmt:
 		return &ir.IfStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init), Cond: fs.expr(s.Cond), Then: fs.stmtList(s.Body.List), Else: fs.optStmt(s.Else)}
 	case *ast.SwitchStmt:
-		st := &ir.SwitchStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init)}
-		var tagType types.Type
-		if s.Tag != nil {
-			st.Tag = fs.expr(s.Tag)
-			tagType = info.Types[s.Tag].Type
-		}
-		for _, c := range s.Body.List {
-			cc := c.(*ast.CaseClause)
-			cl := ir.CaseClause{Pos: fs.pos(cc), IsDefault: cc.List == nil}
-			for _, x := range cc.List {
-				if tagType != nil {
-					cl.Exprs = append(cl.Exprs, fs.compareOperand(x, tagType))
-				} else {
-					cl.Exprs = append(cl.Exprs, fs.expr(x))
-				}
-			}
-			cl.Body = fs.stmtList(cc.Body)
-			st.Clauses = append(st.Clauses, cl)
-		}
-		return st
+		return fs.switchStmt(s)
 	case *ast.TypeSwitchStmt:
 		st := &ir.TypeSwitchStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init)}
 		var ta *ast.TypeAssertExpr
@@ -517,6 +498,9 @@ func (fs *fnState) assign(s *ast.AssignStmt) ir.Stmt {
 		st.Rhs = fs.assignRhs(s.Lhs, s.Rhs)
 	} else {
 		st.Rhs = []ir.Expr{fs.expr(s.Rhs[0])}
+		if op == ir.AssignOpShl || op == ir.AssignOpShr {
+			st.Rhs[0] = fs.shiftCount(s.Rhs[0], st.Rhs[0])
+		}
 	}
 	return st
 }
@@ -654,8 +638,70 @@ func (fs *fnState) convExpr(x ast.Expr, to types.Type) ir.Expr {
 
 // compareOperand emits a switch case value compared against tag type t.
 func (fs *fnState) compareOperand(x ast.Expr, t types.Type) ir.Expr {
+	if fs.e.cfg.Info.Types[x].IsNil() {
+		return &ir.NilExpr{Type: fs.e.typeID(t), Pos: fs.pos(x)}
+	}
 	if types.IsInterface(t) && !types.IsInterface(fs.e.cfg.Info.Types[x].Type) {
 		return fs.convExpr(x, t)
 	}
 	return fs.expr(x)
+}
+
+// switchStmt emits an expression switch. A case of interface type against
+// a tag of non-interface type compares the tag converted to the case's
+// type; the IR switch compares case values with the tag as is, so such a
+// switch is lowered to a tagless one over a fresh local holding the tag.
+func (fs *fnState) switchStmt(s *ast.SwitchStmt) ir.Stmt {
+	info := fs.e.cfg.Info
+	st := &ir.SwitchStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init)}
+	var tagType types.Type
+	if s.Tag != nil {
+		tagType = concrete(info.Types[s.Tag].Type)
+	}
+	lower := false
+	if tagType != nil && !types.IsInterface(tagType) {
+		for _, c := range s.Body.List {
+			for _, x := range c.(*ast.CaseClause).List {
+				lower = lower || types.IsInterface(info.Types[x].Type)
+			}
+		}
+	}
+	var tmp ir.Expr
+	if lower {
+		v := types.NewVar(token.NoPos, fs.e.cfg.Pkg, "·tag", tagType)
+		id := fs.declare(v, 0)
+		tmp = &ir.LocalExpr{Type: fs.e.typeID(tagType), Pos: fs.pos(s.Tag), Local: id}
+		def := &ir.DefineStmt{Pos: fs.pos(s.Tag), Lhs: []ir.Expr{tmp}, Rhs: []ir.Expr{fs.expr(s.Tag)}, Fresh: []uint32{id}}
+		if st.Init != nil {
+			st.Init = &ir.BlockStmt{Pos: fs.pos(s), Stmts: []ir.Stmt{st.Init, def}}
+		} else {
+			st.Init = def
+		}
+	} else if s.Tag != nil {
+		st.Tag = fs.expr(s.Tag)
+	}
+	boolT := fs.e.typeID(types.Typ[types.Bool])
+	for _, c := range s.Body.List {
+		cc := c.(*ast.CaseClause)
+		cl := ir.CaseClause{Pos: fs.pos(cc), IsDefault: cc.List == nil}
+		for _, x := range cc.List {
+			switch {
+			case lower:
+				xt := info.Types[x].Type
+				var l ir.Expr = tmp
+				r := fs.expr(x)
+				if types.IsInterface(xt) {
+					l = &ir.ConvertExpr{Type: fs.e.typeID(xt), Pos: fs.pos(x), X: tmp, Implicit: true}
+				}
+				cl.Exprs = append(cl.Exprs, &ir.BinaryExpr{Type: boolT, Pos: fs.pos(x), Op: ir.BinOpEql, X: l, Y: r})
+			case tagType != nil:
+				cl.Exprs = append(cl.Exprs, fs.compareOperand(x, tagType))
+			default:
+				cl.Exprs = append(cl.Exprs, fs.expr(x))
+			}
+		}
+		cl.Body = fs.stmtList(cc.Body)
+		st.Clauses = append(st.Clauses, cl)
+	}
+	return st
 }

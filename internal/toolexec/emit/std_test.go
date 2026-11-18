@@ -34,6 +34,7 @@ func TestStd(t *testing.T) {
 			t.Errorf("%s: %v", p.ImportPath, err)
 			continue
 		}
+		assertNoUntyped(t, f)
 		data, err := ir.Encode(f)
 		if err != nil {
 			t.Fatalf("%s: %v", p.ImportPath, err)
