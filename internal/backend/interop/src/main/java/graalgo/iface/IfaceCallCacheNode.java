@@ -26,22 +26,25 @@ import graalgo.values.GoInterface;
 @SuppressWarnings("truffle-inlining")
 public abstract class IfaceCallCacheNode extends Node {
 
-    abstract Object execute(VirtualFrame frame, GoInterface gi, IfaceDispatchNode owner);
+    abstract Object execute(VirtualFrame frame, GoInterface gi, Object[] argVals,
+            IfaceDispatchNode owner);
 
     @Specialization(limit = "3", guards = "gi.descriptor() == cachedDesc")
-    static Object doCached(VirtualFrame frame, GoInterface gi, IfaceDispatchNode owner,
+    static Object doCached(VirtualFrame frame, GoInterface gi, Object[] argVals,
+                           IfaceDispatchNode owner,
                            @Cached("gi.descriptor()") Object cachedDesc,
                            @Cached("owner.resolveFast(gi)") IfaceDispatchNode.FastTarget fast,
                            @Cached("createCall(fast)") DirectCallNode call) {
         if (fast == null) {
-            return owner.dispatchSlow(frame, gi);
+            return owner.dispatchSlow(frame, gi, argVals);
         }
-        return owner.callFast(frame, call, fast, gi);
+        return owner.callFast(call, fast, gi, argVals);
     }
 
     @Specialization(replaces = "doCached")
-    static Object doMegamorphic(VirtualFrame frame, GoInterface gi, IfaceDispatchNode owner) {
-        return owner.dispatchSlow(frame, gi);
+    static Object doMegamorphic(VirtualFrame frame, GoInterface gi, Object[] argVals,
+            IfaceDispatchNode owner) {
+        return owner.dispatchSlow(frame, gi, argVals);
     }
 
     static DirectCallNode createCall(IfaceDispatchNode.FastTarget fast) {

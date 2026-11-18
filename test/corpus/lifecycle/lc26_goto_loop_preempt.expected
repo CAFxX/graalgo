@@ -1,0 +1,5 @@
+-- stdout --
+released true
+
+-- stderr (normalized) --
+-- exit 0 --

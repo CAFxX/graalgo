@@ -1,0 +1,7 @@
+-- stdout --
+arg 1 evaluated
+arg 2 evaluated
+recovered: runtime error: invalid memory address or nil pointer dereference
+
+-- stderr (normalized) --
+-- exit 0 --

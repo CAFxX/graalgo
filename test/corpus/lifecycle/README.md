@@ -18,6 +18,8 @@ lane T0.A and SPEC §3.5 ([docs/arch/SPEC.md](../../../docs/arch/SPEC.md)).
 | `lc22` | a goroutine blocked reading a pipe releases its scheduler slot (GOMAXPROCS=1) |
 | `lc23` | an expression switch evaluates its tag once, also against interface-typed cases |
 | `lc24` | a typed nil pointer in an interface selects its type's case in a type switch, not `case nil` |
+| `lc25` | a method call on a nil interface evaluates its arguments before panicking |
+| `lc26` | a backward `goto` loop is preempted like any loop (GOMAXPROCS=1) |
 
 ## Files and comparison
 

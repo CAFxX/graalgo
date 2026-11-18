@@ -3,6 +3,7 @@ package graalgo.frontend;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.safepoint.Safepoint;
 
 /**
  * Sequential statement list (M4, WS E: goto dispatch).
@@ -63,6 +64,12 @@ public final class BlockNode extends GoStmtNode {
                 int target = findLabel(g.label());
                 if (target < 0) {
                     throw g;
+                }
+                if (target <= pc) {
+                    // A backward goto is a loop back-edge: poll like every
+                    // other loop (quantum preemption, exit freeze), or a
+                    // goto loop starves the other goroutines under a cap.
+                    Safepoint.poll(this);
                 }
                 pc = target;
             }
