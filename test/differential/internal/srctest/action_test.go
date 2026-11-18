@@ -79,3 +79,14 @@ func TestSelect(t *testing.T) {
 		t.Fatal("Select of nothing must fail")
 	}
 }
+
+func TestActionCompileFragmentGoBuildRejectsIsNotRun(t *testing.T) {
+	if findGo() == "" {
+		t.Skip("no Go toolchain for the build probe")
+	}
+	// A bodyless func: `go tool compile` accepts it, `go build` does not.
+	f := scanOne(t, "frag.go", "// compile\n\npackage main\n\nfunc f()\n\nfunc main() {}\n")
+	if f.Class != typeparam.ClassNotRun {
+		t.Fatalf("compile fragment: want notrun, got %q (%s)", f.Class, f.Detail)
+	}
+}

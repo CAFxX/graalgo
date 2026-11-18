@@ -71,12 +71,21 @@ func Scan(testDir string, yamlExcl map[string]typeparam.Exclusion) ([]typeparam.
 		}
 		tf := classify(testDir, e.Name())
 		tf.Srcs = []string{filepath.Join(testDir, e.Name())}
-		if tf.Class == runClass && goBin != "" {
+		if (tf.Class == runClass || tf.Class == typeparam.ClassCompile) && goBin != "" {
 			builds, err := gcBuilds(goBin, tf.Srcs[0])
 			if err != nil {
 				return nil, err
 			}
-			if !builds {
+			switch {
+			case builds:
+			case tf.Class == typeparam.ClassCompile:
+				// `// compile` fragments testdir compiles with `go tool
+				// compile` alone (e.g. bodyless func declarations, import.go,
+				// parentype.go): `go build` links them and rejects. There is
+				// no gc build to compare against: nothing to compare.
+				tf.Class = typeparam.ClassNotRun
+				tf.Detail = "// compile fragment: `go build` rejects it (testdir only runs `go tool compile`)"
+			default:
 				tf.Class = "errorcheck"
 				tf.Detail = "negative test: gc rejects it; build-failure parity"
 			}
