@@ -156,6 +156,10 @@ Phase-2 owns the implementation (park/queue/drainer per §3.5).
 The contract `net` calls into (blocking NIO per §3.5), not the deleted
 event loop.
 
+> 2026-11-18: SPEC §3.5 now specifies a runtime epoll poller over raw fds
+> (GG-0063) behind `internal/poll`'s verbatim `runtime_poll*` functions; this
+> v1 stub and its blocking-NIO premise are retired at toolexec M3.
+
 | Signature |
 |-----------|
 | `public static void init()` [T] |

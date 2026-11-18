@@ -171,7 +171,7 @@ func (e *exporter) exportUnsafeRuntimeCall(c *ast.CallExpr, name string, typ any
 			"s": s, "type": typ,
 		}), nil
 	case "Add":
-		// D5/GG-0015: handles admit no byte arithmetic — fail fast.
+		// v1 D5 (non-conforming to GG-0062, deleted at M3): handles admit no byte arithmetic — fail fast.
 		// Both arguments are still exported and attached (evaluated
 		// before the trap, matching the existing D5 conversion trap's
 		// evaluate-then-trap order) so arity/operand errors and arg

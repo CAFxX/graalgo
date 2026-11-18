@@ -16,7 +16,7 @@ import java.util.TreeMap;
  * objects never collide; {@code uintptr(p) + n} stays inside the object's
  * range and converts back to {@code (object, offset + n)}; alignment tests
  * on the integer see the object's real field alignment; an integer that is
- * not inside any live range traps (GG-0016).
+ * not inside any live range traps (GG-0062).
  *
  * <p>Prototype simplification: entries are strong. The backend keeps them
  * weak (the range is dropped when the object dies; Go's rule that the

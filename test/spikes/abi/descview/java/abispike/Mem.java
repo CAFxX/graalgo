@@ -22,7 +22,7 @@ public final class Mem {
         void storeRef(long off, Object ref);
     }
 
-    /** Arithmetic or an access left the addressed object: SPEC GG-0016 says trap, never silently. */
+    /** Arithmetic or an access left the addressed object: SPEC GG-0062 says trap, never silently. */
     public static final class UnsafeTrap extends RuntimeException {
         private static final long serialVersionUID = 1L;
 

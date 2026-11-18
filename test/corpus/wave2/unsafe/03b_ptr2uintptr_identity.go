@@ -6,7 +6,7 @@ import (
 )
 
 // 03b: unsafe.Pointer → uintptr yields the handle as an integer identity
-// token (PKG-007). D5 has no observable address (GG-0015) — the token is
+// token (PKG-007). v1 D5 has no observable address (GG-0061) — the token is
 // identity only, never a raw address, and it never traps. The portable
 // properties asserted here hold under both gc and graalgo: nil → 0,
 // stability (same referent → same token), distinctness, equality-as-identity

@@ -1,6 +1,7 @@
 # graalgo — Phased Roadmap
 
 **Date:** 2026-10-03 · **Status:** plan, no implementation · **Study:** [FEASIBILITY.md](FEASIBILITY.md)
+**Note (2026-11-18):** superseded for scheduling by [RECOVERY.md](RECOVERY.md); SPEC amendments of that date (flat value model, checkptr traps, runtime epoll poller instead of netpoller deletion, spawn helper) are in [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md).
 **Evidence labels:** `[HIST]` · `[VERIFIED]` · `[PROPOSAL]` · `[DECIDED]` · `[OPEN]`
 
 ## 1. Contract & conventions

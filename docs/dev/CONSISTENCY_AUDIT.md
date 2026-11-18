@@ -64,7 +64,7 @@ design; spike 2b PASS decided option C. Concurrency-mechanism text in §1 and §
 [SPEC.md](../arch/SPEC.md) §3.5 is normative; ADR-0001") and/or annotate B1–B3 inline.
 
 Track B explicitly NOT stale (verified true under option C): 1:1 mapping claims (lines 26, 140);
-"(Loom never preempts)"; netpoller deletion (GG-0018, refined via slot-releasing NIO wrapper);
+"(Loom never preempts)"; netpoller deletion (`GG-0018`, refined via slot-releasing NIO wrapper);
 §8 risk #2 body reads as history with accurate kill note; §11 line 405 strikethrough;
 §10 open question #2 still OPEN/relevant; GOMAXPROCS=1 determinism (line 288); §5 safepoint-overhead
 falsifier still relevant; Panama/-toolexec/Truffle modes/value model/panic-defer untouched.

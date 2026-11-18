@@ -49,7 +49,7 @@ public final class SyscallTable {
     public Entry get(long nr) {
         Entry e = entries.get((int) nr);
         if (e == null || nr != e.nr()) {
-            // GG-0016 spirit: never guess. An unknown number would pass handle integers to the kernel as addresses.
+            // GG-0062 spirit: never guess. An unknown number would pass handle integers to the kernel as addresses.
             throw new UnsupportedOperationException("syscall " + nr + " is not in the graalgo syscall table");
         }
         return e;

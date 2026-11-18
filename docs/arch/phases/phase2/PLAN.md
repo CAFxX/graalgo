@@ -24,7 +24,7 @@ NIO on virtual threads; timers; GC interop (exact roots, write barriers free
 from JVM); `GODEBUG` surface triage; JFR goroutine/channel events.
 
 In scope: the Phase-2 GG IDs below (SCHED/WAKE/FAIR families owned here;
-GG-0017 core slice, GG-0018, GG-0048, GG-0055, GG-0057, GG-0008 JFR slice).
+GG-0017 core slice, `GG-0018`, GG-0048, GG-0055, GG-0057, GG-0008 JFR slice).
 Out of scope: stdlib bring-up beyond what the stress suites need (Phase 3),
 `-toolexec` driver wiring (Phase 4), AOT/JIT modes (Phase 5). The Phase-1
 freeze doc's scheduler-glue signatures (D7) are the contract — Phase 2 builds
@@ -58,7 +58,7 @@ bump), not a quiet edit.
 |---|---|---|---|
 | A | Scheduler core: goroutine = vthread + token; quantum park on `Safepoint.poll()` expiry (10 ms default, indefinite `LockSupport.park()` + resume token); single platform-thread drainer (blocking take, lane order per GG-WAKE-0003, non-terminating, swallow-and-continue); hard in-flight cap = `min(GOMAXPROCS, carrier parallelism)`; per-vthread armed ticket + generation counter (ack-before-unpark) | GG-SCHED-0001, GG-SCHED-0002, GG-SCHED-0003, GG-WAKE-0001, GG-0017 (core slice) | 1 (part), 4 (part) |
 | B | Channels + select: scheduler-aware send/recv park (buffered + unbuffered), close semantics (waking parked senders via aborted path), select with fairness across cases, select in-flight stale-signal handling | GG-0017 (chan slice) | 1 |
-| C | Timers/sleep + netpoller deletion: timer heap, `sleep`; blocking NIO with slot-releasing `ioEnter`/`ioExit` (wakeFifo re-acquire, unpaired-ioEnter fail-fast assert); netpoller deleted per GG-0018 | GG-0018, GG-SCHED-0004 | 1 |
+| C | Timers/sleep + netpoller deletion: timer heap, `sleep`; blocking NIO with slot-releasing `ioEnter`/`ioExit` (wakeFifo re-acquire, unpaired-ioEnter fail-fast assert); netpoller deleted per `GG-0018` | `GG-0018`, GG-SCHED-0004 | 1 |
 | D | GC interop: exact root enumeration (goroutine stacks, globals, channel/timer structures) via the JVM GC; write-barrier integrity — JVM barriers cover all Go stores, no Truffle-level barrier (ADR-0002 D3); Go-observable GC surface (SetFinalizer/KeepAlive/GC/weak/memstats) on JVM primitives; barrier + root-correctness differential vs gc | [OPEN: heap layout — see §3; closed by ADR-0002] | 1 (part) |
 | E | `GODEBUG` surface triage: versioned registry (emulated / no-op / unsupported-with-justification per knob); unknown knobs deny-with-error; `godebug-diff` tooling | GG-0055 | 5 |
 | F | JFR events: goroutine lifecycle + channel events flowing; `jdk.VirtualThreadPinned` consumption for the pinning audit | GG-0008 (JFR slice) | 3 |
@@ -135,7 +135,7 @@ before.
   corpus incl. close-while-parked and select-fairness (GG-0017 chan→active)
 - P2-M3: timers/sleep + blocking NIO (WS C) — timer correctness vs gc;
   slot-releasing NIO with CapExhaustion-style falsifier; netpoller deletion
-  (GG-0018, GG-SCHED-0004→active)
+  (`GG-0018`, GG-SCHED-0004→active)
 - P2-M4: GC interop (WS D) — design spike + ADR-0002 first ([OPEN] layout
   closed by ADR-0002); exact roots via the JVM GC + write-barrier integrity
   (no Truffle-level barrier — ADR-0002 D3); Go-observable GC surface on JVM
@@ -292,7 +292,7 @@ divergence list closed or accepted (`phases/phase2/DIVERGENCES.md`)
 - GG-FAIR-0003: any runnable goroutine unadmitted after 4N admissions, or
   never_scheduled > 0 in quiescence probe → red
 - GG-0017: any scheduler semantic ≠ gc differentially → red
-- GG-0018: netpoller code path reachable, or NIO bypassing slot discipline → red
+- `GG-0018`: netpoller code path reachable, or NIO bypassing slot discipline → red
 - GG-0048: scheduling observable diverges systematically and unclosably →
   kill criterion 1
 - GG-0055: unknown GODEBUG knob not denied, or registry unreviewed → red

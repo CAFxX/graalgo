@@ -1,6 +1,6 @@
 # P2-M3 timer corpus
 
-Differential corpus for timers/sleep (WS C; GG-SCHED-0004, GG-0018).
+Differential corpus for timers/sleep (WS C; GG-SCHED-0004, GG-0063).
 
 Each `tm*.go` is a Go program using the `time` package, run under stock
 gc to produce `tm*.expected`. The Java translations in

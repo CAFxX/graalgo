@@ -8,7 +8,7 @@ import java.util.Map;
  *
  * <p>An {@code unsafe.Pointer} value is an opaque handle ({@code long}) into
  * this table, never a raw address: there is no observable address anywhere
- * (GG-0015). The handle doubles as the {@code unsafe.Pointer → uintptr}
+ * (v1 D5; GG-0062 supersedes this with range-allocated handles). The handle doubles as the {@code unsafe.Pointer → uintptr}
  * identity token (PKG-007): {@link GoConvert#unsafePointerToUintptr}
  * returns the handle itself, so the portable identity properties (nil → 0,
  * stability, distinctness, equality-as-identity) hold without exposing an

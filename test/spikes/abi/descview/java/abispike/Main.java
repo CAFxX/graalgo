@@ -233,7 +233,7 @@ public final class Main {
         s.setString(0, "s");
         out.add("v string string " + hx(rf.stringOf(rf.valueOf(new Iface(images.desc[strT.id], s)))));
 
-        // GG-0016: arithmetic that leaves the object traps.
+        // GG-0062: arithmetic that leaves the object traps.
         String trap;
         try {
             rf.intOf(new Value(images.desc[byStr(tab, "int").id], new Addr(p, 0).add(4096), 2 | Reflect.FLAG_INDIR));

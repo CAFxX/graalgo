@@ -370,7 +370,7 @@ stay locked (verified in requirements/*.yaml). `req lint --root
 ## M3 complete 2026-10-04 (worker: M3)
 
 **Acceptance (PLAN.md §4): expressions + values differential-green on the
-arithmetic corpus; GG-0015→active.** All met: 55/55 tests green (23 M2 +
+arithmetic corpus; `GG-0015`→active.** All met: 55/55 tests green (23 M2 +
 32 new), corpus differential-green vs stock gc on all 17 programs.
 
 ### What landed
@@ -467,8 +467,8 @@ shift-double-add sequence; uint64→float32 correctly rounded (0 mismatches
 3. `parseGoIntConst` rejected >64-bit untyped magnitudes (`1<<70`).
    Fix: `BigInteger` parse, low 64 bits.
 
-**GG-0015 → active** (deliverable 6): `req activate GG-0015`;
-GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
+**`GG-0015` → active** (deliverable 6): `req activate GG-0015`;
+`GG-0016` stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 **GREEN**.
 
 ### Evidence files

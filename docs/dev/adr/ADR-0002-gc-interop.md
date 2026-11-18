@@ -8,7 +8,7 @@ may start.
 **Scope:** closes PLAN.md §3 `[OPEN] GC interop heap layout` ("the largest design
 unknown in Phase 2"); workstream D (P2-M4).
 **Normative basis:** SPEC §3.4 "Value model: Java objects throughout"
-`[DECIDED]` (GG-0015, GG-0016); SPEC §4.5 GODEBUG contract (GG-0055, GG-0045).
+`[DECIDED]` (`GG-0015`, `GG-0016`); SPEC §4.5 GODEBUG contract (GG-0055, GG-0045).
 **Spike evidence:** `phases/phase2/hidden_files/p2-m4-spike/` (canonical;
 re-run recipe in its README; provenance: `/tmp/gcspike`, throwaway).
 7/7 checks pass, independently re-run by both reviewers.

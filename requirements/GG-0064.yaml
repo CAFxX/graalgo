@@ -1,0 +1,11 @@
+id: GG-0064
+title: Process creation via a spawn helper
+statement: os/exec, os.StartProcess and syscall.ForkExec/StartProcess SHALL be implemented by posix_spawn of a small helper binary shipped in every graalgo distribution and image mode ($GRAALGO_HOME/libexec), which applies the SysProcAttr semantics of gc's fork/exec child path (descriptor mapping by number, Dir, Env, Setsid, Setpgid/Pgid, Setctty/Ctty/Foreground, Credential, Pdeathsig, Chroot, Noctty, PidFD) and then execs the target, reporting a child-side failure as the same errno gc's child reports. The graalgo process SHALL never fork. A SysProcAttr field the helper does not implement SHALL make the start fail with a documented error, never be ignored silently. Only the fork/exec glue of package syscall SHALL be patched.
+rationale: 'The fork/exec child path (forkAndExecInChild1: clone, execve, setsid, capset, unshare) cannot run in a multi-threaded JVM, whose child would share the heap; ProcessBuilder cannot express descriptors by number, Setsid, Ctty, credentials or pidfd (abi-spike.md §2.1–§2.2). The JDK''s own jspawnhelper is the precedent.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: os/exec and syscall exec std tests differentially vs gc; SysProcAttr matrix (ExtraFiles, Setsid, Setpgid, Credential, Pdeathsig, Ctty) incl. child-side errno; the helper present and used in JIT, AOT and hybrid packaging; unsupported-field test fails loudly.
+history:
+    - '2026-11-18: created (draft)'
+    - '2026-11-18: locked'

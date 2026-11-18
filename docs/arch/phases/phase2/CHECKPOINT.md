@@ -469,7 +469,7 @@ and the divergence list (none found).
    deadline+=period with skip-ahead (no spin); NewTicker(0) panics
    (gc message parity).
 
-4. **ioEnter/ioExit** (SchedulerCore, GG-0018/GG-SCHED-0004): new
+4. **ioEnter/ioExit** (SchedulerCore, `GG-0018`/GG-SCHED-0004): new
    ResumeToken kinds IO_ENTER/IO_EXIT. ioEnter: synchronous slot release
    (offer + ack + unpark, awaitAck) so the release is deterministic;
    inIo set on handle (calling-thread fail-fast for re-entrant/unpaired)
@@ -480,7 +480,7 @@ and the divergence list (none found).
    the slot is free for other goroutines.
 
 5. **Netpoll overlay**: same-FQN, all methods throw UOE documenting
-   DELETION per GG-0018 (no readiness poller exists; blocking I/O uses
+   DELETION per `GG-0018` (no readiness poller exists; blocking I/O uses
    ioEnter/ioExit). `make check` gains a netpoller-deletion grep gate
    (no `Netpoll.` references outside the overlay).
 
@@ -496,7 +496,7 @@ and the divergence list (none found).
 thread), GoTimer (NewTimer/NewTicker + gc-exact Stop/Reset incl. Go 1.23+
 expired-undrained drain rule, probed vs gc 1.27.1), Timers overlay (real
 sleep/startTimer/stopTimer + additive after/newTimer/newTicker/tick),
-Netpoll overlay documenting DELETION per GG-0018, ioEnter/ioExit on
+Netpoll overlay documenting DELETION per `GG-0018`, ioEnter/ioExit on
 SchedulerCore + Drainer IO_ENTER/IO_EXIT (inIo set, fail-fast asserts),
 netpoller-deletion grep gate in `make check`.
 
@@ -566,7 +566,7 @@ reviewer2 independently verified the fix). Remediated:
 - **P2-3**: README tm05 bullet fixed (was "fire+drain → false"; actually
   expired-undrained → true); tm13/tm14 documented; margin note updated.
 - **P2-7**: added pins — callback runs on `graalgo-timer` thread,
-  throwing callback doesn't kill timer thread, Netpoll 5× UOE+GG-0018.
+  throwing callback doesn't kill timer thread, Netpoll 5× UOE+`GG-0018`.
 - **P2-8**: `testTimerResetActive` now asserts no second fire (old
   deadline cancelled).
 - **N3 correction**: the ~14:30 design entry's "startTimer arms + parks

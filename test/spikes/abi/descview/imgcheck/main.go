@@ -392,7 +392,7 @@ func values(roots []unsafe.Pointer) (want, got []string) {
 		}()
 		add("v MyInt int %d", val(&five).Int())
 		add("v string string %s", hx(val(&s).String()))
-		add("v P escape trap") // gc has no such check; the Java side must trap (GG-0016)
+		add("v P escape trap") // gc has no such check; the Java side must trap (GG-0062)
 		return out
 	}
 	return run(false), run(true)

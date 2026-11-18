@@ -8,7 +8,7 @@
 (`phases/phase3/stdlib-fork/asm-inventory-go1.27.1.{json,md}`), the
 loader mechanism (`phases/phase3/src/p3frontend/asm.go`, hooked into
 `Loader.localRef`/`Loader.mainRef`), and its tests.
-**Normative basis:** SPEC §2.8; SPEC §3.7 (syscall/Panama); GG-0018
+**Normative basis:** SPEC §2.8; SPEC §3.7 (syscall/Panama); `GG-0018`
 (netpoller deletion); GG-0023 (Linux-first); ADR-0004 (intrinsic surface,
 linkname registry); P3-M4 intrinsic audit
 (`phases/phase3/hidden_files/m4/intrinsic-audit.md`); research T4
@@ -68,7 +68,7 @@ Concretely:
      `Intrinsics.memequal`/`memmove` (M4 audit: REAL);
    - scheduler/preemption/signal entry points → the P2 scheduler
      (`SchedulerCore`) and the JVM (signals); netpoller-adjacent asm is
-     dead by GG-0018.
+     dead by `GG-0018`.
 3. `internal/cpu`'s CPUID/xgetbv asm evaporates with one coupling the
    inventory records: crypto's emulate leg and bytealg read the
    Go-level `internal/cpu` package to select code paths, so the

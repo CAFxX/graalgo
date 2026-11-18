@@ -1,7 +1,12 @@
 # ABI spike: reflect/`internal/abi` on the JVM value model (P1) and the syscall boundary (P2)
 
-**Status:** spike report, 2026-11-18, lane `wt/recovery/abi-spike`. It
-answers the two prototype questions of
+**Status:** spike report, 2026-11-18, lane `wt/recovery/abi-spike`. The
+owner accepted its proposals the same day: §3 is applied to
+[toolexec-design.md](toolexec-design.md) (its §14), and §4's decisions are
+SPEC amendments (GG-0061–GG-0064, recorded in
+[ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)). Requirement IDs
+quoted below in code font are the ones in force when the report was written.
+It answers the two prototype questions of
 [toolexec-design.md](toolexec-design.md) §12 (P1, P2) behind risks R1 and R2
 of its §10. [SPEC.md](SPEC.md) is authoritative; this document proposes
 amendments (§4) and decides nothing by itself. All numbers were measured on
@@ -158,7 +163,7 @@ identity + offset; "exact `rtype`/itab layouts"):
    (interface: type word + data word; string: data + len; slice: data + len
    + cap). A field access through a view pointer is "load at
    `ptr.offset + Offsetof(field)`" — the constant the frontend already
-   folds. Arithmetic that leaves the object traps (GG-0016).
+   folds. Arithmetic that leaves the object traps (`GG-0016`; now GG-0062).
 3. **A small intrinsic set** — exactly the body-less functions of §1.1 plus
    the four patched call functions.
 
@@ -452,7 +457,7 @@ hot path at this ratio.
 
 ### 2.5 The conflict that needs a decision: raw fds versus "the netpoller is deleted"
 
-SPEC §3.5/§7.4 (GG-0018) decides that blocking `java.nio` operations
+SPEC §3.5/§7.4 (`GG-0018`) decides that blocking `java.nio` operations
 replace the netpoller, and toolexec-design §5.6 says `internal/poll`'s
 `runtime_poll*` bind to "the existing blocking-NIO netpoll contract". The
 existing implementation
@@ -472,7 +477,7 @@ hold. Options:
    through the scheduler's wake lane, deadlines on the existing timer heap.
    About 300 lines of Java replacing `GoNetpoll`'s selector half; keeps
    `internal/poll`, `net`, `os` verbatim. It is a netpoller in the sense of
-   GG-0018's text, though not the gc event loop: no carrier ever blocks in
+   `GG-0018`'s text, though not the gc event loop: no carrier ever blocks in
    it and blocked goroutines consume no carriers.
 2. **Keep NIO, fork the lower half of `os`/`net`/`internal/poll`** so that
    `poll.FD` wraps a channel: by sysscan's call graph that is the 47
@@ -574,16 +579,16 @@ test/spikes/abi/sysexec/run.sh /some/scratch/dir [bench]            # §2.4, ~30
 
 ## 4. Decisions needed from the owner
 
-1. **Netpoller (SPEC §3.5 / §7.4, GG-0018):** accept a minimal epoll-based
+1. **Netpoller (SPEC §3.5 / §7.4, `GG-0018`; decided: option 1, GG-0063):** accept a minimal epoll-based
    poller over raw fds in the runtime (§2.5 option 1, recommended), or fork
    the lower half of `net`/`os`/`internal/poll` onto NIO channels. SPEC
    wording changes either way.
-2. **SPEC §3.4 wording:** make "(object identity + field offset)" precise as
+2. **SPEC §3.4 wording (decided: GG-0061, GG-0062):** make "(object identity + field offset)" precise as
    *gc byte offset*, and state that `uintptr` values are range-allocated
    handles on which in-object arithmetic is defined (today: "arithmetic
    escaping the object traps" — unchanged, but in-object arithmetic becomes
    specified rather than implementation-defined).
-3. **Process creation:** ship a spawn helper binary in the distribution
+3. **Process creation (decided: helper binary, GG-0064):** ship a spawn helper binary in the distribution
    (affects packaging, GG-0050), or restrict `os/exec` to what
    `posix_spawn` alone can express.
 4. Minor, defaults proposed: `sync/atomic.Value` verbatim via a two-word
