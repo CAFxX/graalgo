@@ -192,6 +192,7 @@ public final class SelectNode extends GoStmtNode {
                 isSend = true;
                 chanExpr = ChanWire.exprField(c, "chan", "selectcase", factory, ctx);
                 valueExpr = ChanWire.exprField(c, "value", "selectcase", factory, ctx);
+                valueExpr = ChanWire.toElemType(chanExpr, valueExpr, factory, ctx, cpath + ".value");
                 if (c.opt("targets") != null) {
                     throw new FrontendException(cpath + ": send case takes no targets");
                 }

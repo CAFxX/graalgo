@@ -70,7 +70,9 @@ public final class MakeChanNode extends GoExprNode {
         Json.Value tv = f.opt("type");
         if (tv instanceof Json.Num num) {
             int chanId = (int) num.asLong(path + ".type");
-            Json.Object entry = ctx.types.entry(chanId, path);
+            // make(T) with a defined channel type (type C chan int): the
+            // channel shape is T's underlying type.
+            Json.Object entry = NodeFactory.underlyingEntry(ctx.types, chanId, path);
             if (!"chan".equals(entry.string("kind", path))) {
                 throw new FrontendException(path + ": makechan type must be a chan, got "
                         + entry.string("kind", path));

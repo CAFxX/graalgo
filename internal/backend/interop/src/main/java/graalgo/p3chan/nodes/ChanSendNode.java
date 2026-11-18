@@ -59,6 +59,7 @@ public final class ChanSendNode extends GoStmtNode {
         String path = "send.fields";
         GoExprNode chanNode = ChanWire.exprField(f, "chan", "send", factory, ctx);
         GoExprNode valueNode = ChanWire.exprField(f, "value", "send", factory, ctx);
+        valueNode = ChanWire.toElemType(chanNode, valueNode, factory, ctx, path + ".value");
         return new ChanSendNode(chanNode, valueNode);
     }
 }

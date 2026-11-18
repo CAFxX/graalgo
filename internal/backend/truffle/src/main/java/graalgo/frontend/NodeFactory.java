@@ -2084,6 +2084,18 @@ public final class NodeFactory {
      * verified the conversion's assignability (signatures included);
      * the box preserves the dynamic type for the dispatch-time check.
      */
+    /**
+     * Go assignability: the implicit conversion of {@code child} to the
+     * type {@code toTypeId} it is assigned to (a concrete value sent on a
+     * {@code chan any} boxes into the interface, an untyped constant takes
+     * the target kind) — the same conversion assignments and call
+     * arguments apply. Public for interop node builders whose wire op
+     * carries the value without an explicit conversion node.
+     */
+    public GoExprNode assignableTo(GoExprNode child, int toTypeId, BuildCtx ctx, String path) {
+        return maybeConvert(child, kindOf(ctx, toTypeId, path), toTypeId, ctx, path, null);
+    }
+
     private GoExprNode maybeConvert(GoExprNode child, GoKind to, int toTypeId, BuildCtx ctx, String path) {
         return maybeConvert(child, to, toTypeId, ctx, path, null);
     }
@@ -5356,10 +5368,23 @@ public final class NodeFactory {
 
     /** Type-table entry with alias/named layers resolved (for detail access). */
     private static Json.Object underlyingEntry(BuildCtx ctx, int typeId, String path) {
-        Json.Object entry = ctx.types.entry(resolveAlias(ctx, typeId, path), path);
-        while ("named".equals(entry.string("kind", path))) {
+        return underlyingEntry(ctx.types, typeId, path);
+    }
+
+    /**
+     * Type-table entry with alias and named layers resolved: the entry of
+     * the type's underlying type (Go spec "Underlying types"). Bounded:
+     * a cyclic chain fails fast.
+     */
+    public static Json.Object underlyingEntry(TypeTable types, int typeId, String path) {
+        Json.Object entry = types.entry(resolveAlias(types, typeId, path), path);
+        for (int steps = 0; "named".equals(entry.string("kind", path)); steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": named chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?)");
+            }
             typeId = entry.object("detail", path).intValue("underlying", path);
-            entry = ctx.types.entry(typeId, path);
+            entry = types.entry(resolveAlias(types, typeId, path), path);
         }
         return entry;
     }

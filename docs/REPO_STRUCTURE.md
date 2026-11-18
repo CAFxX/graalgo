@@ -242,7 +242,9 @@ Related: [Makefile](../Makefile) (root build entry point),
     [bufio-split/](../test/regression/bufio-split/),
     [funcname/](../test/regression/funcname/),
     [p0-clear-crash/](../test/regression/p0-clear-crash/),
-    [tls-wrap-hang/](../test/regression/tls-wrap-hang/);
+    [tls-wrap-hang/](../test/regression/tls-wrap-hang/),
+    [chan-semantics/](../test/regression/chan-semantics/) (named channel
+    types, channel equality, send-to-interface boxing);
     run through the graalgo driver + backend via `make test-regression`
     (in `make all`, hence per-push CI).
   - [jit/](../test/jit/) — JIT regression guard:

@@ -146,7 +146,8 @@ public final class BinaryOpNode extends GoExprNode {
                         || operandKind == GoKind.POINTER
                         || (operandKind == GoKind.INTERFACE && (op == Op.EQ || op == Op.NE))
                         || (operandKind == GoKind.STRUCT && (op == Op.EQ || op == Op.NE))
-                        || (operandKind == GoKind.ARRAY && (op == Op.EQ || op == Op.NE)))
+                        || (operandKind == GoKind.ARRAY && (op == Op.EQ || op == Op.NE))
+                        || (operandKind == GoKind.CHAN && (op == Op.EQ || op == Op.NE)))
                     && !(operandKind == GoKind.BOOL && (op == Op.LT || op == Op.LE || op == Op.GT || op == Op.GE));
             // P3-M8b: unsafe.Pointer, *T pointers, and complex support ==/!=
             // (but not ordering).
@@ -370,6 +371,13 @@ public final class BinaryOpNode extends GoExprNode {
                 case GE -> l >= r;
                 default -> throw new AssertionError("unreachable");
             };
+        }
+        // Channel equality (Go spec: two channel values are equal if they
+        // were created by the same call to make or both are nil): a channel
+        // is one GoChan object, nil is Java null — reference identity.
+        if (operandKind == GoKind.CHAN) {
+            boolean eq = left.executeObject(frame) == right.executeObject(frame);
+            return op == Op.EQ ? eq : !eq;
         }
         // P3-M8b: *T pointer equality (Go: ==/!= on pointers compares
         // the addressed storage, not the values stored there).

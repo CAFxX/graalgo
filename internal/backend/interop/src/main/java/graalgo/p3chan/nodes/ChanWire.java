@@ -347,4 +347,26 @@ final class ChanWire {
         }
         return c;
     }
+
+    /**
+     * A sent value assigned to the channel's element type (Go spec, Send
+     * statements: the value must be assignable to the element type): a
+     * concrete value sent on a chan of interface type is boxed, or the
+     * receiver's type assertion sees a raw GoStruct/Long
+     * (ClassCastException, GOROOT/test struct0.go, convT2X.go). Used by
+     * both the send statement and select send cases.
+     */
+    static GoExprNode toElemType(GoExprNode chanNode, GoExprNode valueNode,
+            NodeFactory factory, NodeFactory.BuildCtx ctx, String path) {
+        int chanTid = chanNode.typeId();
+        if (chanTid < 0) {
+            return valueNode;
+        }
+        Json.Object chanEntry = NodeFactory.underlyingEntry(ctx.types, chanTid, path);
+        if (!"chan".equals(chanEntry.string("kind", path))) {
+            return valueNode;
+        }
+        int elemTid = chanEntry.object("detail", path).intValue("elem", path);
+        return factory.assignableTo(valueNode, elemTid, ctx, path);
+    }
 }
