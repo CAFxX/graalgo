@@ -10,7 +10,7 @@ public final class Gir {
     public static final int SCHEMA_VERSION = 1;
     /** Maximum node nesting (schema.txt maxdepth). */
     public static final int MAX_DEPTH = 1000;
-    public static final byte[] SCHEMA_HASH = {(byte) 0x69, (byte) 0x81, (byte) 0xfc, (byte) 0x4a, (byte) 0xd3, (byte) 0x09, (byte) 0x23, (byte) 0xfc};
+    public static final byte[] SCHEMA_HASH = {(byte) 0xdb, (byte) 0x25, (byte) 0xd4, (byte) 0x4c, (byte) 0xe9, (byte) 0xfb, (byte) 0xee, (byte) 0xc5};
 
     public static final class SymKind {
         private SymKind() {}
@@ -857,7 +857,7 @@ public final class Gir {
             }
         }
 
-        record FuncLit(int type, int pos, int[] captures, Gir.FuncBody body) implements Expr {
+        record FuncLit(int type, int pos, int[] captures, Gir.FuncBody body, boolean wrapper) implements Expr {
             @Override
             public int unionTag() {
                 return 29;

@@ -12,7 +12,7 @@ const SchemaVersion = 1
 const MaxDepth = 1000
 
 // SchemaHash identifies schema.txt; it is part of every GIR header.
-var SchemaHash = [8]byte{0x69, 0x81, 0xfc, 0x4a, 0xd3, 0x09, 0x23, 0xfc}
+var SchemaHash = [8]byte{0xdb, 0x25, 0xd4, 0x4c, 0xe9, 0xfb, 0xee, 0xc5}
 
 type SymKind uint8
 
@@ -1338,6 +1338,7 @@ type FuncLitExpr struct {
 	Pos      PosID
 	Captures []uint32
 	Body     FuncBody
+	Wrapper  bool
 }
 
 func (*FuncLitExpr) UnionTag() int { return 29 }
@@ -2791,6 +2792,7 @@ func (w *Writer) writeExpr(x Expr) {
 			w.uvarint(uint64(v.Captures[i2]))
 		}
 		w.writeFuncBody(&v.Body)
+		w.bool(v.Wrapper)
 	case *TupleConvertExpr:
 		w.uvarint(30)
 		w.uvarint(uint64(v.Type))
@@ -3088,6 +3090,7 @@ func (r *Reader) readExprKind(k uint64) Expr {
 			v.Captures[i2] = r.localRef()
 		}
 		r.readFuncBody(&v.Body)
+		v.Wrapper = r.bool()
 		return v
 	case 30:
 		v := &TupleConvertExpr{}

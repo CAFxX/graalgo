@@ -15,8 +15,8 @@ import java.util.Arrays;
  * are {@link Ptr}. Value semantics are the factory's job: a {@code Flat} held by a variable is
  * never shared with another variable.
  *
- * <p>W13 extends this with the gc byte offset: {@code type} names the leaf table that maps a
- * byte offset to a slot pair.
+ * <p>Not yet: toolexec work package W13 (the pointer model, milestone M1r, GG-0062) adds the gc
+ * byte offset — {@code type} will name the leaf table that maps a byte offset to a slot pair.
  */
 public final class Flat {
     public static final long[] NO_PRIMS = new long[0];

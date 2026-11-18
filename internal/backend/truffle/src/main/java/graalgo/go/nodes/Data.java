@@ -53,10 +53,12 @@ public final class Data {
         @Child private Expr s;
         @Child private I64 index;
         private final BranchProfile outOfRange = BranchProfile.create();
+        private final boolean signed;
 
-        public StrIndex(Expr s, I64 index) {
+        public StrIndex(Expr s, I64 index, boolean signed) {
             this.s = s;
             this.index = index;
+            this.signed = signed;
         }
 
         @Override
@@ -65,7 +67,7 @@ public final class Data {
             long i = index.executeLong(frame);
             if (Long.compareUnsigned(i, b.length) >= 0) {
                 outOfRange.enter();
-                throw Panics.index(this, i, b.length);
+                throw Panics.index(this, i, b.length, signed);
             }
             return b[(int) i] & 0xFF;
         }
@@ -93,11 +95,14 @@ public final class Data {
         @Child private I64 lo;
         @Child private I64 hi;
         private final BranchProfile bad = BranchProfile.create();
+        private final int unsigned;
 
-        public StrSlice(Expr s, I64 lo, I64 hi) {
+        /** {@code unsigned}: {@link #UNSIGNED_LO}/{@link #UNSIGNED_HI} for unsigned index types. */
+        public StrSlice(Expr s, I64 lo, I64 hi, int unsigned) {
             this.s = s;
             this.lo = lo;
             this.hi = hi;
+            this.unsigned = unsigned;
         }
 
         @Override
@@ -107,10 +112,10 @@ public final class Data {
             long h = hi == null ? str.b.length : hi.executeLong(frame);
             if (Long.compareUnsigned(h, str.b.length) > 0) {
                 bad.enter();
-                throw Panics.bounds(this, BoundsCode.SLICE_ALEN, h, str.b.length);
+                throw Panics.bounds(this, BoundsCode.SLICE_ALEN, h, str.b.length, (unsigned & UNSIGNED_HI) == 0);
             } else if (Long.compareUnsigned(l, h) > 0) {
                 bad.enter();
-                throw Panics.bounds(this, BoundsCode.SLICE_B, l, h);
+                throw Panics.bounds(this, BoundsCode.SLICE_B, l, h, (unsigned & UNSIGNED_LO) == 0);
             }
             return Strs.slice(str, (int) l, (int) h);
         }
@@ -217,8 +222,11 @@ public final class Data {
         private final int np;
         private final int nr;
         private final BranchProfile bad = BranchProfile.create();
+        private final int unsigned;
 
-        public SliceOfSlice(Expr s, I64 lo, I64 hi, I64 max, int np, int nr) {
+        /** {@code unsigned}: the {@code UNSIGNED_*} bits of the index operands. */
+        public SliceOfSlice(Expr s, I64 lo, I64 hi, I64 max, int np, int nr, int unsigned) {
+            this.unsigned = unsigned;
             this.s = s;
             this.lo = lo;
             this.hi = hi;
@@ -236,7 +244,7 @@ public final class Data {
             if (Long.compareUnsigned(m, sl.cap) > 0 || Long.compareUnsigned(h, m) > 0
                     || Long.compareUnsigned(l, h) > 0) {
                 bad.enter();
-                throw boundsPanic(this, max != null, l, h, m, sl.cap, true);
+                throw boundsPanic(this, max != null, l, h, m, sl.cap, true, unsigned);
             }
             return new Slice(sl.base, sl.prim + (int) l * np, sl.ref + (int) l * nr, (int) (h - l), (int) (m - l));
         }
@@ -252,8 +260,11 @@ public final class Data {
         private final int np;
         private final int nr;
         private final BranchProfile bad = BranchProfile.create();
+        private final int unsigned;
 
-        public SliceOfArray(Loc array, long len, I64 lo, I64 hi, I64 max, int np, int nr) {
+        /** {@code unsigned}: the {@code UNSIGNED_*} bits of the index operands. */
+        public SliceOfArray(Loc array, long len, I64 lo, I64 hi, I64 max, int np, int nr, int unsigned) {
+            this.unsigned = unsigned;
             this.array = array;
             this.len = len;
             this.lo = lo;
@@ -273,26 +284,35 @@ public final class Data {
             long m = max == null ? len : max.executeLong(frame);
             if (Long.compareUnsigned(m, len) > 0 || Long.compareUnsigned(h, m) > 0 || Long.compareUnsigned(l, h) > 0) {
                 bad.enter();
-                throw boundsPanic(this, max != null, l, h, m, len, false);
+                throw boundsPanic(this, max != null, l, h, m, len, false, unsigned);
             }
             return new Slice(o, bp + (int) l * np, br + (int) l * nr, (int) (h - l), (int) (m - l));
         }
     }
 
+    /** Slice-expression index operands of an unsigned type (the bounds panic prints them unsigned). */
+    public static final int UNSIGNED_LO = 1;
+    public static final int UNSIGNED_HI = 2;
+    public static final int UNSIGNED_MAX = 4;
+
     @TruffleBoundary
-    static RuntimeException boundsPanic(GoNode n, boolean three, long l, long h, long m, long cap, boolean slice) {
+    static RuntimeException boundsPanic(GoNode n, boolean three, long l, long h, long m, long cap, boolean slice,
+            int unsigned) {
+        boolean sl = (unsigned & UNSIGNED_LO) == 0;
+        boolean sh = (unsigned & UNSIGNED_HI) == 0;
+        boolean sm = (unsigned & UNSIGNED_MAX) == 0;
         if (three) {
             if (Long.compareUnsigned(m, cap) > 0) {
-                return Panics.bounds(n, slice ? BoundsCode.SLICE3_ACAP : BoundsCode.SLICE3_ALEN, m, cap);
+                return Panics.bounds(n, slice ? BoundsCode.SLICE3_ACAP : BoundsCode.SLICE3_ALEN, m, cap, sm);
             } else if (Long.compareUnsigned(h, m) > 0) {
-                return Panics.bounds(n, BoundsCode.SLICE3_B, h, m);
+                return Panics.bounds(n, BoundsCode.SLICE3_B, h, m, sh);
             }
-            return Panics.bounds(n, BoundsCode.SLICE3_C, l, h);
+            return Panics.bounds(n, BoundsCode.SLICE3_C, l, h, sl);
         }
         if (Long.compareUnsigned(h, cap) > 0) {
-            return Panics.bounds(n, slice ? BoundsCode.SLICE_ACAP : BoundsCode.SLICE_ALEN, h, cap);
+            return Panics.bounds(n, slice ? BoundsCode.SLICE_ACAP : BoundsCode.SLICE_ALEN, h, cap, sh);
         }
-        return Panics.bounds(n, BoundsCode.SLICE_B, l, h);
+        return Panics.bounds(n, BoundsCode.SLICE_B, l, h, sl);
     }
 
     /** {@code make([]T, len, cap)}. */
@@ -302,6 +322,7 @@ public final class Data {
         private final int np;
         private final int nr;
         @CompilationFinal(dimensions = 1) private final Object[] zeroElem;
+        private final long maxElems;
         private final BranchProfile bad = BranchProfile.create();
 
         public MakeSlice(GoType elem, I64 len, I64 cap) {
@@ -310,21 +331,37 @@ public final class Data {
             this.np = elem.nPrim();
             this.nr = elem.nRef();
             this.zeroElem = elem.zeroRefsAreNull() ? null : elem.zeroRefs();
+            this.maxElems = maxElems(np, nr);
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             long n = len.executeLong(frame);
             long c = cap == null ? n : cap.executeLong(frame);
-            if (n < 0 || n > Integer.MAX_VALUE) {
+            // gc makeslice: the cap check first, reported as a len error when len alone fails.
+            // The JVM bound: every backing array holds count * slots-per-element entries.
+            if (n < 0 || n > maxElems) {
                 bad.enter();
                 throw Panics.error(this, "makeslice: len out of range");
-            } else if (c < n || c > Integer.MAX_VALUE) {
+            } else if (c < n || c > maxElems) {
                 bad.enter();
                 throw Panics.error(this, "makeslice: cap out of range");
             }
             return new Slice(backing((int) c, np, nr, zeroElem), 0, 0, (int) n, (int) c);
         }
+    }
+
+    /** The largest Java array, conservatively (the VM reserves a few header words). */
+    static final int MAX_ARRAY = Integer.MAX_VALUE - 8;
+
+    /**
+     * The most elements a backing store of {@code np} primitive and {@code nr} reference slots
+     * per element can hold: both arrays must stay below {@link #MAX_ARRAY} (an element count
+     * times slots that overflows int would otherwise wrap to a short array).
+     */
+    static long maxElems(int np, int nr) {
+        int k = Math.max(np, nr);
+        return k == 0 ? MAX_ARRAY : MAX_ARRAY / k;
     }
 
     /** A zeroed backing store for {@code cap} elements. */
@@ -465,10 +502,13 @@ public final class Data {
 
     @TruffleBoundary
     private static Slice grow(Slice s, int need, int np, int nr, long elemSize, boolean pointers, Object[] zeroElem) {
-        if (need < 0) {
+        if (need < 0 || need > maxElems(np, nr)) {
             throw new OutOfMemoryError("growslice: len out of range");
         }
         int cap = elemSize == 0 ? need : Intrinsics.nextSliceCap(need, s.cap, elemSize, pointers);
+        if (cap > maxElems(np, nr)) {
+            cap = need; // gc's rounding up past the JVM bound: the exact need still fits
+        }
         long[] prims = np == 0 ? Flat.NO_PRIMS : new long[cap * np];
         Object[] refs = nr == 0 ? Flat.NO_REFS : new Object[cap * nr];
         if (s.len > 0) {

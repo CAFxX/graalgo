@@ -34,6 +34,7 @@ import graalgo.go.values.Closure;
 import graalgo.go.values.Env;
 import graalgo.go.values.Iface;
 import graalgo.language.GoLanguage;
+import graalgo.runtime.Goexit;
 import graalgo.safepoint.Safepoint;
 import java.util.function.Supplier;
 
@@ -120,12 +121,17 @@ public final class Calls {
         }
 
         /**
-         * Runs one deferred call. Without a panic in flight it is a plain call. With one
-         * ({@code cur}) the goroutine state names the panic and the call's argument array, which
-         * is what makes {@code recover()} effective in exactly the function called here; the
-         * result is the panic still in flight afterwards (null once recovered).
+         * Runs one deferred call while the function exits; {@code cur} is what is unwinding it:
+         * null (normal return), a {@link GoPanic} or a {@link Goexit}. Without either it is a
+         * plain call. With a panic the goroutine state names the panic and the call's argument
+         * array, which is what makes {@code recover()} effective in exactly the function called
+         * here; during a Goexit no panic is named, so {@code recover()} returns nil (GG-0070).
+         * The result is what still unwinds the function afterwards: null once a panic is
+         * recovered (or the Goexit that panic interrupted, which then resumes), a panic raised
+         * by the call (chained to the one it ran for), or a Goexit called by it (gc: it aborts
+         * the panic in flight).
          */
-        final GoPanic callDeferred(Dispatch site, Object target, Object[] args, GoPanic cur) {
+        final RuntimeException callDeferred(Dispatch site, Object target, Object[] args, RuntimeException cur) {
             if (cur == null) {
                 try {
                     invoke(site, target, args);
@@ -133,18 +139,27 @@ public final class Calls {
                 } catch (GoPanic p) {
                     panicked.enter();
                     return p;
+                } catch (Goexit e) {
+                    panicked.enter();
+                    return e;
                 }
             }
             G g = G.current(this);
             GoPanic outer = g.panic;
             Object[] outerArgs = g.recoverArgs;
-            g.panic = cur;
-            g.recoverArgs = args;
+            GoPanic running = cur instanceof GoPanic p ? p : null;
+            g.panic = running;
+            g.recoverArgs = running == null ? null : args;
             try {
                 invoke(site, target, args);
-                return cur.recovered ? null : cur;
+                if (running != null && running.recovered) {
+                    return running.resumeExit;
+                }
+                return cur;
             } catch (GoPanic p) {
-                return chain(p, cur);
+                return raisedDuring(p, cur);
+            } catch (Goexit e) {
+                return e;
             } finally {
                 g.panic = outer;
                 g.recoverArgs = outerArgs;
@@ -158,9 +173,23 @@ public final class Calls {
             site.execute((RootCallTarget) target, args);
         }
 
-        /** Links a panic raised by a deferred call to the panic that call was running for. */
+        /**
+         * A panic raised by a deferred call that ran for {@code cur}: linked to the panic that
+         * call was running for; raised during a Goexit, it remembers the Goexit, which resumes
+         * if the panic is recovered (gc).
+         */
         @TruffleBoundary
-        private static GoPanic chain(GoPanic raised, GoPanic running) {
+        private static GoPanic raisedDuring(GoPanic raised, RuntimeException cur) {
+            if (cur instanceof Goexit e) {
+                if (raised.resumeExit == null) {
+                    raised.resumeExit = e;
+                }
+                return raised;
+            }
+            GoPanic running = (GoPanic) cur;
+            if (raised.resumeExit == null) {
+                raised.resumeExit = running.resumeExit;
+            }
             if (raised != running) {
                 GoPanic tail = raised;
                 while (tail.link != null && tail.link != running) {
@@ -190,18 +219,27 @@ public final class Calls {
             Safepoint.poll(this);
             G g = G.current(this);
             G.Defer mark = g.defers;
-            GoPanic cur = null;
+            RuntimeException cur = null;
             try {
                 enter(frame);
                 runBody(frame);
-            } catch (GoPanic p) {
+            } catch (GoPanic | Goexit p) {
                 panicked.enter();
                 cur = p;
             }
             while (g.defers != mark) {
                 G.Defer d = g.defers;
                 g.defers = d.next;
-                cur = callDeferred(site, d.target, d.args, cur);
+                if (d instanceof G.RangeDefers r) {
+                    // The defers of a range-over-func body (RangeFunc), in their place.
+                    while (r.list != null) {
+                        G.Defer x = r.list;
+                        r.list = x.next;
+                        cur = callDeferred(site, x.target, x.args, cur);
+                    }
+                } else {
+                    cur = callDeferred(site, d.target, d.args, cur);
+                }
             }
             if (cur != null) {
                 throw cur;
@@ -240,11 +278,11 @@ public final class Calls {
         public Object execute(VirtualFrame frame) {
             Safepoint.poll(this);
             frame.setInt(bitsSlot, 0);
-            GoPanic cur = null;
+            RuntimeException cur = null;
             try {
                 enter(frame);
                 runBody(frame);
-            } catch (GoPanic p) {
+            } catch (GoPanic | Goexit p) {
                 panicked.enter();
                 cur = p;
             }
@@ -256,8 +294,8 @@ public final class Calls {
         }
 
         @ExplodeLoop
-        private GoPanic runDefers(VirtualFrame frame, GoPanic panic) {
-            GoPanic cur = panic;
+        private RuntimeException runDefers(VirtualFrame frame, RuntimeException unwinding) {
+            RuntimeException cur = unwinding;
             for (int i = sites.length - 1; i >= 0; i--) {
                 int bits = frame.getInt(bitsSlot);
                 if ((bits & (1 << i)) != 0) {
@@ -271,7 +309,12 @@ public final class Calls {
         }
     }
 
-    /** A generated wrapper (method value, method expression, deferred builtin): one expression. */
+    /**
+     * A generated wrapper (method value, method expression, embedded-interface forwarder,
+     * deferred builtin): one expression. The forwarding wrappers are gc's {@code WRAPPER}
+     * frames: invisible to {@code recover()} eligibility, which their call node passes on to
+     * the method they forward to ({@link #passRecover}).
+     */
     public static final class ThunkRoot extends RootNode {
         private final String name;
         @Child private Expr body;
@@ -305,10 +348,17 @@ public final class Calls {
         private final Supplier<RootCallTarget> target;
         @Children private final Expr[] args;
         @Child private DirectCallNode call;
+        private final boolean forward;
 
         public Call(Supplier<RootCallTarget> target, Expr[] args) {
+            this(target, args, false);
+        }
+
+        /** {@code forward}: the body of a forwarding wrapper (see {@link ThunkRoot}). */
+        public Call(Supplier<RootCallTarget> target, Expr[] args, boolean forward) {
             this.target = target;
             this.args = args;
+            this.forward = forward;
         }
 
         @Override
@@ -321,6 +371,9 @@ public final class Calls {
             if (call == null) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 call = insert(DirectCallNode.create(target.get()));
+            }
+            if (forward) {
+                passRecover(this, frame, a);
             }
             return call.call(a);
         }
@@ -422,11 +475,18 @@ public final class Calls {
         @Children private final Expr[] args;
         @Child private IfaceDispatch dispatch;
         private final BranchProfile nil = BranchProfile.create();
+        private final boolean forward;
 
         public IfaceCall(Expr recv, GoType iface, int index, Expr[] args) {
+            this(recv, iface, index, args, false);
+        }
+
+        /** {@code forward}: the body of a forwarding wrapper (see {@link ThunkRoot}). */
+        public IfaceCall(Expr recv, GoType iface, int index, Expr[] args, boolean forward) {
             this.recv = recv;
             this.args = args;
             this.dispatch = CallsFactory.IfaceDispatchNodeGen.create(iface, index);
+            this.forward = forward;
         }
 
         @Override
@@ -440,6 +500,9 @@ public final class Calls {
             if (r == null) {
                 nil.enter();
                 throw Panics.nilDeref(this);
+            }
+            if (forward) {
+                passRecover(this, frame, a);
             }
             return dispatch.execute(r, a);
         }
@@ -458,6 +521,19 @@ public final class Calls {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             return Receivers.adapt(method, recv.executeGeneric(frame), this);
+        }
+    }
+
+    /**
+     * A forwarding wrapper's call: when the wrapper's own frame is the one {@code recover()} is
+     * effective in (it was called directly by the deferred-call runner), the forwarded call's
+     * argument array {@code a} inherits that eligibility, as gc skips {@code WRAPPER} frames.
+     * The runner restores the goroutine state when the deferred call returns.
+     */
+    static void passRecover(Node n, VirtualFrame frame, Object[] a) {
+        G g = G.current(n);
+        if (g.recoverArgs == frame.getArguments()) {
+            g.recoverArgs = a;
         }
     }
 
@@ -590,17 +666,30 @@ public final class Calls {
 
     // ---------------------------------------------------------------- defer, go, panic, recover
 
-    /** Evaluates the function and arguments of a {@code defer} or {@code go} call now. */
+    /**
+     * Evaluates the function and arguments of a {@code defer} or {@code go} call now: the
+     * argument array (calling-convention form) is the result, the call target (null: a nil func
+     * value) goes to the frame slot {@link #targetSlot} — for an open-coded defer the site's own
+     * slot — so preparing allocates nothing but the argument array.
+     */
     public abstract static class Prepared extends GoNode {
-        /** {@code {RootCallTarget (null: nil func), Object[] arguments}}. */
+        final int targetSlot;
+
+        Prepared(int targetSlot) {
+            this.targetSlot = targetSlot;
+        }
+
         public abstract Object[] prepare(VirtualFrame frame);
     }
 
+    /** A statically known callee: its target is resolved once and is a PE constant. */
     public static final class PrepStatic extends Prepared {
         private final Supplier<RootCallTarget> target;
         @Children private final Expr[] args;
+        @CompilerDirectives.CompilationFinal private RootCallTarget resolved;
 
-        public PrepStatic(Supplier<RootCallTarget> target, Expr[] args) {
+        public PrepStatic(int targetSlot, Supplier<RootCallTarget> target, Expr[] args) {
+            super(targetSlot);
             this.target = target;
             this.args = args;
         }
@@ -612,12 +701,12 @@ public final class Calls {
             for (int i = 0; i < args.length; i++) {
                 a[i + 1] = args[i].executeGeneric(frame);
             }
-            return new Object[] {resolve(), a};
-        }
-
-        @TruffleBoundary
-        private RootCallTarget resolve() {
-            return target.get();
+            if (resolved == null) {
+                CompilerDirectives.transferToInterpreterAndInvalidate();
+                resolved = target.get();
+            }
+            frame.setObject(targetSlot, resolved);
+            return a;
         }
     }
 
@@ -625,7 +714,8 @@ public final class Calls {
         @Child private Expr fn;
         @Children private final Expr[] args;
 
-        public PrepClosure(Expr fn, Expr[] args) {
+        public PrepClosure(int targetSlot, Expr fn, Expr[] args) {
+            super(targetSlot);
             this.fn = fn;
             this.args = args;
         }
@@ -639,10 +729,12 @@ public final class Calls {
                 a[i + 1] = args[i].executeGeneric(frame);
             }
             if (c == null) {
-                return new Object[] {null, a};
+                frame.setObject(targetSlot, null);
+                return a;
             }
             a[0] = c.env;
-            return new Object[] {c.target, a};
+            frame.setObject(targetSlot, c.target);
+            return a;
         }
     }
 
@@ -653,7 +745,8 @@ public final class Calls {
         private final GoType iface;
         private final int index;
 
-        public PrepIface(Expr recv, GoType iface, int index, Expr[] args) {
+        public PrepIface(int targetSlot, Expr recv, GoType iface, int index, Expr[] args) {
+            super(targetSlot);
             this.recv = recv;
             this.iface = iface;
             this.index = index;
@@ -671,9 +764,15 @@ public final class Calls {
             if (r == null) {
                 throw Panics.nilDeref(this);
             }
-            Method m = r.type.itab(iface).methods[index];
+            Method m = method(r.type);
             a[1] = Receivers.adapt(m, r.data, this);
-            return new Object[] {m.target(), a};
+            frame.setObject(targetSlot, m.target());
+            return a;
+        }
+
+        @TruffleBoundary
+        private Method method(GoType dyn) {
+            return dyn.itab(iface).methods[index];
         }
     }
 
@@ -687,33 +786,33 @@ public final class Calls {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            Object[] p = call.prepare(frame);
+            Object[] a = call.prepare(frame);
             G g = G.current(this);
-            g.defers = new G.Defer(p[0], (Object[]) p[1], g.defers);
+            g.defers = new G.Defer(frame.getObject(call.targetSlot), a, g.defers);
         }
     }
 
-    /** An open-coded {@code defer}: function and arguments into the site's slots, bit set. */
+    /**
+     * An open-coded {@code defer}: the function into the site's target slot (by the prepared
+     * call itself), the arguments into its argument slot, its bit set. No allocation beyond the
+     * argument array, no access to the goroutine state (GG-0071).
+     */
     public static final class OpenDefer extends Stmt {
         @Child private Prepared call;
         private final int bit;
         private final int bitsSlot;
-        private final int targetSlot;
         private final int argsSlot;
 
-        public OpenDefer(Prepared call, int bit, int bitsSlot, int targetSlot, int argsSlot) {
+        public OpenDefer(Prepared call, int bit, int bitsSlot, int argsSlot) {
             this.call = call;
             this.bit = bit;
             this.bitsSlot = bitsSlot;
-            this.targetSlot = targetSlot;
             this.argsSlot = argsSlot;
         }
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            Object[] p = call.prepare(frame);
-            frame.setObject(targetSlot, p[0]);
-            frame.setObject(argsSlot, p[1]);
+            frame.setObject(argsSlot, call.prepare(frame));
             frame.setInt(bitsSlot, frame.getInt(bitsSlot) | (1 << bit));
         }
     }
@@ -728,11 +827,12 @@ public final class Calls {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            Object[] p = call.prepare(frame);
-            if (p[0] == null) {
+            Object[] a = call.prepare(frame);
+            Object target = frame.getObject(call.targetSlot);
+            if (target == null) {
                 throw Panics.plain(this, "go of nil func value");
             }
-            GoProcess.get(this).go((RootCallTarget) p[0], (Object[]) p[1]);
+            GoProcess.get(this).go((RootCallTarget) target, a);
         }
     }
 

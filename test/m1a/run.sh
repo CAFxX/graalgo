@@ -11,7 +11,8 @@
 # Programs: every test/corpus/**/*.go without an import (the M1a set of
 # docs/arch/toolexec-design.md §8), made observable by transform.py, the
 # programs of test/m1a/programs/ (language areas the corpus is thin on: open-coded
-# and chained defers, the flat value model, interfaces, generics, goroutines),
+# and chained defers, the flat value model, interfaces, generics, goroutines,
+# Goexit through the intrinsic registry),
 # the multi-package modules under test/m1a/multipkg/ (one directory = one module;
 # its root package is main), and the programs of the reference GIR interpreter
 # (internal/toolexec/girinterp/testdata/progs).
@@ -60,7 +61,11 @@ STUB_ID="GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-
     || infra_die "cannot build graalgo-tool / graalgo-stub"
 
 if [ $# -eq 0 ]; then
-    mapfile -t programs < <(cd "$ROOT" && grep -rLE '^[[:space:]]*import' --include='*.go' test/corpus test/m1a/programs | sort)
+    # The corpus programs that import nothing; all of test/m1a/programs (written for this
+    # gate: an import there names a package the intrinsic registry provides until the
+    # facade runtime of toolexec W5 exists, e.g. runtime.Goexit).
+    mapfile -t programs < <(cd "$ROOT" && { grep -rLE '^[[:space:]]*import' --include='*.go' test/corpus;
+        ls test/m1a/programs/*.go; } | sort)
     for d in "$HERE"/multipkg/*/; do
         [ -f "$d/go.mod" ] && programs+=("test/m1a/multipkg/$(basename "$d")")
     done
@@ -145,6 +150,10 @@ for prog in "${programs[@]}"; do
 done
 
 echo "m1a: $pass passed, $fail failed of $((pass + fail))"
+if [ $((pass + fail)) -eq 0 ]; then
+    echo "m1a: no program ran (zero cases is not a pass)" >&2
+    exit "$INFRA_EXIT"
+fi
 for c in "${!failed_by_category[@]}"; do
     echo "m1a: failing category $c: ${failed_by_category[$c]}"
 done | sort

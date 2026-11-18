@@ -12,7 +12,7 @@ import graalgo.language.GoThreadSlot;
  */
 public final class G {
     /** One deferred call: target and its already evaluated arguments (calling convention form). */
-    public static final class Defer {
+    public static class Defer {
         public final Object target;
         public final Object[] args;
         public final Defer next;
@@ -24,9 +24,26 @@ public final class G {
         }
     }
 
+    /**
+     * The deferred calls of the range-over-func loop bodies of one loop execution (gc's
+     * {@code deferrangefunc} record): it sits on the chain at the enclosing function's level,
+     * below the records of the sequence function, and is run by the enclosing function in its
+     * place in the chain; {@link #list} is last-in first.
+     */
+    public static final class RangeDefers extends Defer {
+        public Defer list;
+
+        public RangeDefers(Defer next) {
+            super(null, null, next);
+        }
+    }
+
     /** Top of the defer chain; a function's own records are those above its entry mark. */
     public Defer defers;
-    /** The panic whose deferred calls are running, or null. */
+    /**
+     * The panic whose deferred calls are running, or null — also while a Goexit's deferred
+     * calls run, which is what makes {@code recover()} return nil during a Goexit (GG-0070).
+     */
     public GoPanic panic;
     /**
      * The argument array of the deferred call being run for {@link #panic}: {@code recover()}

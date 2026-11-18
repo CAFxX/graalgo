@@ -7,7 +7,8 @@
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs `make all`
 # (generate/build/snapshot-check/check/module tests/test-ci/test-java-fast/
-# test-regression) plus the testing-strategy layers at their
+# test-regression/test-m1a/pe-check-m1a — the last two are the new
+# -toolexec path's gc differential and PE gate) plus the testing-strategy layers at their
 # cadence (SPEC §5):
 #   layer 1 (smoke):            per-commit  — `make all` -> snapshot-check:
 #                               the differential corpus under graalgo vs

@@ -17,7 +17,7 @@
 # by .github/scripts/check_makefile.py (part of `make check`).
 #   `make all` = generate build snapshot-check check test-v2 test-toolexec
 #                test-gir test-p3frontend test-ci test-java-fast
-#                test-regression:
+#                test-regression test-m1a pe-check-m1a:
 #     generate  rebuilds the gofrontend binary + overlay.json, the 18
 #               generated synth_*.go, and the GIR Go/Java codecs
 #     build     compiles both backend modules (javac, -Werror)
@@ -52,6 +52,14 @@
 #               ([test/regression/](test/regression/)): each
 #               test/regression/<pkg>/ dir runs through the graalgo driver
 #               + backend. Per-push: a re-break fails the gate.
+#     test-m1a  the new path's differential gate (~2.5 min): import-free
+#               corpus programs, test/m1a/programs, multi-package modules
+#               and girinterp's programs built through graalgo-tool and run
+#               on the new node package vs live gc; plus GG-0071's defer-path
+#               checks (test/m1a/defer_path.sh)
+#     pe-check-m1a
+#               partial-evaluation gate of the new node package over the
+#               benchmark set (~15 s): any failed compilation fails it
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
 #   `make test` — the full differential suite (graalgo.test.Runner,
@@ -138,7 +146,7 @@ GO ?= $(HOME)/tools/go/bin/go
 
 .PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression
+all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -336,14 +344,19 @@ test-toolexec:
 test-gir:
 	$(MAKE) -C internal/backend/gir test
 
-# Toolexec milestone M1a differential gate (~2 min; not per-push yet): the
-# corpus programs that import nothing, built by the stock `go build` through
-# graalgo-tool and run as linked bundles on the new node package
+# Toolexec milestone M1a differential gate (~2.5 min; per-push since the M1a
+# close-out): the corpus programs that import nothing and test/m1a/programs,
+# built by the stock `go build` through graalgo-tool and run as linked
+# bundles on the new node package
 # (internal/backend/truffle/src/main/java/graalgo/go), compared with gc on
-# stdout, normalized stderr and exit status. See test/m1a/run.sh.
-# M1A_PROGRAMS narrows the run to the given programs.
+# stdout, normalized stderr and exit status (test/m1a/run.sh); then the
+# defer-mechanism checks of GG-0071 (test/m1a/defer_path.sh: the open-coding
+# limit and the forced-chain differential). M1A_PROGRAMS narrows run.sh to
+# the given programs and skips defer_path.sh.
 test-m1a: build
+	python3 test/m1a/test_transform.py
 	GO="$(GO)" test/m1a/run.sh $(M1A_PROGRAMS)
+	@if [ -z "$(strip $(M1A_PROGRAMS))" ]; then echo GO="$(GO)" test/m1a/defer_path.sh; GO="$(GO)" test/m1a/defer_path.sh; fi
 M1A_PROGRAMS ?=
 
 # The test/bench workloads on the new node package (test/m1a/bench.sh):

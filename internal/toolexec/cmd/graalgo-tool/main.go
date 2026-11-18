@@ -70,7 +70,20 @@ var goTools = map[string]bool{
 	"vet": true, "preprofile": true, "pack": true, "buildid": true,
 }
 
+// builtBy is the release that built this binary: runtime.Version(), unless
+// a test sets it with -ldflags=-X=main.builtBy=<version> to stand in for a
+// build by another toolchain.
+var builtBy string
+
 func main() {
+	if builtBy == "" {
+		builtBy = runtime.Version()
+	}
+	// GG-0069: the frontend linked into this binary is the builder's
+	// go/parser + go/types; refuse to run unless that is the tracked release.
+	if err := release.CheckBuiltBy(builtBy); err != nil {
+		fatalf("%v", err)
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "usage: go build -toolexec graalgo-tool ... (graalgo-tool [-chain CMD] <tool> <args>)")
 		os.Exit(2)

@@ -13,6 +13,7 @@ import (
 	"graalgo-toolexec/archive"
 	"graalgo-toolexec/bundle"
 	"graalgo-toolexec/ir"
+	"graalgo-toolexec/release"
 )
 
 // env holds a built wrapper + stub and an isolated build cache.
@@ -424,5 +425,26 @@ func TestSignalAndRepeatedFlags(t *testing.T) {
 	out, err := exec.Command(e.tool, compile, "-d=libfuzzer", "-d=checkptr", "-o", filepath.Join(t.TempDir(), "x.a"), "-p", "x", src).CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "libfuzzer") {
 		t.Errorf("-d=libfuzzer followed by another -d was not refused: %v\n%s", err, out)
+	}
+}
+
+// verifies: GG-0069 (a graalgo-tool built by another toolchain exits
+// non-zero with a message naming its build version and the tracked release).
+// The foreign build is simulated with -X main.builtBy: only one toolchain is
+// installed.
+func TestRefusesForeignBuild(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds graalgo-tool")
+	}
+	tool := filepath.Join(t.TempDir(), "graalgo-tool")
+	if out, err := goCmd(t, ".", nil, "build", "-ldflags=-X=main.builtBy=go1.99.0", "-o", tool, "."); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	out, err := exec.Command(tool, "/bin/true").CombinedOutput()
+	if err == nil {
+		t.Fatalf("a graalgo-tool built by go1.99.0 ran:\n%s", out)
+	}
+	if !strings.Contains(string(out), "go1.99.0") || !strings.Contains(string(out), release.GoVersion) {
+		t.Errorf("refusal does not name both versions:\n%s", out)
 	}
 }
