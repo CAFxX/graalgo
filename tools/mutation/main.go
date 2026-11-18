@@ -103,6 +103,10 @@ func main() {
 		if c.work, err = os.MkdirTemp("", "graalgo-mutation-*"); err != nil {
 			fatal(3, err)
 		}
+	} else if err := os.MkdirAll(c.work, 0o755); err != nil {
+		// -work names a scratch dir that may not exist yet (rsync's
+		// working directory is c.work, so it must exist before the copy).
+		fatal(3, err)
 	}
 	if report == "" {
 		report = filepath.Join(c.work, "report.json")
