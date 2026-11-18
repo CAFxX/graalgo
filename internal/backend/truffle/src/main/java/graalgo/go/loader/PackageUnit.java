@@ -162,6 +162,22 @@ public final class PackageUnit {
         return globalRef[obj];
     }
 
+    /** A variable's storage: the package whose globals object holds it and its OBJECTS index. */
+    public record Global(PackageUnit unit, int obj) {}
+
+    /**
+     * Where variable {@code obj} lives: in this package, unless the link unified it with
+     * another package's variable ({@code //go:linkname} on variables, toolexec-design §3.3).
+     */
+    public Global global(int obj) {
+        String[] alias = program.varAlias(this, str(s.objects[obj].name()));
+        if (alias == null) {
+            return new Global(this, obj);
+        }
+        PackageUnit owner = program.packageNamed(alias[0]);
+        return new Global(owner, owner.objectNamed(alias[1]));
+    }
+
     // ---------------------------------------------------------------- types
 
     /** The descriptor of TYPES entry {@code id} (1-based; 0: none) under {@code env}. */

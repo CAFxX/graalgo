@@ -224,6 +224,24 @@ public final class GoMap {
         advanceEpoch(remap);
     }
 
+    /**
+     * A new map with the same entries: each key and value copied as by assignment (the
+     * runtime's map clone, reached from {@code maps.Clone}).
+     */
+    @TruffleBoundary
+    public GoMap copy() {
+        GoMap c = new GoMap(keyType, valType, count);
+        for (int e = 0; e < used; e++) {
+            if (!live[e]) {
+                continue;
+            }
+            int n = primKeys ? c.insert(hashes[e], kprims[e], null) : c.insert(hashes[e], 0, krefs[e]);
+            System.arraycopy(vprims, e * vp, c.vprims, n * vp, vp);
+            System.arraycopy(vrefs, e * vr, c.vrefs, n * vr, vr);
+        }
+        return c;
+    }
+
     /** The key of entry {@code e} in carrier form, boxed. */
     public Object keyAt(int e) {
         return primKeys ? (Object) kprims[e] : krefs[e];

@@ -7,12 +7,16 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 
 	"graalgo-toolexec/archive"
 	"graalgo-toolexec/bundle"
+	"graalgo-toolexec/fork"
+	"graalgo-toolexec/intrinsics"
 	"graalgo-toolexec/ir"
+	"graalgo-toolexec/release"
 )
 
 // env holds a built wrapper + stub and an isolated build cache.
@@ -32,6 +36,64 @@ func goCmd(t *testing.T, dir string, extraEnv []string, args ...string) (string,
 	cmd.Env = append(os.Environ(), extraEnv...)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
+}
+
+// The standard library these tests build against is graalgo's fork
+// (design §5.1), loaded once per test process: forkOverlay applies it to
+// the toolchain's GOROOT with -overlay, the launcher tests assemble a
+// GOROOT from it.
+var theFork struct {
+	once    sync.Once
+	fork    *fork.Fork
+	overlay string // GOFLAGS entry
+	err     error
+}
+
+func loadFork(t *testing.T) *fork.Fork {
+	t.Helper()
+	theFork.once.Do(func() {
+		goroot, err := goCmd(t, ".", nil, "env", "GOROOT")
+		if err != nil {
+			theFork.err = err
+			return
+		}
+		f, err := fork.Load(filepath.Join("..", "..", "..", "..", "stdlib"), strings.TrimSpace(goroot), release.GoVersion)
+		if err != nil {
+			theFork.err = err
+			return
+		}
+		// Not t.TempDir: the overlay outlives the first test that asks.
+		dir, err := os.MkdirTemp("", "graalgo-fork-overlay")
+		if err != nil {
+			theFork.err = err
+			return
+		}
+		data, err := f.Overlay(filepath.Join(dir, "work"))
+		if err == nil {
+			err = os.WriteFile(filepath.Join(dir, "overlay.json"), data, 0o644)
+		}
+		theFork.fork, theFork.err = f, err
+		theFork.overlay = "-overlay=" + filepath.Join(dir, "overlay.json")
+	})
+	if theFork.err != nil {
+		t.Fatalf("stdlib fork: %v", theFork.err)
+	}
+	return theFork.fork
+}
+
+// forkOverlay is the GOFLAGS entry that applies the fork.
+func forkOverlay(t *testing.T) string {
+	t.Helper()
+	loadFork(t)
+	return theFork.overlay
+}
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if theFork.overlay != "" {
+		os.RemoveAll(filepath.Dir(strings.TrimPrefix(theFork.overlay, "-overlay=")))
+	}
+	os.Exit(code)
 }
 
 func setup(t *testing.T) *env {
@@ -82,7 +144,7 @@ func (e *env) build(out string, extra ...string) (string, error) {
 	args := append([]string{"build", "-toolexec", e.tool, "-o", out}, extra...)
 	args = append(args, ".")
 	return goCmd(e.t, e.moduleDir, []string{
-		"GOCACHE=" + e.cache, "GOFLAGS=", "CGO_ENABLED=0",
+		"GOCACHE=" + e.cache, "GOFLAGS=" + forkOverlay(e.t), "CGO_ENABLED=0",
 		"GRAALGO_TOOL_LOG=" + e.toolLog, "GRAALGO_RUNNER=" + e.fakeRun,
 	}, args...)
 }
@@ -109,8 +171,9 @@ func TestBuildThroughToolexec(t *testing.T) {
 		t.Fatalf("go build -toolexec: %v\n%s", err, out)
 	}
 
-	// The executable carries the IR of both user packages and nothing
-	// from the (unforked) standard library.
+	// The executable carries the IR of both user packages and of the
+	// standard-library packages of the link: the facade runtime and what
+	// it imports.
 	b, err := bundle.ReadFile(exe)
 	if err != nil {
 		t.Fatal(err)
@@ -133,8 +196,11 @@ func TestBuildThroughToolexec(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(paths, ","); got != "example.com/skel,example.com/skel/lib" {
+	if got := strings.Join(paths, ","); got != "example.com/skel,example.com/skel/lib,internal/goarch,internal/goos,runtime" {
 		t.Errorf("bundle packages = %s", got)
+	}
+	if r := b.Resolution; r.RegistryVersion != uint64(intrinsics.Registry.Version) || r.RegistryHash == "" {
+		t.Errorf("bundle resolution names registry %d %q", r.RegistryVersion, r.RegistryHash)
 	}
 	if b.Main != "example.com/skel" {
 		t.Errorf("bundle main = %q", b.Main)
@@ -274,28 +340,26 @@ func TestEmbedThroughToolexec(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "data.txt"), []byte("embedded!"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	exe := filepath.Join(t.TempDir(), "skel")
-	if out, err := e.build(exe); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
+	// Compile only: package embed's closure (io/fs, time, syscall) does
+	// not link yet — its intrinsics are milestones M1r–M1c — and the
+	// subject here is the compile step.
+	archivePath, err := goCmd(t, e.moduleDir, []string{
+		"GOCACHE=" + e.cache, "GOFLAGS=" + forkOverlay(t), "CGO_ENABLED=0",
+	}, "list", "-toolexec", e.tool, "-export", "-f", "{{.Export}}", "./lib")
+	if err != nil {
+		t.Fatalf("build: %v\n%s", err, archivePath)
 	}
-	b, err := bundle.ReadFile(exe)
+	gir, err := archive.Read(strings.TrimSpace(archivePath), archive.IRMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, p := range b.Packages {
-		if p.ImportPath != "example.com/skel/lib" {
-			continue
-		}
-		f, err := ir.DecodeValidate(p.IR)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(f.Data) != "embedded!" {
-			t.Errorf("DATA = %q", f.Data)
-		}
-		return
+	f, err := ir.DecodeValidate(gir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatal("no IR for lib")
+	if string(f.Data) != "embedded!" {
+		t.Errorf("DATA = %q", f.Data)
+	}
 }
 
 // Input the IR cannot represent (nesting deeper than the decoders accept,

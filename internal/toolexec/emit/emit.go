@@ -115,7 +115,10 @@ type emitter struct {
 	tparamOwner map[*types.TypeParam]string
 	typedefs    []*types.TypeName
 	linknames   map[string]string
-	dataOff     map[string][2]uint64 // embedded file -> (offset, length) in DATA
+	// hasMethods caches, per defined type, whether its pointer method set
+	// is non-empty (noteType).
+	hasMethods map[*types.TypeName]bool
+	dataOff    map[string][2]uint64 // embedded file -> (offset, length) in DATA
 
 	errFirst string
 	errCount int
@@ -138,6 +141,7 @@ func Emit(cfg Config) (*ir.File, *Stats, error) {
 		localTargs:  map[*types.TypeName][]types.Type{},
 		tparamOwner: map[*types.TypeParam]string{},
 		linknames:   map[string]string{},
+		hasMethods:  map[*types.TypeName]bool{},
 		dataOff:     map[string][2]uint64{},
 	}
 	e.keyer = ir.TypeKeyer{LocalName: e.localTypeName, TypeParamOwner: e.typeParamOwner,
@@ -522,7 +526,11 @@ func (e *emitter) run() {
 		fn.Name = name
 		pos := cfg.Fset.Position(d.fd.Pos())
 		fn.File, fn.Line = e.fileName(pos.Filename), uint64(pos.Line)
-		fn.Linkname = e.linknames[d.fd.Name.Name]
+		if d.fd.Recv == nil {
+			// //go:linkname names package-level objects; a method that
+			// happens to share a linknamed function's name is not one.
+			fn.Linkname = e.linknames[d.fd.Name.Name]
+		}
 		var sig *types.Signature
 		if !d.isInit {
 			sig = d.obj.Signature()
@@ -560,6 +568,8 @@ func (e *emitter) run() {
 			}
 			fs.body.Body = fs.stmtList(d.fd.Body.List)
 			fs.endReturn(sig, d.fd.Body.Rbrace)
+			fs.noteTypes(d.fd.Type)
+			fs.noteTypes(d.fd.Body)
 		})
 		if fs.ok {
 			e.file.Bodies[i] = fs.body
@@ -607,8 +617,10 @@ func (e *emitter) emitVarInit() {
 		fs.body.Body = append(fs.body.Body, fs.embedInits(embeds)...)
 		for _, in := range order {
 			initCounts = append(initCounts, e.countNodes(in.Rhs))
+			fs.noteTypes(in.Rhs)
 			var lhs []ir.Expr
 			for _, v := range in.Lhs {
+				fs.noteType(v.Type())
 				if v.Name() == "_" {
 					lhs = append(lhs, &ir.BlankExpr{Type: e.typeID(v.Type())})
 				} else {
@@ -817,12 +829,14 @@ func (e *emitter) fileName(name string) string {
 	return name
 }
 
-// scanLinknames collects //go:linkname directives (design §3.3).
+// scanLinknames collects //go:linkname directives (design §3.3) and
+// go1.27's //go:linknamestd, which differs only in what the gc toolchain
+// lets it name; a directive binds the same way under either spelling.
 func (e *emitter) scanLinknames() {
 	for _, f := range e.cfg.Files {
 		for _, cg := range f.Comments {
 			for _, c := range cg.List {
-				if !strings.HasPrefix(c.Text, "//go:linkname ") {
+				if !strings.HasPrefix(c.Text, "//go:linkname ") && !strings.HasPrefix(c.Text, "//go:linknamestd ") {
 					continue
 				}
 				fields := strings.Fields(c.Text)

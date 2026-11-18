@@ -638,9 +638,10 @@ public final class NodeFactory {
         if (u.sections().objects[obj].kind() != Gir.SymKind.VAR) {
             return null;
         }
-        int gp = u.globalPrim(obj);
-        int gr = u.globalRef(obj);
-        int index = u.index;
+        PackageUnit.Global g = u.global(obj); // the storage, after //go:linkname unification
+        int gp = g.unit().globalPrim(g.obj());
+        int gr = g.unit().globalRef(g.obj());
+        int index = g.unit().index;
         return (p, r) -> new Mem.FlatLoc(new Mem.Globals(index), gp + p, gr + r);
     }
 

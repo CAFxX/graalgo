@@ -75,6 +75,73 @@ func (fs *fnState) refs() (syms, objs []uint32) {
 	return syms, objs
 }
 
+// noteTypes records, among the function's symbol references, every defined
+// type with methods that is the type of an expression or variable under n,
+// or a type argument of an instantiation there. The linker needs it for
+// reachability (design §5.3): a method that no reachable function names can
+// only be called through an interface, and a value of its receiver type can
+// only get into an interface in a function that has an expression of that
+// type.
+func (fs *fnState) noteTypes(n ast.Node) {
+	if n == nil {
+		return
+	}
+	info := fs.e.cfg.Info
+	ast.Inspect(n, func(n ast.Node) bool {
+		x, ok := n.(ast.Expr)
+		if !ok {
+			return true
+		}
+		if tv, ok := info.Types[x]; ok && tv.Type != nil {
+			fs.noteType(tv.Type)
+		}
+		if id, ok := x.(*ast.Ident); ok {
+			if v, ok := info.ObjectOf(id).(*types.Var); ok {
+				fs.noteType(v.Type())
+			}
+			if inst, ok := info.Instances[id]; ok {
+				for i := range inst.TypeArgs.Len() {
+					fs.noteType(inst.TypeArgs.At(i))
+				}
+			}
+		}
+		return true
+	})
+}
+
+// noteType records t (through pointers) if it is a defined non-interface
+// type with a non-empty pointer method set, and likewise its type
+// arguments, which the generic code may convert to interfaces.
+func (fs *fnState) noteType(t types.Type) {
+	e := fs.e
+	for {
+		p, ok := types.Unalias(t).(*types.Pointer)
+		if !ok {
+			break
+		}
+		t = p.Elem()
+	}
+	named, ok := types.Unalias(t).(*types.Named)
+	if !ok {
+		return
+	}
+	for i := range named.TypeArgs().Len() {
+		fs.noteType(named.TypeArgs().At(i))
+	}
+	obj := named.Origin().Obj()
+	if obj.Pkg() == nil {
+		return // error, comparable
+	}
+	has, seen := e.hasMethods[obj]
+	if !seen {
+		has = !types.IsInterface(named.Origin()) && types.NewMethodSet(types.NewPointer(named.Origin())).Len() > 0
+		e.hasMethods[obj] = has
+	}
+	if has {
+		fs.root.syms[e.objSym(obj)] = true
+	}
+}
+
 func (fs *fnState) pos(n ast.Node) ir.PosID {
 	if n == nil || !n.Pos().IsValid() {
 		return 0
