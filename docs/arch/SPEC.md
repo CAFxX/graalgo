@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 75 records — `requirements/GG-0001`–`GG-0065`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0015`/0016/0018/0055 superseded by GG-0061/0062/0063/0065
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 76 records — `requirements/GG-0001`–`GG-0066`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0055 superseded by GG-0066/0061/0062/0063/0065
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed ·
@@ -260,12 +260,22 @@ priced honestly — the fork roughly doubles driver toil every release, forever
 matrix through the wrapper); kill trigger = argv-interception gaps that force the
 fork *and* the fork's merge burden breaks the toil bound.
 
-### 3.2 Frontend service: go/parser + go/types, verbatim (GG-0012, GG-0013)
+### 3.2 Frontend service: go/parser + go/types of the tracked release (GG-0066, GG-0013)
 
-`go/parser` produces go/ast; `go/types` produces full type info; a node factory
-walks the typed AST and builds Truffle nodes `[DECIDED]`. The `go/*` tree is
-reused **verbatim** from the tracked release and re-vendored **atomically**
-(frontend + stdlib as one unit) every release — pinning the frontend to N while
+`go/parser` produces go/ast; `go/types` produces full type info. Both run at
+**compile time**, inside `graalgo-tool` (the `-toolexec` wrapper of §3.1, one
+`compile` invocation per package), which serializes the resolved typed AST as
+**GIR** — the per-package typed IR appended to the package archive
+([toolexec-design.md](toolexec-design.md) D3–D5, §3.2). The JVM never sees Go
+source: the backend's **node factory decodes GIR** (lazily, per function)
+and builds Truffle nodes `[DECIDED]` (amended 2026-11-18, ADR-0011; was "a
+node factory walks the typed AST"). The `go/*` packages are not a vendored
+copy: they are those of the **tracked release's toolchain that builds
+`graalgo-tool`**, and the build asserts that this toolchain is the tracked
+release (GG-0066, superseding the byte-identical-vendored-tree check of
+`GG-0012`). Frontend and stdlib still move **as one unit** every release —
+graalgo-tool is rebuilt by the new release's toolchain in the same change that
+re-bases the stdlib fork — because pinning the frontend to N while
 tracking stdlib N+1 does not work in general (go1.27's stdlib itself uses a 1.27
 language feature, generic methods on `math/rand/v2.Rand` `[VERIFIED]`). Old code
 is supported via per-file/per-module `-lang` gates exactly like the stock
@@ -277,7 +287,8 @@ against the bound.
 
 ### 3.3 One Truffle AST (GG-0014)
 
-Two node families per Truffle convention: expression nodes with typed execute
+The AST is built by the node factory from GIR (§3.2), never from Go source
+or from a JSON export. Two node families per Truffle convention: expression nodes with typed execute
 methods (`executeLong`/`executeInt`/`executeDouble`/`executeBoolean`/generic
 `execute→Object`) keeping primitives unboxed, and void statement nodes; loops use
 `@ExplodeLoop`-friendly structures or `LoopNode`/`RepeatingNode` for OSR
@@ -1182,7 +1193,7 @@ Extends [FEASIBILITY.md](FEASIBILITY.md) §11 with the decisions this spec makes
 |---|---|---|
 | Seven program requirements | Carlo, refined 2026-10-03 | `[DECIDED]` |
 | Wrap-via-`-toolexec`; fork only as escape hatch | this spec §3.1 (T3 analysis) | `[DECIDED]` |
-| Verbatim `go/*` frontend; atomic re-vendor; `-lang` gates | this spec §3.2 (T2 analysis) | `[DECIDED]` |
+| `go/*` frontend of the tracked toolchain, GIR to the node factory (amended 2026-11-18); frontend+stdlib as one unit; `-lang` gates | this spec §3.2 (T2 analysis; toolexec-design D3–D5, D10) | `[DECIDED]` |
 | One Truffle AST; specialization budget only at dynamic sites | this spec §3.3 (T5 adversarial) | `[DECIDED]` |
 | Java-object value model (flat, amended 2026-11-18); unsafe = gc byte offsets + checkptr traps | this spec §3.4 (T5; abi-spike) | `[DECIDED]` |
 | Goroutine = vthread + scheduler token; user-space quantum scheduler (option C); runtime epoll poller (amended 2026-11-18); panic/defer model | this spec §3.5 (spike 2b PASS) | `[DECIDED]` |
@@ -1266,7 +1277,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0009 | Stdlib reuse | §2.8 |
 | GG-0010 | Testing strategy built early | §2.9 |
 | GG-0011 | Driver wrapper via -toolexec | §3.1 |
-| GG-0012 | Verbatim frontend vendoring | §3.2 |
+| `GG-0012` | Verbatim frontend vendoring — superseded by GG-0066 | — |
 | GG-0013 | No language pinning | §3.2 |
 | GG-0014 | One Truffle AST | §3.3 |
 | `GG-0015` | Java-object value model — superseded by GG-0061 | — |
@@ -1320,6 +1331,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0063 | Runtime epoll poller over raw fds | §3.5 (§7.4 closure) |
 | GG-0064 | Process creation via a spawn helper | §3.8 |
 | GG-0065 | GODEBUG registry, gc-compatible unknown keys | §4.5 (§7.15 closure) |
+| GG-0066 | Frontend: go/parser + go/types of the tracked toolchain | §3.2 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |
@@ -1335,7 +1347,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 
 | Dependency | Pin | Status |
 |---|---|---|
-| Go release tracked | go1.27.1 (re-vendored atomically per release, GG-0012) | `[VERIFIED]` current as of 2026-10-03 |
+| Go release tracked | go1.27.1 (frontend and stdlib move as one unit per release, GG-0066) | `[VERIFIED]` current as of 2026-10-03 |
 | GraalVM/JDK distribution | Oracle GraalVM **25.0.4.1.1** (LTS line; jars re-pinned in [phases/phase1/lib/LIB.md](../../internal/backend/truffle/lib/LIB.md)) (GG-0027) | `[DECIDED]` 2026-10-04 — program owner: LTS line over the Innovation line (25.4.x); compiler/JIT deltas re-evaluated at Phase 5 |
 | `go/*` frontend API | additive-only per the Go 1 compatibility promise | `[VERIFIED]` |
 

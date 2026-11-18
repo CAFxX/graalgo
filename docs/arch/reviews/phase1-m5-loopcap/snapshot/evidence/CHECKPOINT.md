@@ -231,7 +231,7 @@ diffharness README.
 
 ### GG activation
 
-**GG-0012/GG-0013/GG-0044 stay LOCKED** — activation happens at M2 when
+**`GG-0012`/GG-0013/GG-0044 stay LOCKED** — activation happens at M2 when
 NodeFactory builds straight-line programs end-to-end through `graalgo-run`
 (per PLAN.md). D1 falsifier watch: no go/* API breakage observed; the
 watch is recorded in `frontend/VENDORING.md`.
@@ -249,7 +249,7 @@ error. Full list + M2 stand-in replacements: `docs/frontend-v1.md` §9.
   integration breakage from the WS B merge into the unified build.
 - Next: wire `frontend/gofrontend` into `make main`; rewrite `Main` for the real
   frontend path; remove `--handbuilt-hello`/`Handbuilt`; corpus + differential
-  tests red-green-first; GG-0012 activation.
+  tests red-green-first; `GG-0012` activation.
 - Static-analysis finding (M2, pre-corpus): `BinaryOpNode` ignores integer
   signedness — Java's `/`, `%`, `>>` are wrong for unsigned Go operands with
   the high bit set (`uint64(0xFF..FF)/2` must be 9223372036854775807, Java
@@ -268,7 +268,7 @@ error. Full list + M2 stand-in replacements: `docs/frontend-v1.md` §9.
 ## M2 complete 2026-10-04 (worker: M2)
 
 **Acceptance (PLAN.md §4): `gofrontend` emits typed AST; NodeFactory builds
-straight-line programs end-to-end via `graalgo-run`; GG-0012→active.** All met.
+straight-line programs end-to-end via `graalgo-run`; `GG-0012`→active.** All met.
 
 ### What landed
 
@@ -337,7 +337,7 @@ asserted bit-identical.
 Truffle `sun.misc.Unsafe` stderr warning (M7 normalizer allowlist item,
 already recorded). gc-a vs gc-b SAME.
 
-**GG-0012 → active** (deliverable 5): `req activate GG-0012`; GG-0013/GG-0044
+**`GG-0012` → active** (deliverable 5): `req activate GG-0012`; GG-0013/GG-0044
 stay locked (verified in requirements/*.yaml). `req lint --root
 ~/workspace/graalgo`: **GREEN** — 70 requirements, 826 references.
 

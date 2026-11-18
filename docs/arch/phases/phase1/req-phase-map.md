@@ -17,7 +17,7 @@ Phase definitions used (from task brief):
 | ID | Phase | Statement (one line) | Why this phase |
 |---|---|---|---|
 | GG-0009 | 1 (slice) | Reuse Go stdlib maximally: verbatim vendor + adapted fork limited to runtime-coupled packages; Plan 9 asm per-category handling. | Phase-1 slice: vendoring + intrinsic stubs for language tests. Full adapted fork is Phase 3. |
-| GG-0012 | 1 | Use `go/parser`+`go/types` vendored verbatim as frontend, re-vendored atomically per release. | Direct Phase-1 scope: the frontend service. |
+| `GG-0012` | 1 | Use `go/parser`+`go/types` vendored verbatim as frontend, re-vendored atomically per release. | Direct Phase-1 scope: the frontend service. |
 | GG-0013 | 1 | Support older language versions via per-file/per-module `-lang` gates; no pinning below vendored stdlib version. | Language-version policy for the Phase-1 frontend. |
 | GG-0014 | 1 | One Truffle AST from go/ast+go/types feeds all three execution modes; no second backend. | Direct Phase-1 scope: build the AST once, correctly. |
 | `GG-0015` | 1 | Go values as Java objects: descriptor-based structs, typed-array slices, (itab,data) interfaces, byte[] strings; opaque pointers. | Direct Phase-1 scope: the descriptor-based value model. |
@@ -125,7 +125,7 @@ Requirements Phase 1 owns or exercises during Phase 1:
 1. GG-0007
 2. GG-0009 (vendoring + intrinsic stubs slice)
 3. GG-0010 (differential harness on language suites)
-4. GG-0012
+4. `GG-0012`
 5. GG-0013
 6. GG-0014 (AST construction slice)
 7. `GG-0015`

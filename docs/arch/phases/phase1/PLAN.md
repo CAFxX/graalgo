@@ -25,7 +25,7 @@ direct `graalgo-run` launcher, never the wrapper (req-phase-map §3 flag 8).
 | WS | Workstream | GG IDs | Gate |
 |---|---|---|---|
 | A | Toolchain & repo skeleton (pinned jars, javac build, `graalgo-run` launcher, placeholder grep gate) | GG-0027 (pin stable), GG-0023 (linux/amd64) | — |
-| B | Frontend service: `gofrontend` (vendored go/* verbatim) → versioned typed-AST JSON (`frontend/v1`) → Java `NodeFactory` | GG-0012, GG-0013, GG-0044 | 3 (part) |
+| B | Frontend service: `gofrontend` (vendored go/* verbatim) → versioned typed-AST JSON (`frontend/v1`) → Java `NodeFactory` | `GG-0012`, GG-0013, GG-0044 | 3 (part) |
 | C | Value model (`graalgo.values`): descriptors, GoStruct{long[],Object[]}, GoSlice, GoMap (open-addressing), GoString{byte[]}, GoInterface{(descriptor,data),itab}, GoFunc{RootCallTarget,Frame}, handle-table unsafe.Pointer | `GG-0015`, `GG-0016` | 1 |
 | D | Expression nodes: typed execute methods, unboxed primitives; **Safepoint.poll() seam** at function entries; polymorphism probe hooks at interface dispatch | GG-0014, GG-0017 (seam slice) | 1 |
 | E | Statement nodes incl. loops (`LoopNode`/`RepeatingNode`, `@ExplodeLoop`-friendly); **Safepoint.poll() seam** at loop back-edges; accurate SourceSections on every node | GG-0014, GG-0024 (inspect slice) | 1 |
@@ -50,7 +50,7 @@ lands with a `verifies: GG-XXXX` annotation (req lint rule (c)); never before.
   Java `NodeFactory` parses JSON and builds Truffle nodes. Rationale: debuggable,
   versionable, process-boundary clean; the -toolexec wrapper invokes it per
   `compile` action in Phase 4. Falsifier: any go/* API the exporter needs that
-  breaks the additive-only assumption (GG-0012) → spike-3 toil re-measurement.
+  breaks the additive-only assumption (`GG-0012`) → spike-3 toil re-measurement.
 - **D2 [DECIDED]: generics = frontend monomorphization.** `go/types` yields fully
   instantiated types; the exporter emits one node subtree per instantiation
   (functions and methods, incl. generic methods); descriptors are per-instantiation.
@@ -102,7 +102,7 @@ API wherever possible — enforced by `-Xlint:deprecation -Werror` in the build
 ## 4. Milestones and acceptance
 
 - M1: toolchain + `graalgo-run` executes hand-built "hello" AST; diffharness backend registered (GG-0027)
-- M2: `gofrontend` emits typed AST; NodeFactory builds straight-line programs (GG-0012→active)
+- M2: `gofrontend` emits typed AST; NodeFactory builds straight-line programs (`GG-0012`→active)
 - M3: expressions + values differential-green on arithmetic corpus (`GG-0015`→active)
 - M4: control flow, composite types, maps green (GG-0014→active)
 - M5: defer/panic/recover/Goexit green incl. adversarial (GG-0019→active)
@@ -162,7 +162,7 @@ reviews each, every finding remediated at named targets and re-tested)
 
 ## 8. Falsifiers per owned GG ID (greenfield item 4)
 
-- GG-0012: frontend rebase toil > 200 agent-hours on next dry run → bound broken
+- `GG-0012`: frontend rebase toil > 200 agent-hours on next dry run → bound broken
 - GG-0013: `-lang`-gated file with semantics ≠ gc → differential red
 - GG-0014: any mode-specific AST assumption or second backend → review fail
 - `GG-0015`: value-semantics divergence (copy/reference/nil) vs gc → red

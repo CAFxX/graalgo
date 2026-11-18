@@ -20,7 +20,7 @@ import org.graalvm.options.OptionStability;
  * Go program.
  *
  * <p>{@link #parse} never sees Go source text: the frontend ({@code go/types}
- * in a Go process, GG-0012) already produced typed IR. Two byte MIME types
+ * in a Go process, GG-0066) already produced typed IR. Two byte MIME types
  * are registered:
  * <ul>
  *   <li>{@link #WIRE_MIME} — the v1 frontend/v1 JSON wire document (what

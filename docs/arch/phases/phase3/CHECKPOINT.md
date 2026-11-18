@@ -79,8 +79,8 @@ filter → oracle mismatch; both reverted, suite re-run green).
 executed by the runtime (gc prints INIT RAN, graalgo INIT DID NOT RUN) —
 M1 rejects any `func init()` with a clear scope error (documented
 limitation, never a silent gap); probe at `hidden_files/m1/initprobe2.go`.
-Commits: f3e9b05 (design), b5d3b03 (loader; verifies: GG-0023, GG-0012),
-1fc2f3a (importer/flattener/ExportDir; verifies: GG-0012, GG-0013).
+Commits: f3e9b05 (design), b5d3b03 (loader; verifies: GG-0023, `GG-0012`),
+1fc2f3a (importer/flattener/ExportDir; verifies: `GG-0012`, GG-0013).
 Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
 `phases/phase3/hidden_files/m1/`, `phases/phase3/CHECKPOINT.md`).
 
@@ -112,7 +112,7 @@ Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
    DESIGN.md §8).
 4. `f8269ee` **Methodology P1-1**: GG-0013/GG-0023 locked→active with
    dated history entries (first real tests with `verifies:`
-   annotations); GG-0012 (already active) gained its P3-M1 `verifies:`
+   annotations); `GG-0012` (already active) gained its P3-M1 `verifies:`
    entry. GG-0017 untouched (Phase-2's record, still locked).
 5. `ab98a09` **Methodology P1-2/P1-3/P1-4**: twopkg corpus gains a
    main-level `Counter` shadowing `helper.Counter`; third red-green

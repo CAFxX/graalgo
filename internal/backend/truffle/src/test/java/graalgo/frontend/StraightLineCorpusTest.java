@@ -35,7 +35,7 @@ import java.util.stream.Stream;
  * {@code corpus/straightline/README.md}. Run from the phase1 directory
  * ({@code make test}); override with {@code -Dgraalgo.phase1.dir=...}.
  */
-// verifies: GG-0012 (M2: gofrontend emits typed AST; NodeFactory builds
+// verifies: GG-0066 (M2: gofrontend emits typed AST; NodeFactory builds
 // straight-line programs end-to-end; every program's computed values are
 // asserted equal to stock gc's output).
 public final class StraightLineCorpusTest {

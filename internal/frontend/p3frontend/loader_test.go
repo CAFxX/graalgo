@@ -148,7 +148,7 @@ func runWithTimeout(t *testing.T, d time.Duration, fn func() error) error {
 	}
 }
 
-// TestImportCycle verifies: GG-0012 — an a<->b import cycle and a
+// TestImportCycle verifies: GG-0066 — an a<->b import cycle and a
 // self-import cycle fail fast with an error containing "import cycle".
 // The timeout guard proves the resolver cannot hang.
 func TestImportCycle(t *testing.T) {

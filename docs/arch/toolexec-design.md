@@ -5,7 +5,7 @@ needed. Written 2026-11-17 for track T1 of [RECOVERY.md](RECOVERY.md);
 amended 2026-11-18 with the owner's decisions and the results of the two
 prototypes of §12 ([abi-spike.md](abi-spike.md)) — the change list is §14.
 [SPEC.md](SPEC.md) is authoritative; this document implements SPEC §3.1–3.3,
-§3.6, §4.1–4.2, §4.4 and requirements GG-0001/0002/0009/0011/0012/0013/0014/
+§3.6, §4.1–4.2, §4.4 and requirements GG-0001/0002/0009/0011/0066/0013/0014/
 0020/0021/0028/0059. Every number below was measured on this box against
 go1.27.1 linux/amd64 (the tracked release) unless it is labelled an estimate;
 the measurement programs are described in §11.
@@ -23,7 +23,7 @@ the measurement programs are described in §11.
 | D7 | Types cross package boundaries by **canonical type key**; descriptors are interned at load; itabs are computed lazily at run time. No link-time itab or method-set generation. | Itabs are immutable (SPEC §3.3); the JVM is the linker. |
 | D8 | The runtime boundary is the **source tree**: graalgo ships a `GOROOT` whose `src` is upstream go1.27.1 plus the fork patch stack. `runtime` and `internal/runtime/*` are replaced by facade packages whose body-less functions are the intrinsic surface; a small set of coupled packages carries minimal patches; everything else is verbatim. `internal/abi` and `internal/reflectlite` are verbatim and `reflect` is verbatim except a 4-function call-path patch, on byte-exact descriptor images and the pointer model of §3.4 (P1, answered). | GG-0009. No package is name-keyed inside the tool: the tool compiles whatever `cmd/go` hands it. Verified: stock `cmd/go` + gc `compile` + `vet` accept a facade `runtime` (§5.2); verbatim reflect on synthesized descriptors: 607/607 answers identical to gc ([abi-spike.md](abi-spike.md) §1.4). |
 | D9 | Body-less functions resolve at link time, by symbol name, to (a) a Go body named by `//go:linkname`, or (b) a Java intrinsic registered under that symbol name; otherwise the link fails if the function is reachable. | GG-0020/GG-0021. Same rule for std, the fork and third-party modules. |
-| D10 | The frontend is `go/parser` + `go/types` from the toolchain that builds `graalgo-tool`, with a build-time assertion that this is the tracked release. | GG-0012/GG-0013 by construction; the vendored copy under `internal/frontend/go` retires with v1. |
+| D10 | The frontend is `go/parser` + `go/types` from the toolchain that builds `graalgo-tool`, with a build-time assertion that this is the tracked release. | GG-0066/GG-0013 by construction; the vendored copy under `internal/frontend/go` retires with v1. |
 | D11 | v1 (`gofrontend`, JSON, `synth_*.go`, the custom `cmd/graalgo` commands, **and v1's node classes**) is deleted at one cutover gate (§9, M3), not migrated piecemeal. | The two paths share only the runtime library (scheduler, channels, timers); a hybrid would need the import overlay the recovery is removing. |
 | D12 | The node factory of W4 targets a **new node package** written to the Truffle conventions of [truffle-design.md](truffle-design.md) §11–§12 (statically typed node families, DSL specializations only at dynamic sites, `TruffleLanguage`-native); the existing ~110 node classes are the semantic reference, not reused, and are deleted at M3. | Owner decision 2026-11-18 (truffle-design T13). Reusing them would carry every PE-hostile pattern of truffle-design §1.2 and the nested-`GoStruct` value model (§3.4) into the new path and force a second rewrite. Cost: +6–10 agent-days on M1a. |
 

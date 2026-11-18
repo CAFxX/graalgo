@@ -132,7 +132,7 @@ stored on the node and exposed via `getSourceSection()` override.
 
 ## GG status
 
-**GG-0012 active** (2026-10-04, M2): `gofrontend` emits typed AST and
+**`GG-0012` active** (2026-10-04, M2): `gofrontend` emits typed AST and
 `NodeFactory` builds straight-line programs end-to-end via `graalgo-run`,
 verified by `StraightLineCorpusTest` (`// verifies: GG-0012`, differential vs
 stock gc). GG-0013/GG-0044 stay **locked** per PLAN.md.

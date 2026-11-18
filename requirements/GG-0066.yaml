@@ -1,0 +1,12 @@
+id: GG-0066
+title: 'Frontend: go/parser + go/types of the tracked toolchain'
+statement: graalgo SHALL use go/parser + go/types of the tracked Go release as its frontend, taken from the toolchain that builds graalgo-tool rather than from a vendored copy, and its build SHALL fail when that toolchain is not the tracked release. The frontend SHALL run at compile time and hand the backend serialized typed IR (GIR), never Go source. Frontend and standard library SHALL move to a new release as one unit.
+rationale: 'toolexec-design D10: the per-package -toolexec path runs the frontend inside graalgo-tool, so the toolchain that builds it already carries the tracked release''s go/* verbatim; a separate vendored tree (GG-0012) duplicates it and retires with v1. The atomicity of GG-0012 is kept. ADR-0011 decision 2.'
+parent: ""
+status: active
+superseded_by: ""
+verification_plan: release.TestBuiltByTrackedToolchain fails when graalgo-tool is built by any other toolchain (red-green); the emitter's compile-only gate over all std packages; graalgo-tool's tracked-release checks on -V=full and compile -goversion; parser/types suites are upstream's by construction.
+history:
+    - '2026-11-18: created (draft), supersedes GG-0012'
+    - '2026-11-18: locked'
+    - '2026-11-18: activated (implementation started)'

@@ -26,14 +26,14 @@ design; interface freeze impossible without breaking the toil bound (→ archite
 
 ---
 
-## A. Frontend service — `go/parser` + `go/types`, verbatim (SPEC §3.2; GG-0012, GG-0013)
+## A. Frontend service — `go/parser` + `go/types`, verbatim (SPEC §3.2; `GG-0012`, GG-0013)
 
-1. SPEC.md:237–239 — *"``go/parser`` produces go/ast; ``go/types`` produces full type info; a node factory walks the typed AST and builds Truffle nodes `[DECIDED]`."* (GG-0012)
+1. SPEC.md:237–239 — *"``go/parser`` produces go/ast; ``go/types`` produces full type info; a node factory walks the typed AST and builds Truffle nodes `[DECIDED]`."* (`GG-0012`)
    → Paraphrase: build a **frontend service** whose node factory consumes the fully
    type-checked `go/ast` from `go/types` and emits Truffle nodes — one pipeline stage,
    no `cmd/compile` IR involved.
 
-2. SPEC.md:240–242 — *"The ``go/*`` tree is reused **verbatim** from the tracked release and re-vendored **atomically** (frontend + stdlib as one unit) every release."* (GG-0012)
+2. SPEC.md:240–242 — *"The ``go/*`` tree is reused **verbatim** from the tracked release and re-vendored **atomically** (frontend + stdlib as one unit) every release."* (`GG-0012`)
    → Paraphrase: never fork or hand-port `go/*`; vendor it whole each release.
    Normative counterexample: *"pinning the frontend to N while tracking stdlib N+1 does
    not work in general (go1.27's stdlib itself uses a 1.27 language feature, generic
@@ -42,7 +42,7 @@ design; interface freeze impossible without breaking the toil bound (→ archite
 3. SPEC.md:244–246 — *"Old code is supported via per-file/per-module `-lang` gates exactly like the stock toolchain, never by pinning (GG-0013)."*
    → Paraphrase: old language versions are handled by honoring `-lang` flags per file/module, not by keeping an old frontend around.
 
-4. SPEC.md:246–248 — *"The Go 1 compatibility promise covers ``go/*`` as additive-only API `[VERIFIED]`; per-release frontend deltas are new exported API, new accepted syntax, and type-checker behavior behind `-lang` gates."* (GG-0012)
+4. SPEC.md:246–248 — *"The Go 1 compatibility promise covers ``go/*`` as additive-only API `[VERIFIED]`; per-release frontend deltas are new exported API, new accepted syntax, and type-checker behavior behind `-lang` gates."* (`GG-0012`)
    → Paraphrase: frontend upgrades are expected to be additive + gated; the node factory
    must be written against this stability assumption (falsifier: spike 3's dry-run
    measures frontend rebase toil against the ≤200 agent-hour toil bound, SPEC.md:250–251).
@@ -270,7 +270,7 @@ design; interface freeze impossible without breaking the toil bound (→ archite
 ## K. Requirement-ID quick map (Phase-1-relevant GG IDs and their primary homes)
 
 54. GG-0011 (driver wrapper via -toolexec): SPEC §3.1 (items 35, 39), §4.2 (items 36–38).
-    GG-0012 (verbatim frontend vendoring): SPEC §3.2 (items 1, 2, 4). GG-0013 (no language pinning): SPEC §3.2 (item 3).
+    `GG-0012` (verbatim frontend vendoring): SPEC §3.2 (items 1, 2, 4). GG-0013 (no language pinning): SPEC §3.2 (item 3).
     GG-0014 (one Truffle AST): SPEC §3.3 (items 17–20). `GG-0015` (Java-object value model): SPEC §3.4 (items 5–14).
     `GG-0016` (unsafe.Pointer v1): SPEC §3.4 + §7.3 (items 15, 16). GG-0017 (goroutines on vthreads — Phase 2, context only): SPEC §3.5 (item 28).
     GG-0019 (panic/defer/Goexit model): SPEC §3.5 (items 24–27). GG-0020 (intrinsic surface): SPEC §3.6 (items 29, 30), §4.1 (items 40, 41).

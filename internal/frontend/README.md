@@ -69,7 +69,7 @@ registration) and `Json` unit checks.
 
 ## GG status
 
-GG-0012/GG-0013/GG-0044 stay **locked**: WS B sources are landed and tested,
+`GG-0012`/GG-0013/GG-0044 stay **locked**: WS B sources are landed and tested,
 but activation happens at M2 when `NodeFactory` builds straight-line programs
 end-to-end through the `graalgo-run` launcher (per PLAN.md). See
 [`../../phases/phase1/CHECKPOINT.md`](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).

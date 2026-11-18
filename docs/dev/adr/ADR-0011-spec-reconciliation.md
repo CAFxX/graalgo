@@ -4,8 +4,8 @@
 **Status:** accepted 2026-11-18 (coordinator instruction relaying the program
 owner's decisions from the global spec-conformance review; owner
 confirmation of the lock is requested in the review report).
-**Scope:** [SPEC.md](../../arch/SPEC.md) §4.5, §7.15, Appendix B;
-requirement `GG-0055` (superseded) → GG-0065 (new, locked).
+**Scope:** [SPEC.md](../../arch/SPEC.md) §3.2, §3.3, §4.5, §7.15, Appendix B, Appendix C;
+requirements `GG-0055` → GG-0065 (locked), `GG-0012` → GG-0066 (locked, active).
 **Evidence:** the global spec-conformance review of 2026-11-18 (items A2, B2,
 B6, D1, D3); each finding was re-checked against the tree at `cbb2ebd0`
 before it was acted on.
@@ -40,9 +40,27 @@ fixes; the launcher's temporary deviations are recorded separately in
    skips all of them silently) lost their `verifies:` annotations in the
    supersession; the other annotations were re-pointed to GG-0065.
 
+2. **Frontend provenance and GIR (`GG-0012` → GG-0066; review items B2,
+   D1).** toolexec-design D10 (implemented by W1/W2:
+   `internal/toolexec/release`, `TestBuiltByTrackedToolchain`) takes
+   `go/parser` + `go/types` from the toolchain that builds `graalgo-tool` and
+   asserts at build/test time that it is the tracked release. `GG-0012`
+   required a vendored copy, re-vendored atomically and verified
+   byte-identical to upstream — a copy the new path does not use (the one
+   under `internal/frontend/go` serves v1 and is deleted at M3). GG-0066
+   keeps the substance (the frontend *is* the tracked release's `go/*`;
+   frontend and stdlib move as one unit) and replaces the verification with
+   the toolchain assertion. SPEC §3.2/§3.3 now describe the actual pipeline:
+   the frontend runs at compile time inside `graalgo-tool` and serializes a
+   resolved typed AST (GIR) into each package archive; the JVM-side node
+   factory decodes GIR, never Go source. GG-0066 is locked and active: v1's
+   frontend tests (annotations re-pointed) and the toolexec module's
+   `TestBuiltByTrackedToolchain` exercise it; the latter has no `verifies:`
+   annotation yet (code follow-up).
+
 ## Consequences
 
-- SPEC §4.5 and §7.15 state the gc-compatible rule; Appendix B lists
-  `GG-0055` as superseded.
+- SPEC §4.5 and §7.15 state the gc-compatible rule; §3.2/§3.3 the GIR
+  pipeline; Appendix B lists `GG-0055` and `GG-0012` as superseded.
 - Historical records (phase plans and checkpoints, ADR-0002) quote the old
   ID in code font so they keep their meaning.

@@ -7,7 +7,7 @@
 copy of `$GOROOT/src/go` (329 `.go` files, whole tree including
 `go/internal/*`, test files included verbatim).
 
-## Why this shape (GG-0012, GG-0044)
+## Why this shape (`GG-0012`, GG-0044)
 
 SPEC §3.2 / PLAN.md D1 require the `go/*` tree **reused verbatim from the
 tracked release, re-vendored atomically every release, zero local patches**.
@@ -41,7 +41,7 @@ One copy command = one atomic unit (SPEC: "frontend + stdlib as one unit").
 No patch stack exists by construction; rebase conflicts are impossible
 unless someone edits `go/` directly, which the diff gate forbids.
 
-## D1 falsifier watch (GG-0012)
+## D1 falsifier watch (`GG-0012`)
 
 [`export.go`](export.go) uses only long-stable `go/*` APIs (`parser.ParseFile`,
 `types.Config.Check`, `Info.{Types,Defs,Uses}`). If a re-vendoring breaks
