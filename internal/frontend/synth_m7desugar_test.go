@@ -128,22 +128,18 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 // entries for archive/zip and mime/multipart (REVIEW-2026-11-05-15;
 // the 6th, headerFileInfo.Info, added by the NEEDS-FIX fix-up — the
 // guard's EXCLUSIONS had wrongly excused it as unreachable).
-// Table-only by design (step 1 of checkM7DesugarWiring): the full
-// synthetic-package check (steps 2-5) cannot run on this branch's base
-// because the two synthetic packages do not type-check there yet —
-// mime/multipart is blocked by the carried type-error fix (branch
-// review-1105-multipart-typeerr, tip 5225acbe: synth_mime_multipart.go:934,
-// `os` used as a value) and archive/zip by the carried FixedZone fix
-// (branch review-1105-zip-fixedzone, tip ddd8b37d:
-// synth_archive_zip.go:2397, time.FixedZone); buildSyntheticPackage
-// panics on a type error, so loading either package would crash the
-// test binary. The full checkM7DesugarWiring coverage for these five
-// rows was verified in the merged checkout (this lane + both carried
-// branches) and must replace this table-only pinning once the carried
-// branches land — the helper/pair/field values pinned here are the
-// same ones that check verifies (pair structs read from the synth
-// sources; the subset check in check_mr_table_subset.py re-verifies
-// them against the generator on every `make check`).
+// Full checkM7DesugarWiring coverage (steps 1-5): the synthetic-package
+// steps could not run while the two packages did not type-check —
+// mime/multipart was blocked by the type error fixed in
+// review-1105-multipart-typeerr (synth_mime_multipart.go:934, `os` used
+// as a value) and archive/zip by the FixedZone fix in
+// review-1105-zip-fixedzone (synth_archive_zip.go:2397, time.FixedZone).
+// Both fixes are rebased onto master in this lane, so the packages load
+// and steps 2-5 verify the helpers/pairs/fields against the synthetic
+// sources. The ifaceFallback=false pin is kept alongside the full check:
+// checkM7DesugarWiring step 1 does not pin it, and the interface
+// dispatch for these methods goes through
+// classifyUserIfaceMultiResultCall, not the m7 ifaceFallback retry.
 func TestM7ArchiveMimeDesugarWiring(t *testing.T) {
 	if len(m7ArchiveMimeTable) != 6 {
 		t.Fatalf("m7ArchiveMimeTable has %d entries, want 6", len(m7ArchiveMimeTable))
@@ -151,32 +147,16 @@ func TestM7ArchiveMimeDesugarWiring(t *testing.T) {
 	for _, want := range m7ArchiveMimeTable {
 		name := want.pkgPath + "." + want.recvType + "." + want.name
 		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
 			var got *m7MultiResultFunc
 			for i := range m7MultiResultFuncs {
 				mf := &m7MultiResultFuncs[i]
 				if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
-					if got != nil {
-						t.Fatalf("duplicate m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
-					}
 					got = mf
 				}
 			}
 			if got == nil {
 				t.Fatalf("no m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
-			}
-			if got.helper != want.helper {
-				t.Fatalf("table helper = %q, want %q", got.helper, want.helper)
-			}
-			if got.pairType != want.pairType {
-				t.Fatalf("table pairType = %q, want %q", got.pairType, want.pairType)
-			}
-			if len(got.pairFields) != len(want.pairFields) {
-				t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
-			}
-			for i, f := range want.pairFields {
-				if got.pairFields[i] != f {
-					t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
-				}
 			}
 			if got.ifaceFallback {
 				t.Fatalf("table ifaceFallback = true for %s, want false (interface dispatch for these methods goes through classifyUserIfaceMultiResultCall, not the m7 ifaceFallback retry)", name)
