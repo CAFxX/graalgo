@@ -40,11 +40,17 @@ else
     done
 fi
 
-pass=0; fail=0
+# Zero cases is never a pass (a wrong probe-dir would otherwise exit 0).
+if [ "${#cases[@]}" -eq 0 ]; then
+    echo "INFRA: no case*/main.go under $PROBE_DIR" >&2
+    exit 3
+fi
+
+pass=0; fail=0; skip=0
 declare -a rows
 for c in "${cases[@]}"; do
     casedir="$PROBE_DIR/$c"
-    [ -f "$casedir/main.go" ] || { echo "SKIP $c: no main.go"; continue; }
+    [ -f "$casedir/main.go" ] || { echo "SKIP $c: no main.go"; skip=$((skip+1)); continue; }
     # gc leg (module-aware; module cache supplies deps, no network)
     ( cd "$PROBE_DIR" && GOFLAGS=-mod=mod "$GO" build -o "$TMPDIR/$c.gcbin" "./$c" ) \
         || { rows+=("FAIL $c [gc build failed]"); fail=$((fail+1)); continue; }
@@ -85,5 +91,6 @@ for c in "${cases[@]}"; do
 done
 
 printf '%s\n' "${rows[@]}"
-echo "== $pass passed, $fail failed =="
-[ "$fail" = 0 ]
+echo "== $pass passed, $fail failed, $skip skipped =="
+[ "$pass" -gt 0 ] || { echo "INFRA: no case ran" >&2; exit 3; }
+[ "$fail" = 0 ] && [ "$skip" = 0 ]

@@ -18,7 +18,13 @@ This directory holds end-to-end proofs: real published Go modules compiled
 
 ## Status
 
-`run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
-before it runs again — see the driver-hardening lane.
+`run_module.sh` runs each case under gc and under the product launcher
+([internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run),
+resolved by [test/lib/infra.sh](../lib/infra.sh)) at `--gmp=1` and `--gmp=4`:
+
+```sh
+make build && test/e2e/run_module.sh test/e2e/uuid
+```
+
+It is not part of any gate (needs the module cache for the gc leg). Zero
+cases, or a skipped case, is a failure, never a pass.

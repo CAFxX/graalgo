@@ -17,7 +17,11 @@ on:
       - 'internal/backend/**'
       - 'internal/driver/**'
       - 'cmd/graalgo/**'
+      - 'internal/toolexec/**'
+      - 'stdlib/**'
       - 'test/differential/**'
+      - 'test/lib/**'
+      - 'Makefile'
       - '.github/workflows/conformance.yml'
   pull_request:
     paths:
@@ -25,7 +29,11 @@ on:
       - 'internal/backend/**'
       - 'internal/driver/**'
       - 'cmd/graalgo/**'
+      - 'internal/toolexec/**'
+      - 'stdlib/**'
       - 'test/differential/**'
+      - 'test/lib/**'
+      - 'Makefile'
       - '.github/workflows/conformance.yml'
   workflow_dispatch:
 

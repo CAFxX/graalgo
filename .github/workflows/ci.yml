@@ -1,11 +1,13 @@
 # graalgo CI — per project standing order (2026-10-12): runs `make all`
 # (regenerate generated artifacts + build + gates + fast tests +
 # snapshot-check, the M10 behavior-drift gate) and then
-# `git diff --exit-code`: if `make all` regenerates any tracked file
-# differently from what's committed, the build fails.
+# `git diff --exit-code` + `git status --porcelain`: if `make all`
+# regenerates any file differently from what's committed (or leaves a new
+# untracked one), the build fails.
 #
-# SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
-# (generate/build/check/test-ci) plus the testing-strategy layers at their
+# SCOPE (see [Makefile](../../Makefile) header): per-push CI runs `make all`
+# (generate/build/snapshot-check/check/module tests/test-ci/test-java-fast/
+# test-regression) plus the testing-strategy layers at their
 # cadence (SPEC §5):
 #   layer 1 (smoke):            per-commit  — `make all` -> snapshot-check:
 #                               the differential corpus under graalgo vs
@@ -41,7 +43,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (wt.py integrate + push, no PR) — a shallow checkout has no
+          # (fast-forward merge of a lane branch + push, no PR) — a shallow checkout has no
           # HEAD~1 and the gate would fail loudly instead of inspecting.
           fetch-depth: 0
 
@@ -81,8 +83,14 @@ jobs:
       - name: make all (generate + build + check + fast tests)
         run: make all
 
-      - name: Fail on drift (generated files differ from committed)
-        run: git diff --exit-code
+      - name: Fail on drift (generated files differ from committed, or new untracked files)
+        # `git diff --exit-code` alone misses a generated file that is
+        # untracked (never committed): porcelain lists both.
+        run: |
+          git diff --exit-code
+          if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+            echo "DRIFT: make all left modified or untracked files:"; git status --porcelain --untracked-files=all; exit 1
+          fi
 
       - name: Harness self-test (diffharness comparator, gc-vs-gc)
         # Builds/vets/unit-tests the harness and checks the comparator on

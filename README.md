@@ -20,8 +20,14 @@ go run main.go
 go test ./...
 ```
 
-`graalgo` supports the `build`, `run`, `test`, `vet`, and `fmt` commands
-(see [cmd/graalgo/](cmd/graalgo/) and [internal/driver/](internal/driver/)).
+Today `graalgo` is the **v1** driver, a custom reimplementation of the
+`build`, `run`, `test`, `vet`, and `fmt` commands (see
+[cmd/graalgo/](cmd/graalgo/) and [internal/driver/](internal/driver/)). It is
+pending replacement at M3 by a thin launcher that runs the stock `go`
+command with a `-toolexec` wrapper
+([internal/toolexec/](internal/toolexec/),
+[docs/arch/toolexec-design.md](docs/arch/toolexec-design.md)); the recovery
+plan is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md).
 
 ## Repository layout
 
@@ -32,15 +38,20 @@ principles, and what is intentionally not in the repo — is
 
 The short version:
 
-- [cmd/graalgo/](cmd/graalgo/) — the binary: `build`, `run`, `test`, `vet`,
-  `fmt`.
-- [internal/](internal/) — the implementation: `frontend/` (Go source → IR),
-  `ir/`, `backend/` (`truffle/` — nodes + runtime, `interop/`), `driver/` (build
-  orchestration).
-- [stdlib/](stdlib/) — stdlib support: `synthetic/` (documented
-  workarounds), `patches/` (minimal diffs vs upstream Go).
+- [cmd/graalgo/](cmd/graalgo/) — the v1 driver binary: `build`, `run`,
+  `test`, `vet`, `fmt` (replaced at M3 by the toolexec launcher).
+- [internal/](internal/) — the implementation:
+  [toolexec/](internal/toolexec/) (the `-toolexec` wrapper, launcher, and the
+  GIR typed IR), [frontend/](internal/frontend/) (v1: Go source → JSON IR,
+  incl. the frozen `synth_*.go` stdlib replacements),
+  [backend/](internal/backend/) ([truffle/](internal/backend/truffle/) —
+  nodes + runtime, [gir/](internal/backend/gir/) — Java GIR codec,
+  [interop/](internal/backend/interop/)), [driver/](internal/driver/) (v1
+  build orchestration), [vet/](internal/vet/) (v1 `graalgo vet` analyzers).
+- [stdlib/](stdlib/) — `patches/` (minimal diffs vs upstream Go).
 - [test/](test/) — `corpus/`, `differential/` (run vs `gc`, byte-compare),
-  `e2e/` (real published modules), `snapshots/` (behavior baselines).
+  `e2e/` (real published modules), `snapshots/` (gc behavior baselines),
+  `regression/`, `jit/`, `java/`.
 - [docs/](docs/) — `arch/`, `dev/`, `spec/`, and the map itself.
 
 Build and test with [Makefile](Makefile) (`make all`); the agent operating

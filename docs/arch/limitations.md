@@ -9,7 +9,7 @@ Guest-language recursion burns host (JVM) stack: each Go call frame costs
 several JVM frames through Truffle dispatch. With the pinned `-Xss32m`
 (M5 stance), measured 2026-10-05: depths 1k/5k/10k/15k run clean (exit 0);
 20k/30k/100k report `graalgo-run: stack overflow` on stderr, exit 2
-(log: `hidden_files/m10_selfattack/DEPTH_LIMIT.log`). No JVM trace leaks.
+(the original run log was research scratch and was not kept; the regression test below re-checks the 100k case). No JVM trace leaks.
 
 gc grows goroutine stacks dynamically, so very deep recursion that gc
 accepts is rejected here. This is an interpreter-architecture limit, not
