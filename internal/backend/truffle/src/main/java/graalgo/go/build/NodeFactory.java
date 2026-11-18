@@ -130,12 +130,18 @@ public final class NodeFactory {
     private static final boolean TRACE_DEFER_PATH = Boolean.getBoolean("graalgo.go.traceDeferPath");
     private static final boolean FORCE_DEFER_CHAIN = Boolean.getBoolean("graalgo.go.forceDeferChain");
     private boolean inThunk;
+    /** Nesting depth of range-over-func bodies being built (their defers and recover differ). */
+    private int rangeFuncDepth;
+    /** The frame slot of the running range-over-func loop's defer record; -1 until needed. */
+    private int rangeDeferSlot = -1;
     /**
      * The body is a generated forwarding literal (GIR {@code FuncLit.wrapper}, gc's WRAPPER):
      * its calls pass {@code recover()} eligibility on ({@link Calls#passRecover}).
      */
     private boolean wrapper;
     private int litCount;
+    /** gc names a range-over-func body {@code f-rangeN}, numbered apart from literals. */
+    private int rangeCount;
 
     private NodeFactory(FunctionUnit.Instance inst, Gir.FuncBody body, String name) {
         this.inst = inst;
@@ -1827,7 +1833,8 @@ public final class NodeFactory {
             }
             case Gir.Builtin.RECOVER:
                 // `defer recover()` does not recover: recover is not called by a deferred function.
-                return inThunk ? new N.ConstRef(null) : new Calls.Recover();
+                // Nor does recover() in a range-over-func body: the body runs inside yield.
+                return inThunk || rangeFuncDepth > 0 ? new N.ConstRef(null) : new Calls.Recover();
             default: {
                 Stmt s = builtinStmt(c, given);
                 if (s != null) {
@@ -1844,6 +1851,17 @@ public final class NodeFactory {
         Supplier<Expr> a0 = () -> given != null ? given[0] : expr(a[0]);
         switch (c.builtin()) {
             case Gir.Builtin.PRINT, Gir.Builtin.PRINTLN: {
+                if (given == null && a.length == 1 && ty(a[0]).kind == GoType.TUPLE) {
+                    // println(f()) with a multi-valued f: the results are the operands.
+                    GoType[] ts = ty(a[0]).results;
+                    int tuple = tempObject();
+                    Expr[] xs = new Expr[ts.length];
+                    for (int i = 0; i < ts.length; i++) {
+                        xs[i] = new Calls.TupleGet(new N.ReadRef(tuple), i);
+                    }
+                    return new Ctl.Block(new Stmt[] {new N.WriteRef(tuple, expr(a[0])),
+                            new Data.Print(ts, xs, c.builtin() == Gir.Builtin.PRINTLN)});
+                }
                 GoType[] ts = new GoType[a.length];
                 Expr[] xs = new Expr[a.length];
                 for (int i = 0; i < a.length; i++) {
@@ -1940,6 +1958,10 @@ public final class NodeFactory {
             case Gir.Stmt.Go g:
                 return new Calls.Go(prepared(g.call(), tempObject()));
             case Gir.Stmt.Defer d: {
+                if (rangeFuncDepth > 0) {
+                    // Attaches to the enclosing function (never open-coded: see the constructor).
+                    return new graalgo.go.nodes.RangeFunc.Defer(prepared(d.call(), tempObject()), rangeDeferSlot);
+                }
                 if (!openDefers) {
                     return new Calls.Defer(prepared(d.call(), tempObject()));
                 }
@@ -2512,6 +2534,39 @@ public final class NodeFactory {
         return e != null && !(e instanceof Gir.Expr.Blank);
     }
 
+    /** Range over a function: see {@link graalgo.go.nodes.RangeFunc}. */
+    private Stmt rangeFunc(Gir.Stmt.Range r, Target target, GoType seqType) {
+        GoType[] yp = seqType.params[0].u().params;
+        int keySlot = yp.length > 0 ? tempObject() : -1;
+        int valueSlot = yp.length > 1 ? tempObject() : -1;
+        List<Stmt> body = new ArrayList<>();
+        if (used(r.key())) {
+            body.add(rangeVar(r, r.key(), iterValue(yp[0], keySlot)));
+        }
+        if (used(r.value())) {
+            body.add(rangeVar(r, r.value(), iterValue(yp[1], valueSlot)));
+        }
+        boolean[] defers = new boolean[1];
+        walk(r.body(), s -> defers[0] |= s instanceof Gir.Stmt.Defer);
+        if (defers[0] && rangeDeferSlot < 0) {
+            rangeDeferSlot = tempObject();
+        }
+        rangeFuncDepth++;
+        targets.push(target);
+        body.add(block(r.body()));
+        targets.pop();
+        rangeFuncDepth--;
+        RootCallTarget yield = new graalgo.go.nodes.RangeFunc.YieldRoot(lang, name + "-range" + (++rangeCount),
+                seq(body), keySlot, valueSlot, target.brk, target.cont).getCallTarget();
+        return new graalgo.go.nodes.RangeFunc(expr(r.x()), yield, defers[0] ? rangeDeferSlot : -1);
+    }
+
+    /** A yield argument from its slot: a struct/array value is copied into the variable. */
+    private static Expr iterValue(GoType t, int slot) {
+        Expr e = new N.ReadRef(slot);
+        return t.carrier() == GoType.C_FLAT ? new Mem.Copy(e) : typed(t, e);
+    }
+
     private Stmt range(Gir.Stmt.Range r) {
         Target target = new Target(takeLabel(), true);
         GoType xt = ty(r.x()).u();
@@ -2625,7 +2680,7 @@ public final class NodeFactory {
                 return seq(out);
             }
             case GoType.FUNC:
-                throw new Unsupported("range over func");
+                return rangeFunc(r, target, xt);
             default: {
                 if (!xt.isInteger()) {
                     throw new Unsupported("range over " + xt.key);

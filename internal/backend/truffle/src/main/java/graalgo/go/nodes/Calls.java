@@ -230,7 +230,16 @@ public final class Calls {
             while (g.defers != mark) {
                 G.Defer d = g.defers;
                 g.defers = d.next;
-                cur = callDeferred(site, d.target, d.args, cur);
+                if (d instanceof G.RangeDefers r) {
+                    // The defers of a range-over-func body (RangeFunc), in their place.
+                    while (r.list != null) {
+                        G.Defer x = r.list;
+                        r.list = x.next;
+                        cur = callDeferred(site, x.target, x.args, cur);
+                    }
+                } else {
+                    cur = callDeferred(site, d.target, d.args, cur);
+                }
             }
             if (cur != null) {
                 throw cur;

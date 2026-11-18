@@ -48,7 +48,7 @@ status=0
 ( cd "$TMP" && GRAALGO_JAVA_OPTS="${GRAALGO_JAVA_OPTS:-} -Dgraalgo.go.traceDeferPath=true" TMPDIR="$TMP" \
     timeout "$TIMEOUT" "$TMP/gg.bin" >/dev/null 2>"$TMP/trace" </dev/null ) || status=$?
 infra_check_run defer_limit "$status" "$TMP/trace"
-for want in "main.atLimit open-coded" "main.overLimit chain" "main.inLoop chain" \
+for want in "main.atLimit open-coded" "main.overLimit chain" "main.inLoop chain" "main.inRangeFunc chain" \
         "main.outerOpen open-coded" "main.middleChain chain" "main.innerOpen open-coded"; do
     if grep -qx "graalgo: defer path $want" "$TMP/trace"; then
         echo "PASS defer path $want"

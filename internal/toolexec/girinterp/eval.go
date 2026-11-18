@@ -3,6 +3,7 @@ package girinterp
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"strconv"
 	"strings"
 
@@ -685,8 +686,10 @@ func (in *Interp) applyBuiltin(fr *frame, x *ir.BuiltinCallExpr, args []Value, d
 		}
 		in.panicValue(v)
 	case ir.BuiltinRecover:
-		if deferred {
-			return Iface{} // recover() deferred directly is not called by a deferred function
+		if deferred || fr.rangeBody > 0 {
+			// recover() deferred directly, or in a range-over-func body (which
+			// runs inside yield), is not called by a deferred function
+			return Iface{}
 		}
 		p := fr.deferOf
 		if p == nil || p.recovered {
@@ -934,6 +937,24 @@ func floatMinMax(r, x float64, isMin, f32 bool) Value {
 	return v
 }
 
+// addrOf renders the address a gc program would print for a reference-like
+// value: the interpreter object's own address (the Go heap's, so shaped like
+// gc's), 0x0 for nil. Only the differential normalizer masks it — the
+// interpreter never prints the mask token itself.
+func addrOf(v Value) string {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Chan, reflect.Func, reflect.Slice:
+		if rv.IsNil() {
+			return "0x0"
+		}
+		return fmt.Sprintf("%#x", rv.Pointer())
+	case reflect.Invalid:
+		return "0x0"
+	}
+	return fmt.Sprintf("%p", &v) // a value copied into the interface: its box
+}
+
 // printArg formats one print/println argument as the runtime does.
 func printArg(v Value) string {
 	switch x := v.(type) {
@@ -941,11 +962,11 @@ func printArg(v Value) string {
 		if x.T == nil {
 			return "(0x0,0x0)"
 		}
-		return "(0xADDR,0xADDR)"
+		return "(" + addrOf(x.T) + "," + addrOf(x.V) + ")"
 	case *Value, *Map, *Chan, *Closure:
-		return "0xADDR"
+		return addrOf(x)
 	case Slice:
-		return "[" + strconv.Itoa(x.Len) + "/" + strconv.Itoa(x.Cap) + "]0xADDR"
+		return "[" + strconv.Itoa(x.Len) + "/" + strconv.Itoa(x.Cap) + "]" + addrOf(x.A)
 	case float32:
 		return strconv.FormatFloat(float64(x), 'g', -1, 32)
 	}

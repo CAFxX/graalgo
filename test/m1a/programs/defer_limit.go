@@ -53,6 +53,21 @@ func inLoop(n int) (s string) {
 	return "loop:"
 }
 
+// Under the limit but in a range-over-func body: the chain; the deferred
+// calls belong to inRangeFunc and run when it returns, after seq2's own.
+func seq2(yield func(int) bool) {
+	defer println("seq2 done")
+	_ = yield(0) && yield(1)
+}
+
+func inRangeFunc() (s string) {
+	defer func() { s += "!" }()
+	for i := range seq2 {
+		defer func() { s += string(rune('x' + i)) }()
+	}
+	return "rangefunc:"
+}
+
 // Panic unwinding through alternating open-coded and chained frames runs
 // every pending defer exactly once, last in first out.
 func outerOpen() {
@@ -79,5 +94,6 @@ func main() {
 	println(overLimit(false))
 	println(overLimit(true))
 	println(inLoop(3))
+	println(inRangeFunc())
 	outerOpen()
 }

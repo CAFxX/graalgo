@@ -286,6 +286,7 @@ type frame struct {
 	deferOf    *goPanic // the panic whose deferred calls invoked this frame
 	pos        ir.PosID
 	inDefer    bool
+	rangeBody  int // > 0 while a range-over-func body runs (inside yield) on this frame
 	retDone    bool
 	litCounter *int
 }
@@ -535,7 +536,7 @@ func (in *Interp) panicText(v Iface) string {
 		}
 		return v.T.Str + "(" + s + ")"
 	}
-	return "(" + v.T.Str + ") 0xADDR"
+	return "(" + v.T.Str + ") " + addrOf(v.V)
 }
 
 func printIndented(s string) string { return strings.ReplaceAll(s, "\n", "\n\t") }
