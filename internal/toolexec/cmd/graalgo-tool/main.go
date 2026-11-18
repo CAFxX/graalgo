@@ -21,10 +21,14 @@
 // the basename "compile", design §1) are expanded and rewritten for the stock
 // tool; "-chain X" runs every stock tool under the user's own -toolexec X.
 //
-// The IR is GIR (internal/toolexec/ir), emitted by internal/toolexec/emit.
-// Skeleton limits, each failing loudly rather than silently: packages
-// compiled with -std get no IR (the stdlib fork of design §5 does not exist
-// yet).
+// The IR is GIR (internal/toolexec/ir), emitted by internal/toolexec/emit
+// for every package cmd/go hands over, the standard library included: the
+// tool has no list of packages. Which standard library it sees is decided
+// by the source tree — graalgo's GOROOT, or upstream's with the fork
+// applied by -overlay (internal/toolexec/fork, design §5.1). Link resolves
+// symbols against the intrinsic registry (internal/toolexec/link, design
+// §5.3) and fails on a reachable function that has neither a Go body nor
+// an intrinsic — which is what a build against an unforked runtime does.
 package main
 
 import (
@@ -55,7 +59,9 @@ import (
 	"graalgo-toolexec/argv"
 	"graalgo-toolexec/bundle"
 	"graalgo-toolexec/emit"
+	"graalgo-toolexec/intrinsics"
 	"graalgo-toolexec/ir"
+	golink "graalgo-toolexec/link"
 	"graalgo-toolexec/release"
 )
 
@@ -189,17 +195,27 @@ func checkToolchain(tool string) {
 	if home == "" {
 		return // development layout: no GOROOT of graalgo's own
 	}
-	want, err := filepath.EvalSymlinks(filepath.Join(home, "goroot"))
-	if err != nil {
-		return
+	// The tools of graalgo's GOROOT may be links into the upstream
+	// distribution it was assembled from (design §5.1): the tool belongs
+	// to the GOROOT if the path cmd/go ran, or what it resolves to, lies
+	// under the GOROOT as named or as resolved.
+	goroot := filepath.Join(home, "goroot")
+	wants := []string{goroot}
+	if r, err := filepath.EvalSymlinks(goroot); err == nil {
+		wants = append(wants, r)
 	}
-	got, err := filepath.EvalSymlinks(tool)
-	if err != nil {
-		got = tool
+	gots := []string{filepath.Clean(tool)}
+	if r, err := filepath.EvalSymlinks(tool); err == nil {
+		gots = append(gots, r)
 	}
-	if !strings.HasPrefix(got, want+string(filepath.Separator)) {
-		fatalf("%s is not a tool of graalgo's GOROOT %s; this graalgo tracks %s (was the toolchain switched with GOTOOLCHAIN?)", tool, want, release.GoVersion)
+	for _, got := range gots {
+		for _, want := range wants {
+			if strings.HasPrefix(got, want+string(filepath.Separator)) {
+				return
+			}
+		}
 	}
+	fatalf("%s is not a tool of graalgo's GOROOT %s; this graalgo tracks %s (was the toolchain switched with GOTOOLCHAIN?)", tool, goroot, release.GoVersion)
 }
 
 // versionProbe answers "<tool> -V=full" (design §2.1). cmd/go hashes the
@@ -361,9 +377,6 @@ func compile(inv *argv.Invocation) {
 		os.Exit(code)
 	}
 	// -race needs no IR difference: link refuses it (design §2.6).
-	if fl.bools["std"] {
-		return // no IR for the unforked standard library in the skeleton
-	}
 	out := fl.values["o"]
 	if out == "" || pkgPath == "" || len(fl.rest) == 0 {
 		fatalf("compile: cannot interpret command line (need -o, -p and source files)")
@@ -567,9 +580,9 @@ func link(args []string) {
 	b := &bundle.Bundle{Runner: os.Getenv("GRAALGO_RUNNER"), X: fl.multi["X"], ModInfo: modinfo}
 	seenMain := false
 	for _, p := range paths {
-		ir, err := archive.Read(pkgFile[p], archive.IRMember)
+		gir, err := archive.Read(pkgFile[p], archive.IRMember)
 		if errors.Is(err, archive.ErrNoMember) {
-			continue // -std package (skeleton) or a package built by plain gc
+			fatalf("link: package %s has no graalgo IR (%s was not compiled through graalgo-tool)", p, pkgFile[p])
 		}
 		if err != nil {
 			fatalf("link: %s: %v", p, err)
@@ -578,18 +591,45 @@ func link(args []string) {
 			seenMain = true
 			b.Main = p
 		}
-		b.Packages = append(b.Packages, bundle.Package{ImportPath: p, IR: ir})
+		b.Packages = append(b.Packages, bundle.Package{ImportPath: p, IR: gir})
 	}
 	if !seenMain {
 		// cmd/go lists the main package in importcfg.link; be robust if
 		// it does not.
-		ir, err := archive.Read(mainArchive, archive.IRMember)
+		gir, err := archive.Read(mainArchive, archive.IRMember)
 		if err != nil {
 			fatalf("link: main package archive %s: %v (was it compiled through graalgo-tool?)", mainArchive, err)
 		}
 		b.Main = "main"
-		b.Packages = append(b.Packages, bundle.Package{ImportPath: "main", IR: ir})
+		b.Packages = append(b.Packages, bundle.Package{ImportPath: "main", IR: gir})
 	}
+	// Symbol resolution and reachability (design §5.3): a reachable
+	// function without a Go body and without an intrinsic fails the link.
+	files := make([]*ir.File, len(b.Packages))
+	for i, p := range b.Packages {
+		f, err := ir.Decode(p.IR)
+		if err != nil {
+			fatalf("link: %s: %v", p.ImportPath, err)
+		}
+		files[i] = f
+	}
+	res, err := golink.Resolve(files, intrinsics.Registry)
+	if err != nil {
+		var le *golink.Error
+		if errors.As(err, &le) {
+			const show = 10
+			for i, problem := range le.Problems {
+				if i == show {
+					fmt.Fprintf(os.Stderr, "graalgo-tool: link: ... and %d more (is the standard library graalgo's fork? design §5.1)\n", len(le.Problems)-show)
+					break
+				}
+				fmt.Fprintf(os.Stderr, "graalgo-tool: link: %s\n", problem)
+			}
+			os.Exit(2)
+		}
+		fatalf("link: %v", err)
+	}
+	b.Resolution = *res
 	stub, err := os.ReadFile(stubPath())
 	if err != nil {
 		fatalf("link: launcher stub: %v", err)

@@ -29,21 +29,17 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 infra_mktemp m1a-defer
 TIMEOUT="${M1A_TIMEOUT:-60}"
 
-mkdir -p "$TMP/bin" "$TMP/gotmp" "$TMP/mod"
-export GOTMPDIR="$TMP/gotmp" GOFLAGS= CGO_ENABLED=0 GOTOOLCHAIN=local
-STUB_ID="GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID"
-( cd "$ROOT/internal/toolexec" \
-    && "$GO" build -o "$TMP/bin/graalgo-tool" ./cmd/graalgo-tool \
-    && "$GO" build -ldflags="-buildid=$STUB_ID" -o "$TMP/bin/graalgo-stub" ./cmd/graalgo-stub ) \
-    || infra_die "cannot build graalgo-tool / graalgo-stub"
+mkdir -p "$TMP/mod"
+# shellcheck source=../lib/toolexec.sh
+. "$HERE/../lib/toolexec.sh"
+toolexec_setup
 
 fail=0
 
 # ---- 1. which path each function takes
 cp "$HERE/programs/defer_limit.go" "$TMP/mod/main.go"
 printf 'module m1a/deferpath\n\ngo 1.27\n' > "$TMP/mod/go.mod"
-( cd "$TMP/mod" && GRAALGO_STUB="$TMP/bin/graalgo-stub" GRAALGO_RUNNER="$RUNNER" \
-    "$GO" build -toolexec "$TMP/bin/graalgo-tool" -o "$TMP/gg.bin" . ) || infra_die "graalgo-tool build failed"
+( cd "$TMP/mod" && toolexec_build "$TMP/gg.bin" "$RUNNER" ) || infra_die "graalgo-tool build failed"
 status=0
 ( cd "$TMP" && GRAALGO_JAVA_OPTS="${GRAALGO_JAVA_OPTS:-} -Dgraalgo.go.traceDeferPath=true" TMPDIR="$TMP" \
     timeout "$TIMEOUT" "$TMP/gg.bin" >/dev/null 2>"$TMP/trace" </dev/null ) || status=$?

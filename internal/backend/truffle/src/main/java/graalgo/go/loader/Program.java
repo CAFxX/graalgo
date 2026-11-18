@@ -1,30 +1,40 @@
 package graalgo.go.loader;
 
-import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import graalgo.gir.Gir;
 import graalgo.gir.GirFile;
+import graalgo.go.intrinsics.IntrinsicTable;
 import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.RuntimeTypes;
 import graalgo.go.types.TypeTable;
 import graalgo.go.values.Flat;
 import graalgo.language.GoLanguage;
-import graalgo.sched.SchedulerCore;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * A loaded bundle (toolexec-design §4.2–4.3; truffle-design §2.2): the context-independent
- * result of {@code GoLanguage.parse} — package units in initialization order, the symbol
- * resolution between them and the intrinsic table. Running it in a context allocates the
- * globals, initializes every package and calls {@code main.main}.
+ * result of {@code GoLanguage.parse} — package units in initialization order and the link's
+ * symbol resolution. Running it in a context allocates the globals, initializes every package
+ * and calls {@code main.main}.
+ *
+ * <p>Symbols are resolved by the linker ({@code internal/toolexec/link}, toolexec-design §5.3),
+ * not here: the bundle's resolution table binds each function that is not its own Go body to
+ * another package's body ({@code //go:linkname}) or to an intrinsic of the registry
+ * ({@link IntrinsicTable}), and names the variables that share storage. A function without a
+ * body and without a binding was unreachable at link time; calling it is the linker's
+ * "undefined" error, at run time.
  *
  * <p>Bundle wire format ({@code internal/toolexec/bundle}): {@code "GGBN" | version | runner |
- * main package | count | x* | modinfo | count | (import path | GIR)*}, unsigned varints and length-prefixed bytes.
+ * main package | count | x* | modinfo | resolution | count | (import path | GIR)*} with
+ * {@code resolution := registry version | registry hash | count | (package | name | intrinsic |
+ * target package | target name)* | count | (package | name | target package | target name)*},
+ * unsigned varints and length-prefixed bytes.
  */
 public final class Program {
     public final GoLanguage language;
@@ -34,42 +44,16 @@ public final class Program {
     /** Packages in initialization order. */
     private final List<PackageUnit> initOrder = new ArrayList<>();
     private PackageUnit main;
-    private final Map<String, RootCallTarget> intrinsics = new HashMap<>();
+    /** Function bindings of the link, by {@code package + '\0' + name}. */
+    private final Map<String, String[]> funcBindings = new HashMap<>();
+    /** Variable aliases of the link, by {@code package + '\0' + name}: target package, name. */
+    private final Map<String, String[]> varAliases = new HashMap<>();
+    private final Map<String, RootCallTarget> intrinsics = new ConcurrentHashMap<>();
 
     private Program(GoLanguage language) {
         this.language = language;
         this.runtime = language.runtimeTypes();
         this.types = runtime.table;
-        // The intrinsic registry until the facade runtime (toolexec W5) provides the package
-        // surface: keyed by gc symbol, reached by a body-less function's linkname or, for a
-        // package the bundle does not carry, by a direct reference ({@link #externalIntrinsic}).
-        intrinsics.put("runtime.nanotime", runtime.nativeTarget("runtime.nanotime", args -> System.nanoTime()));
-        intrinsics.put("runtime.Goexit", runtime.nativeTarget("runtime.Goexit", args -> {
-            graalgo.runtime.Goexit.goexit();
-            return null;
-        }));
-        intrinsics.put("os.Exit", runtime.nativeTarget("os.Exit", args -> exit((long) args[1])));
-    }
-
-    /** {@code os.Exit}: the scheduler's exit request; the calling goroutine never returns. */
-    @TruffleBoundary
-    private static Object exit(long code) {
-        SchedulerCore sc = SchedulerCore.installedOrNull();
-        if (sc == null || !sc.onGoroutine()) {
-            throw new IllegalStateException("os.Exit outside a goroutine");
-        }
-        sc.requestExit((int) code);
-        sc.freezeForExit();
-        throw new IllegalStateException("os.Exit returned");
-    }
-
-    /**
-     * The intrinsic for function {@code symbol} ({@code path.Name}) of a package the bundle does
-     * not carry (the unforked standard library), or null: the facade runtime of toolexec W5
-     * replaces this lookup by real package units.
-     */
-    public RootCallTarget externalIntrinsic(String path, String symbol) {
-        return byPath.containsKey(path) ? null : intrinsics.get(symbol);
     }
 
     /** Decodes a bundle; function bodies stay undecoded. */
@@ -81,8 +65,8 @@ public final class Program {
         }
         pos[0] = 4;
         long version = uvarint(bundle, pos);
-        if (version != 2) {
-            throw new IllegalArgumentException("bundle version " + version + ", this runtime reads 2");
+        if (version != 3) {
+            throw new IllegalArgumentException("bundle version " + version + ", this runtime reads 3");
         }
         bytes(bundle, pos);
         String mainPath = new String(bytes(bundle, pos), StandardCharsets.UTF_8);
@@ -92,6 +76,21 @@ public final class Program {
             bytes(bundle, pos);
         }
         bytes(bundle, pos);
+        long registryVersion = uvarint(bundle, pos);
+        String registryHash = string(bundle, pos);
+        if (registryVersion != IntrinsicTable.VERSION || !registryHash.equals(IntrinsicTable.HASH)) {
+            throw new IllegalArgumentException("bundle was linked against intrinsic registry version "
+                    + registryVersion + " (" + registryHash + "); this runtime implements version "
+                    + IntrinsicTable.VERSION + " (" + IntrinsicTable.HASH + ") — rebuild the program");
+        }
+        for (long n = uvarint(bundle, pos); n > 0; n--) {
+            String key = string(bundle, pos) + '\0' + string(bundle, pos);
+            p.funcBindings.put(key, new String[] {string(bundle, pos), string(bundle, pos), string(bundle, pos)});
+        }
+        for (long n = uvarint(bundle, pos); n > 0; n--) {
+            String key = string(bundle, pos) + '\0' + string(bundle, pos);
+            p.varAliases.put(key, new String[] {string(bundle, pos), string(bundle, pos)});
+        }
         long count = uvarint(bundle, pos);
         List<PackageUnit> units = new ArrayList<>();
         for (long i = 0; i < count; i++) {
@@ -142,14 +141,25 @@ public final class Program {
         return out;
     }
 
+    private static String string(byte[] b, int[] pos) {
+        return new String(bytes(b, pos), StandardCharsets.UTF_8);
+    }
+
     /**
      * gc's order since go1.21 (toolexec-design §3.6): sort by import path, then repeatedly
-     * initialize the first package whose imports are all initialized. Imports outside the
-     * bundle (the unforked standard library, toolexec W5) are skipped.
+     * initialize the first package whose imports are all initialized; {@code runtime} first
+     * (gc's runtime is running before any initializer; packages reach it by
+     * {@code //go:linkname} without importing it). Imports outside the bundle ({@code unsafe})
+     * are skipped.
      */
     private void computeInitOrder(List<PackageUnit> units) {
         List<PackageUnit> pending = new ArrayList<>(units);
         pending.sort((a, b) -> a.path.compareTo(b.path));
+        PackageUnit rt = byPath.get("runtime");
+        if (rt != null) {
+            pending.remove(rt);
+            pending.add(0, rt);
+        }
         Map<String, Boolean> done = new HashMap<>();
         while (!pending.isEmpty()) {
             PackageUnit next = null;
@@ -179,8 +189,7 @@ public final class Program {
     public PackageUnit packageNamed(String path) {
         PackageUnit u = byPath.get(path);
         if (u == null) {
-            throw new IllegalStateException("package " + path + " is not in the bundle (standard-library "
-                    + "packages need the toolexec fork, work package W5)");
+            throw new IllegalStateException("package " + path + " is not in the bundle");
         }
         return u;
     }
@@ -189,21 +198,37 @@ public final class Program {
         return byPath.size();
     }
 
-    /** The Java implementation of a body-less function (toolexec-design §5.3, D9). */
-    RootCallTarget intrinsic(FunctionUnit f) {
-        String linkname = f.pkg.str(f.func.linkname());
-        RootCallTarget t = intrinsics.get(linkname.isEmpty() ? f.symbol : linkname);
-        if (t == null) {
-            for (Gir.Linkname l : f.pkg.sections().pkg.linknames()) {
-                if (f.pkg.str(l.local()).equals(f.pkg.str(f.func.name()))) {
-                    t = intrinsics.get(f.pkg.str(l.remote()));
-                }
+    /**
+     * The link's binding of {@code f} (toolexec-design §5.3, D9): the call target of the Go
+     * body or of the intrinsic it resolves to, or null when {@code f} is simply its own body.
+     * A function with neither body nor binding was unreachable for the linker.
+     */
+    RootCallTarget bound(FunctionUnit f) {
+        String[] b = funcBindings.get(f.pkg.path + '\0' + f.pkg.str(f.func.name()));
+        if (b == null) {
+            if (f.isBodyless()) {
+                throw new IllegalStateException("undefined: " + f.symbol + " (no Go body and no graalgo intrinsic)");
             }
+            return null;
         }
-        if (t == null) {
-            throw new IllegalStateException("undefined: " + f.symbol + " (no Go body and no graalgo intrinsic)");
+        if (b[0].isEmpty()) {
+            return packageNamed(b[1]).funcNamed(b[2]).instance(null).get();
         }
-        return t;
+        return intrinsics.computeIfAbsent(b[0], symbol -> {
+            com.oracle.truffle.api.nodes.RootNode root = IntrinsicTable.root(language, symbol);
+            if (root == null) {
+                throw new IllegalStateException("intrinsic " + symbol + " is not in this runtime's registry");
+            }
+            return root.getCallTarget();
+        });
+    }
+
+    /**
+     * The package and variable that hold the storage of variable {@code name} of {@code u}:
+     * itself, unless {@code //go:linkname} makes it another package's variable.
+     */
+    String[] varAlias(PackageUnit u, String name) {
+        return varAliases.get(u.path + '\0' + name);
     }
 
     /** Fresh, zeroed package-variable storage for one context. */

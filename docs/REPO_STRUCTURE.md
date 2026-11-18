@@ -63,7 +63,19 @@ Related: [Makefile](../Makefile) (root build entry point),
     coverage and GIR size/speed over std;
     [archive/](../internal/toolexec/archive/) reads/extends gc package
     archives; [bundle/](../internal/toolexec/bundle/) is the program-bundle
-    format. Tested by `make test-toolexec`.
+    format (with the link's resolution table);
+    [fork/](../internal/toolexec/fork/) applies the standard-library fork
+    of [stdlib/](../stdlib/) to an upstream GOROOT (validation, strict
+    patch application, `-overlay` file, assembled GOROOT, fork-size audit)
+    and [cmd/graalgo-goroot/](../internal/toolexec/cmd/graalgo-goroot/) is
+    its command (`make goroot`);
+    [intrinsics/](../internal/toolexec/intrinsics/) is the intrinsic
+    registry — [registry.txt](../internal/toolexec/intrinsics/registry.txt)
+    is the single source of truth, from which
+    [gen/](../internal/toolexec/intrinsics/gen/) generates the backend's
+    Java dispatch table; [link/](../internal/toolexec/link/) is link-time
+    symbol resolution and reachability (toolexec-design §5.3).
+    Tested by `make test-toolexec`.
   - [frontend/](../internal/frontend/) — Go source → IR. Moved here from
     `phases/phase1/frontend/` (code lane 2, 2026-10-13). The main Go module
     (own `go.mod`, `package main`) is the `gofrontend` tool:
@@ -145,6 +157,9 @@ Related: [Makefile](../Makefile) (root build entry point),
       [loader/](../internal/backend/truffle/src/main/java/graalgo/go/loader/)
       (bundle, package and lazily decoded function units, generic
       instantiation),
+      [intrinsics/](../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/)
+      (the Java implementations of registered Go symbols and the generated
+      dispatch table `IntrinsicTable.java`),
       [types/](../internal/backend/truffle/src/main/java/graalgo/go/types/)
       (type descriptors interned by canonical key, flat layouts, method
       sets, lazy itabs),
@@ -218,9 +233,21 @@ Related: [Makefile](../Makefile) (root build entry point),
     [`internal/frontend/gen_synth_adapt/`](../internal/frontend/gen_synth_adapt/).
     The full generator→output mapping lives in the `GENERATED_SYNTH` block in
     the [`Makefile`](../Makefile); CI fails on any drift.
+  - [fork/](../stdlib/fork/) — the *replaced* packages of the `-toolexec`
+    path (toolexec-design D8, §5.1): one complete directory per import
+    path, taking the place of upstream's.
+    [fork/runtime/](../stdlib/fork/runtime/) is the facade `runtime` (the
+    identifiers std names outside the runtime family, declarations and
+    documentation upstream's, functions without bodies resolved by the
+    intrinsic registry); [fork/runtime/race/](../stdlib/fork/runtime/race/)
+    is the empty package a `GRAALGO_RACE=ignore` build links.
   - [patches/](../stdlib/patches/) — minimal diffs against upstream
-    [go/](https://go.dev/dl/) sources. Empty where the real sources compile
-    unmodified.
+    [go/](https://go.dev/dl/) sources, as
+    `patches/<import path>/<file>.patch`. Empty where the real sources
+    compile unmodified. Which packages are replaced or patched is exactly
+    what these two directories contain: no tool has a package list, and
+    [internal/toolexec/fork/](../internal/toolexec/fork/) refuses a fork
+    that does not apply exactly to the tracked release.
 - [test/](../test/) — organized by what each suite proves, not by which phase
   wrote it.
   - [corpus/](../test/corpus/) — differential corpus programs (moved here
@@ -252,7 +279,19 @@ Related: [Makefile](../Makefile) (root build entry point),
     snapshot corpus).
   - [lib/](../test/lib/) — [infra.sh](../test/lib/infra.sh), the shared
     exit-code contract of the shell differential runners (0 pass,
-    1 divergence, 2 usage, 3 infrastructure error).
+    1 divergence, 2 usage, 3 infrastructure error);
+    [toolexec.sh](../test/lib/toolexec.sh) builds graalgo-tool, the stub
+    and the standard-library fork overlay for runners of the `-toolexec`
+    path.
+  - [m1r/](../test/m1r/) — the differential gate of the standard library
+    through the `-toolexec` path (`make test-m1r`, not per-push):
+    [run.sh](../test/m1r/run.sh) builds each program of
+    [programs/](../test/m1r/programs/) against graalgo's fork with
+    `go build -toolexec graalgo-tool`, runs it on the new node package and
+    compares stdout, normalized stderr and exit status with gc.
+    [quarantine/](../test/m1r/quarantine/) holds reproducers of runtime
+    defects the gate found outside its subject (not run by default; each
+    file states the defect).
   - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
     runs named backend unit-test classes with per-test timing
     (`make test-java-fast` / `test-java-slow`);

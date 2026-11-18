@@ -43,13 +43,9 @@ infra_mktemp m1a-bench
 TIMEOUT="${BENCH_TIMEOUT:-600}"
 BASE_OPTS="${GRAALGO_JAVA_OPTS:--Xmx2g}"
 
-mkdir -p "$TMP/bin" "$TMP/gotmp"
-export GOTMPDIR="$TMP/gotmp" GOFLAGS= CGO_ENABLED=0 GOTOOLCHAIN=local
-STUB_ID="GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID"
-( cd "$ROOT/internal/toolexec" \
-    && "$GO" build -o "$TMP/bin/graalgo-tool" ./cmd/graalgo-tool \
-    && "$GO" build -ldflags="-buildid=$STUB_ID" -o "$TMP/bin/graalgo-stub" ./cmd/graalgo-stub ) \
-    || infra_die "cannot build graalgo-tool / graalgo-stub"
+# shellcheck source=../lib/toolexec.sh
+. "$HERE/../lib/toolexec.sh"
+toolexec_setup
 
 bench_ns() { sed -n "s/^BENCH $2 \([0-9][0-9]*\)\$/\1/p" "$1" | tail -1; }
 
@@ -67,8 +63,7 @@ for name in "$@"; do
     w="$TMP/$name"
     python3 "$HERE/bench.py" "$src" "$w/mod" || exit "$USAGE_EXIT"
     ( cd "$w/mod" && "$GO" build -o "$w/gc.bin" . ) || infra_die "gc build failed: $name"
-    ( cd "$w/mod" && GRAALGO_STUB="$TMP/bin/graalgo-stub" GRAALGO_RUNNER="$RUNNER" \
-        "$GO" build -toolexec "$TMP/bin/graalgo-tool" -o "$w/gg.bin" . ) || infra_die "graalgo-tool build failed: $name"
+    ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) || infra_die "graalgo-tool build failed: $name"
     "$w/gc.bin" >/dev/null 2>"$w/gc.err"
     status=0
     GRAALGO_JAVA_OPTS="$OPTS" TMPDIR="$TMP" nice -n 19 timeout "$TIMEOUT" "$w/gg.bin" >"$w/gg.out" 2>"$w/gg.err" || status=$?

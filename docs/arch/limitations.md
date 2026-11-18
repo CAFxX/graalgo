@@ -3,6 +3,23 @@
 Implementation limits that are fail-fast (clean error, no silent wrong
 result), with re-test triggers for the phase that owns the fix.
 
+## CPU features: none reported (`-toolexec` path)
+
+On the `-toolexec` path (the standard library compiled from upstream's
+source against the facade `runtime`, [toolexec-design.md](toolexec-design.md)
+§5.4) nothing calls `internal/cpu.Initialize`, so `internal/cpu` reports no
+optional CPU feature and every feature-gated path of the standard library
+takes its portable branch. A program behaves as under gc with
+`GODEBUG=cpu.all=off`. The only observable difference found so far is the
+last bit of `math.Exp` (and what is built on it) on hosts with FMA, where
+upstream's amd64 assembly has a second path; the intrinsic ports the path
+without FMA. [test/m1r/run.sh](../../test/m1r/run.sh) therefore runs both
+legs with `GODEBUG=cpu.all=off`.
+
+- Re-test trigger: the parity-stance log (WP-PAR) decides whether graalgo
+  reports the host's features; the intrinsic then reads `math.useFMA` as
+  the assembly does.
+
 ## Stack depth (M10 self-attack)
 
 Guest-language recursion burns host (JVM) stack: each Go call frame costs

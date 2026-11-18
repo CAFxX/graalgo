@@ -51,14 +51,11 @@ infra_mktemp m1a
 TIMEOUT="${M1A_TIMEOUT:-60}"
 NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
 
-# The toolexec tools, built by the tracked gc toolchain.
-mkdir -p "$TMP/bin" "$TMP/gotmp"
-export GOTMPDIR="$TMP/gotmp" GOFLAGS= CGO_ENABLED=0 GOTOOLCHAIN=local
-STUB_ID="GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID/GRAALGO-STUB-BUILDID"
-( cd "$ROOT/internal/toolexec" \
-    && "$GO" build -o "$TMP/bin/graalgo-tool" ./cmd/graalgo-tool \
-    && "$GO" build -ldflags="-buildid=$STUB_ID" -o "$TMP/bin/graalgo-stub" ./cmd/graalgo-stub ) \
-    || infra_die "cannot build graalgo-tool / graalgo-stub"
+# The toolexec tools, built by the tracked gc toolchain, and the
+# standard-library fork they build against (test/lib/toolexec.sh).
+# shellcheck source=../lib/toolexec.sh
+. "$HERE/../lib/toolexec.sh"
+toolexec_setup
 
 if [ $# -eq 0 ]; then
     # The corpus programs that import nothing; all of test/m1a/programs (written for this
@@ -114,8 +111,7 @@ for prog in "${programs[@]}"; do
     reason=""
     if ! ( cd "$w/mod" && "$GO" build -o "$w/gc.bin" . ) >"$w/gc.build" 2>&1; then
         reason="gc rejects the program (corpus bug)"
-    elif ! ( cd "$w/mod" && GRAALGO_STUB="$TMP/bin/graalgo-stub" GRAALGO_RUNNER="$RUNNER" \
-                "$GO" build -toolexec "$TMP/bin/graalgo-tool" -o "$w/gg.bin" . ) >"$w/gg.build" 2>&1; then
+    elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(head -1 "$w/gg.build")"
     else
         gc_status=0

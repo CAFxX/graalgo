@@ -1,0 +1,116 @@
+# The intrinsic registry: the single source of truth for which Go symbols
+# the backend implements in Java (docs/arch/toolexec-design.md D9, §5.3;
+# SPEC §3.6/§4.1; GG-0020, GG-0021, GG-0059).
+#
+# graalgo-tool's link step resolves functions against this table by symbol
+# name (package link; a reachable function without a Go body and without an
+# entry fails the link), and the Java dispatch table
+# (graalgo/go/intrinsics/IntrinsicTable.java) is generated from it by
+# `go generate ./intrinsics` in internal/toolexec, so the two sides cannot
+# list different symbols. Each entry names the Java class whose static
+# method implements it; a missing method is a javac error.
+#
+# Grammar (one declaration per line, '#' starts a comment):
+#   version N
+#   intrinsic SYMBOL CLASS SIGNATURE
+#       a function without a Go body: an assembly function of an upstream
+#       package, a function the runtime provides by //go:linkname, or a
+#       body-less function of a facade package (stdlib/fork).
+#   replace SYMBOL CLASS SIGNATURE
+#       a function WITH a Go body that the backend implements instead, as
+#       gc's compiler does for the same function
+#       (cmd/compile/internal/ssagen/intrinsics.go). Only functions gc
+#       itself intrinsifies on the tracked platform may be listed.
+# SYMBOL is gc's symbol name (import path "." name). SIGNATURE is the
+# function type's canonical key (internal/toolexec/ir/typekey.go); the
+# linker refuses a declaration whose signature differs. CLASS is a class of
+# package graalgo.go.intrinsics; the method is the symbol with every
+# character outside [A-Za-z0-9] replaced by '_', and takes the calling
+# Truffle node followed by the Go arguments in carrier form (integers
+# long, floats double, bool boolean, string Str, anything else Object).
+#
+# Bump `version` for an incompatible edit (a removed symbol or a changed
+# signature). The version and a content hash travel in every linked
+# bundle; the runtime refuses a bundle linked against another registry.
+
+version 1
+
+# --- runtime (facade, stdlib/fork/runtime) -------------------------------
+intrinsic runtime.Gosched      RuntimeIntrinsics func()
+intrinsic runtime.GC           RuntimeIntrinsics func()
+intrinsic runtime.GOMAXPROCS   RuntimeIntrinsics func(int) int
+intrinsic runtime.NumCPU       RuntimeIntrinsics func() int
+intrinsic runtime.nanotime     RuntimeIntrinsics func() int64
+intrinsic runtime.Goexit       RuntimeIntrinsics func()
+intrinsic runtime.runtimeError RuntimeIntrinsics func(int) error
+
+# --- syscall: provided by the runtime through //go:linkname (upstream
+# runtime/runtime.go syscall_Exit) -------------------------------------------
+intrinsic syscall.Exit RuntimeIntrinsics func(int)
+
+# --- maps: provided by the runtime through //go:linkname (upstream
+# runtime/map.go maps_clone) ------------------------------------------------
+intrinsic maps.clone MapsIntrinsics func(interface {}) interface {}
+
+# --- math: the amd64 assembly functions (floor_asm.go, dim_asm.go,
+# hypot_asm.go, exp_asm.go, log_asm.go) --------------------------------------
+intrinsic math.archFloor MathIntrinsics func(float64) float64
+intrinsic math.archCeil  MathIntrinsics func(float64) float64
+intrinsic math.archTrunc MathIntrinsics func(float64) float64
+intrinsic math.archMax   MathIntrinsics func(float64, float64) float64
+intrinsic math.archMin   MathIntrinsics func(float64, float64) float64
+intrinsic math.archHypot MathIntrinsics func(float64, float64) float64
+intrinsic math.archExp   MathIntrinsics func(float64) float64
+intrinsic math.archLog   MathIntrinsics func(float64) float64
+
+# --- math: bit casts. Upstream's bodies reinterpret memory through
+# unsafe.Pointer; gc replaces them by a register move (ssagen
+# intrinsics.go: math.Float64bits, Float64frombits, Float32bits,
+# Float32frombits on every architecture). -----------------------------------
+replace math.Float64bits     MathIntrinsics func(float64) uint64
+replace math.Float64frombits MathIntrinsics func(uint64) float64
+replace math.Float32bits     MathIntrinsics func(float32) uint32
+replace math.Float32frombits MathIntrinsics func(uint32) float32
+
+# --- sync/atomic: the assembly functions (doc.go, doc_64.go) and the
+# pointer forms the runtime provides by //go:linkname
+# (runtime/atomic_pointer.go) ------------------------------------------------
+intrinsic sync/atomic.SwapInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.CompareAndSwapInt32 AtomicIntrinsics func(*int32, int32, int32) bool
+intrinsic sync/atomic.AddInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.AndInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.OrInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.LoadInt32 AtomicIntrinsics func(*int32) int32
+intrinsic sync/atomic.StoreInt32 AtomicIntrinsics func(*int32, int32)
+intrinsic sync/atomic.SwapUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.CompareAndSwapUint32 AtomicIntrinsics func(*uint32, uint32, uint32) bool
+intrinsic sync/atomic.AddUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.AndUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.OrUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.LoadUint32 AtomicIntrinsics func(*uint32) uint32
+intrinsic sync/atomic.StoreUint32 AtomicIntrinsics func(*uint32, uint32)
+intrinsic sync/atomic.SwapInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.CompareAndSwapInt64 AtomicIntrinsics func(*int64, int64, int64) bool
+intrinsic sync/atomic.AddInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.AndInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.OrInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.LoadInt64 AtomicIntrinsics func(*int64) int64
+intrinsic sync/atomic.StoreInt64 AtomicIntrinsics func(*int64, int64)
+intrinsic sync/atomic.SwapUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.CompareAndSwapUint64 AtomicIntrinsics func(*uint64, uint64, uint64) bool
+intrinsic sync/atomic.AddUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.AndUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.OrUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.LoadUint64 AtomicIntrinsics func(*uint64) uint64
+intrinsic sync/atomic.StoreUint64 AtomicIntrinsics func(*uint64, uint64)
+intrinsic sync/atomic.SwapUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.CompareAndSwapUintptr AtomicIntrinsics func(*uintptr, uintptr, uintptr) bool
+intrinsic sync/atomic.AddUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.AndUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.OrUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.LoadUintptr AtomicIntrinsics func(*uintptr) uintptr
+intrinsic sync/atomic.StoreUintptr AtomicIntrinsics func(*uintptr, uintptr)
+intrinsic sync/atomic.SwapPointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer) unsafe.Pointer
+intrinsic sync/atomic.CompareAndSwapPointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) bool
+intrinsic sync/atomic.LoadPointer AtomicIntrinsics func(*unsafe.Pointer) unsafe.Pointer
+intrinsic sync/atomic.StorePointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer)

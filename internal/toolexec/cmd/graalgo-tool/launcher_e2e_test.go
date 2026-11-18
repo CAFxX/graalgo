@@ -45,11 +45,9 @@ func installHome(t *testing.T) *home {
 			t.Fatalf("build %s: %v\n%s", b.pkg, err, out)
 		}
 	}
-	goroot, err := goCmd(t, ".", nil, "env", "GOROOT")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(strings.TrimSpace(goroot), filepath.Join(h.dir, "goroot")); err != nil {
+	// GRAALGO_HOME/goroot is the upstream distribution with the fork
+	// applied (design §5.1); the shallow form suffices to build packages.
+	if err := loadFork(t).Assemble(filepath.Join(h.dir, "goroot"), true); err != nil {
 		t.Fatal(err)
 	}
 	h.runner = filepath.Join(h.dir, "fake-runner")
@@ -153,7 +151,8 @@ func TestLauncherBuildAndRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Main != "example.com/skel" || len(b.Packages) != 2 {
+	// The two user packages, the facade runtime and its two imports.
+	if b.Main != "example.com/skel" || len(b.Packages) != 5 {
 		t.Errorf("bundle main=%q packages=%d", b.Main, len(b.Packages))
 	}
 	out, err := h.graalgo(nil, "run", ".", "x", "-toolexec=y")

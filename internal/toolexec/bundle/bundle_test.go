@@ -13,6 +13,14 @@ func TestRoundTripThroughExecutable(t *testing.T) {
 		Main:    "main",
 		X:       []string{"main.version=v1", "runtime.godebugDefault=panicnil=1"},
 		ModInfo: "path\tmain\n",
+		Resolution: Resolution{
+			RegistryVersion: 7, RegistryHash: "00ff",
+			Funcs: []FuncBinding{
+				{Pkg: "main", Name: "now", Intrinsic: "runtime.nanotime"},
+				{Pkg: "sync", Name: "runtime_Semacquire", TargetPkg: "runtime", TargetName: "sync_runtime_Semacquire"},
+			},
+			Vars: []VarAlias{{Pkg: "math/bits", Name: "overflowError", TargetPkg: "runtime", TargetName: "overflowError"}},
+		},
 		Packages: []Package{
 			{ImportPath: "example.com/m/lib", IR: []byte{1, 2, 3}},
 			{ImportPath: "main", IR: []byte{}},
@@ -30,6 +38,9 @@ func TestRoundTripThroughExecutable(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Decode yields empty-but-non-nil byte slices; compare field by field.
+	if !reflect.DeepEqual(got.Resolution, want.Resolution) {
+		t.Fatalf("resolution: got %+v, want %+v", got.Resolution, want.Resolution)
+	}
 	if got.Runner != want.Runner || got.Main != want.Main || len(got.Packages) != 2 ||
 		got.Packages[0].ImportPath != "example.com/m/lib" || !reflect.DeepEqual(got.Packages[0].IR, []byte{1, 2, 3}) ||
 		got.Packages[1].ImportPath != "main" || len(got.Packages[1].IR) != 0 {

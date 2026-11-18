@@ -53,8 +53,8 @@ public final class FunctionUnit {
         @TruffleBoundary
         private synchronized RootCallTarget build() {
             if (target == null) {
-                target = isBodyless() ? pkg.program.intrinsic(FunctionUnit.this)
-                        : NodeFactory.buildFunction(this);
+                RootCallTarget bound = pkg.program.bound(FunctionUnit.this);
+                target = bound != null ? bound : NodeFactory.buildFunction(this);
             }
             return target;
         }

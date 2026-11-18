@@ -664,9 +664,10 @@ public final class NodeFactory {
         if (u.sections().objects[obj].kind() != Gir.SymKind.VAR) {
             return null;
         }
-        int gp = u.globalPrim(obj);
-        int gr = u.globalRef(obj);
-        int index = u.index;
+        PackageUnit.Global g = u.global(obj); // the storage, after //go:linkname unification
+        int gp = g.unit().globalPrim(g.obj());
+        int gr = g.unit().globalRef(g.obj());
+        int index = g.unit().index;
         return (p, r) -> new Mem.FlatLoc(new Mem.Globals(index), gp + p, gr + r);
     }
 
@@ -860,10 +861,6 @@ public final class NodeFactory {
             case Gir.Expr.Global g:
                 return global(pkg, g.obj(), ty(g.type()), e);
             case Gir.Expr.Ext x: {
-                RootCallTarget ext = externalIntrinsic(x);
-                if (ext != null) {
-                    return new N.ConstRef(new graalgo.go.values.Closure(ext, null));
-                }
                 Gir.SymRef sym = sec.symRefs[x.sym()];
                 PackageUnit u = pkg.packageOf(sym);
                 return global(u, u.objectNamed(pkg.str(sym.name())), ty(x.type()), e);
@@ -1359,20 +1356,6 @@ public final class NodeFactory {
         return null;
     }
 
-    /**
-     * The intrinsic a reference to a function of a package outside the bundle resolves to, or
-     * null (also for packages in the bundle). Until the facade runtime (toolexec W5) exists this
-     * is how {@code runtime.Goexit} and {@code os.Exit} are reached.
-     */
-    private RootCallTarget externalIntrinsic(Gir.Expr fn) {
-        if (fn instanceof Gir.Expr.Ext x) {
-            Gir.SymRef sym = sec.symRefs[x.sym()];
-            String path = pkg.str(sym.pkg());
-            return pkg.program.externalIntrinsic(path, path + "." + pkg.str(sym.name()));
-        }
-        return null;
-    }
-
     /** The statically known callee of a call's function operand, or null. */
     private FunctionUnit.Instance staticCallee(Gir.Expr fn) {
         if (fn instanceof Gir.Expr.Inst in) {
@@ -1486,10 +1469,6 @@ public final class NodeFactory {
     private Expr call(Gir.Expr.Call c) {
         GoType sig = ty(c.fn());
         GoType result = ty(c.type());
-        RootCallTarget ext = externalIntrinsic(c.fn());
-        if (ext != null) {
-            return typed(result, new Calls.Call(() -> ext, args(c.args(), sig, c.spread())));
-        }
         FunctionUnit.Instance callee = staticCallee(c.fn());
         Expr[] a = args(c.args(), sig, c.spread());
         if (callee != null) {
@@ -2248,10 +2227,6 @@ public final class NodeFactory {
             case Gir.Expr.Call c: {
                 GoType sig = ty(c.fn());
                 Expr[] a = args(c.args(), sig, c.spread());
-                RootCallTarget ext = externalIntrinsic(c.fn());
-                if (ext != null) {
-                    return new Calls.PrepStatic(targetSlot, () -> ext, a);
-                }
                 FunctionUnit.Instance callee = staticCallee(c.fn());
                 return callee != null ? new Calls.PrepStatic(targetSlot, callee, a)
                         : new Calls.PrepClosure(targetSlot, expr(c.fn()), a);
