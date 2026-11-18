@@ -457,7 +457,7 @@ hot path at this ratio.
 
 ### 2.5 The conflict that needs a decision: raw fds versus "the netpoller is deleted"
 
-SPEC §3.5/§7.4 (`GG-0018`) decides that blocking `java.nio` operations
+SPEC §3.5/§7.4 (`GG-0018`, since superseded by GG-0063) decided that blocking `java.nio` operations
 replace the netpoller, and toolexec-design §5.6 says `internal/poll`'s
 `runtime_poll*` bind to "the existing blocking-NIO netpoll contract". The
 existing implementation
@@ -477,7 +477,7 @@ hold. Options:
    through the scheduler's wake lane, deadlines on the existing timer heap.
    About 300 lines of Java replacing `GoNetpoll`'s selector half; keeps
    `internal/poll`, `net`, `os` verbatim. It is a netpoller in the sense of
-   `GG-0018`'s text, though not the gc event loop: no carrier ever blocks in
+   `GG-0018`'s (superseded) text, though not the gc event loop: no carrier ever blocks in
    it and blocked goroutines consume no carriers.
 2. **Keep NIO, fork the lower half of `os`/`net`/`internal/poll`** so that
    `poll.FD` wraps a channel: by sysscan's call graph that is the 47
@@ -579,7 +579,7 @@ test/spikes/abi/sysexec/run.sh /some/scratch/dir [bench]            # §2.4, ~30
 
 ## 4. Decisions needed from the owner
 
-1. **Netpoller (SPEC §3.5 / §7.4, `GG-0018`; decided: option 1, GG-0063):** accept a minimal epoll-based
+1. **Netpoller (SPEC §3.5 / §7.4, `GG-0018`, superseded; decided: option 1, GG-0063):** accept a minimal epoll-based
    poller over raw fds in the runtime (§2.5 option 1, recommended), or fork
    the lower half of `net`/`os`/`internal/poll` onto NIO channels. SPEC
    wording changes either way.

@@ -185,7 +185,14 @@ check:
 # Repo-wide static gates (no build needed). Each check_*.py has a
 # test_*.py that plants the violation it guards; every test_*.py runs here.
 check-repo:
-	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py; do echo "== $$t"; python3 $$t; done
+	# Gate self-tests plant violations, so their passing output is full of
+	# gate failure lines, and a "file.go:N: ..." line becomes a fake
+	# ##[error] annotation through setup-go's problem matcher (the top
+	# annotation of a red run pointed at test_check_ratchets.py's planted
+	# tools/b.go). A self-test's output is shown only when it fails.
+	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py; do \
+	  if out=$$(python3 $$t 2>&1); then echo "== $$t: ok"; \
+	  else echo "== $$t: FAILED"; echo "$$out"; exit 1; fi; done
 	python3 .github/scripts/check_tracked_files.py
 	python3 .github/scripts/check_doc_paths.py
 	python3 .github/scripts/check_gg_ids.py
