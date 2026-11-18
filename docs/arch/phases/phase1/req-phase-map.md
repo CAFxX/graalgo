@@ -20,8 +20,8 @@ Phase definitions used (from task brief):
 | GG-0012 | 1 | Use `go/parser`+`go/types` vendored verbatim as frontend, re-vendored atomically per release. | Direct Phase-1 scope: the frontend service. |
 | GG-0013 | 1 | Support older language versions via per-file/per-module `-lang` gates; no pinning below vendored stdlib version. | Language-version policy for the Phase-1 frontend. |
 | GG-0014 | 1 | One Truffle AST from go/ast+go/types feeds all three execution modes; no second backend. | Direct Phase-1 scope: build the AST once, correctly. |
-| GG-0015 | 1 | Go values as Java objects: descriptor-based structs, typed-array slices, (itab,data) interfaces, byte[] strings; opaque pointers. | Direct Phase-1 scope: the descriptor-based value model. |
-| GG-0016 | 1 | `unsafe.Pointer` emulated via handle table; escaping arithmetic traps; restriction documented, never silent. | Language-level unsafe semantics for Phase-1 language tests. |
+| `GG-0015` | 1 | Go values as Java objects: descriptor-based structs, typed-array slices, (itab,data) interfaces, byte[] strings; opaque pointers. | Direct Phase-1 scope: the descriptor-based value model. |
+| `GG-0016` | 1 | `unsafe.Pointer` emulated via handle table; escaping arithmetic traps; restriction documented, never silent. | Language-level unsafe semantics for Phase-1 language tests. |
 | GG-0019 | 1 | panic as AbstractTruffleException, Goexit as ControlFlowException, explicit per-goroutine defer chain, panic(nil)→*PanicNilError. | Direct Phase-1 scope: defer/panic/Goexit model. |
 | GG-0020 | 1 (slice) | Versioned intrinsic surface of ~60–70 functions (memmove/memequal, makeslice/growslice, map/chan/select ops, itab, panic/defer, scheduler, atomics, timers, fastrand, traceback) + exact rtype/itab layouts. | Phase-1 slice: stubs for language tests. Full chan/select/scheduler/timer impl is Phase 2. |
 | GG-0021 | 1 (slice) | Linkname compatibility runtime↔stdlib by symbol name, not gc ABI; linkname-diff step scopes per-release churn. | Phase-1 slice: symbol-name linkage for the stubbed runtime. Per-release churn scoping is cross-cutting. |
@@ -89,7 +89,7 @@ Phase definitions used (from task brief):
 | GG-0003 | 3+ | Expose extra JVM-integration APIs (`graalgo/java` package, polyglot bindings) without altering stock behavior. | Polyglot surface; post-Phase-2, rides on the interop contract. |
 | GG-0005 | 3+ | Bidirectional Go↔Java calls with shared types: copy-vs-view semantics, error↔exception mapping, func↔lambda adapters. | Interop contract; needs value model + Phase-2 scheduling landed. |
 | GG-0009 | 3 | (adapted-fork slice of GG-0009) adapted fork limited to runtime-coupled packages. | Runtime-coupled package adaptation is the Phase-3 core. |
-| GG-0018 | 3 | Go's netpoller event loop deleted; `net` implemented on virtual-thread-friendly blocking NIO. | Explicitly net; "no net/os (Phase 3+)". |
+| `GG-0018` | 3 | Go's netpoller event loop deleted; `net` implemented on virtual-thread-friendly blocking NIO. | Explicitly net; "no net/os (Phase 3+)". |
 | GG-0022 | 3+ | cgo maps to Panama FFI; stock cgo tool + host gcc kept for C side; linux/amd64 first, arm64 second; darwin/windows deferred. | FFI boundary; linux/amd64 first places it Phase 3 at earliest. |
 | GG-0058 | 3+ | momo's MM-0017 verifier ban on C interop gates graalgo's Panama FFI path: module code must not reach the FFI boundary. | Gate on the Phase-3 FFI path. |
 
@@ -128,8 +128,8 @@ Requirements Phase 1 owns or exercises during Phase 1:
 4. GG-0012
 5. GG-0013
 6. GG-0014 (AST construction slice)
-7. GG-0015
-8. GG-0016
+7. `GG-0015`
+8. `GG-0016`
 9. GG-0019
 10. GG-0020 (stubs-for-language-tests slice)
 11. GG-0021 (symbol-name linkage slice)

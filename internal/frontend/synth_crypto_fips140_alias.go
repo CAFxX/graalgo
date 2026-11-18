@@ -2,7 +2,7 @@ package main
 
 // P3-M9 tier-5: synthetic `crypto/internal/fips140/alias` package.
 // The real package uses uintptr(unsafe.Pointer(...)) for overlap detection,
-// which traps under D5 (GG-0016). Calls to AnyOverlap/InexactOverlap are
+// which traps under v1 D5 (GG-0062 supersedes that model). Calls to AnyOverlap/InexactOverlap are
 // intercepted by the frontend (isAliasIntrinsicFunc) and lowered to the
 // "sliceoverlap" wire node (SliceOverlapNode.java), which implements correct
 // overlap detection directly on GoSlice values (array identity + range

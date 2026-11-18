@@ -1,0 +1,11 @@
+id: GG-0062
+title: unsafe.Pointer and uintptr semantics
+statement: 'unsafe.Pointer, and every *T converted from it, SHALL be (referent object, gc byte offset) over the flat values of GG-0061. Arithmetic and conversions inside the referent (unsafe.Add, uintptr(p)+n converted back, (*T)(p) views, unsafe.Slice/String/SliceData/StringData) SHALL have gc layout semantics. uintptr(p) SHALL be a stable integer from a per-process range-allocating handle table (the referent range base plus the byte offset); an integer converted to unsafe.Pointer SHALL resolve to (object, offset) only if it lies inside a live range. Every pointer result, conversion or access that gc''s -d=checkptr instrumentation would reject, and every integer that does not resolve, SHALL be a Go fatal error (exit status 2, goroutine trace) with gc''s checkptr text — "checkptr: pointer arithmetic result points to invalid allocation", "checkptr: converted pointer straddles multiple allocations", or "checkptr: pointer arithmetic computed bad pointer value" — never an uncaught Java exception and never silent; this restriction SHALL be documented.'
+rationale: 'Refines GG-0016 per abi-spike.md §1.3 and §2.3: the handle offset is a gc byte offset, so in-object arithmetic is specified instead of implementation-defined, and verbatim reflect, sync, slices and the syscall executor run unpatched; the trap reuses gc''s own checkptr diagnostics, replacing the v1 behaviour where an escape crashed the JVM with an uncaught UnsafeEscapeException.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: unsafe corpus differential vs gc built with -d=checkptr (trap cases compare fatal-error text and exit status); descview pointer-model checks; uintptr round-trip and out-of-range integer tests; syscall executor handle checks (sysexec).
+history:
+    - '2026-11-18: created (draft), supersedes GG-0016'
+    - '2026-11-18: locked'

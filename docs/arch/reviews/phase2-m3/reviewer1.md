@@ -247,7 +247,7 @@ Sub-period, transient, unobservable in practice — note only. (Also:
 
 ### P2-3. Netpoller-deletion gate does not encode the falsifier's second disjunct
 
-`Makefile:89-93`. PLAN §9 GG-0018: "netpoller code path reachable, **or NIO
+`Makefile:89-93`. PLAN §9 `GG-0018`: "netpoller code path reachable, **or NIO
 bypassing slot discipline** → red". The gate greps only `Netpoll\.`
 (excluding tests, which is correct — deletion tests must reference it).
 No NIO exists in the goroutine path today (`SchedMain`'s `java.nio.file`/
@@ -301,7 +301,7 @@ a machine-check gap only.
    calling-thread CAS guards (`GoroutineHandle.inIo`) fail fast on
    re-entrant `ioEnter`/unpaired `ioExit` with tests.
 6. **Netpoller deletion:** every `Netpoll` method throws UOE documenting
-   GG-0018; the `make check` gate is adequate for `Netpoll.` references;
+   `GG-0018`; the `make check` gate is adequate for `Netpoll.` references;
    no `java.nio`/`java.net` in the scheduled-I/O path.
 7. **Timer mechanics:** `newTicker(0)` panic message byte-matches gc;
    `PriorityQueue` entries are never mutated while queued (pop → mutate →

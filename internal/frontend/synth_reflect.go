@@ -1904,17 +1904,17 @@ func (v Value) Equal(u Value) bool {
 
 // Pointer returns v's value as a uintptr (address escape — D5 trap).
 func (v Value) Pointer() uintptr {
-	panic("reflect: reflect.Value.Pointer: not in M8 scope (uintptr escape traps per D5/GG-0015; no re-test planned)")
+	panic("reflect: reflect.Value.Pointer: not in M8 scope (uintptr escape traps per v1 D5; no re-test planned)")
 }
 
 // UnsafeAddr returns a pointer to v's data (address escape — D5 trap).
 func (v Value) UnsafeAddr() uintptr {
-	panic("reflect: reflect.Value.UnsafeAddr: not in M8 scope (uintptr escape traps per D5/GG-0015; no re-test planned)")
+	panic("reflect: reflect.Value.UnsafeAddr: not in M8 scope (uintptr escape traps per v1 D5; no re-test planned)")
 }
 
 // InterfaceData returns the interface's data pointer (D5 trap).
 func (v Value) InterfaceData() [2]uintptr {
-	panic("reflect: reflect.Value.InterfaceData: not in M8 scope (uintptr escape traps per D5/GG-0015; no re-test planned)")
+	panic("reflect: reflect.Value.InterfaceData: not in M8 scope (uintptr escape traps per v1 D5; no re-test planned)")
 }
 
 // UnsafePointer returns v's value as an unsafe.Pointer.

@@ -1,0 +1,11 @@
+id: GG-0063
+title: Runtime epoll poller over raw fds
+statement: gc's netpoller SHALL be replaced by a small epoll-based poller in the graalgo runtime over raw file descriptors, issuing epoll_create1/epoll_ctl/epoll_wait through the Panama syscall executor, so that internal/poll, net, os and syscall stay verbatim and internal/poll's runtime_poll* linknames are the poller's intrinsics. A goroutine waiting for readiness SHALL park through the scheduler's slot-releasing path (GG-SCHED-0004), holding neither a carrier nor an in-flight slot while blocked, and SHALL be woken through the wake lane; I/O deadlines SHALL use the runtime timer heap. Blocking system calls outside the poller SHALL release the slot around the downcall. No carrier thread SHALL ever block in the poller.
+rationale: 'With verbatim syscall/internal/poll/net (GG-0009) sockets are raw descriptors created by socket(2), and the JDK can neither wait on nor build a channel from a descriptor number, so the blocking-NIO design of GG-0018 cannot coexist with GG-0009 (abi-spike.md §2.5). The poller keeps the property GG-0018 was for: blocked goroutines consume no carriers.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: net, os and os/signal std suites differentially vs gc; the CapExhaustion falsifier ported to fds (N fd-blocked goroutines at cap=N never starve a runnable one); deadline and readiness corpus; sysexec epoll checks.
+history:
+    - '2026-11-18: created (draft), supersedes GG-0018'
+    - '2026-11-18: locked'

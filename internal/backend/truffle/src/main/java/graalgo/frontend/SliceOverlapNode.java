@@ -10,9 +10,9 @@ import graalgo.values.GoSlice;
  *
  * <p>The real stdlib implements these via
  * {@code uintptr(unsafe.Pointer(...))} address arithmetic, which is
- * meaningless on D5 identity tokens (GG-0015/GG-0016: handles are not
- * addresses and admit no byte arithmetic — the token carries identity
- * only). This node implements the overlap detection directly on the
+ * meaningless on v1 D5 identity tokens (handles are not addresses and
+ * admit no byte arithmetic — the token carries identity only; GG-0062,
+ * which supersedes that model, defines in-object arithmetic). This node implements the overlap detection directly on the
  * {@link GoSlice} values: two slices overlap iff they share the same
  * backing array object and their {@code [offset, offset+len)} ranges
  * intersect.

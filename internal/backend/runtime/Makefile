@@ -135,7 +135,7 @@ check: main $(OUT_TEST)/.built
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
-	@echo "== netpoller-deletion gate (GG-0018, P2-M3; updated P3-M9) =="
+	@echo "== v1 netpoller-deletion gate (P2-M3; updated P3-M9; GG-0063 poller replaces it in W8) =="
 	@# P3-M9: the netpoller was re-integrated (phase3 graalgo.p3net.GoNetpoll), so the
 	@# P2-M3 deletion premise no longer holds. This disjunct now guards against
 	@# *code* references to netpoller paths in this module; the ParkReason.java javadoc
@@ -148,7 +148,7 @@ check: main $(OUT_TEST)/.built
 	@# code-source URI parsing — not network I/O; the phase-1 tree never
 	@# ran this gate.
 	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
-		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (GG-0018 second disjunct)"; exit 1; fi
+		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (slot discipline, GG-SCHED-0004)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
 	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
 	@echo "-- each pattern guards a way Go references could bypass JVM GC barriers;"

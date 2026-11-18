@@ -43,7 +43,7 @@ public final class Drainer {
     private final java.util.Map<Long, Long> parked = new java.util.HashMap<>();
     // handle id -> pending unpark arrived before the PARKED token.
     private final java.util.Set<Long> unparkPending = new java.util.HashSet<>();
-    // handle ids currently in blocking I/O (P2-M3, GG-0018): slot
+    // handle ids currently in blocking I/O (P2-M3, GG-0063): slot
     // released, vthread blocked in the syscall (not parked). IO_EXIT
     // re-admits through the WAKE lane.
     private final java.util.Set<Long> inIo = new java.util.HashSet<>();
@@ -201,7 +201,7 @@ public final class Drainer {
                 }
             }
             case IO_ENTER -> {
-                // Slot-releasing blocking I/O (P2-M3, GG-0018,
+                // Slot-releasing blocking I/O (P2-M3, GG-0063,
                 // GG-SCHED-0004): the goroutine no longer counts against
                 // the in-flight cap while blocked in the syscall.
                 if (!inIo.add(token.handle.id)) {

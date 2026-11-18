@@ -9,7 +9,7 @@ import graalgo.sched.SchedulerCore;
 import graalgo.sched.GoroutineHandle;
 
 /**
- * Scheduler-owned timer heap (P2-M3, WS C; GG-SCHED-0004, GG-0018).
+ * Scheduler-owned timer heap (P2-M3, WS C; GG-SCHED-0004, GG-0063).
  *
  * <p>A priority queue of deadlines served by a single daemon platform
  * thread (not a carrier — it never runs goroutines and never counts
@@ -35,8 +35,8 @@ import graalgo.sched.GoroutineHandle;
  * in the order heap-lock → owner-lock (never the reverse). Channel
  * monitor is the leaf: heap → owner → chan.
  *
- * <p>verifies: GG-SCHED-0004 (timer slice), GG-0018 (timer heap, not a
- * netpoller — readiness-based I/O does not exist here)
+ * <p>verifies: GG-SCHED-0004 (timer slice), GG-0063 (I/O deadlines live on this
+ * timer heap; v1 has no readiness poller yet)
  */
 public final class TimerHeap {
     /** Callback for channel-timer re-arm/staleness (implemented by GoTimer). */

@@ -137,7 +137,7 @@ stored on the node and exposed via `getSourceSection()` override.
 verified by `StraightLineCorpusTest` (`// verifies: GG-0012`, differential vs
 stock gc). GG-0013/GG-0044 stay **locked** per PLAN.md.
 
-**GG-0015 active** (2026-10-04, M3): the D5 value model
+**`GG-0015` active** (2026-10-04, M3): the D5 value model
 (`graalgo.values`) and the complete expression surface
 (`BinaryOpNode`/`UnaryOpNode`/`ConstNode`/`ConvertNode` at every Go kind)
 are differential-green on the arithmetic corpus, verified by

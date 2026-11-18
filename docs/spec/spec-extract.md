@@ -47,48 +47,48 @@ design; interface freeze impossible without breaking the toil bound (→ archite
    must be written against this stability assumption (falsifier: spike 3's dry-run
    measures frontend rebase toil against the ≤200 agent-hour toil bound, SPEC.md:250–251).
 
-## B. Value model — Java objects throughout (SPEC §3.4; GG-0015, GG-0016)
+## B. Value model — Java objects throughout (SPEC §3.4; `GG-0015`, `GG-0016`)
 
-5. SPEC.md:276–277 — *"descriptor-based structs (per-type descriptor + flat ``long[]`` for scalars + ``Object[]`` for references)"* (GG-0015)
+5. SPEC.md:276–277 — *"descriptor-based structs (per-type descriptor + flat ``long[]`` for scalars + ``Object[]`` for references)"* (`GG-0015`)
    → Paraphrase: Go structs live in a per-type **descriptor + flat `long[]` (scalars) + `Object[]` (references)** layout.
 
-6. SPEC.md:277–279 — *"`one-class-per-struct is rejected because runtime class definition is unavailable in closed-world images`"* (GG-0015)
+6. SPEC.md:277–279 — *"`one-class-per-struct is rejected because runtime class definition is unavailable in closed-world images`"* (`GG-0015`)
    → Paraphrase: never generate one JVM class per Go struct type; the descriptor design
    is load-bearing for Native Image closed-world compatibility.
 
-7. SPEC.md:279–280 — *"slices as `{typedArray, offset, len, cap}` with typed Java arrays"* (GG-0015)
+7. SPEC.md:279–280 — *"slices as `{typedArray, offset, len, cap}` with typed Java arrays"* (`GG-0015`)
    → Paraphrase: slice = typed Java array + offset + len + cap (backing store must be a *typed* Java array).
 
-8. SPEC.md:280–282 — *"maps as a hand-written open-addressing table (Go specifies randomized iteration order, so the runtime must own the iterator)"* (GG-0015)
+8. SPEC.md:280–282 — *"maps as a hand-written open-addressing table (Go specifies randomized iteration order, so the runtime must own the iterator)"* (`GG-0015`)
    → Paraphrase: implement maps as a hand-written open-addressing table; the runtime
    (not any Java map) must own iteration order to give Go's randomized order.
 
-9. SPEC.md:282–283 — *"strings as immutable ``GoString{byte[]}`` (`java.lang.String` is UTF-16 and wrong for arbitrary Go bytes)"* (GG-0015)
+9. SPEC.md:282–283 — *"strings as immutable ``GoString{byte[]}`` (`java.lang.String` is UTF-16 and wrong for arbitrary Go bytes)"* (`GG-0015`)
    → Paraphrase: strings are an immutable `GoString` wrapping `byte[]`; never `java.lang.String` (UTF-16 cannot hold arbitrary Go bytes).
 
-10. SPEC.md:283–284 — *"interfaces as `(dynamicType descriptor, data)` + itab"* (GG-0015)
+10. SPEC.md:283–284 — *"interfaces as `(dynamicType descriptor, data)` + itab"* (`GG-0015`)
     → Paraphrase: interface value = (dynamic-type descriptor, data) + itab.
 
-11. SPEC.md:284–285 — *"closures as `{RootCallTarget, MaterializedFrame|null}`"* (GG-0015)
+11. SPEC.md:284–285 — *"closures as `{RootCallTarget, MaterializedFrame|null}`"* (`GG-0015`)
     → Paraphrase: closure = RootCallTarget + optional MaterializedFrame for captures.
 
-12. SPEC.md:285–287 — *'"Go pointer" = opaque Java reference: the GC moves objects freely; write barriers and exact roots come free from the JVM'* (GG-0015)
+12. SPEC.md:285–287 — *'"Go pointer" = opaque Java reference: the GC moves objects freely; write barriers and exact roots come free from the JVM'* (`GG-0015`)
     → Paraphrase: a Go pointer is an opaque Java reference; rely on JVM write barriers
     and exact roots (no manual barrier machinery in Phase 1).
 
-13. SPEC.md:287–288 — *"pinning happens only at the cgo/FFI boundary, scoped to the call `[DECIDED]`"* (GG-0015)
+13. SPEC.md:287–288 — *"pinning happens only at the cgo/FFI boundary, scoped to the call `[DECIDED]`"* (`GG-0015`)
     → Paraphrase: object pinning is allowed only at the cgo/FFI boundary and only for
     the call's duration (out of Phase 1 scope, but constrains the pointer model).
 
-14. SPEC.md:288–289 — *"Off-heap as primary storage is rejected (scoped verdict, T5 §2.3): for a managed Go implementation it reimplements the GC's job worse."* (GG-0015)
+14. SPEC.md:288–289 — *"Off-heap as primary storage is rejected (scoped verdict, T5 §2.3): for a managed Go implementation it reimplements the GC's job worse."* (`GG-0015`)
     → Paraphrase: values live on the managed heap; do not build an off-heap value store.
 
-15. SPEC.md:290–292 — *"``unsafe.Pointer`` v1 = handle-table emulation (object identity + field offset); arithmetic escaping the object traps — a documented semantic restriction, never silent (GG-0016) `[DECIDED]`."* (also §7.3 closure, SPEC.md:910–913)
+15. SPEC.md:290–292 — *"``unsafe.Pointer`` v1 = handle-table emulation (object identity + field offset); arithmetic escaping the object traps — a documented semantic restriction, never silent (`GG-0016`) `[DECIDED]`."* (also §7.3 closure, SPEC.md:910–913)
     → Paraphrase: `unsafe.Pointer` is emulated as a handle table (object identity +
     field offset); out-of-object arithmetic **traps** and the restriction must be
     documented, never silently divergent.
 
-16. SPEC.md:293–294 — falsifier for the v1 unsafe semantics: *"if `reflect`'s 243 unsafe uses require true raw-address arithmetic beyond what the handle table + a raw-address FFM-arena mode can cover, the v1 semantics are re-scoped."* (GG-0016)
+16. SPEC.md:293–294 — falsifier for the v1 unsafe semantics: *"if `reflect`'s 243 unsafe uses require true raw-address arithmetic beyond what the handle table + a raw-address FFM-arena mode can cover, the v1 semantics are re-scoped."* (`GG-0016`)
     → Paraphrase: Phase-1 `unsafe` semantics must survive spike-4's evidence — the
     handle table + an isolated FFM-arena raw-address mode already passed spike 4
     against `reflect`'s 243 unsafe uses (SPEC.md:10.1 ledger).
@@ -271,8 +271,8 @@ design; interface freeze impossible without breaking the toil bound (→ archite
 
 54. GG-0011 (driver wrapper via -toolexec): SPEC §3.1 (items 35, 39), §4.2 (items 36–38).
     GG-0012 (verbatim frontend vendoring): SPEC §3.2 (items 1, 2, 4). GG-0013 (no language pinning): SPEC §3.2 (item 3).
-    GG-0014 (one Truffle AST): SPEC §3.3 (items 17–20). GG-0015 (Java-object value model): SPEC §3.4 (items 5–14).
-    GG-0016 (unsafe.Pointer v1): SPEC §3.4 + §7.3 (items 15, 16). GG-0017 (goroutines on vthreads — Phase 2, context only): SPEC §3.5 (item 28).
+    GG-0014 (one Truffle AST): SPEC §3.3 (items 17–20). `GG-0015` (Java-object value model): SPEC §3.4 (items 5–14).
+    `GG-0016` (unsafe.Pointer v1): SPEC §3.4 + §7.3 (items 15, 16). GG-0017 (goroutines on vthreads — Phase 2, context only): SPEC §3.5 (item 28).
     GG-0019 (panic/defer/Goexit model): SPEC §3.5 (items 24–27). GG-0020 (intrinsic surface): SPEC §3.6 (items 29, 30), §4.1 (items 40, 41).
     GG-0021 (linkname by symbol name): SPEC §3.6 (items 31, 32). GG-0024 (debugging/SourceSections): SPEC §3.10 (item 22).
     GG-0030/GG-0031 (differential oracle + nondeterminism controls): SPEC §5.5 (item 46). GG-0032 (conformance corpora): SPEC §5.2 (item 44).

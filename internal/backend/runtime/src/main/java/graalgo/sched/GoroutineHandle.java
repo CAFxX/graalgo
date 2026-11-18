@@ -93,7 +93,7 @@ public final class GoroutineHandle {
     final AtomicReference<Runnable> wakeAction = new AtomicReference<>();
 
     /**
-     * Blocking-I/O flag (P2-M3, GG-0018): set by {@code ioEnter},
+     * Blocking-I/O flag (P2-M3, GG-0063): set by {@code ioEnter},
      * cleared by {@code ioExit}, on the goroutine's own vthread.
      * Calling-thread fail-fast for re-entrant ioEnter / unpaired ioExit;
      * the drainer's in-I/O set is the authoritative accounting.

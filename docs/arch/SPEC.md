@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Requirements:** 70 total, all locked — `requirements/GG-0001`–`GG-0060`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)) · **Requirements:** 74 records — `requirements/GG-0001`–`GG-0064`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0015`/0016/0018 superseded by GG-0061/0062/0063
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed
@@ -57,7 +57,10 @@ are **[DECIDED]** by this spec; the companion ADR records their rationale and
 signatures. `[PROPOSAL]` appears only where the spec names a *default pending a
 spike verdict*, and is always paired with the `[DECIDED]` decision procedure that
 will settle it. There are **zero `[OPEN]` items on go/no-go questions** — every
-§10 question of the study closes in §7. Go/no-go items are: the program
+§10 question of the study closes in §7. Two architecture items (not go/no-go)
+are `[OPEN]` since 2026-11-18 pending measurement: goroutines in native-image
+modes (§3.5) and the meaning of "performant without the runtime JIT" (§3.9).
+Go/no-go items are: the program
 requirements (§2), the §7 closures, and the §8 risks. Anything labeled
 `[ESTIMATE]` is a quantified judgment, never a measurement; `[SPECULATIVE]` and
 `[UNVERIFIED]` mark claims that must survive the falsifying experiments in §8
@@ -123,9 +126,10 @@ enforced by measurement (GG-0042), not asserted.
 
 ### 2.4 Go↔Java interop, both directions (GG-0005)
 
-Full interop with shared data types `[DECIDED]`, built on `org.graalvm.polyglot`
-with `SCOPED` host access `[VERIFIED]` (the documented safe default for
-untrusted guests). The sharpest edge — view vs copy at the boundary — is decided
+Full interop with shared data types `[DECIDED]`, built on `org.graalvm.polyglot`.
+Host access (Go calling Java) is the embedder's `HostAccess` policy when graalgo
+is embedded, and an allow-listed public access only when a standalone program
+imports `graalgo/java` (§4.3) `[DECIDED]` 2026-11-18. The sharpest edge — view vs copy at the boundary — is decided
 per type in §4.3 with copy as the default. A Java exception crossing into Go is a
 Go `error`, never a Go panic `[DECIDED]`.
 
@@ -185,8 +189,8 @@ and the "beyond gc" pitch shrinks to vectorization.
 
 ### 2.7 Modern JVM integration (GG-0008)
 
-Virtual threads (the goroutine mapping, §3.5), async I/O (blocking NIO on virtual
-threads; io_uring has no JDK JEP as of Oct 2026 `[VERIFIED]` — Loom roadmap only),
+Virtual threads (the goroutine mapping, §3.5), async I/O (a runtime epoll poller
+parking goroutines without holding carriers, §3.5; io_uring has no JDK JEP as of Oct 2026 `[VERIFIED]` — Loom roadmap only),
 GraalVM isolates (§3.11), and JVM-grade observability: custom JFR events
 (goroutine/channel/GC, `graalgo.ModuleCrash` for momo), heap dumps, and VisualVM
 in JIT mode `[DECIDED]`. Known gap, stated plainly: no JMX/VisualVM attach in
@@ -278,30 +282,46 @@ spike 6's re-test triggers (current-LLVM Sulong support, a maintained
 full-language Go→LLVM frontend, or precise-GC/threading/signal primitives in
 Sulong). `[DECIDED]`.
 
-### 3.4 Value model: Java objects throughout (GG-0015, GG-0016)
+### 3.4 Value model: Java objects throughout (GG-0061, GG-0062)
 
 Go values live as Java objects `[DECIDED]`: descriptor-based structs (per-type
 descriptor + flat `long[]` for scalars + `Object[]` for references — one-class-
 per-struct is rejected because runtime class definition is unavailable in
-closed-world images); slices as `{typedArray, offset, len, cap}` with typed Java
+closed-world images). Structs and arrays are **flat**: nested struct and array
+fields are inlined into the enclosing value's `long[]`/`Object[]`, and a per-type
+**leaf table** derived from the gc layout maps each gc byte offset to its slot;
+one Java object per nested struct is not carried into the toolexec backend
+(GG-0061) `[DECIDED]` 2026-11-18. Slices as `{typedArray, offset, len, cap}` with typed Java
 arrays; maps as a hand-written open-addressing table (Go specifies randomized
 iteration order, so the runtime must own the iterator); strings as immutable
 `GoString{byte[]}` (`java.lang.String` is UTF-16 and wrong for arbitrary Go
 bytes); interfaces as `(dynamicType descriptor, data)` + itab; closures as
-`{RootCallTarget, MaterializedFrame|null}`. "Go pointer" = opaque Java reference:
+`{RootCallTarget, MaterializedFrame|null}`. "Go pointer" = Java reference to the
+referent plus a gc byte offset within it, never a native address:
 the GC moves objects freely; write barriers and exact roots come free from the
 JVM; pinning happens only at the cgo/FFI boundary, scoped to the call
 `[DECIDED]`. Off-heap as primary storage is rejected (scoped verdict, T5 §2.3):
 for a managed Go implementation it reimplements the GC's job worse.
 
-`unsafe.Pointer` v1 = handle-table emulation (object identity + field offset);
-arithmetic escaping the object traps — a documented semantic restriction, never
-silent (GG-0016) `[DECIDED]`. **Falsifier:** spike 4 (reflect/unsafe): if
-`reflect`'s 243 unsafe uses require true raw-address arithmetic beyond what the
-handle table + a raw-address FFM-arena mode can cover, the v1 semantics are
-re-scoped.
+`unsafe.Pointer` = `(referent object, gc byte offset)` over flat values; every
+`*T` converted from it is a view at that offset (GG-0062) `[DECIDED]`
+2026-11-18. **In-object arithmetic** (`unsafe.Add`, `uintptr(p)+n` converted
+back, `unsafe.Slice/String`, `(*T)(p)` views) has gc layout semantics.
+`uintptr(p)` is a stable integer from a range-allocating handle table (each
+address-taken object owns a range above any real user address; integer →
+pointer is a floor lookup). **Trap behavior:** a result, conversion or access
+that gc's `-d=checkptr` would reject, or an integer that resolves to no live
+object, is a Go **fatal error** (exit status 2, goroutine trace, unrecoverable)
+with gc's own text — `fatal error: checkptr: pointer arithmetic result points
+to invalid allocation`, `… converted pointer straddles multiple allocations`,
+or `… pointer arithmetic computed bad pointer value`. It is never an uncaught
+Java exception (the v1 `UnsafeEscapeException` crash is non-conforming) and
+never silent; the restriction relative to gc without checkptr is documented.
+Evidence: [abi-spike.md](abi-spike.md) §1 (verbatim reflect on byte-exact
+descriptor images: 607/607 answers identical to gc). **Falsifier:** a std or
+corpus program that gc runs without checkptr errors but that traps here.
 
-### 3.5 Concurrency runtime (GG-0017, GG-0018, GG-0019; GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
+### 3.5 Concurrency runtime (GG-0017, GG-0063, GG-0019; GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
 
 **Goroutine = virtual thread + scheduler token** `[DECIDED]`. `go f(args)` ≡
 `Thread.ofVirtual().start(...)` (JEP 444 `[VERIFIED]`); goroutine-local state
@@ -406,7 +426,9 @@ cap → transient under-utilization; with cap=1 it deadlocked the O5 test barrie
 in the prototype `[VERIFIED]`. **All blocking in the runtime/stdlib adaptation
 layer SHALL go through scheduler-aware primitives** (channel park, timer park,
 sleep, select park, scheduler-token sleep) `[DECIDED]`. Blocking I/O uses the
-**slot-releasing NIO wrapper**: `ioEnter` releases the in-flight slot (the
+**slot-releasing blocking-I/O wrapper** (originally for NIO; since 2026-11-18 it
+brackets blocking syscall downcalls, and readiness waits park via the poller of
+GG-0063): `ioEnter` releases the in-flight slot (the
 drainer decrements `inflight` into a dedicated `ioBlocked` lane — no resume
 token is enqueued), `ioExit` re-acquires via `wakeFifo` on completion
 `[DECIDED]`; both WAKEUP/IOBLOCK orderings are tolerated via `wakePending`.
@@ -435,11 +457,25 @@ cgo-only scope — GG-0057 is extended to them as of 2026-10-03 `[DECIDED]`.
 internals may use it. The `jdk.VirtualThreadPinned` audit stays a Phase-2
 done-gate `[DECIDED]`.
 
-**The netpoller is deleted** (GG-0018) `[DECIDED]`: blocking `java.nio` socket
-operations park the virtual thread inside the slot-releasing NIO wrapper (slot
-released while blocked, re-acquired via `wakeFifo` on readiness); the JDK's
-internal poller handles readiness. This is the entire Loom value proposition
-and the lowest-risk path.
+**Readiness: a runtime epoll poller over raw fds** (GG-0063) `[DECIDED]`
+2026-11-18, superseding "the netpoller is deleted" (`GG-0018`). With verbatim
+`syscall`/`internal/poll`/`net` (GG-0009) sockets are raw descriptors, which the
+JDK cannot wait on. gc's netpoller is therefore replaced by a small epoll-based
+poller in the runtime (one daemon platform thread in `epoll_wait`), issuing
+`epoll_create1/ctl/wait` through the Panama syscall executor (§3.8), so
+`internal/poll`, `net` and `os` stay verbatim and their `runtime_poll*`
+linknames are the poller's intrinsics. A goroutine waiting for readiness parks
+through the scheduler's slot-releasing path (GG-SCHED-0004: no carrier, no
+in-flight slot while blocked) and is woken via `wakeFifo`; deadlines live on the
+runtime timer heap. Blocking syscalls outside the poller release the slot around
+the downcall (`ioEnter`/`ioExit`). Evidence: [abi-spike.md](abi-spike.md) §2.5.
+
+**Goroutines in native-image modes** `[OPEN]` (2026-11-18): a polyglot context
+in a native image runs Truffle "virtual" threads on platform threads, so modes
+(b)/(c) may have goroutine = OS thread (truffle-design amendment A1). Not amended
+until measured: gating work item **P-F** ([truffle-design.md](truffle-design.md)
+§13.2: minimal language image with 10⁴ goroutine threads on the pinned
+`native-image`). Re-test trigger: each GraalVM pin bump.
 
 **Channels** = Java objects (lock, circular buffer over a typed array, two
 wait-queues of scheduler-parked virtual threads); **select** ports
@@ -488,8 +524,9 @@ those IDs encode.
 The runtime exposes a **versioned intrinsic surface of ~60–70 functions**
 `[VERIFIED]` by source measurement of what the coupled stdlib needs: memmove/
 memequal, makeslice/growslice, map/chan/select ops, interface/itab machinery,
-panic/defer, scheduler glue, netpoller API contract (satisfied by blocking NIO
-per §3.5 — the contract `net` calls into, not the deleted event loop), atomics, timers, fastrand, write
+panic/defer, scheduler glue, netpoller API contract (the `runtime_poll*`
+functions `internal/poll` calls, served by the runtime epoll poller of §3.5),
+atomics, timers, fastrand, write
 barrier, traceback — plus **exact `rtype`/itab layouts** for `reflect`'s 243
 `unsafe` uses `[DECIDED]`. Linkname compatibility between graalgo-compiled
 runtime and stdlib is **by symbol name, not gc ABI** (52 stdlib→runtime symbols +
@@ -528,6 +565,19 @@ darwin is a moderate deferral; **Windows is out of v1 scope** — 2–3× cost (
 verdict-scope ledger (§10.2): re-measure after Linux is green. `runtime/cgo` +
 `plugin` are stubbed as unsupported initially (plugin's full scope is §7.7).
 
+**System calls and process creation** `[DECIDED]` 2026-11-18. `syscall`,
+`internal/syscall/unix`, `internal/poll` and `os` are verbatim; their raw entry
+points dispatch through a per-number **role table** whose roles name Go types
+(never sizes) and one Panama downcall to libc `syscall(2)`, with call-scoped
+copy in/out of `uintptr` handles (§3.4); unknown numbers fail loudly and the
+table is gated against the types std's call sites pass (a wrong entry is
+memory-unsafe). **Process creation** (`os/exec`, `syscall.ForkExec`): the
+fork/exec child path cannot run in a JVM, so graalgo ships a small helper binary
+in the distribution (`$GRAALGO_HOME/libexec`, all three modes) that is started
+with `posix_spawn`, applies `SysProcAttr` and `exec`s the target; the graalgo
+process never forks; unsupported `SysProcAttr` fields fail loudly (GG-0064).
+Evidence: [abi-spike.md](abi-spike.md) §2.
+
 ### 3.9 Three-mode implementation & packaging (GG-0050)
 
 The FEASIBILITY §5 matrix, as architecture `[DECIDED]`: startup (b) fastest ≈ (c)
@@ -543,7 +593,12 @@ reachability-metadata pipeline, identical in pure AOT and hybrid (GG-0052, §7.6
 **The AOT baseline must be correct and performant without the runtime JIT**
 (GG-0050) `[DECIDED]`: every isolate/generation starts cold and loses its
 profiles on restart, so the JIT is a steady-state bonus, never a correctness or
-tail-latency dependency. W^X platforms veto runtime compilation entirely — that
+tail-latency dependency. **`[OPEN]` (2026-11-18):** in mode (b) Go code runs in
+the Truffle interpreter (Native Image compiles the interpreter, not the
+program), so what "performant without the runtime JIT" means is not yet
+defined (truffle-design amendment A2). Not amended until measured: gating work
+item **P-D** ([truffle-design.md](truffle-design.md) §13.2: the benchmark set
+with `engine.Compilation=false`). W^X platforms veto runtime compilation entirely — that
 is what mode (b) is for. **Falsifiers:** the six experiments in §8 rows 8–13; the meta-gate
 (GG-0049) decides whether (c) stays the default.
 
@@ -635,8 +690,15 @@ this table is):
 `[DECIDED]` — view-vs-copy is the sharpest edge in the contract. Go-from-Java is
 annotation/codegen-driven at build time (closed-world-friendly: no runtime
 reflection scanning, which also keeps the native-image reachability story
-tractable). Host access defaults to `SCOPED`-like scoping, never `ALL`
-`[DECIDED]`. Language features cross the boundary only by explicit decision per
+tractable). **Host access** `[DECIDED]` 2026-11-18 (supersedes "defaults to
+`SCOPED`-like scoping, never `ALL`"): *embedded* — the embedder's `HostAccess`
+policy is used as given (graalgo's embedding helpers default to `SCOPED`);
+*standalone* — only if the program imports `graalgo/java` does the launcher
+enable host class lookup and public access restricted to an allow-list of
+packages (default `java.*`, `javax.*`, extensible by a launcher flag); a program
+that does not import it gets no host access. `ALL` is never used. The "Java"
+column wording above (`Proxy*` vs polyglot `Value`) is pending (truffle-design
+A3). Language features cross the boundary only by explicit decision per
 release (T2 §4.5).
 
 ### 4.4 Build-cache identity (GG-0028)
@@ -916,20 +978,20 @@ parks are semantically safe). **Falsifier:** the preemption-torture suite re-run
 against the spike-2b design (Phase 2) showing systematic divergence the
 user-space scheduler cannot close → kill trigger.
 
-### 7.3 unsafe.Pointer v1 — handle-table emulation
+### 7.3 unsafe.Pointer — gc byte offsets over flat values
 
-**Closure:** §3.4 / GG-0016 `[DECIDED]`. **Falsifier:** spike 4 finds
-`reflect`/`unsafe` requirements (the 243 unsafe uses, measured) that neither the
-handle table nor an isolated FFM-arena raw-address mode can cover → re-scope
-the v1 semantics.
+**Closure:** §3.4 / GG-0062 `[DECIDED]` (amended 2026-11-18; was handle-table
+emulation with object identity + field offset). **Falsifier:** a program gc
+runs cleanly under `-d=checkptr` that traps here, or a verbatim std package
+needing raw addresses the pointer model cannot give → re-scope.
 
-### 7.4 Netpoller — deleted
+### 7.4 Netpoller — runtime epoll poller
 
-**Closure:** §3.5 / GG-0018 `[DECIDED]` — blocking NIO on virtual threads
-replaces the event loop. **Falsifier:** the Phase-2 differential run of the
-`net`/`os/signal` suites against the §3.5 scheduler shows edge-triggered or
-signal-delivery semantics that blocking NIO cannot express → adapt instead of
-delete (scoped workaround, not a program kill).
+**Closure:** §3.5 / GG-0063 `[DECIDED]` (amended 2026-11-18; was "deleted,
+blocking NIO"): a small epoll poller driven through the syscall executor;
+waiting goroutines park through the slot-releasing path. **Falsifier:** the
+`net`/`os/signal` std suites differentially vs gc, and fd-blocked goroutines at
+cap = GOMAXPROCS starving a runnable one → fix the poller (scoped, not a kill).
 
 ### 7.5 cgo→Panama — authorship and platform list
 
@@ -1094,8 +1156,8 @@ Extends [FEASIBILITY.md](FEASIBILITY.md) §11 with the decisions this spec makes
 | Wrap-via-`-toolexec`; fork only as escape hatch | this spec §3.1 (T3 analysis) | `[DECIDED]` |
 | Verbatim `go/*` frontend; atomic re-vendor; `-lang` gates | this spec §3.2 (T2 analysis) | `[DECIDED]` |
 | One Truffle AST; specialization budget only at dynamic sites | this spec §3.3 (T5 adversarial) | `[DECIDED]` |
-| Java-object value model; unsafe v1 = handle table | this spec §3.4 (T5) | `[DECIDED]` |
-| Goroutine = vthread + scheduler token; user-space quantum scheduler (option C); netpoller deleted; panic/defer model | this spec §3.5 (spike 2b PASS) | `[DECIDED]` |
+| Java-object value model (flat, amended 2026-11-18); unsafe = gc byte offsets + checkptr traps | this spec §3.4 (T5; abi-spike) | `[DECIDED]` |
+| Goroutine = vthread + scheduler token; user-space quantum scheduler (option C); runtime epoll poller (amended 2026-11-18); panic/defer model | this spec §3.5 (spike 2b PASS) | `[DECIDED]` |
 | Spike 2 (1:1 on FJP, back-edge yields): KILLED — 0 latency samples, systematic starvation | [spikes/02-loom/](spikes/02-loom/) | `[VERIFIED]` |
 | Spike 2b (option C): PASS — 11,824 vs 0 samples, in-flight cap assert never tripped, 48,140/48,140 parks/admissions, 40,588/40,588 wakeups won, scoped fixes (initFifo, 10ms quantum) | [spikes/02b-userspace-scheduler/](spikes/02b-userspace-scheduler/) | `[VERIFIED]` |
 | Spike 1 (asm/cgo surface taxonomy): PASS — four-strategy classification exhaustive over the cgo-relevant asm surface (scope §7; spike 4 drives `reflect.Value.Call` through it) | [spikes/01-asmcgo/](spikes/01-asmcgo/) | `[VERIFIED]` |
@@ -1179,10 +1241,10 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0012 | Verbatim frontend vendoring | §3.2 |
 | GG-0013 | No language pinning | §3.2 |
 | GG-0014 | One Truffle AST | §3.3 |
-| GG-0015 | Java-object value model | §3.4 |
-| GG-0016 | unsafe.Pointer v1 semantics | §3.4 (§7.3 closure) |
+| `GG-0015` | Java-object value model — superseded by GG-0061 | — |
+| `GG-0016` | unsafe.Pointer v1 semantics — superseded by GG-0062 | — |
 | GG-0017 | Goroutines on virtual threads with user-space scheduler | §3.5 |
-| GG-0018 | Netpoller deletion | §3.5 (§7.4 closure) |
+| `GG-0018` | Netpoller deletion — superseded by GG-0063 | — |
 | GG-0019 | Panic/defer/Goexit model | §3.5 |
 | GG-0020 | Intrinsic surface | §3.6 |
 | GG-0021 | Linkname by symbol name | §3.6 |
@@ -1225,6 +1287,10 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0058 | MM-0017 gate on FFI | §3.7 |
 | GG-0059 | Interface freeze | §4.1, §4.2 |
 | GG-0060 | Mode selection | §2.5 |
+| GG-0061 | Flat Java-object value model | §3.4 |
+| GG-0062 | unsafe.Pointer and uintptr semantics | §3.4 (§7.3 closure) |
+| GG-0063 | Runtime epoll poller over raw fds | §3.5 (§7.4 closure) |
+| GG-0064 | Process creation via a spawn helper | §3.8 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |

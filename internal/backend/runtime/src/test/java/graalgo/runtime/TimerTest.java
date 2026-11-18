@@ -471,7 +471,7 @@ public final class TimerTest {
     }
 
     // P2-7: Netpoll deletion pin — all five methods throw UOE with the
-    // GG-0018 message (netpoller deleted; blocking I/O uses ioEnter/ioExit).
+    // message citing GG-0063 (v1 has no netpoller; blocking I/O uses ioEnter/ioExit).
     public void testNetpollDeletion() throws Exception {
         withScheduler(1, () -> {
             assertThrowsUoe(() -> Netpoll.init());
@@ -486,8 +486,8 @@ public final class TimerTest {
         try {
             r.run();
         } catch (UnsupportedOperationException uoe) {
-            assertTrue(String.valueOf(uoe.getMessage()).contains("GG-0018"),
-                    "UOE message must cite GG-0018: " + uoe.getMessage());
+            assertTrue(String.valueOf(uoe.getMessage()).contains("GG-0063"),
+                    "UOE message must cite GG-0063: " + uoe.getMessage());
             return;
         }
         throw new AssertionError("expected UnsupportedOperationException");

@@ -49,7 +49,8 @@ time after M7 remediation completes.
 4b. **Intentionally-divergent programs** get an empty
    `<base>.divergent` file. These are programs where graalgo
    INTENTIONALLY fail-fasts and gc does not (e.g. `unsafe.Add` traps
-   under graalgo per D5/GG-0015, computes under gc). The runner skips
+   under graalgo per the v1 D5 model, computes under gc; GG-0062 removes
+   that divergence). The runner skips
    the exit-code comparison for them, but stdout must still match and
    the `.panic` pin still applies. A `.divergent` marker WITHOUT a
    `.panic` file is a harness FAIL — divergence must always be a

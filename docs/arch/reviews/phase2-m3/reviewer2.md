@@ -53,7 +53,7 @@ The 50ms test margins sit inside the measured noise band.
 **Edge probes** (custom drivers on the snapshot): T1 ticker Stop leaves 1 pending tick (gc: 0) —
 **confirmed divergence**; T2 ticker Reset with pending tick delivered a stale tick immediately in 1/5 iters
 (gc: never); T3 callback runs on `graalgo-timer` daemon ✓; T4 throwing callback doesn't kill timer thread ✓;
-T5 all five `Netpoll` methods throw UOE with the GG-0018 message ✓; T6 `ChanOps.len()` on a timer channel
+T5 all five `Netpoll` methods throw UOE with the `GG-0018` message ✓; T6 `ChanOps.len()` on a timer channel
 with a buffered tick returns 1 (gc: **always 0**).
 
 **Fix verification.** I implemented the P1-1 remediation (unconditional drain in `stopChan`/`resetChan`,
@@ -164,7 +164,7 @@ race with the window analysis.
 **P2-7. No test pins the `b3a7546` headline change.** The commit message is "startTimer callback runs on
 timer thread (gc parity)" — yet no test asserts which thread runs the callback (my T3 probe confirmed
 `graalgo-timer` ✓), the `catch (Throwable)` in `fire()` (my T4 confirmed the timer thread survives a
-throwing callback ✓), or that `Netpoll`'s five methods throw the GG-0018 UOE (my T5 confirmed ✓).
+throwing callback ✓), or that `Netpoll`'s five methods throw the `GG-0018` UOE (my T5 confirmed ✓).
 The `make check` netpoller-deletion gate also excludes `src/test` — a test could call `Netpoll.*`
 without tripping it (probably intentional; undocumented).
 *Remediation:* add the three pins (thread-name assertion; throwing-callback-then-next-timer-fires;

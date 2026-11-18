@@ -1,6 +1,7 @@
 # graalgo.values
 
-The Go value model (PLAN.md D5 [DECIDED], GG-0015). Every Go value lives as
+The v1 Go value model (PLAN.md D5 [DECIDED]; superseded by GG-0061, flat
+values, for the toolexec backend — this package is deleted at M3). Every Go value lives as
 a Java object (or unboxed primitive) in its D5 carrier:
 
 | Go kind | Java carrier |
@@ -56,7 +57,7 @@ a Java object (or unboxed primitive) in its D5 carrier:
 
 ## Notes
 
-- There is no observable address anywhere (GG-0015): pointers are opaque
+- There is no observable address anywhere (v1 D5): pointers are opaque
   references, `unsafe.Pointer` is a handle. The `→ uintptr` conversion
   yields the handle as an integer identity token, not an address — it
   carries identity (nil → 0, stability, distinctness) and no path back to

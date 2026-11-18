@@ -5,14 +5,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Unit tests for the D5 value model (GG-0015).
+ * Unit tests for the v1 D5 value model (deleted at M3; GG-0061 supersedes it).
  *
  * <p>Float-conversion expectations are the stock-gc/amd64 values measured
  * in the M3 probe battery (the spec leaves out-of-range float→int
  * implementation-defined; we mirror gc).
  */
-// verifies: GG-0015 (M3: value-model classes implement the D5 mapping;
-// every conversion expectation below is a gc-measured value).
+// M3: value-model classes implement the D5 mapping; every conversion
+// expectation below is a gc-measured value.
 public final class ValuesTest {
 
     private static void assertEq(long want, long got, String what) {
