@@ -42,18 +42,26 @@ import (
 )
 
 // File classes. Excluded files carry the reason: "exclude:<reason>".
+// ClassNotRun ("notrun:<why>") marks files that are not standalone test
+// programs for this target at all (helper packages, no func main, build
+// constraints unsatisfiable on linux/amd64): nothing to compare, so not an
+// exclusion.
 const (
 	ClassRun        = "run"
 	ClassCompile    = "compile"
 	ClassErrorCheck = "errorcheck"
+	ClassNotRun     = "notrun"
 )
 
 // TFile is one classified test/typeparam file.
 type TFile struct {
-	Name   string   `json:"file"`
-	Class  string   `json:"class"`
-	Detail string   `json:"detail"`
-	Srcs   []string `json:"-"`
+	Name   string `json:"file"`
+	Class  string `json:"class"`
+	Detail string `json:"detail"`
+	// Expected is the reason code of a reviewed expected-divergence entry
+	// (srctest): the file still RUNS, and matching gc makes it STALE.
+	Expected string   `json:"expected,omitempty"`
+	Srcs     []string `json:"-"`
 }
 
 // Exclusion is one entry of the versioned exclusion list (GG-0033).
@@ -173,54 +181,19 @@ func readHeader(path string) (directive, constraint string) {
 	return directive, constraint
 }
 
-// LoadExclusions parses the versioned YAML exclusion file. The format is
-// deliberately minimal (no YAML dependency):
-//
-//	# comments allowed
-//	version: 1
-//	exclusions:
-//	- file: foo.go
-//	  reason: deferred-parity
-//	  detail: free text
+// LoadExclusions parses the versioned, reason-coded exclusion file via
+// the shared harness loader (one vocabulary for every layer, SPEC §5.6):
+// an unknown reason code, an empty detail or a duplicate entry is an error.
 func LoadExclusions(path string) (version string, excl map[string]Exclusion, err error) {
-	excl = map[string]Exclusion{}
-	data, err := os.ReadFile(path)
+	v, rx, err := harness.LoadReviewedExclusions(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("read exclusions: %w", err)
+		return "", nil, err
 	}
-	var cur Exclusion
-	inEntry := false
-	flush := func() {
-		if inEntry && cur.File != "" {
-			excl[cur.File] = cur
-		}
-		cur = Exclusion{}
-		inEntry = false
+	excl = make(map[string]Exclusion, len(rx))
+	for k, e := range rx {
+		excl[k] = Exclusion{File: e.File, Reason: e.Reason, Detail: e.Detail}
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		t := strings.TrimSpace(line)
-		if t == "" || strings.HasPrefix(t, "#") {
-			continue
-		}
-		if strings.HasPrefix(t, "version:") {
-			version = strings.TrimSpace(strings.TrimPrefix(t, "version:"))
-			continue
-		}
-		if strings.HasPrefix(t, "- file:") {
-			flush()
-			cur.File = strings.TrimSpace(strings.TrimPrefix(t, "- file:"))
-			inEntry = true
-		} else if strings.HasPrefix(t, "reason:") && inEntry {
-			cur.Reason = strings.TrimSpace(strings.TrimPrefix(t, "reason:"))
-		} else if strings.HasPrefix(t, "detail:") && inEntry {
-			cur.Detail = strings.TrimSpace(strings.TrimPrefix(t, "detail:"))
-		}
-	}
-	flush()
-	if version == "" {
-		return "", nil, fmt.Errorf("exclusions file %s has no version: line", path)
-	}
-	return version, excl, nil
+	return v, excl, nil
 }
 
 // WriteScanJSON writes {"scan": {"files": [...], "total": N}}.
@@ -233,9 +206,13 @@ func WriteScanJSON(path string, files []TFile) error {
 
 // Comparison is one program's differential verdict.
 type Comparison struct {
-	Program string   `json:"program"`
-	Same    bool     `json:"same"`
-	Reasons []string `json:"reasons"`
+	Program  string   `json:"program"`
+	Same     bool     `json:"same"`
+	Reasons  []string `json:"reasons"`
+	Expected string   `json:"expected,omitempty"`
+	// Infra marks a comparison that could not produce a verdict (the
+	// graalgo batch JVM failed, staging failed): never a pass.
+	Infra bool `json:"infra,omitempty"`
 }
 
 // WriteReportJSON writes {"report": {"summary": {...}, "comparisons": [...]}}.
@@ -295,7 +272,7 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 
 	var included []TFile
 	for _, f := range files {
-		if !strings.HasPrefix(f.Class, "exclude") {
+		if !strings.HasPrefix(f.Class, "exclude") && !strings.HasPrefix(f.Class, ClassNotRun) {
 			included = append(included, f)
 		}
 	}
@@ -316,8 +293,14 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 			if len(mine) == 0 {
 				return
 			}
-			results := runBatched(cfg, ref, alt, included, mine, workRoot, job)
+			var results []Comparison
+			if alt.Batch {
+				results = runBatched(cfg, ref, alt, included, mine, workRoot, job)
+			} else {
+				results = runPerFile(cfg, ref, alt, included, mine, workRoot, job)
+			}
 			for k, idx := range mine {
+				results[k].Expected = included[idx].Expected
 				comps[idx] = results[k]
 			}
 		}(j)
@@ -405,7 +388,12 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
 
 		// graalgo build result from batch.
-		bAlt := batchOut[batchKey("check", srcs[k])]
+		bAlt, ok := batchOut[batchKey("check", srcs[k])]
+		if !ok {
+			c.Same, c.Infra = false, true
+			c.Reasons = append(c.Reasons, "infra: no graalgo batch result (batch JVM failed or output unparsable)")
+			continue
+		}
 
 		switch tf.Class {
 		case ClassCompile:
@@ -455,6 +443,53 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		hc := harness.Compare(oRef, oAltFull)
 		c.Same = hc.Same
 		c.Reasons = hc.Reasons
+	}
+	return comps
+}
+
+// runPerFile is runBatched for backends without --batch support (the
+// product launcher): one graalgo JVM per build and per run.
+func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile, mine []int, workRoot string, job int) []Comparison {
+	comps := make([]Comparison, len(mine))
+	for k, idx := range mine {
+		tf := included[idx]
+		c := &comps[k]
+		*c = Comparison{Program: tf.Name, Same: true}
+		fail := func(format string, args ...any) {
+			c.Same = false
+			c.Reasons = append(c.Reasons, fmt.Sprintf(format, args...))
+		}
+		dir := filepath.Join(workRoot, fmt.Sprintf("job%d", job), tf.Name)
+		src, err := stageFile(tf, dir)
+		if err != nil {
+			c.Same, c.Infra = false, true
+			fail("infra: stage: %v", err)
+			continue
+		}
+		prog := harness.Program{Name: tf.Name, Dir: dir, Main: src}
+		switch tf.Class {
+		case ClassCompile, ClassErrorCheck:
+			bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
+			bAlt := harness.BuildOnly(cfg, alt, prog, workRoot)
+			if tf.Class == ClassCompile {
+				if !bRef.BuildOK {
+					fail("build: ref failed: %s", firstLines(bRef.BuildLog, 4))
+				}
+				if !bAlt.BuildOK {
+					fail("build: alt failed: %s", firstLines(bAlt.BuildLog, 4))
+				}
+			} else {
+				if bRef.BuildOK {
+					fail("errorcheck: ref built ok, expected failure")
+				}
+				if bAlt.BuildOK {
+					fail("errorcheck: alt built ok, expected failure (gc rejects this program)")
+				}
+			}
+			continue
+		}
+		hc := harness.Compare(harness.RunProgram(cfg, ref, prog, workRoot), harness.RunProgram(cfg, alt, prog, workRoot))
+		c.Same, c.Reasons = hc.Same, hc.Reasons
 	}
 	return comps
 }
@@ -536,7 +571,8 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		// Batch failed entirely; mark all as failed.
+		// Batch failed entirely: every entry is an infrastructure failure
+		// (absent from the map -> runBatched marks it Infra).
 		return out
 	}
 	// Parse JSON array. Results are in the same order as the batch file
@@ -585,7 +621,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		oc := harness.Outcome{
 			Program:  filepath.Base(filepath.Dir(src)),
 			Backend:  alt.Name,
-			Stdout:   harness.Normalize(r.Stdout),
+			Stdout:   r.Stdout, // exact: stdout normalization is per-program opt-in only
 			Stderr:   alt.FilterStderr(harness.Normalize(r.Stderr)),
 			ExitCode: r.Exit,
 		}

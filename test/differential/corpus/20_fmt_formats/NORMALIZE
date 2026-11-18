@@ -1,0 +1,2 @@
+# 20_fmt_formats prints %p (a heap address): differs run to run.
+pointers

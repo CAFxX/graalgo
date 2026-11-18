@@ -1,412 +1,444 @@
 {
-  "backend": "graalgo",
+  "format": "graalgo-behavior-snapshot/v2",
+  "toolchain": "go1.27.1",
+  "reference": "gc-a",
+  "recordedAt": "2026-11-18T04:53:37Z",
   "corpus": "test/differential/corpus",
-  "excluded": [
-    {
-      "program": "10_closures",
-      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
-    },
-    {
-      "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
-    },
-    {
-      "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
-    },
-    {
-      "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
-    },
-    {
-      "program": "19_sort",
-      "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
-    },
-    {
-      "program": "27_panic_trace",
-      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
-    },
-    {
-      "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
-    },
-    {
-      "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
-    },
-    {
-      "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
-    },
-    {
-      "program": "40_method_values",
-      "reason": "backend-specific: method values not in scope"
-    },
-    {
-      "program": "42_json",
-      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
-    }
-  ],
-  "format": "graalgo-behavior-snapshot/v1",
-  "graalgoCommit": "10b6c50708ec3ad46e3cdab6fd2c65555521babe",
-  "normalizer": "harness.Normalize+backend.stderrFilters/v1",
+  "normalizer": "harness.Normalize/v2(trace-addresses-only)+NORMALIZE-opt-in+noiseSets",
   "programs": [
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "01_hello",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "a1c10abf1ca67ae31620b4903dc77e9403a4127fc71732ecc6812005a9c9b639",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "hello, world\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "02_arithmetic",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "fe2f39c28bbbccd7a59ed522d36b088e8a972d000ed93ea19abe866c87a69bd1",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "22\n12\n85\n3\n2\n10\n0\n0\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "03_control_flow",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "9c9e574b323946068aacaecee6ab3d2a61ddfb908f23fe3dd16db95f59809266",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "5 small\n10 medium\n99 medium\n100 large\n101 large\nodd\n0 0 1 0 2 0 \n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "04_for_range",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "0fec755456bfc982e3028dabccf921060b6b23ec6c2734da70fc6bcd630a2871",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "0 1 2 3 4 \n6\n6\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "05_slices",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "3600b17f8428cd84269ada2ff8d3b61c4e3e33afe1f5dbbaf592d1bf5f51a81c",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "[1 2 3]\n[0 1 2] 3 6\n[2 3 4 5]\n[7 8 9] 3 4\n[0 1 2 3 4 5]\ntrue 0\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "06_nested_defer",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "622e9de1c92929c9b20a8c75b72c5c60de2f02586a9c8000a6817edfc40d76dd",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "body\nloop 2\nloop 1\nloop 0\nsecond\nfirst\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "07_two_sum",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "f532641b758f32a62dac155536ea11a7359a623442713e88ffacaa8d66654161",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "0 1\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "08_multiple_assignment",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "662cda631be1660f36260212b9613576bace47cb5b0dc77a773ad16d98c5e5ce",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "3 2\n2 1\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "09_pipeline",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "280aadb003417c315e43130e9857b21164a7b06514eee89ba022007ef208317b",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "55\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
+      "name": "10_closures",
+      "sourceSha256": "c5ec7a138f26a02dfc1c37fab013607a99cf96b49921357bb7d02b2465d529de",
       "buildOk": true,
+      "buildLog": "",
       "exitCode": 0,
+      "timedOut": false,
+      "stdout": "1 2 3\n7\n10 15\n",
+      "stderr": ""
+    },
+    {
       "name": "11_methods",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "eb285758f84effcc105c8063f92f1db5a48ea74421588981a237461529a3f1c5",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "{4 6}\n{10 20}\n{6 7}\n5 6\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "12_interfaces",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "cab94f5060eee7e9e03aa0926d611ac7b4ad5b0e9c039490d5dc71cc7ffe9306",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "Rex says woof\nbeep\ndog: Max\nfalse\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "13_maps_sorted",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "ab72e98317b86db27226679a9ef742810d83c3ec096bb614a4fc145fab4156a5",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "apple 5\ndate 4\nfig 1\npear 3\n5 true\n0 false\n3\n9\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
+      "name": "14_goroutines_sum",
+      "sourceSha256": "ff287975a758500d01c3aa5eabd4d96647621e24e0e513ca256a96a04c787c49",
       "buildOk": true,
+      "buildLog": "",
       "exitCode": 0,
+      "timedOut": false,
+      "stdout": "36\n",
+      "stderr": ""
+    },
+    {
       "name": "15_select",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "dc2e1314d99b6e052d0bc3927d1aaa0372e3095d9891437ba12ad121fad54be8",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "got ready\nempty\ntimed out\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "16_defer_panic_recover",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "94ba4f94f724375ee7293b62b69bc6ae0bc655f25e6b7a1bc35a0e63da802d72",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "cleanup 21\n42\ncleanup -5\nrecovered: negative!\n-1\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "16_generics_targswap",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "bd50824269c5dbce034b2b17f2d8a6bb62c72f7c2886716ff7b0286a3134389c",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "int/int=2/2\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
+      "name": "17_generics",
+      "sourceSha256": "0189fa96298a98033fc4b55161e37969dcb6a91d4f628ff0f22009e556f63b69",
       "buildOk": true,
+      "buildLog": "",
       "exitCode": 0,
+      "timedOut": false,
+      "stdout": "6\n4\nb a\n3\n",
+      "stderr": ""
+    },
+    {
+      "name": "18_errors",
+      "sourceSha256": "82783a175c133803b2fc4f63f6ac4603fceb5e61be28f14b8c3ec47ec5c08f29",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "ok: 1\ntrue\nfalse\nnot found\n",
+      "stderr": ""
+    },
+    {
+      "name": "19_sort",
+      "sourceSha256": "ef686480afa15aeef362de5ccd38e06742b213b36a553e766ea24518af4169ac",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "[1 2 3 5 8 9]\n4\n[alpha bravo charlie delta]\n[{c 1} {b 2} {a 3}]\ntrue\n",
+      "stderr": ""
+    },
+    {
       "name": "20_fmt_formats",
-      "stderr": "",
-      "stdin": "",
-      "stdout": "{3 4} {X:3 Y:4} main.Point{X:3, Y:4} main.Point\n255 ff 377 11111111\n3.141590 3.14 3.141590e+00\n\"h\u00e9llo\" world\n0xADDR\ndeadbeef DE AD BE EF\n",
-      "timedOut": false
+      "sourceSha256": "e7d54ab9a96d5ca8a2fdb83c548272b82eb630cc57b316b10c31f047a3311686",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "{3 4} {X:3 Y:4} main.Point{X:3, Y:4} main.Point\n255 ff 377 11111111\n3.141590 3.14 3.141590e+00\n\"héllo\" world\n0xPTR\ndeadbeef DE AD BE EF\n",
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "21_pointers",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "653805382754155ef598d1938bb18f35c09588ff67daa0290fff427fb6030b7f",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "42\n100\n100\ntrue\ntrue\n3\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "22_conversions",
-      "stderr": "",
-      "stdin": "",
-      "stdout": "\ud83d\ude00\n[97 98 99]\nhi\n-42\n1234 <nil>\n3 3.5\nA\n5 h\u00e9llo\n",
-      "timedOut": false
+      "sourceSha256": "8ca28e31636cf338faa5d6b2ab87d139de63dfc9c47a505ce9980feba4f319b6",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "😀\n[97 98 99]\nhi\n-42\n1234 \u003cnil\u003e\n3 3.5\nA\n5 héllo\n",
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "23_bitwise",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "50d9a1e4f497bd0379661f5758b60ebf07e53bda59f2d09edb84b8b1d5777407",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "6 true\n00011000\n255 15\n57005 48879\n2 4 8\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "24_variadic",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "e2ac4ed1b812d0be77e12a2c6cfeab391a47d710d854c6f81efb4fe144460c73",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "0\n6\n15\n22\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "25_recursion",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "d3dd8e3a5ee890ef8cc2941025274b34cca3c192f24233dd48b203149ba4f576",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "6765\n3628800\n21\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "26_sync_primitives",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "b885fa7066b32a3422cfdb70f777b4e103d99227d84c8c0905ef39e62f4c65e7",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "8000\n42\nrlock ok\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
+      "name": "27_panic_trace",
+      "sourceSha256": "3d93a3bc7f222241c867408ae345a6cff9284adade70c06a206eab087b6e045c",
       "buildOk": true,
-      "exitCode": 0,
+      "buildLog": "",
+      "exitCode": 2,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "panic: boom\n\ngoroutine # [running]:\nmain.level3(...)\n\t{CORPUS}/27_panic_trace/main.go:3\nmain.level2(...)\n\t{CORPUS}/27_panic_trace/main.go:4\nmain.level1(...)\n\t{CORPUS}/27_panic_trace/main.go:5\nmain.main()\n\t{CORPUS}/27_panic_trace/main.go:7\n"
+    },
+    {
+      "name": "28_exit_code",
+      "sourceSha256": "c73384c8487e6e915c9200fb7f4b83bd71db59d0d2151c5356919b37c429958a",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 3,
+      "timedOut": false,
+      "stdout": "stdout line\n",
+      "stderr": "about to exit\n"
+    },
+    {
       "name": "29_interface_nil",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "59c135b2849d1d23c3837fc7d47e34a26e4d896d41263bc1357819138e17efed",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "false\ntrue\nfalse\ntrue false\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "30_type_switch",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "149d990de52f57312ad1432cd616d0fbcbaadee9d5fe8f3fc82706ad55a54b4f",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "nil\nint 7\nstring \"hi\"\nslice len 2\nother float64\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "31_string_switch",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "e854679c7eb2a79f5358576005ce7d4819148f86d4c54dd65b6cd88f8e2e002d",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "a excellent\nB fail\nc pass\n empty\nz fail\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "32_defer_args",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "9fbd4ec08cd7e6ef755736d49cfd65ba686c34b541c447b9d1f72703d0a768ae",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "body x = 2\nclosure sees x = 2\ndeferred x = 1\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "33_recover_reraise",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "7b0691c7b52c0ff3f042f48dca9608a9f70effadf4a5d0d43ed8420b0e6e4850",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "inner recovered: original\nouter recovered: re-raised\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "34_struct_reflect",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "ebebd83bde27373a1336979b29e6672492838517cd94821312e34ac53e63781f",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "Config 3\nHost string host\nPort int port\nTLS bool tls,omitempty\n80\nint\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "35_map_zero",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "b14218b24b6f69a22731f64c07b43b650218cf290dc57bd56b1007e2926b99e0",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "0\n0 true\nfalse\n\"\" false true\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "36_matrix_mult",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "bc90ec334c6c3b67ba31441509585f91bed460883e4e6fe2ec9c5e0b241be0fb",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "[[19 22] [43 50]]\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
+      "name": "37_utf8",
+      "sourceSha256": "c18698ee3ee3f4113304c341d8f4e8002d72bed100f79430bb774c434d6ea955",
       "buildOk": true,
+      "buildLog": "",
       "exitCode": 0,
+      "timedOut": false,
+      "stdout": "14 9\n0 h U+0068\nfooβ 5\nABC true\n",
+      "stderr": ""
+    },
+    {
       "name": "38_iota_enum",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "2839142ac428c2b8fe020f0a5308b64c1e5900cee4f9c817a9b08747555e3187",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "0 1 2 3\n1 1024 1048576\ntrue\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
+      "name": "39_named_returns",
+      "sourceSha256": "4a0b2371e87bde47d8c7a9df170ba407dfd0bdab620ebd8860416055126a9997",
       "buildOk": true,
+      "buildLog": "",
       "exitCode": 0,
+      "timedOut": false,
+      "stdout": "7 10\n",
+      "stderr": ""
+    },
+    {
+      "name": "40_method_values",
+      "sourceSha256": "94b23ad5e078b76f35046daea43e45778043a0eba680ffc78cecfbcf94e86455",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "5 15\n115\n115\n",
+      "stderr": ""
+    },
+    {
       "name": "41_done_channel",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "efc415e222315d49889f833eefa2c6d168efadd0aabec4246148ef176cad5186",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "worker stopped, counted to true\n",
-      "timedOut": false
+      "stderr": ""
+    },
+    {
+      "name": "42_json",
+      "sourceSha256": "d4fa5d47b8bc7e4766f7be7db1e30cba57a496d27c894aea3998ceeaaf489766",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "{\"name\":\"widget\",\"price\":9.99,\"meta\":{\"a\":1,\"b\":2}} \u003cnil\u003e\n\u003cnil\u003e widget 1\n[123 34 109 34 58 50 44 34 122 34 58 49 125] \u003cnil\u003e\n",
+      "stderr": ""
     },
     {
       "name": "43_range_over_func",
-      "args": [],
-      "stdin": "",
+      "sourceSha256": "ebb1f6ac923ff45a90920098b0ee04a4d176e73b6aa05adc37e8e61166107198",
       "buildOk": true,
       "buildLog": "",
       "exitCode": 0,
@@ -415,61 +447,175 @@
       "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "44_copy_builtin",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "a1579078c8682bb43efe5fc03b6566eab27a3cfa1c0b3ecad5f82af31ac6ed10",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "3 [1 2 3]\n[1 1 2 3 4]\nhe\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "45_shadowing",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "8323d04dbb8de155983a87e903f836607fbd5da479a3092405b8b5e104f7bdfa",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "inner\ninnermost\ninner\nouter\nshadowed 2\nouter 1\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "46_sync_pool",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "0e2aae80038aef88ee8d0ec29a06a879f82217b123ced9f77dfab4bba8f9d6fa",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "1 1\n42\n7\n42\nnew\nnewptr\ntrue\ntrue\n9\n9\n28\ntrue\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
-      "args": [],
-      "buildLog": "",
-      "buildOk": true,
-      "exitCode": 0,
       "name": "47_reflect_funcof_structof",
-      "stderr": "",
-      "stdin": "",
+      "sourceSha256": "6f5c3ec61ed0b2d4297fe889f0aaf81e2ae803d28f44b5dc478d89a7bccc4b22",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
       "stdout": "named new-elem: 7\nkind=func str=\"func(int, string) float64\"\nvariadic: false in: 2 out: 1\nf2: func(...int) variadic: true in0: []int\ncanonical: true ptr: *func(int, string) float64\npanic: interface conversion: reflect.Type is nil, not *reflect.rtype\npanic: reflect.FuncOf: last arg of variadic func must be slice\npanic: reflect.FuncOf: last arg of variadic func must be slice\nkind=struct str=\"struct { A int; b string; C float64 \\\"json:\\\\\\\"c\\\\\\\"\\\" }\"\nfield b: true b string main 8\nnumfield: 3 field1off: 8 field2off: 24 size: 32 align: 8\npanic: reflect.StructOf: field 0 has no name\npanic: reflect.StructOf: duplicate field A\npanic: reflect.StructOf: field \"a\" is unexported but missing PkgPath\npanic: reflect.StructOf: field \"a\" is unexported but missing PkgPath\nkind=struct str=\"struct { main.E }\"\npromoted Hello: true Hello true\ncall: hello 42\nptr-embed Pong: true Pong\ncall3: 10\nptr-embed value method: true\nmakefunc: 5\nsetfield: 9\ntag: c\n",
-      "timedOut": false
+      "stderr": ""
     },
     {
       "name": "48_range_over_func_edge",
-      "args": [],
-      "stdin": "",
+      "sourceSha256": "ac88bdfd781611eddae613872498a46b25f80356f87883201177ae29e6fe5c67",
       "buildOk": true,
       "buildLog": "",
       "exitCode": 0,
       "timedOut": false,
       "stdout": "--- return-with-defers ---\nseq defer\nenclosing defer\nresult: 30\n--- goto-out ---\n0\n1\n2\nseq defer\ndone\n--- outward-labels ---\n0 0\n1 0\nend\n--- body-defer-lifo ---\niter 0\niter 1\niter 2\nafter loop\nd2\nbody 2\nbody 1\nbody 0\nd1\n--- body-defer-recover ---\nbody defer 0\ninner recovered: boom\nbody defer 1\ninner recovered: boom\nbody defer 2\ninner recovered: boom\nafter\n--- body-panic-rethrow ---\niter 0\niter 1\niter 2\nseq defer runs\nenclosing defer runs\nrecovered: body boom\n--- nested-return ---\ninner seq defer 3\ninner seq defer 3\ninner seq defer 3\nf defer\nresult: 42\n--- assign-form ---\nx = 7\nx = 8\nx = 9\nfinal x = 9\n--- misuse-yield-after-false ---\ngot 1\nrecovered: runtime error: range function continued iteration after function for loop body returned false\n--- misuse-yield-after-exit ---\ngot 1\nrecovered: runtime error: range function continued iteration after whole loop exit\n--- misuse-swallowed-body-panic ---\ngot 1\nrecovered: runtime error: range function recovered a loop body panic and did not resume panicking\n--- misuse-reentrant-yield ---\ngot 1\nrecovered: runtime error: range function continued iteration after loop body panic\n",
       "stderr": ""
+    },
+    {
+      "name": "49_int_arith_edges",
+      "sourceSha256": "3794fdf57075408b5955c6a7b66685371671d6a4ad5964ebfa0ae55ac1b33ada",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "i64 -7 3 -2 -1 -4 -10 -21\ni64 -7 -3 2 -1 -10 -4 21\ni64 -7 2 -3 -1 -5 -9 -14\ni64 -7 -2 3 -1 -9 -5 14\ni64 -7 1 -7 0 -6 -8 -7\ni64 -7 -1 7 0 -8 -6 7\ni64 -7 7 -1 0 0 -14 -49\ni64 -7 -9 0 -7 -16 2 63\ni64 7 3 2 1 10 4 21\ni64 7 -3 -2 1 4 10 -21\ni64 7 2 3 1 9 5 14\ni64 7 -2 -3 1 5 9 -14\ni64 7 1 7 0 8 6 7\ni64 7 -1 -7 0 6 8 -7\ni64 7 7 1 0 14 0 49\ni64 7 -9 0 7 -2 16 -63\ni64 -8 3 -2 -2 -5 -11 -24\ni64 -8 -3 2 -2 -11 -5 24\ni64 -8 2 -4 0 -6 -10 -16\ni64 -8 -2 4 0 -10 -6 16\ni64 -8 1 -8 0 -7 -9 -8\ni64 -8 -1 8 0 -9 -7 8\ni64 -8 7 -1 -1 -1 -15 -56\ni64 -8 -9 0 -8 -17 1 72\ni64 8 3 2 2 11 5 24\ni64 8 -3 -2 2 5 11 -24\ni64 8 2 4 0 10 6 16\ni64 8 -2 -4 0 6 10 -16\ni64 8 1 8 0 9 7 8\ni64 8 -1 -8 0 7 9 -8\ni64 8 7 1 1 15 1 56\ni64 8 -9 0 8 -1 17 -72\ni64 -1 3 0 -1 2 -4 -3\ni64 -1 -3 0 -1 -4 2 3\ni64 -1 2 0 -1 1 -3 -2\ni64 -1 -2 0 -1 -3 1 2\ni64 -1 1 -1 0 0 -2 -1\ni64 -1 -1 1 0 -2 0 1\ni64 -1 7 0 -1 6 -8 -7\ni64 -1 -9 0 -1 -10 8 9\ni64 1 3 0 1 4 -2 3\ni64 1 -3 0 1 -2 4 -3\ni64 1 2 0 1 3 -1 2\ni64 1 -2 0 1 -1 3 -2\ni64 1 1 1 0 2 0 1\ni64 1 -1 -1 0 0 2 -1\ni64 1 7 0 1 8 -6 7\ni64 1 -9 0 1 -8 10 -9\ni64 0 3 0 0 3 -3 0\ni64 0 -3 0 0 -3 3 0\ni64 0 2 0 0 2 -2 0\ni64 0 -2 0 0 -2 2 0\ni64 0 1 0 0 1 -1 0\ni64 0 -1 0 0 -1 1 0\ni64 0 7 0 0 7 -7 0\ni64 0 -9 0 0 -9 9 0\ni64 9223372036854775807 3 3074457345618258602 1 -9223372036854775806 9223372036854775804 9223372036854775805\ni64 9223372036854775807 -3 -3074457345618258602 1 9223372036854775804 -9223372036854775806 -9223372036854775805\ni64 9223372036854775807 2 4611686018427387903 1 -9223372036854775807 9223372036854775805 -2\ni64 9223372036854775807 -2 -4611686018427387903 1 9223372036854775805 -9223372036854775807 2\ni64 9223372036854775807 1 9223372036854775807 0 -9223372036854775808 9223372036854775806 9223372036854775807\ni64 9223372036854775807 -1 -9223372036854775807 0 9223372036854775806 -9223372036854775808 -9223372036854775807\ni64 9223372036854775807 7 1317624576693539401 0 -9223372036854775802 9223372036854775800 9223372036854775801\ni64 9223372036854775807 -9 -1024819115206086200 7 9223372036854775798 -9223372036854775800 -9223372036854775799\ni64 -9223372036854775808 3 -3074457345618258602 -2 -9223372036854775805 9223372036854775805 -9223372036854775808\ni64 -9223372036854775808 -3 3074457345618258602 -2 9223372036854775805 -9223372036854775805 -9223372036854775808\ni64 -9223372036854775808 2 -4611686018427387904 0 -9223372036854775806 9223372036854775806 0\ni64 -9223372036854775808 -2 4611686018427387904 0 9223372036854775806 -9223372036854775806 0\ni64 -9223372036854775808 1 -9223372036854775808 0 -9223372036854775807 9223372036854775807 -9223372036854775808\ni64 -9223372036854775808 -1 -9223372036854775808 0 9223372036854775807 -9223372036854775807 -9223372036854775808\ni64 -9223372036854775808 7 -1317624576693539401 -1 -9223372036854775801 9223372036854775801 -9223372036854775808\ni64 -9223372036854775808 -9 1024819115206086200 -8 9223372036854775799 -9223372036854775799 -9223372036854775808\ni32 -7 3 -2 -1 -4 -10 -21\ni32 -7 -3 2 -1 -10 -4 21\ni32 -7 -1 7 0 -8 -6 7\ni32 -7 16 0 -7 9 -23 -112\ni32 -7 -16 0 -7 -23 9 112\ni32 7 3 2 1 10 4 21\ni32 7 -3 -2 1 4 10 -21\ni32 7 -1 -7 0 6 8 -7\ni32 7 16 0 7 23 -9 112\ni32 7 -16 0 7 -9 23 -112\ni32 -2147483648 3 -715827882 -2 -2147483645 2147483645 -2147483648\ni32 -2147483648 -3 715827882 -2 2147483645 -2147483645 -2147483648\ni32 -2147483648 -1 -2147483648 0 2147483647 -2147483647 -2147483648\ni32 -2147483648 16 -134217728 0 -2147483632 2147483632 0\ni32 -2147483648 -16 134217728 0 2147483632 -2147483632 0\ni32 2147483647 3 715827882 1 -2147483646 2147483644 2147483645\ni32 2147483647 -3 -715827882 1 2147483644 -2147483646 -2147483645\ni32 2147483647 -1 -2147483647 0 2147483646 -2147483648 -2147483647\ni32 2147483647 16 134217727 15 -2147483633 2147483631 -16\ni32 2147483647 -16 -134217727 15 2147483631 -2147483633 16\ni32 -100 3 -33 -1 -97 -103 -300\ni32 -100 -3 33 -1 -103 -97 300\ni32 -100 -1 100 0 -101 -99 100\ni32 -100 16 -6 -4 -84 -116 -1600\ni32 -100 -16 6 -4 -116 -84 1600\ni16 -7 3 -2 -1 -4 -10 -21\ni16 -7 -3 2 -1 -10 -4 21\ni16 -7 -1 7 0 -8 -6 7\ni16 -7 256 0 -7 249 -263 -1792\ni16 7 3 2 1 10 4 21\ni16 7 -3 -2 1 4 10 -21\ni16 7 -1 -7 0 6 8 -7\ni16 7 256 0 7 263 -249 1792\ni16 -32768 3 -10922 -2 -32765 32765 -32768\ni16 -32768 -3 10922 -2 32765 -32765 -32768\ni16 -32768 -1 -32768 0 32767 -32767 -32768\ni16 -32768 256 -128 0 -32512 32512 0\ni16 32767 3 10922 1 -32766 32764 32765\ni16 32767 -3 -10922 1 32764 -32766 -32765\ni16 32767 -1 -32767 0 32766 -32768 -32767\ni16 32767 256 127 255 -32513 32511 -256\ni16 -300 3 -100 0 -297 -303 -900\ni16 -300 -3 100 0 -303 -297 900\ni16 -300 -1 300 0 -301 -299 300\ni16 -300 256 -1 -44 -44 -556 -11264\ni8 -7 3 -2 -1 -4 -10 -21\ni8 -7 -3 2 -1 -10 -4 21\ni8 -7 -1 7 0 -8 -6 7\ni8 -7 2 -3 -1 -5 -9 -14\ni8 7 3 2 1 10 4 21\ni8 7 -3 -2 1 4 10 -21\ni8 7 -1 -7 0 6 8 -7\ni8 7 2 3 1 9 5 14\ni8 -128 3 -42 -2 -125 125 -128\ni8 -128 -3 42 -2 125 -125 -128\ni8 -128 -1 -128 0 127 -127 -128\ni8 -128 2 -64 0 -126 126 0\ni8 127 3 42 1 -126 124 125\ni8 127 -3 -42 1 124 -126 -125\ni8 127 -1 -127 0 126 -128 -127\ni8 127 2 63 1 -127 125 -2\ni8 -100 3 -33 -1 -97 -103 -44\ni8 -100 -3 33 -1 -103 -97 44\ni8 -100 -1 100 0 -101 -99 100\ni8 -100 2 -50 0 -98 -102 56\nu64 7 3 2 1 10 4 21\nu64 7 2 3 1 9 5 14\nu64 7 18446744073709551615 0 7 6 8 18446744073709551609\nu64 7 10 0 7 17 18446744073709551613 70\nu64 18446744073709551615 3 6148914691236517205 0 2 18446744073709551612 18446744073709551613\nu64 18446744073709551615 2 9223372036854775807 1 1 18446744073709551613 18446744073709551614\nu64 18446744073709551615 18446744073709551615 1 0 18446744073709551614 0 1\nu64 18446744073709551615 10 1844674407370955161 5 9 18446744073709551605 18446744073709551606\nu64 9223372036854775808 3 3074457345618258602 2 9223372036854775811 9223372036854775805 9223372036854775808\nu64 9223372036854775808 2 4611686018427387904 0 9223372036854775810 9223372036854775806 0\nu64 9223372036854775808 18446744073709551615 0 9223372036854775808 9223372036854775807 9223372036854775809 9223372036854775808\nu64 9223372036854775808 10 922337203685477580 8 9223372036854775818 9223372036854775798 0\nu64 0 3 0 0 3 18446744073709551613 0\nu64 0 2 0 0 2 18446744073709551614 0\nu64 0 18446744073709551615 0 0 18446744073709551615 1 0\nu64 0 10 0 0 10 18446744073709551606 0\nu32 7 3 2 1 10 4 21\nu32 7 4294967295 0 7 6 8 4294967289\nu32 7 16 0 7 23 4294967287 112\nu32 4294967295 3 1431655765 0 2 4294967292 4294967293\nu32 4294967295 4294967295 1 0 4294967294 0 1\nu32 4294967295 16 268435455 15 15 4294967279 4294967280\nu32 2147483648 3 715827882 2 2147483651 2147483645 2147483648\nu32 2147483648 4294967295 0 2147483648 2147483647 2147483649 2147483648\nu32 2147483648 16 134217728 0 2147483664 2147483632 0\nu16 7 3 2 1 10 4 21\nu16 7 65535 0 7 6 8 65529\nu16 7 300 0 7 307 65243 2100\nu16 65535 3 21845 0 2 65532 65533\nu16 65535 65535 1 0 65534 0 1\nu16 65535 300 218 135 299 65235 65236\nu16 40000 3 13333 1 40003 39997 54464\nu16 40000 65535 0 40000 39999 40001 25536\nu16 40000 300 133 100 40300 39700 6912\nu8 7 3 2 1 10 4 21\nu8 7 255 0 7 6 8 249\nu8 7 100 0 7 107 163 188\nu8 255 3 85 0 2 252 253\nu8 255 255 1 0 254 0 1\nu8 255 100 2 55 99 155 156\nu8 200 3 66 2 203 197 88\nu8 200 255 0 200 199 201 56\nu8 200 100 2 0 44 100 32\nneg -128 -32768 -2147483648 -9223372036854775808 127 32767 2147483647 9223372036854775807\nuneg 255 65535 4294967295 18446744073709551615 254 65534 4294967294 18446744073709551614\nincdec -128 255 2147483647\ncompound -47\nfnv 3846415658\ni8fn -56 127 5\nint -9223372036854775808 0 -9223372036854775808 9223372036854775807\n",
+      "stderr": ""
+    },
+    {
+      "name": "50_shifts",
+      "sourceSha256": "bbf6a4f3932584e6689619f94a24a752d5700e29be96cd0cd983f687898b3c1d",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "i64 0 -12345 -12345 12345 1\nu64 0 17361641481138401520 17361641481138401520\ni32 0 -12345 -12345 1073741824\nu32 0 4042322160 4042322160\ni16 0 -1234 -1234 16384\nu16 0 61680 61680\ni8 0 -100 -100 64\nu8 0 245 245\nint 0 -1 -7\ni64 1 -24690 -6173 6172 2\nu64 1 16276538888567251424 8680820740569200760\ni32 1 -24690 -6173 -2147483648\nu32 1 3789677024 2021161080\ni16 1 -2468 -617 -32768\nu16 1 57824 30840\ni8 1 56 -50 -128\nu8 1 234 122\nint 1 -2 -4\ni64 7 -1580160 -97 96 128\nu64 7 8680820740569200640 135637824071393761\ni32 7 -1580160 -97 0\nu32 7 2021160960 31580641\ni16 7 -26880 -10 0\nu16 7 30720 481\ni8 7 0 -1 0\nu8 7 128 1\nint 7 -128 -1\ni64 8 -3160320 -49 48 256\nu64 8 17361641481138401280 67818912035696880\ni32 8 -3160320 -49 0\nu32 8 4042321920 15790320\ni16 8 11776 -5 0\nu16 8 61440 240\ni8 8 0 -1 0\nu8 8 0 0\nint 8 -256 -1\ni64 15 -404520960 -1 0 32768\nu64 15 8680820740569169920 529835250278881\ni32 15 -404520960 -1 0\nu32 15 2021130240 123361\ni16 15 0 -1 0\nu16 15 0 1\ni8 15 0 -1 0\nu8 15 0 0\nint 15 -32768 -1\ni64 16 -809041920 -1 0 65536\nu64 16 17361641481138339840 264917625139440\ni32 16 -809041920 -1 0\nu32 16 4042260480 61680\ni16 16 0 -1 0\nu16 16 0 0\ni8 16 0 -1 0\nu8 16 0 0\nint 16 -65536 -1\ni64 31 -26510685634560 -1 0 2147483648\nu64 31 8680820738548039680 8084644321\ni32 31 -2147483648 -1 0\nu32 31 0 1\ni16 31 0 -1 0\nu16 31 0 0\ni8 31 0 -1 0\nu8 31 0 0\nint 31 -2147483648 -1\ni64 32 -53021371269120 -1 0 4294967296\nu64 32 17361641477096079360 4042322160\ni32 32 0 -1 0\nu32 32 0 0\ni16 32 0 -1 0\nu16 32 0 0\ni8 32 0 -1 0\nu8 32 0 0\nint 32 -4294967296 -1\ni64 33 -106042742538240 -1 0 8589934592\nu64 33 16276538880482607104 2021161080\ni32 33 0 -1 0\nu32 33 0 0\ni16 33 0 -1 0\nu16 33 0 0\ni8 33 0 -1 0\nu8 33 0 0\nint 33 -8589934592 -1\ni64 63 -9223372036854775808 -1 0 -9223372036854775808\nu64 63 0 1\ni32 63 0 -1 0\nu32 63 0 0\ni16 63 0 -1 0\nu16 63 0 0\ni8 63 0 -1 0\nu8 63 0 0\nint 63 -9223372036854775808 -1\ni64 64 0 -1 0 0\nu64 64 0 0\ni32 64 0 -1 0\nu32 64 0 0\ni16 64 0 -1 0\nu16 64 0 0\ni8 64 0 -1 0\nu8 64 0 0\nint 64 0 -1\ni64 65 0 -1 0 0\nu64 65 0 0\ni32 65 0 -1 0\nu32 65 0 0\ni16 65 0 -1 0\nu16 65 0 0\ni8 65 0 -1 0\nu8 65 0 0\nint 65 0 -1\ni64 200 0 -1 0 0\nu64 200 0 0\ni32 200 0 -1 0\nu32 200 0 0\ni16 200 0 -1 0\nu16 200 0 0\ni8 200 0 -1 0\nu8 200 0 0\nint 200 0 -1\nctypes 0 128 -1099511627776 0 40\nmix 2 64 -64 512 1\nrecovered: runtime error: negative shift amount\n",
+      "stderr": ""
+    },
+    {
+      "name": "51_int_conversions",
+      "sourceSha256": "d5c685ad4b82a096a20e3b520bc7ed3e1fa66a02be1c47bf93324f241c451ccb",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "",
+      "stderr": "",
+      "stdoutBase64": "ZnJvbSAtMSAtMSAyNTUgLTEgNjU1MzUgLTEgNDI5NDk2NzI5NSAxODQ0Njc0NDA3MzcwOTU1MTYxNSAtMSAxODQ0Njc0NDA3MzcwOTU1MTYxNQpmcm9tIDI1NSAtMSAyNTUgMjU1IDI1NSAyNTUgMjU1IDI1NSAyNTUgMjU1CmZyb20gMjU2IDAgMCAyNTYgMjU2IDI1NiAyNTYgMjU2IDI1NiAyNTYKZnJvbSAtMTI5IDEyNyAxMjcgLTEyOSA2NTQwNyAtMTI5IDQyOTQ5NjcxNjcgMTg0NDY3NDQwNzM3MDk1NTE0ODcgLTEyOSAxODQ0Njc0NDA3MzcwOTU1MTQ4Nwpmcm9tIDEyOCAtMTI4IDEyOCAxMjggMTI4IDEyOCAxMjggMTI4IDEyOCAxMjgKZnJvbSA2NTUzNSAtMSAyNTUgLTEgNjU1MzUgNjU1MzUgNjU1MzUgNjU1MzUgNjU1MzUgNjU1MzUKZnJvbSAtMzI3NjkgLTEgMjU1IDMyNzY3IDMyNzY3IC0zMjc2OSA0Mjk0OTM0NTI3IDE4NDQ2NzQ0MDczNzA5NTE4ODQ3IC0zMjc2OSAxODQ0Njc0NDA3MzcwOTUxODg0Nwpmcm9tIDIxNDc0ODM2NDggMCAwIDAgMCAtMjE0NzQ4MzY0OCAyMTQ3NDgzNjQ4IDIxNDc0ODM2NDggMjE0NzQ4MzY0OCAyMTQ3NDgzNjQ4CmZyb20gLTIxNDc0ODM2NDkgLTEgMjU1IC0xIDY1NTM1IDIxNDc0ODM2NDcgMjE0NzQ4MzY0NyAxODQ0Njc0NDA3MTU2MjA2Nzk2NyAtMjE0NzQ4MzY0OSAxODQ0Njc0NDA3MTU2MjA2Nzk2Nwpmcm9tIDEzMTE3Njg0NjcyOTQ4OTk2OTUgLTE3IDIzOSAtMTI4MTcgNTI3MTkgLTE4Njc3ODg4MTcgMjQyNzE3ODQ3OSAxMzExNzY4NDY3Mjk0ODk5Njk1IDEzMTE3Njg0NjcyOTQ4OTk2OTUgMTMxMTc2ODQ2NzI5NDg5OTY5NQpmcm9tIC05MjIzMzcyMDM2ODU0Nzc1ODA3IDEgMSAxIDEgMSAxIDkyMjMzNzIwMzY4NTQ3NzU4MDkgLTkyMjMzNzIwMzY4NTQ3NzU4MDcgOTIyMzM3MjAzNjg1NDc3NTgwOQp1ZnJvbSAxODQ0Njc0NDA3MzcwOTU1MTYxNSAtMSAtMSAtMSAyNTUgMS44NDQ2NzQ0MDczNzA5NTUyZSsxOSAxLjg0NDY3NDRlKzE5CnVmcm9tIDkyMjMzNzIwMzY4NTQ3NzU4MDggLTkyMjMzNzIwMzY4NTQ3NzU4MDggMCAwIDAgOS4yMjMzNzIwMzY4NTQ3NzZlKzE4IDkuMjIzMzcyZSsxOAp1ZnJvbSA0Mjk0OTY3Mjk2IDQyOTQ5NjcyOTYgMCAwIDAgNC4yOTQ5NjcyOTZlKzA5IDQuMjk0OTY3M2UrMDkKZnRvaSAxLjkgMSAxIDEgMQpmdG9pIC0xLjkgLTEgLTEgLTEgMjU1CmZ0b2kgMC41IDAgMCAwIDAKZnRvaSAtMC41IDAgMCAwIDAKZnRvaSAyLjE0NzQ4MzY0NzdlKzA5IDIxNDc0ODM2NDcgMjE0NzQ4MzY0NyAyMTQ3NDgzNjQ3IDI1NQpmdG9pIC0yLjE0NzQ4MzY0ODllKzA5IC0yMTQ3NDgzNjQ4IC0yMTQ3NDgzNjQ4IC0yMTQ3NDgzNjQ4IDAKZnRvaSAxLjAwMDAwMDAwMDAwMDAwMDVlKzE1IDEwMDAwMDAwMDAwMDAwMDAgLTIxNDc0ODM2NDggMTAwMDAwMDAwMDAwMDAwMCAwCmZ0b2kgMCAwIDAgMCAwCmZ0b3UgMS41IDEgMQpmdG91IDI1NS45OSAyNTUgMjU1CmZ0b3UgM2UrMDkgMzAwMDAwMDAwMCAzMDAwMDAwMDAwCmZ0b3UgMS44ZSsxOSAxODAwMDAwMDAwMDAwMDAwMDAwMCAwCml0b2YgOTAwNzE5OTI1NDc0MDk5MiA5LjAwNzE5OTI1NDc0MDk5MmUrMTUgOS4wMDcxOTllKzE1Cml0b2YgOTAwNzE5OTI1NDc0MDk5MyA5LjAwNzE5OTI1NDc0MDk5MmUrMTUgOS4wMDcxOTllKzE1Cml0b2YgLTQ2MTE2ODYwMTg0MjczODc5MDUgLTQuNjExNjg2MDE4NDI3Mzg4ZSsxOCAtNC42MTE2ODZlKzE4Cml0b2YgMTIzNDU2Nzg5IDEuMjM0NTY3ODllKzA4IDEuMjM0NTY3OWUrMDgKZjY0dG8zMiAwLjEgMC4xIDAuMTAwMDAwMDAxNDkwMTE2MTIKZjY0dG8zMiAxLjAwMDAwMDEgMS4wMDAwMDAxIDEuMDAwMDAwMTE5MjA5Mjg5NgpmNjR0bzMyIDMuNDAyODIzNWUrMzggMy40MDI4MjM1ZSszOCAzLjQwMjgyMzQ2NjM4NTI4ODZlKzM4CmY2NHRvMzIgMWUtNDYgMCAwCmY2NHRvMzIgMS42Nzc3MjE3ZSswNyAxLjY3NzcyMTZlKzA3IDEuNjc3NzIxNmUrMDcKcnVuZSA2NSAiQSIgMQpydW5lIDEyODUxMiAi8J+YgCIgNApydW5lIC0xICLvv70iIDMKcnVuZSA1NTI5NiAi77+9IiAzCnJ1bmUgMTExNDExMSAiXFUwMDEwZmZmZiIgNApydW5lIDExMTQxMTIgIu+/vSIgMwpieXRlcyA2IFsxMDQgMjU1IDE5NSAxNjkgMjI2IDEzMF0gcnVuZXMgNSBbMTA0IDY1NTMzIDIzMyA2NTUzMyA2NTUzM10gZmFsc2UgdHJ1ZQpyYW5nZSAwIDEwNApyYW5nZSAxIDY1NTMzCnJhbmdlIDIgMjMzCnJhbmdlIDQgNjU1MzMKcmFuZ2UgNSA2NTUzMwpjb3B5IGj/w6nigiBI/8Op4oIKYnl0ZStydW5lIDk4IDEyMSBjCg=="
+    },
+    {
+      "name": "52_float_edges",
+      "sourceSha256": "bd5ae90d902c014a92324ac84d1fb485616f97040317aa32563e21849fbc54fb",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "NaN +Inf -Inf -0 -Inf\nnan cmp false true false false false false\nzero cmp true false true true\ninf +Inf NaN NaN true true\noverflow +Inf -Inf 0\nf32 1.6777216e+07 0.3 0.33333334 +Inf\nf32ops 0.07 -0.59999996 7 true\nf64ops 0.30000000000000004 false 0.30000000000000004 0.1 2.3333333333333335\n1.5 1.5 1.500000e+00 1.500     1.50 1.5\n-2.25 -2.25 -2.250000e+00 -2.250    -2.25 -2.25\n1e+21 1e+21 1.000000e+21 1000000000000000000000.000 1000000000000000000000.00 1E+21\n1e-07 1e-07 1.000000e-07 0.000     0.00 1E-07\n1.23456789125e+08 1.23456789125e+08 1.234568e+08 123456789.125 123456789.12 1.23456789125E+08\nNaN NaN NaN NaN      NaN NaN\n+Inf +Inf +Inf +Inf     +Inf +Inf\n-0 -0 -0.000000e+00 -0.000    -0.00 -0\nminmax NaN -0 2.5\nfloor -2 -1 -1 -3 1.4142135623730951\nbits 9223372036854775808 true 1\nharmonic 3.597739657143682\n",
+      "stderr": ""
+    },
+    {
+      "name": "53_compare_ops",
+      "sourceSha256": "2d261a27f7eec308324b23385425a7632f1ae5fc1ef70b0cb0ff61fe9fff2023",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "i64 -9223372036854775808 -9223372036854775808 [true false false true false true]\ni64 -9223372036854775808 -1 [false true true true false false]\ni64 -9223372036854775808 0 [false true true true false false]\ni64 -9223372036854775808 1 [false true true true false false]\ni64 -9223372036854775808 9223372036854775807 [false true true true false false]\ni64 -1 -9223372036854775808 [false true false false true true]\ni64 -1 -1 [true false false true false true]\ni64 -1 0 [false true true true false false]\ni64 -1 1 [false true true true false false]\ni64 -1 9223372036854775807 [false true true true false false]\ni64 0 -9223372036854775808 [false true false false true true]\ni64 0 -1 [false true false false true true]\ni64 0 0 [true false false true false true]\ni64 0 1 [false true true true false false]\ni64 0 9223372036854775807 [false true true true false false]\ni64 1 -9223372036854775808 [false true false false true true]\ni64 1 -1 [false true false false true true]\ni64 1 0 [false true false false true true]\ni64 1 1 [true false false true false true]\ni64 1 9223372036854775807 [false true true true false false]\ni64 9223372036854775807 -9223372036854775808 [false true false false true true]\ni64 9223372036854775807 -1 [false true false false true true]\ni64 9223372036854775807 0 [false true false false true true]\ni64 9223372036854775807 1 [false true false false true true]\ni64 9223372036854775807 9223372036854775807 [true false false true false true]\nu64 0 0 [true false false true false true]\nu64 0 1 [false true true true false false]\nu64 0 9223372036854775807 [false true true true false false]\nu64 0 9223372036854775808 [false true true true false false]\nu64 0 18446744073709551615 [false true true true false false]\nu64 1 0 [false true false false true true]\nu64 1 1 [true false false true false true]\nu64 1 9223372036854775807 [false true true true false false]\nu64 1 9223372036854775808 [false true true true false false]\nu64 1 18446744073709551615 [false true true true false false]\nu64 9223372036854775807 0 [false true false false true true]\nu64 9223372036854775807 1 [false true false false true true]\nu64 9223372036854775807 9223372036854775807 [true false false true false true]\nu64 9223372036854775807 9223372036854775808 [false true true true false false]\nu64 9223372036854775807 18446744073709551615 [false true true true false false]\nu64 9223372036854775808 0 [false true false false true true]\nu64 9223372036854775808 1 [false true false false true true]\nu64 9223372036854775808 9223372036854775807 [false true false false true true]\nu64 9223372036854775808 9223372036854775808 [true false false true false true]\nu64 9223372036854775808 18446744073709551615 [false true true true false false]\nu64 18446744073709551615 0 [false true false false true true]\nu64 18446744073709551615 1 [false true false false true true]\nu64 18446744073709551615 9223372036854775807 [false true false false true true]\nu64 18446744073709551615 9223372036854775808 [false true false false true true]\nu64 18446744073709551615 18446744073709551615 [true false false true false true]\nu8 0 0 [true false false true false true] i8 [true false false true false true]\nu8 0 127 [false true true true false false] i8 [false true true true false false]\nu8 0 128 [false true true true false false] i8 [false true false false true true]\nu8 0 255 [false true true true false false] i8 [false true false false true true]\nu8 127 0 [false true false false true true] i8 [false true false false true true]\nu8 127 127 [true false false true false true] i8 [true false false true false true]\nu8 127 128 [false true true true false false] i8 [false true false false true true]\nu8 127 255 [false true true true false false] i8 [false true false false true true]\nu8 128 0 [false true false false true true] i8 [false true true true false false]\nu8 128 127 [false true false false true true] i8 [false true true true false false]\nu8 128 128 [true false false true false true] i8 [true false false true false true]\nu8 128 255 [false true true true false false] i8 [false true true true false false]\nu8 255 0 [false true false false true true] i8 [false true true true false false]\nu8 255 127 [false true false false true true] i8 [false true true true false false]\nu8 255 128 [false true false false true true] i8 [false true false false true true]\nu8 255 255 [true false false true false true] i8 [true false false true false true]\ns \"\" \"\" [true false false true false true]\ns \"\" \"a\" [false true true true false false]\ns \"\" \"ab\" [false true true true false false]\ns \"\" \"b\" [false true true true false false]\ns \"\" \"B\" [false true true true false false]\ns \"\" \"\\xff\" [false true true true false false]\ns \"\" \"é\" [false true true true false false]\ns \"\" \"a\\x00\" [false true true true false false]\ns \"a\" \"\" [false true false false true true]\ns \"a\" \"a\" [true false false true false true]\ns \"a\" \"ab\" [false true true true false false]\ns \"a\" \"b\" [false true true true false false]\ns \"a\" \"B\" [false true false false true true]\ns \"a\" \"\\xff\" [false true true true false false]\ns \"a\" \"é\" [false true true true false false]\ns \"a\" \"a\\x00\" [false true true true false false]\ns \"ab\" \"\" [false true false false true true]\ns \"ab\" \"a\" [false true false false true true]\ns \"ab\" \"ab\" [true false false true false true]\ns \"ab\" \"b\" [false true true true false false]\ns \"ab\" \"B\" [false true false false true true]\ns \"ab\" \"\\xff\" [false true true true false false]\ns \"ab\" \"é\" [false true true true false false]\ns \"ab\" \"a\\x00\" [false true false false true true]\ns \"b\" \"\" [false true false false true true]\ns \"b\" \"a\" [false true false false true true]\ns \"b\" \"ab\" [false true false false true true]\ns \"b\" \"b\" [true false false true false true]\ns \"b\" \"B\" [false true false false true true]\ns \"b\" \"\\xff\" [false true true true false false]\ns \"b\" \"é\" [false true true true false false]\ns \"b\" \"a\\x00\" [false true false false true true]\ns \"B\" \"\" [false true false false true true]\ns \"B\" \"a\" [false true true true false false]\ns \"B\" \"ab\" [false true true true false false]\ns \"B\" \"b\" [false true true true false false]\ns \"B\" \"B\" [true false false true false true]\ns \"B\" \"\\xff\" [false true true true false false]\ns \"B\" \"é\" [false true true true false false]\ns \"B\" \"a\\x00\" [false true true true false false]\ns \"\\xff\" \"\" [false true false false true true]\ns \"\\xff\" \"a\" [false true false false true true]\ns \"\\xff\" \"ab\" [false true false false true true]\ns \"\\xff\" \"b\" [false true false false true true]\ns \"\\xff\" \"B\" [false true false false true true]\ns \"\\xff\" \"\\xff\" [true false false true false true]\ns \"\\xff\" \"é\" [false true false false true true]\ns \"\\xff\" \"a\\x00\" [false true false false true true]\ns \"é\" \"\" [false true false false true true]\ns \"é\" \"a\" [false true false false true true]\ns \"é\" \"ab\" [false true false false true true]\ns \"é\" \"b\" [false true false false true true]\ns \"é\" \"B\" [false true false false true true]\ns \"é\" \"\\xff\" [false true true true false false]\ns \"é\" \"é\" [true false false true false true]\ns \"é\" \"a\\x00\" [false true false false true true]\ns \"a\\x00\" \"\" [false true false false true true]\ns \"a\\x00\" \"a\" [false true false false true true]\ns \"a\\x00\" \"ab\" [false true true true false false]\ns \"a\\x00\" \"b\" [false true true true false false]\ns \"a\\x00\" \"B\" [false true false false true true]\ns \"a\\x00\" \"\\xff\" [false true true true false false]\ns \"a\\x00\" \"é\" [false true true true false false]\ns \"a\\x00\" \"a\\x00\" [true false false true false true]\nbool false true true true true false\nswitch 22133\nshort false true true [a c e f g]\n",
+      "stderr": ""
+    },
+    {
+      "name": "54_string_ops",
+      "sourceSha256": "e69d2fdd30ede82e0a5fcf14826413589a6e91af28a3da28bfc5743b1642cf4d",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "15 104 195 169 33 é  世界! true\nhéllo, 世界!+héll 21\na|bcd|efg|hij| 14\nr 0 97 a\nr 1 233 é\nr 3 19990 世\nr 6 128512 😀\nr 10 122 z\nhigh bytes 8\nlower go\nother graal false true\nother gc true false\nlower go\nempty\nupper go\nabcdef cd true\n!界世 ,olléh  a\n\"héllo, 世界!\" 6869 6869 68 69    ab|ab   |hé\n",
+      "stderr": ""
+    },
+    {
+      "name": "55_slice_bounds",
+      "sourceSha256": "84ef80dead5467d860af7d35e09acada0fb3b70ebf05975d430dd5fbc564e54d",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "4\nidx-last ok\nidx-len panic: runtime error: index out of range [5] with length 5\nidx-neg panic: runtime error: index out of range [-1]\narr-idx panic: runtime error: index out of range [4] with length 4\nstr-idx panic: runtime error: index out of range [5] with length 5\n[0 1 2 3 4] []\nslice-full ok\nslice-hi panic: runtime error: slice bounds out of range [:6] with capacity 5\nslice-inv panic: runtime error: slice bounds out of range [3:2]\n[0 1 2 3] 2 5\nslice-cap ok\n[1 2] 2 3\nslice3 ok\nslice3-bad panic: runtime error: slice bounds out of range [::7] with capacity 5\nell \nstr-slice ok\nstr-slice-bad panic: runtime error: slice bounds out of range [:7] with length 5\n0 0 true true\nnil ok\nalias [0 0] [0 0 20] [0 0 20] 3 3\ngrow [0 0 20] [99 0 20 30] 4\ncopy 4 [0 0 1 2 3]\ncopy2 0 3 hel\narrays [[0 1 2] [3 4 5] [6 7 8]] [[0 1 2] [3 -1 5] [6 7 8]] false\nzero-len-make panic: runtime error: index out of range [0] with length 0\n",
+      "stderr": ""
+    },
+    {
+      "name": "56_map_ops",
+      "sourceSha256": "593be026d1cdbbdefb873fec69a502a0ac5c5564e701a851cc74df14505358ec",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "2 0 false 11 true 0\na 11\nc 3\n2 c b true\n6 2 1\n3 4\n1000 499500 499500\n500\n0\n0 0\nrecovered: assignment to entry in nil map\n",
+      "stderr": ""
+    },
+    {
+      "name": "57_defer_order",
+      "sourceSha256": "3a7e13e395af7312dcb12b4bb55fd1886c3742e737e4358f8ba16f3dcd9d4c82",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "closure sees 2\narg at defer time 1\nloop defer 3\nloop defer 2\nloop defer 1\nloop defer 0\nnested helper recover: \u003cnil\u003e\nouter got first\nsecond\nfinal: re-orig\ncnt 11\n",
+      "stderr": ""
+    },
+    {
+      "name": "58_float_minmax_signed_zero",
+      "sourceSha256": "d32f41945561074bf965fb82a9619a326252ab6691375b2e2422d6ec528a9591",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "0 0 -0 -0\nfalse true\nNaN NaN -0 0\n0 -0 false\n",
+      "stderr": ""
+    },
+    {
+      "name": "59_recover_named_results",
+      "sourceSha256": "f0cfe8a3bf94403f1cff7357b3075b1adce76258b1a5974ee5304353e0692883",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "40 recovered: boom\nset by defer\n",
+      "stderr": ""
+    },
+    {
+      "name": "60_narrow_unary_widen",
+      "sourceSha256": "240cd670dd6a3516ea24b502da86c6b5e395551c3210bd3633b3dc63ed1c4796",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "neg-widen -128 -32768 -2147483648 255 65535 4294967295\nnot-widen 127 32767 2147483647 254 65534 4294967294\nas-int -127 255 1 1431655765\nindex 765 765 384\nmapkey wrapped\niface -128 254 65535 -2147483648 4294967294\n-128 255 32767\nconv-widen -2147483647 1 1 2147483649 -2147483646\nconv-index 3 -647\ncmp true true true false\n",
+      "stderr": ""
     }
-  ],
-  "recordedAt": "2026-10-14T13:37:58Z",
-  "toolchain": "go1.27.1"
+  ]
 }

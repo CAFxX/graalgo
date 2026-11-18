@@ -14,7 +14,7 @@ cd "$(dirname "$0")"
 
 # Scratch space: /tmp on this VM is a small tmpfs shared with other work;
 # keep all temp build/run dirs on the persistent disk.
-export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp}"
+export TMPDIR="${TMPDIR:-$PWD/.tmp}"
 mkdir -p "$TMPDIR"
 
 if [ -z "${DH_GO:-}" ]; then
@@ -47,7 +47,7 @@ if [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
   exit 2
 fi
 
-OUTDIR="${OUTDIR:-./test-results}"
+OUTDIR="${OUTDIR:-./.tmp/test-results}"
 mkdir -p "$OUTDIR"
 
 echo "== [0/5] toolchain =="
@@ -55,13 +55,13 @@ go version
 command -v go
 
 echo "== [1/5] build =="
-# NOTE: test-results/ holds generated mutants and reports; it is not source
+# NOTE: $OUTDIR (.tmp/) holds generated mutants and reports; it is not source
 # and is deliberately excluded from the build/vet/test patterns below.
 go build ./cmd/... ./internal/... ./corpus/...
 
 echo "== [2/5] vet + gofmt =="
 go vet ./cmd/... ./internal/... ./corpus/...
-gofmt -l $(find . -name '*.go' -not -path './testdata/_broken/*') | tee "$OUTDIR/gofmt.txt"
+gofmt -l $(find . -name '*.go' -not -path './testdata/_broken/*' -not -path './.tmp/*') | tee "$OUTDIR/gofmt.txt"
 test ! -s "$OUTDIR/gofmt.txt"
 
 echo "== [3/5] unit tests =="
@@ -75,13 +75,18 @@ if [ -n "${DH_TIMEOUT:-}" ]; then
   TIMEOUT_ARGS=(-timeout "$DH_TIMEOUT")
 fi
 
+# graalgo-vs-gc is NOT compared here: that is `make snapshot-check`
+# (gc snapshot + reviewed expected divergences). This step and the next
+# self-test the comparator on gc-vs-gc only: no false positives on the
+# unmutated corpus, no flakiness, and sensitivity to mutated corpus
+# programs. Mutation of graalgo itself (SPEC 5.7) is tools/mutation.
 echo "== [4/5] green run: unmutated corpus, gc-a vs gc-b =="
 go run ./cmd/diffharness run \
-  -config backends-p3.json -corpus corpus \
+  -config backends-p3.json -corpus corpus -backends gc-a,gc-b \
   "${TIMEOUT_ARGS[@]}" \
   -out "$OUTDIR/green.json" 2>&1 | tee "$OUTDIR/green.log"
 
-echo "== [5/5] oracle validation: rerun control + mutation red-green =="
+echo "== [5/5] comparator self-test: rerun control + corpus-mutation red-green (gc-vs-gc) =="
 rm -rf "$OUTDIR/mutants" && mkdir -p "$OUTDIR/mutants"
 go run ./cmd/diffharness validate \
   -config backends-p3.json -corpus corpus \
@@ -92,9 +97,9 @@ go run ./cmd/diffharness validate \
 echo "== checksums (measurement honesty: harness sources archived with logs) =="
 {
   echo "# sha256 of harness sources at validation time: $(date -u +%FT%TZ)"
-  find . -name '*.go' -not -path './testdata/_broken/*' -not -path './test-results/*' | sort | xargs sha256sum
+  find . -name '*.go' -not -path './testdata/_broken/*' -not -path './.tmp/*' | sort | xargs sha256sum
   sha256sum backends.json backends-p3.json mutations.txt run.sh
 } | tee "$OUTDIR/checksums.txt"
 
 echo
-echo "ALL GREEN: harness operational, oracles mutation-validated."
+echo "ALL GREEN: harness comparator self-test passed (gc-vs-gc). graalgo-vs-gc: make snapshot-check; graalgo mutation: make mutation."

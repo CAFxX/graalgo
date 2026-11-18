@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -8,17 +10,7 @@ import (
 )
 
 func mkEntry(name string) SnapshotEntry {
-	return SnapshotEntry{
-		Name:     name,
-		Args:     []string{},
-		Stdin:    "",
-		BuildOK:  true,
-		BuildLog: "",
-		ExitCode: 0,
-		TimedOut: false,
-		Stdout:   "hello\n",
-		Stderr:   "",
-	}
+	return SnapshotEntry{Name: name, BuildOK: true, Stdout: "hello\n"}
 }
 
 func TestDiffEntries_Equal(t *testing.T) {
@@ -31,9 +23,6 @@ func TestDiffEntries_StdoutDiff(t *testing.T) {
 	a, b := mkEntry("p"), mkEntry("p")
 	b.Stdout = "goodbye\n"
 	d := diffEntries(a, b)
-	if d == "" {
-		t.Fatal("stdout difference not detected")
-	}
 	if !strings.Contains(d, "stdout") || !strings.Contains(d, "line 1") {
 		t.Fatalf("drift description should name field and line: %q", d)
 	}
@@ -47,54 +36,135 @@ func TestDiffEntries_ExitCode(t *testing.T) {
 	}
 }
 
-func TestDiffEntries_BuildLogOnlyCompared(t *testing.T) {
-	// A build-failure baseline must be sensitive to the failure text.
+func TestDiffEntries_BuildLogSameBackend(t *testing.T) {
 	a, b := mkEntry("p"), mkEntry("p")
 	a.BuildOK, b.BuildOK = false, false
-	a.ExitCode, b.ExitCode = -1, -1
-	a.BuildLog = "build [{GRAALGO_RUN} --check {CORPUS}/x/main.go] failed: exit status 1\nold error"
-	b.BuildLog = "build [{GRAALGO_RUN} --check {CORPUS}/x/main.go] failed: exit status 1\nnew error"
+	a.BuildLog, b.BuildLog = "old error", "new error"
 	if d := diffEntries(a, b); !strings.Contains(d, "buildLog") {
 		t.Fatalf("build log drift not reported: %q", d)
+	}
+	// Cross-toolchain comparison ignores compiler-specific build logs ...
+	if d := diffBehavior(a, b); d != "" {
+		t.Fatalf("cross-toolchain build logs compared: %q", d)
+	}
+	// ... but never the build outcome.
+	b.BuildOK = true
+	if d := diffBehavior(a, b); !strings.Contains(d, "buildOk") {
+		t.Fatalf("build outcome difference missed: %q", d)
 	}
 }
 
 func TestScrubEnvPaths(t *testing.T) {
-	in := "build [/home/u/checkout/phases/phase1/graalgo-run --check /home/u/checkout/tools/diffharness/corpus/13_x/main.go] failed"
-	got := scrubEnvPaths(in, "/home/u/checkout/tools/diffharness/corpus")
-	if strings.Contains(got, "/home/u/checkout") {
+	in := "build [/home/u/c/internal/backend/graalgo-sync-run --check /home/u/c/test/differential/corpus/13_x/main.go] failed"
+	got := scrubEnvPaths(in, "/home/u/c/test/differential/corpus")
+	if strings.Contains(got, "/home/u/c") {
 		t.Fatalf("machine paths not scrubbed: %q", got)
 	}
 	if !strings.Contains(got, "{GRAALGO_RUN}") || !strings.Contains(got, "{CORPUS}/13_x/main.go") {
 		t.Fatalf("scrub tokens wrong: %q", got)
 	}
-}
-
-func TestScrubEnvPaths_LeavesProgramOutputAlone(t *testing.T) {
-	in := "hello, world\n"
-	if got := scrubEnvPaths(in, "/home/u/checkout/tools/diffharness/corpus"); got != in {
-		t.Fatalf("program output mangled: %q -> %q", in, got)
+	if out := scrubEnvPaths("hello, world\n", "/x"); out != "hello, world\n" {
+		t.Fatalf("program output mangled: %q", out)
 	}
 }
 
-func TestDiffExclusions_OrderInsensitive(t *testing.T) {
-	a := []harness.Exclusion{{Program: "x", Reason: "flaky"}, {Program: "y", Reason: "other: z"}}
-	b := []harness.Exclusion{{Program: "y", Reason: "other: z"}, {Program: "x", Reason: "flaky"}}
-	if d := diffExclusions(a, b); d != "" {
-		t.Fatalf("order-only difference reported as drift: %s", d)
+func TestClassify(t *testing.T) {
+	exp := map[string]harness.ReviewedExclusion{"x": {File: "x", Reason: "deferred-parity", Detail: "d"}}
+	for _, c := range []struct {
+		name, diff string
+		infra      bool
+		want       string
+	}{
+		{"y", "", false, "MATCH"},
+		{"y", "stdout differs", false, "DRIFT"},
+		{"x", "stdout differs", false, "EXPECTED"},
+		{"x", "", false, "STALE"},
+		{"y", "buildOk", true, "INFRA"},
+	} {
+		if got := classify(c.name, c.diff, c.infra, exp).kind; got != c.want {
+			t.Errorf("classify(%s,%q,%v)=%s want %s", c.name, c.diff, c.infra, got, c.want)
+		}
 	}
 }
 
-func TestDiffExclusions_DetectsDrift(t *testing.T) {
-	a := []harness.Exclusion{{Program: "x", Reason: "flaky"}}
-	if d := diffExclusions(a, nil); d == "" {
-		t.Fatal("removed exclusion not detected")
+func TestReport_FailsOnDriftStaleInfra(t *testing.T) {
+	snap := &SnapshotFile{Reference: "gc-a", Toolchain: "go1.x"}
+	if err := report([]verdict{{"a", "MATCH", ""}, {"b", "EXPECTED", "x"}}, 2, snap, "g"); err != nil {
+		t.Fatalf("clean report failed: %v", err)
 	}
-	if d := diffExclusions(nil, a); d == "" {
-		t.Fatal("added exclusion not detected")
+	for _, k := range []string{"DRIFT", "STALE", "REF-DRIFT"} {
+		if err := report([]verdict{{"a", k, ""}}, 1, snap, "g"); err == nil {
+			t.Errorf("%s did not fail", k)
+		}
 	}
-	c := []harness.Exclusion{{Program: "x", Reason: "backend-specific"}}
-	if d := diffExclusions(a, c); d == "" {
-		t.Fatal("changed exclusion reason not detected")
+	if err := report([]verdict{{"a", "INFRA", ""}}, 1, snap, "g"); err == nil || !strings.Contains(err.Error(), errInfra.Error()) {
+		t.Errorf("INFRA not reported as infra failure: %v", err)
+	}
+}
+
+func TestIsInfra(t *testing.T) {
+	if !isInfra(SnapshotEntry{BuildLog: "internal error building AST: JSON parse error at line 3"}) {
+		t.Fatal("frontend corruption not classified as infra")
+	}
+	if isInfra(SnapshotEntry{Stderr: "panic: runtime error: index out of range [5] with length 3"}) {
+		t.Fatal("program panic classified as infra")
+	}
+}
+
+func TestSelectChecked_ContentAddressed(t *testing.T) {
+	dir := t.TempDir()
+	for _, n := range []string{"a", "b"} {
+		os.MkdirAll(filepath.Join(dir, n), 0o755)
+		os.WriteFile(filepath.Join(dir, n, "main.go"), []byte("package main\nfunc main(){}\n// "+n), 0o644)
+	}
+	progs, err := harness.DiscoverCorpus(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := &SnapshotFile{}
+	for _, p := range progs {
+		h, _ := sourceHash(p)
+		snap.Programs = append(snap.Programs, SnapshotEntry{Name: p.Name, SourceSHA256: h})
+	}
+	if live, err := selectChecked(snap, progs, nil, ""); err != nil || len(live) != 2 {
+		t.Fatalf("consistent corpus rejected: %v", err)
+	}
+	if live, err := selectChecked(snap, progs, nil, "b"); err != nil || len(live) != 1 || live[0].Name != "b" {
+		t.Fatalf("-programs slice wrong: %v %v", live, err)
+	}
+	if _, err := selectChecked(snap, progs, map[string]harness.ReviewedExclusion{"zz": {}}, ""); err == nil {
+		t.Error("expected-divergence entry for a missing program accepted")
+	}
+	if _, err := selectChecked(snap, progs, nil, "zz"); err == nil {
+		t.Error("unknown -programs name accepted")
+	}
+	snap2 := &SnapshotFile{Programs: append(append([]SnapshotEntry{}, snap.Programs...), SnapshotEntry{Name: "gone"})}
+	if _, err := selectChecked(snap2, progs, nil, ""); err == nil {
+		t.Error("recorded program missing from corpus accepted")
+	}
+	os.WriteFile(progs[0].Main, []byte("package main\nfunc main(){println()}\n"), 0o644)
+	if _, err := selectChecked(snap, progs, nil, ""); err == nil || !strings.Contains(err.Error(), "source changed") {
+		t.Errorf("edited source not detected: %v", err)
+	}
+}
+
+func TestSnapshotRoundTripsInvalidUTF8(t *testing.T) {
+	// encoding/json replaces invalid UTF-8 with U+FFFD: without the base64
+	// fallback a gc snapshot of a program printing raw bytes would be
+	// silently wrong (found by corpus 51_int_conversions).
+	raw := "copy h\xff\xc3\xa9\xe2\x82\n"
+	path := filepath.Join(t.TempDir(), "s.json")
+	e := SnapshotEntry{Name: "p", Stdout: raw, Stderr: "ok"}
+	e.encodeBytes()
+	snap := SnapshotFile{Format: snapshotFormat, Normalizer: snapshotNormalizer, Programs: []SnapshotEntry{e}}
+	if err := writeJSON(path, snap); err != nil {
+		t.Fatal(err)
+	}
+	got, err := readSnapshot(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Programs[0].Stdout != raw || got.Programs[0].Stderr != "ok" {
+		t.Fatalf("output did not round-trip: %q / %q", got.Programs[0].Stdout, got.Programs[0].Stderr)
 	}
 }

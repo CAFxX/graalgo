@@ -8,34 +8,26 @@
 #   byte-identical stdout and equal exit codes. Panic programs: the first
 #   stderr line is compared (wave3 convention).
 #
-# Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
-#   GO        gc toolchain (default ~/tools/go/bin/go)
-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
-#   TMPDIR    scratch (default <probe-dir>/.tmp, created)
+# Environment (set by caller or defaults; see test/lib/infra.sh):
+#   GO                gc toolchain (default ~/tools/go/bin/go)
+#   GRAALGO_SYNC_RUN  graalgo launcher (default: this repo's product launcher)
+#   GRAALVM_HOME      JDK for the launcher (default ~/tools/graalvm-jdk-25)
+#   TMPDIR            scratch (default <probe-dir>/.tmp, created)
 #
-# Exit: 0 iff every case passes every leg. Prints a per-case table.
+# Exit: 0 every case passes every leg; 1 a divergence; 3 infrastructure
+# error (launcher/backend/toolchain missing, JVM class-load failure).
+# Prints a per-case table.
 set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
-GO="${GO:-$HOME/tools/go/bin/go}"
-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
+# shellcheck source=../lib/infra.sh
+. "$(dirname "$0")/../lib/infra.sh"
+infra_setup_go
+infra_setup_graalgo
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
-export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
-fi
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
@@ -63,6 +55,7 @@ for c in "${cases[@]}"; do
         "${GRAALGO_RUN[@]}" --gmp="$gmp" "$casedir/main.go" \
             > "$TMPDIR/$c.gr$gmp.out" 2> "$TMPDIR/$c.gr$gmp.err"
         eval "gr${gmp}_exit=$?"
+        eval "infra_check_run \"$c@gmp$gmp\" \"\$gr${gmp}_exit\" \"$TMPDIR/$c.gr$gmp.err\""
     done
     ok=1; why=""
     for gmp in 1 4; do

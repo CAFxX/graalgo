@@ -187,8 +187,6 @@ check: main $(OUT_TEST)/.built
 # P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
 # suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
 # before milestone sign-off.
-# BRIDGE (test lane): the corpora still live under phases/ until the test
-# code-move lane relocates them to test/corpus/; repoint P1_CORPUS/P2_CORPUS.
 P1_CORPUS ?= ../../../test/corpus/phase1
 P2_CORPUS ?= ../../../test/corpus/phase2
 pin-audit: main $(OUT_TEST)/.built
@@ -201,13 +199,10 @@ pin-audit: main $(OUT_TEST)/.built
 	--out out/pinaudit-report.md
 
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
+# Takes ~10 min. (The GOMAXPROCS-matrix and stress-differential scripts
+# were deleted: their Go corpus only ever lived in untracked scratch.)
 torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
-
-# P2-M8 GOMAXPROCS matrix (differential vs gc).
-gmp-matrix: main $(OUT_TEST)/.built
-	bash ../../../tools/torture/gmp_matrix.sh
 
 clean:
 	rm -rf out

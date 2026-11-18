@@ -177,6 +177,10 @@ feed:
 	journal.Flush()
 	saveState(*workdir, st)
 	fmt.Fprintf(os.Stderr, "done: %v\n", st.Counts)
+	if st.Counts[vInfra.String()] > 0 {
+		fmt.Fprintf(os.Stderr, "INFRA: %d seeds had no verdict (launcher/frontend failure)\n", st.Counts[vInfra.String()])
+		os.Exit(3)
+	}
 }
 
 // cmdRegress re-runs every saved regression and reports any that no longer

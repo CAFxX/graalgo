@@ -1,0 +1,61 @@
+# Oracle validation by mutation (SPEC §5.7, GG-0034): nightly.
+#
+# tools/mutation deliberately breaks graalgo's lowering/runtime (curated
+# mutants in tools/mutation/mutants.json: signed % -> floorMod, unsigned
+# division done signed, dropped width truncation, Java shift masking,
+# FIFO defers, ...) on a scratch copy of the tree and confirms the per-push
+# differential gate (`make snapshot-check`) goes red for each. A survivor
+# without a reviewed survivorJustification fails this job: the per-push
+# gate has a blind spot that needs a new corpus program.
+#
+# Too slow for per-push (one rebuild + a corpus slice per mutant, ~1-2 h);
+# the per-push gate it validates is `make all` -> snapshot-check.
+name: mutation
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/mutation/**'
+      - '.github/workflows/mutation.yml'
+
+jobs:
+  mutation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: Build frontend + backend
+        run: make generate build
+
+      - name: Mutation run (exit 1 = unjustified survivor, 3 = infra/red baseline)
+        run: make mutation MUTATION_WORK="$RUNNER_TEMP/mutation"
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: ${{ runner.temp }}/mutation/report.json
+          if-no-files-found: warn

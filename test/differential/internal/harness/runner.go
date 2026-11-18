@@ -103,10 +103,9 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 	start := time.Now()
 	runErr := cmd.Run()
 	oc.Duration = time.Since(start)
-	// Stdout is normalized for addresses: pointer values printed by the
-	// program (%p, %x of pointers) are not semantic observables and differ
-	// between runs even of the same binary. Message text is untouched.
-	oc.Stdout = Normalize(stdout.String())
+	// Stdout is compared exactly, except for the program's declared
+	// opt-in rules (e.g. "pointers" for a program printing %p).
+	oc.Stdout = NormalizeStdout(stdout.String(), prog.StdoutRules)
 	// Stderr carries the backend's declared noise filters (e.g. the
 	// Truffle Unsafe warnings on the graalgo backend) after normalization.
 	oc.Stderr = b.FilterStderr(Normalize(stderr.String()))
@@ -166,6 +165,11 @@ func runEnv(overrides map[string]string) []string {
 	// and fails with 127 in CI. Pass it through when set.
 	if gh := os.Getenv("GRAALVM_HOME"); gh != "" {
 		base = append(base, "GRAALVM_HOME="+gh)
+	}
+	// GRAALGO_JAVA_OPTS: launcher JVM resource caps on shared hosts
+	// (read only by the graalgo launchers; inert for gc binaries).
+	if jo := os.Getenv("GRAALGO_JAVA_OPTS"); jo != "" {
+		base = append(base, "GRAALGO_JAVA_OPTS="+jo)
 	}
 	return overrideEnv(base, overrides)
 }

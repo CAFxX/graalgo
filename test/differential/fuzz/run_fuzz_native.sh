@@ -16,14 +16,18 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE1_DIR   phase-1 tree with the graalgo-run launcher
+#   PHASE3_DIR   dir holding the product launcher graalgo-sync-run
+#                (default: <repo>/internal/backend; needs `make build`)
+#
+# Exit status: 0 no divergence, 1 divergence, 2 usage, 3 infrastructure
+# failure (launcher/backend missing, no verdict for some program).
 set -euo pipefail
 
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DH_ROOT="$(cd "$HERE/.." && pwd)"
 REPO_ROOT="$(cd "$DH_ROOT/../.." && pwd)"
 
-export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp}"
+export TMPDIR="${TMPDIR:-$REPO_ROOT/.tmp}"
 mkdir -p "$TMPDIR"
 
 if [ -z "${DH_GO:-}" ]; then
@@ -36,7 +40,11 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-export PHASE1_DIR="${PHASE1_DIR:-$REPO_ROOT/phases/phase1}"
+export PHASE3_DIR="${PHASE3_DIR:-$REPO_ROOT/internal/backend}"
+if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ] || [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
+  echo "INFRA: product launcher/backend not built under $PHASE3_DIR (run make generate build)" >&2
+  exit 3
+fi
 
 FUZZTIME="30"
 OUTDIR=""
@@ -47,7 +55,7 @@ while [ $# -gt 0 ]; do
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-OUTDIR="${OUTDIR:-$DH_ROOT/test-results/fuzz-native}"
+OUTDIR="${OUTDIR:-$DH_ROOT/.tmp/fuzz-native}"
 mkdir -p "$OUTDIR"
 
 echo "== [1/4] native fuzz: grow corpora (${FUZZTIME}s per target) =="
@@ -67,12 +75,14 @@ python3 "$HERE/replay.py" --fuzzdir "$HERE/testdata/fuzz" --out "$REPLAY_DIR" | 
 echo "== [3/4] differential: gc vs graalgo =="
 cd "$DH_ROOT"
 go build -o "$OUTDIR/diffharness" ./cmd/diffharness
-PHASE1_DIR="$PHASE1_DIR" \
+set +e
+PHASE3_DIR="$PHASE3_DIR" \
 "$OUTDIR/diffharness" run \
-  -config "$DH_ROOT/backends.json" \
+  -config "$DH_ROOT/backends-p3.json" \
   -corpus "$REPLAY_DIR" \
   -out "$OUTDIR/report.json" 2>&1 | tee "$OUTDIR/run.log"
-rc=$?
+rc=${PIPESTATUS[0]}
+set -e
 
 echo "== [4/4] verdict =="
 if [ $rc -eq 0 ]; then

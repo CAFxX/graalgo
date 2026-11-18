@@ -1,22 +1,32 @@
-# Layer 2 — conformance (phases/phase3/PLAN.md §5, GG-0029/GG-0032):
-# GOROOT/test language suite (356 files), per-commit on frontend changes.
+# Layer 2 — conformance (SPEC §5.2, GG-0029/GG-0032): GOROOT/test language
+# suite (356 files), per-commit on any change that can alter lowering or
+# runtime behavior (frontend, backend, driver, harness).
 #
 # The srctest adapter (test/differential/internal/srctest) classifies every
-# file (run / errorcheck / structural exclusions) and runs the
-# language-conformance subset differential gc vs graalgo through the shared
-# diffharness oracle. Exclusions are versioned and reason-coded in
-# test/differential/srctest-exclusions.yaml (GG-0033).
+# file (run / errorcheck / notrun) and runs every runnable one differential
+# gc vs graalgo under the PRODUCT launcher (P3SyncMain). Expected
+# divergences are explicit, reason-coded entries in
+# test/differential/srctest-exclusions.yaml (SPEC §5.6); a listed file that
+# now matches gc fails the run (stale entry).
 name: conformance
 
 on:
   push:
     paths:
       - 'internal/frontend/**'
+      - 'internal/backend/**'
+      - 'internal/driver/**'
+      - 'cmd/graalgo/**'
       - 'test/differential/**'
+      - '.github/workflows/conformance.yml'
   pull_request:
     paths:
       - 'internal/frontend/**'
+      - 'internal/backend/**'
+      - 'internal/driver/**'
+      - 'cmd/graalgo/**'
       - 'test/differential/**'
+      - '.github/workflows/conformance.yml'
   workflow_dispatch:
 
 jobs:
@@ -44,8 +54,8 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: Build backend (graalgo-run)
-        run: make -C internal/backend/truffle main && make -C internal/backend/runtime main && make -C internal/backend/interop main
+      - name: Build frontend + backend (product launcher graalgo-sync-run)
+        run: make generate build
 
       - name: Conformance differential (GOROOT/test vs gc)
         # actions/setup-go ships a full GOROOT including test/.

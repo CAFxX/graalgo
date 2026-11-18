@@ -7,7 +7,7 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in phases/phase2/GODEBUG.md)
+#                documented in the runtime module's GoDebug sources)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)
@@ -17,16 +17,22 @@
 # Exit 0 iff every knob diffs as expected. Writes REPORT.md on success.
 set -u
 
-P2="$(cd "$(dirname "$0")/../../phases/phase2" && pwd)"
-GRAALGO="$P2"
-GO="$HOME/tools/go/bin/go"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+BK="$ROOT/internal/backend"
+GO="${GO:-$HOME/tools/go/bin/go}"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 JAVA="$GRAALVM_HOME/bin/java"
-CORPUS="$P2/corpus/godebug"
-WORK="$(mktemp -d)"
+CORPUS="$ROOT/test/corpus/phase2/godebug"
+mkdir -p "$ROOT/.tmp"
+WORK="$(mktemp -d "$ROOT/.tmp/godebug-diff.XXXXXX")"
 KEEP="${1:-}"
 
-CP="$P2/out/classes:$P2/../phase1/out/classes:$(echo $P2/../phase1/lib/*.jar | tr ' ' ':')"
+# Infrastructure preconditions: exit 3 (no verdict), never a knob FAIL.
+[ -x "$GO" ] || { echo "INFRA: gc toolchain not found: $GO" >&2; exit 3; }
+[ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; exit 3; }
+# Same classpath order as the runtime module's RUN_CP: runtime classes
+# shadow the truffle module's frozen stubs.
+CP="$BK/runtime/out/classes:$BK/truffle/out/classes:$BK/interop/out/classes:$(echo "$BK"/truffle/lib/*.jar | tr ' ' ':')"
 JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
 
 pass=0
@@ -45,6 +51,11 @@ run_gr() { # $1=godebug $2=probe
         graalgo.sched.launcher.SchedMain --gmp=2 "$CORPUS/$probe" \
         >"$WORK/gr.out" 2>"$WORK/gr.err"
     echo "$?" >"$WORK/gr.exit"
+    if grep -qE 'ClassNotFoundException|NoClassDefFoundError|Could not find or load main class' "$WORK/gr.err"; then
+        echo "INFRA: graalgo launcher could not load its classes:" >&2
+        head -3 "$WORK/gr.err" >&2
+        exit 3
+    fi
 }
 
 # Strip JVM/Truffle warnings from graalgo stderr (not program behavior).
@@ -65,7 +76,9 @@ check() { # $1=knob $2=ok(0/1) $3=detail
 }
 
 echo "== building phase2 =="
-make -C "$P2" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
+make -C "$ROOT" build >/dev/null 2>&1 || { echo "INFRA: make build failed" >&2; exit 3; }
+[ -f "$BK/runtime/out/classes/graalgo/sched/launcher/SchedMain.class" ] \
+    || { echo "INFRA: SchedMain not built" >&2; exit 3; }
 
 # --- schedtrace ---
 # Strengthened comparator: requires >=3 lines with STRICTLY INCREASING

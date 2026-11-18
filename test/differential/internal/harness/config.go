@@ -36,17 +36,42 @@ type Backend struct {
 	// Filters are backend-specific by construction: they never apply to
 	// the reference backend's output.
 	StderrFilters []string `json:"stderrFilters,omitempty"`
+	// NoiseSets names built-in, harness-owned filter sets (see NoiseSets)
+	// applied like StderrFilters. Structural: every JVM-hosted backend
+	// declares "jvm" and gets the same, single definition of JVM noise,
+	// instead of each config copying (and forgetting) regexes.
+	NoiseSets []string `json:"noiseSets,omitempty"`
+	// Batch: the launcher accepts --batch=<file> (the phase-1 graalgo-run
+	// does; the product launcher does not), letting the typeparam/srctest
+	// adapters amortize one JVM over many files.
+	Batch bool `json:"batch,omitempty"`
+}
+
+// NoiseSets are the named stderr-noise filter sets a backend may opt into.
+// Each line pattern is anchored and matches only text a host runtime (not
+// the Go program) prints.
+var NoiseSets = map[string][]string{
+	"jvm": {
+		// JDK 25 sun.misc.Unsafe terminal-deprecation warnings (Truffle).
+		`^WARNING: A terminally deprecated method in sun\.misc\.Unsafe has been called$`,
+		`^WARNING: sun\.misc\.Unsafe::.*$`,
+		`^WARNING: Please consider reporting this to the maintainers.*$`,
+		// HotSpot VM warnings, e.g. the hsperfdata "... locked" warning
+		// two concurrent JVMs sharing a temp dir can print (the launchers
+		// also pass -XX:-UsePerfData; this is the belt to that brace),
+		// and its continuation lines.
+		`^(Java HotSpot\(TM\)|OpenJDK) 64-Bit Server VM warning:.*$`,
+		`^   \S*hsperfdata\S*$`,
+		`^Try using the -Djava\.io\.tmpdir= option to select an alternate temp location\.$`,
+	},
 }
 
 // FilterStderr drops every line of s matching any of the backend's
 // StderrFilters. An invalid expression is a programming error and panics.
 func (b *Backend) FilterStderr(s string) string {
-	if len(b.StderrFilters) == 0 {
+	res := b.filterRegexps()
+	if len(res) == 0 {
 		return s
-	}
-	res := make([]*regexp.Regexp, len(b.StderrFilters))
-	for i, expr := range b.StderrFilters {
-		res[i] = regexp.MustCompile(expr)
 	}
 	var kept []string
 	for _, line := range strings.Split(s, "\n") {
@@ -62,6 +87,19 @@ func (b *Backend) FilterStderr(s string) string {
 		}
 	}
 	return strings.Join(kept, "\n")
+}
+
+func (b *Backend) filterRegexps() []*regexp.Regexp {
+	var res []*regexp.Regexp
+	for _, set := range b.NoiseSets {
+		for _, expr := range NoiseSets[set] {
+			res = append(res, regexp.MustCompile(expr))
+		}
+	}
+	for _, expr := range b.StderrFilters {
+		res = append(res, regexp.MustCompile(expr))
+	}
+	return res
 }
 
 // Exclusion removes a corpus program from runs with a recorded reason, per
@@ -111,6 +149,16 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		if len(b.Run) == 0 {
 			return nil, fmt.Errorf("backend %q has empty run template", b.Name)
+		}
+		for _, set := range b.NoiseSets {
+			if _, ok := NoiseSets[set]; !ok {
+				return nil, fmt.Errorf("backend %q: unknown noise set %q", b.Name, set)
+			}
+		}
+		for _, expr := range b.StderrFilters {
+			if _, err := regexp.Compile(expr); err != nil {
+				return nil, fmt.Errorf("backend %q: bad stderr filter %q: %v", b.Name, expr, err)
+			}
 		}
 		// Expand ${ENVVAR} in Vars values so toolchain paths stay portable
 		// across checkouts; an empty expansion falls back to PATH lookup.

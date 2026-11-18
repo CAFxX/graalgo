@@ -179,11 +179,23 @@ Related: [Makefile](../Makefile) (root build entry point),
       [run_differential.sh](../test/corpus/lifecycle/run_differential.sh).
   - [differential/](../test/differential/) — the differential harness: run
     each corpus program under graalgo and under `gc`, byte-compare outputs.
-    Moved here from `tools/diffharness/` (2026-10-13).
+    Moved here from `tools/diffharness/` (2026-10-13). Reviewed,
+    reason-coded expected divergences (SPEC §5.6):
+    [corpus-exclusions.yaml](../test/differential/corpus-exclusions.yaml)
+    (corpus) and
+    [srctest-exclusions.yaml](../test/differential/srctest-exclusions.yaml)
+    (GOROOT/test, layer 2); listed tests still run and fail when stale.
+  - [lib/](../test/lib/) — [infra.sh](../test/lib/infra.sh), the shared
+    exit-code contract of the shell differential runners (0 pass,
+    1 divergence, 2 usage, 3 infrastructure error).
+  - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
+    runs named backend unit-test classes with per-test timing
+    (`make test-java-fast` / `test-java-slow`).
   - [e2e/](../test/e2e/) — end-to-end: real published Go modules compiled
     as-published (e.g. `github.com/google/uuid`), output matching `go run`.
-  - [snapshots/](../test/snapshots/) — committed behavior snapshots
-    (`go1.27.1.json`); `make snapshot-check` fails on drift. See
+  - [snapshots/](../test/snapshots/) — committed behavior snapshots of
+    **gc** (`go1.27.1.json`); `make snapshot-check` fails when graalgo
+    diverges from gc outside the reviewed expected-divergence list. See
     [test/snapshots/README.md](../test/snapshots/README.md).
   - [regression/](../test/regression/) — regression tests for fixed
     package-level bugs (`pkg031/` covers the PKG-031 strings.Repeat hang);
@@ -222,7 +234,10 @@ Related: [Makefile](../Makefile) (root build entry point),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
   [torture/](../tools/torture/) (scheduler torture),
   [godebug-diff/](../tools/godebug-diff/),
-  [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
+  [mutation/](../tools/mutation/) (mutates graalgo on a scratch copy and
+  requires the per-push differential gate to go red; `make mutation`,
+  nightly [mutation.yml](../.github/workflows/mutation.yml)),
+  [gate1/](../tools/gate1/),
   [req/](../tools/req/) (requirements CLI), and
   [precommit-check.sh](../tools/precommit-check.sh) (mechanical pre-commit
   guard).

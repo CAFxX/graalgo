@@ -22,20 +22,25 @@
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
-#               behavior snapshots (M10 WS I): re-runs the differential
-#               corpus under graalgo and fails on drift from the committed
-#               baseline in [test/snapshots/](test/snapshots/) (~1 min,
-#               parallel). Per-push: a refactor that changes observable
-#               behavior must fail loudly at the commit that caused it.
+#               behavior snapshots (SPEC 5.9): runs the differential
+#               corpus under graalgo and fails on any divergence from gc's
+#               committed snapshot in [test/snapshots/](test/snapshots/)
+#               that is not a reviewed, reason-coded expected divergence,
+#               and on stale expected-divergence entries.
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
+#               / dead-path (no phases/ or hidden_files/ in executable paths)
 #               grep gates + `internal/frontend/build.sh check`
 #               (gofrontend gofmt/vet/tests, vendoring diff gate, and the
 #               frontend/v1 wire-format validator over every golden doc
 #               plus fresh exports — the validator was shelfware until
 #               fix-0005-validator-kinds wired it in)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-java-fast
+#               the fast backend Java unit tests (incl. FreezeSignatureTest,
+#               WakeupModelTest, WakeupRaceStressTest; ~30 s); the slow ones
+#               are test-java-slow (weekly full-suite job)
 #     test-regression
 #               regression tests for fixed PKGs
 #               ([test/regression/](test/regression/)): each
@@ -102,15 +107,16 @@ GENERATED_SYNTH := \
 	internal/frontend/synth_textscanner.go
 GENERATED += $(GENERATED_SYNTH)
 # NOTE: [test/snapshots/](test/snapshots/)/go<VERSION>.json are also generated
-# and committed, but their generator is `make snapshot` (deliberate
-# re-baseline: toolchain upgrade or reviewed behavior change), NOT `make all`
-# — `make all` *verifies* them via snapshot-check instead of regenerating.
+# and committed, but their generator is `make snapshot` (gc's behavior on
+# the corpus: re-record when a corpus program changes or on a toolchain
+# upgrade), NOT `make all` — `make all` *verifies* graalgo against them via
+# snapshot-check.
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-jit bench test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-jit bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-toolexec test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-toolexec test-p3frontend test-ci test-java-fast test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -140,6 +146,11 @@ check:
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
+	# dead-path gate: no executable reference to the deleted per-phase
+	# tree or the banned scratch dir (a dead path makes a harness report
+	# ClassNotFoundException as a divergence). The gate's own test first.
+	python3 .github/scripts/test_check_no_dead_paths.py
+	python3 .github/scripts/check_no_dead_paths.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
 	# wire-format validation (internal/frontend/build.sh check).
@@ -272,67 +283,140 @@ test: build
 	$(MAKE) -C internal/backend/runtime test
 	$(MAKE) -C internal/backend/interop test
 
-# Behavior snapshots (M10 WS I): graalgo's observable behavior on the
-# differential corpus ([test/differential/corpus/](test/differential/corpus/)),
-# recorded against the pinned Go toolchain — the upgrade baseline. See
-# [test/snapshots/README.md](test/snapshots/README.md) for the format.
+# Backend Java unit tests, split by measured cost (SPEC §5.10: fast→slow).
+# The module runners (graalgo.test.Runner, SchedTestRunner, IfaceTestRunner)
+# run everything in `make test` (weekly). Here
+# [test/java/ClassListRunner.java](test/java/ClassListRunner.java) runs named
+# classes with each module's own classpath and per-test timing:
+#   test-java-fast  per-push (in `make all`): classes measured fast
+#   test-java-slow  nightly/weekly: the corpus differentials and stress tests
+# Split measured 2026-11-18 (make test-java-timing, nice 19, -Xmx2g): fast
+# lists total ~26 s of test time (classes <= ~4 s each). Slow lists hold
+# classes > ~4 s AND classes with failures on that run (they never ran
+# per-push and had rotted): MainTest, GenericsCorpusTest, VarsCorpusTest,
+# BuiltinsCorpusTest, TypeparamDifferentialTest, SectionClampTest,
+# IfaceMethodTablesTest, ChanBuilderTest, GoOsErrnoTest, GoNetpollTest -
+# so test-java-slow is RED until those are fixed (owners: backend lanes).
+# Re-measure with `make test-java-timing` (all classes, timings printed)
+# before moving a class between lists. A class missing from both lists is
+# caught by `java-test-lists-check` (every class registered in a module
+# runner must be in exactly one list).
+JT_BK := $(CURDIR)/internal/backend
+JT_JARS := $(subst $(eval) ,:,$(strip $(wildcard $(JT_BK)/truffle/lib/*.jar)))
+JT_RUNNER := $(CURDIR)/test/java/out
+JT_TRUFFLE_CP := $(JT_RUNNER):$(JT_BK)/truffle/out/test-classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
+JT_RUNTIME_CP := $(JT_RUNNER):$(JT_BK)/runtime/out/test-classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_BK)/interop/out/classes:$(JT_JARS)
+JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop/out/classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
+JT_JAVA := $(or $(GRAALVM_HOME),$(HOME)/tools/graalvm-jdk-25)/bin/java
+JT_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
+JAVA_TEST_OPTS ?=
+# run_java_tests <module> <classpath> <classes> <extra -D props>
+define run_java_tests
+	cd $(JT_BK)/$(1) && mkdir -p out/test-tmp && \
+	  TMPDIR="$(JT_BK)/$(1)/out/test-tmp" GOTMPDIR="$(JT_BK)/$(1)/out/test-tmp" \
+	  GRAALGO_GOFRONTEND="$(CURDIR)/internal/frontend/gofrontend" \
+	  $(JT_JAVA) -Djava.io.tmpdir="$(JT_BK)/$(1)/out/test-tmp" $(4) $(JT_FLAGS) \
+	  -cp "$(2)" ClassListRunner $(3)
+endef
+JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
+JAVA_FAST_TRUFFLE := graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest
+JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest graalgo.frontend.SectionClampTest
+JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.launcher.LauncherOverlayTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.PanicOverlayDriftTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
+JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
+JAVA_FAST_INTEROP := graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
+JAVA_SLOW_INTEROP := graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3net.GoNetpollTest graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
+
+java-test-classes: build
+	$(MAKE) -C internal/backend/truffle out/test-classes/.built
+	$(MAKE) -C internal/backend/runtime out/test-classes/.built
+	$(MAKE) -C internal/backend/interop out/test-classes/.built
+	mkdir -p $(JT_RUNNER) && $(dir $(JT_JAVA))javac -Werror -d $(JT_RUNNER) test/java/ClassListRunner.java
+
+# Every class a module runner registers must be in exactly one list.
+java-test-lists-check:
+	python3 test/java/check_lists.py \
+	  internal/backend/truffle/src/test/java/graalgo/test/Runner.java "$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE)" \
+	  internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java "$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME)" \
+	  internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java "$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP)"
+
+test-java-fast: java-test-classes java-test-lists-check
+	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
+	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
+
+test-java-slow: java-test-classes java-test-lists-check
+	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),)
+	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),)
+
+test-java-timing: java-test-classes
+	-$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	-$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME),)
+	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP),)
+
+# Behavior snapshots (SPEC §5.9, GG-0036). The committed snapshot
+# [test/snapshots/](test/snapshots/)go<VERSION>.json records gc's (the
+# REFERENCE toolchain's) observable behavior on the differential corpus
+# ([test/differential/corpus/](test/differential/corpus/)), content-addressed
+# by program source hash. graalgo is checked against gc's snapshot; its own
+# output is never the baseline. See
+# [test/snapshots/README.md](test/snapshots/README.md).
 #
-# Backend: the product launcher P3SyncMain via
-# [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
-# (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
-# channel/scheduler support, so recording against it enshrines build
-# failures as the baseline and leaves P3SyncMain regressions invisible to
-# the per-push gate). The phase-1 config is retained for the typeparam and
-# srctest adapters (layer 2), which test the frontend.
+# `make snapshot` RE-RECORDS gc's behavior: run when a corpus program is
+# added/edited or for a toolchain upgrade (then triage any gc drift), and
+# commit the result. It never needs graalgo.
 #
-# `make snapshot` RE-RECORDS the baseline: run only for a toolchain upgrade
-# or a deliberately re-baselined behavior change, then commit the result.
-# `make snapshot-check` verifies the current tree against the committed
-# baseline and fails on drift (this is what per-push CI runs via `make all`).
+# `make snapshot-check` (per-push, via `make all`) runs every corpus program
+# under the product launcher (P3SyncMain, backends-p3.json) and compares
+# with the gc snapshot. Expected divergences are explicit, reviewed entries
+# with a SPEC §5.6 reason code in
+# [test/differential/corpus-exclusions.yaml](test/differential/corpus-exclusions.yaml);
+# an expected divergence that now matches gc FAILS (stale entry: prune it).
+# `-verify-ref gc-a` also re-runs gc and fails if gc no longer matches its
+# own snapshot. Exit 3 = infrastructure failure (no verdict).
+# Slice: `make snapshot-check SNAPSHOT_PROGRAMS=49_int_arith,50_shifts`.
 DH := test/differential
 SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
-# /tmp is a 512M tmpfs shared with other work and routinely full: keep go
-# build temps and harness scratch dirs on the persistent disk (same pattern
-# as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
+# /tmp may be a small shared tmpfs: keep go build temps and harness scratch
+# dirs on the persistent disk. $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
-# Snapshot harness parallelism: one JVM per job, each ~1.2GB RSS, with a
-# ~13s standalone run for a trivial program. A hardcoded -jobs 4 oversubscribes
-# small machines (2 CPUs: 4 JVMs push runs past the 60s timeout — 11/38
-# timedOut locally on this VM while jobs=1 is 0 drift), so size jobs to the
-# machine, capped at 4: CI runners have 4 vCPUs, so CI behavior is unchanged.
-# Jobs sizing alone leaves too little timeout margin: at jobs=2 on this 2-CPU
-# VM, contended runs measure ~42s (vs ~14s standalone), leaving only 1.4x
-# headroom under a 60s per-run timeout — ordinary third-party load trips
-# false timeouts (2/38 in the r50 run, both programs correct standalone).
-# The per-run timeout is therefore 120s (same as the harness build-step
-# timeout): a hang detector needs headroom well above contended latency,
-# and a true hang still fails fast relative to the ~20min suite.
-# Override with `make snapshot-check SNAPSHOT_JOBS=N`.
+# One JVM per job (~1.2GB RSS, ~7-13s per trivial program). Sized to the
+# machine, capped at 4 (CI runners have 4 vCPUs). The per-run timeout is
+# 120s: contended runs measure ~42s on a 2-CPU box. Shared hosts: run with
+# SNAPSHOT_JOBS=1 GRAALGO_JAVA_OPTS="-Xmx2g -XX:ActiveProcessorCount=4".
 SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
-# The diffharness resolves the graalgo backend launcher as
-# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
-# product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
-# Both wrappers now live in internal/backend/.
-snapshot: build
-	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
+SNAPSHOT_PROGRAMS ?=
+SNAPSHOT_ENV := TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" \
+	PHASE3_DIR="$(CURDIR)/internal/backend" PHASE1_DIR="$(CURDIR)/internal/backend"
+snapshot:
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) \
 	  $(GO) run ./cmd/diffharness snapshot record \
-	  -config backends-p3.json -corpus corpus -backend graalgo \
+	  -config backends-p3.json -corpus corpus -backend gc-a \
 	  -corpus-label test/differential/corpus \
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
-	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
-	  -graalgo-commit $(shell git rev-parse HEAD) \
-	  -jobs $(SNAPSHOT_JOBS) -timeout 120
+	  -toolchain $(SNAPSHOT_TOOLCHAIN) -runs 3 -jobs $(SNAPSHOT_JOBS) -timeout 120
 
 snapshot-check: build
-	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) \
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
+	  -expected corpus-exclusions.yaml -verify-ref gc-a \
+	  $(if $(SNAPSHOT_PROGRAMS),-programs $(SNAPSHOT_PROGRAMS)) \
 	  -jobs $(SNAPSHOT_JOBS) -timeout 120
+
+# Oracle validation by mutation (SPEC §5.7, GG-0034): tools/mutation
+# applies each curated mutant in tools/mutation/mutants.json to a scratch
+# copy of the tree, rebuilds, and requires the per-push differential gate
+# (diffharness snapshot check vs gc) to go red. Fast stage: MUTATION_SLICE
+# (the edge-case corpus); slice survivors are re-run on the full corpus.
+# Exit 1 = unjustified survivor, 3 = infra error / red baseline. Slow
+# (~1-2 h): nightly in .github/workflows/mutation.yml, not per-push.
+MUTATION_SLICE ?= 06_nested_defer,60_narrow_unary_widen,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,55_slice_bounds,56_map_ops,57_defer_order
+MUTATION_WORK ?=
+mutation: generate build
+	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) \
+	  $(if $(MUTATION_WORK),-work $(MUTATION_WORK)) $(if $(MUTANTS),-only $(MUTANTS))
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
 # Uses a persistent warm JVM: in-process compilation (~0.5s) and runs

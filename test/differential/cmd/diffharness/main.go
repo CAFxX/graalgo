@@ -17,13 +17,15 @@
 //	          every mutation class). Exit status is non-zero on any violated
 //	          expectation. This is the red-green evidence for the oracles.
 //
-//	snapshot  behavior snapshots (M10 WS I): record graalgo's observable
-//	          behavior on the corpus as the upgrade baseline, or check the
-//	          current behavior against a recorded snapshot (fails on drift).
+//	snapshot  behavior snapshots (SPEC 5.9): record gc's observable
+//	          behavior on the corpus, or check a backend (graalgo) against
+//	          the recorded gc snapshot (fails on unexpected divergence, on a
+//	          stale expected-divergence entry, exits 3 on infra failure).
 package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -62,6 +64,9 @@ func main() {
 	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "diffharness %s: error: %v\n", os.Args[1], err)
+		if errors.Is(err, errInfra) {
+			os.Exit(3) // infrastructure failure: no verdict
+		}
 		os.Exit(1)
 	}
 }
@@ -74,18 +79,19 @@ func usage() {
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
   typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
-  snapshot record -config PATH -corpus DIR -backend NAME -out FILE [-toolchain V] [-graalgo-commit SHA] [-runs N] [-jobs N]
-  snapshot check  -config PATH -corpus DIR -backend NAME -snapshot FILE [-jobs N]
+  snapshot record -config PATH -corpus DIR -backend gc-a -out FILE [-toolchain V] [-runs N] [-jobs N]
+  snapshot check  -config PATH -corpus DIR -backend graalgo -snapshot FILE [-expected FILE] [-programs a,b] [-verify-ref gc-a] [-jobs N]
   srctest scan -dir DIR -exclusions FILE -out PATH
   srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
 `)
 }
 
 type runFlags struct {
-	config  string
-	corpus  string
-	out     string
-	timeout int
+	config   string
+	corpus   string
+	out      string
+	timeout  int
+	backends string
 }
 
 func baseFlags(fs *flag.FlagSet) *runFlags {
@@ -94,6 +100,7 @@ func baseFlags(fs *flag.FlagSet) *runFlags {
 	fs.StringVar(&rf.corpus, "corpus", "corpus", "corpus directory")
 	fs.StringVar(&rf.out, "out", "results.json", "JSON report output path")
 	fs.IntVar(&rf.timeout, "timeout", 0, "per-program timeout seconds (0 = config default)")
+	fs.StringVar(&rf.backends, "backends", "", "comma-separated backend names to use, in order (default: all in the config)")
 	return rf
 }
 
@@ -104,6 +111,17 @@ func loadCfg(rf *runFlags) (*harness.Config, error) {
 	}
 	if rf.timeout > 0 {
 		cfg.TimeoutSec = rf.timeout
+	}
+	if rf.backends != "" {
+		var sel []harness.Backend
+		for _, name := range strings.Split(rf.backends, ",") {
+			b, err := findBackend(cfg, strings.TrimSpace(name))
+			if err != nil {
+				return nil, err
+			}
+			sel = append(sel, *b)
+		}
+		cfg.Backends = sel
 	}
 	return cfg, nil
 }
@@ -167,10 +185,16 @@ func cmdRun(args []string) error {
 		Skipped:     skipped,
 		Summary:     map[string]int{},
 	}
-	diverged := 0
+	diverged, infra := 0, 0
 	for _, p := range progs {
 		outs := runOne(cfg, p, workRoot)
 		for i := 1; i < len(outs); i++ {
+			if reInfra.MatchString(outs[i].BuildLog) || reInfra.MatchString(outs[i].Stderr) {
+				infra++
+				fmt.Printf("INFRA    %-28s %s: no verdict (launcher/frontend failure): %s\n", p.Name, outs[i].Backend,
+					trunc(strings.ReplaceAll(outs[i].BuildLog+outs[i].Stderr, "\n", "\\n"), 200))
+				continue
+			}
 			c := harness.Compare(outs[0], outs[i])
 			rep.Comparisons = append(rep.Comparisons, c)
 			status := "SAME    "
@@ -189,10 +213,14 @@ func cmdRun(args []string) error {
 	rep.Summary["same"] = len(rep.Comparisons) - diverged
 	rep.Summary["diverged"] = diverged
 	rep.Summary["skipped"] = len(skipped)
+	rep.Summary["infra"] = infra
 	if err := writeJSON(rf.out, rep); err != nil {
 		return err
 	}
-	fmt.Printf("run: %d comparisons, %d diverged, report %s\n", len(rep.Comparisons), diverged, rf.out)
+	fmt.Printf("run: %d comparisons, %d diverged, %d infra, report %s\n", len(rep.Comparisons), diverged, infra, rf.out)
+	if infra > 0 {
+		return fmt.Errorf("%w: %d comparisons without a verdict", errInfra, infra)
+	}
 	if diverged > 0 {
 		return fmt.Errorf("%d divergences", diverged)
 	}
@@ -606,34 +634,58 @@ func cmdSrctestRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	div := 0
+	counts := map[string]int{}
 	for _, c := range comps {
-		status := "SAME    "
-		if !c.Same {
-			status = "DIVERGE "
-			div++
+		v := srctestVerdict(c)
+		counts[v]++
+		if v == "MATCH" {
+			continue
 		}
-		fmt.Printf("%s %s", status, c.Program)
+		fmt.Printf("%-9s %s", v, c.Program)
+		if v == "STALE" {
+			fmt.Printf("\n           - listed in %s (%s) but matches gc: prune the entry", filepath.Base(*exclusions), c.Expected)
+		}
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
 		}
 		fmt.Println()
 	}
-	skipped := 0
+	notrun := 0
 	for _, f := range files {
-		if strings.HasPrefix(f.Class, "exclude") {
-			skipped++
+		if strings.HasPrefix(f.Class, typeparam.ClassNotRun) {
+			notrun++
 		}
 	}
-	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+	if err := typeparam.WriteReportJSON(*out, comps, notrun); err != nil {
 		return err
 	}
-	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",
-		len(comps), div, skipped, *out)
-	if div > 0 {
-		return fmt.Errorf("%d divergences", div)
+	fmt.Printf("srctest run: %d compared: match=%d expected=%d diverge=%d stale=%d infra=%d; %d not programs; report %s\n",
+		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], notrun, *out)
+	if bad := counts["DIVERGE"] + counts["STALE"]; bad > 0 {
+		return fmt.Errorf("%d unexpected results (unlisted divergences / stale entries)", bad)
+	}
+	if counts["INFRA"] > 0 {
+		return fmt.Errorf("%w: %d files could not be compared", errInfra, counts["INFRA"])
 	}
 	return nil
+}
+
+// srctestVerdict classifies one srctest comparison: MATCH, EXPECTED (listed
+// and diverging), DIVERGE (unlisted divergence), STALE (listed but matching
+// gc), INFRA (no verdict).
+func srctestVerdict(c typeparam.Comparison) string {
+	switch {
+	case c.Infra:
+		return "INFRA"
+	case c.Same && c.Expected != "":
+		return "STALE"
+	case c.Same:
+		return "MATCH"
+	case c.Expected != "":
+		return "EXPECTED"
+	default:
+		return "DIVERGE"
+	}
 }
 
 func readManifest(path string) ([]manifestEntry, error) {

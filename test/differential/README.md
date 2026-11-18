@@ -1,9 +1,24 @@
 # diffharness — differential-vs-gc smoke harness
 
-The day-one conformance net for graalgo (FEASIBILITY.md §7, smoke layer):
-compile and run the same corpus programs under two backends, compare
-observables, report divergences. Validated *now* by differential testing
-gc-vs-gc with injected mutations (graalgo doesn't exist yet).
+The conformance net for graalgo (SPEC §5.1/§5.5): compile and run the same
+corpus programs under gc and graalgo, compare observables, report
+divergences.
+
+Gates built on it (current):
+
+- `make snapshot-check` (per push, in `make all`): every corpus program
+  under the product launcher vs **gc's** committed snapshot
+  ([../snapshots/](../snapshots/)); expected divergences are reviewed,
+  reason-coded entries in [corpus-exclusions.yaml](corpus-exclusions.yaml)
+  and fail as STALE once they match gc.
+- `make mutation` (nightly): mutates graalgo itself
+  ([../../tools/mutation/](../../tools/mutation/)) and requires the gate
+  above to go red — the oracle validation of SPEC §5.7.
+- `run_conformance.sh` (layer 2): GOROOT/test via the `srctest` adapter,
+  expected divergences in [srctest-exclusions.yaml](srctest-exclusions.yaml).
+- `run.sh` (CI): harness self-test on gc-vs-gc only (the `validate`
+  corpus-mutation check proves the comparator notices a changed program;
+  it says nothing about graalgo).
 
 ## Quick start
 
@@ -12,7 +27,7 @@ gc-vs-gc with injected mutations (graalgo doesn't exist yet).
 ```
 
 `run.sh` exits non-zero on any failure and leaves machine-readable reports
-in `./test-results/`. It needs only a Go toolchain: set `DH_GO` to the
+in `./.tmp/test-results/` (gitignored). It needs only a Go toolchain: set `DH_GO` to the
 toolchain root, or rely on `~/tools/go`, or on `go` in `PATH`.
 
 ## Layout
@@ -51,20 +66,12 @@ backends[0] (the reference); `run` compares every backend against the first.
 |---|---|---|---|
 | `gc-a` | `{GO}/bin/go build -o {BIN} {SRC}` | `{BIN}` | reference backend |
 | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
-| `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | Phase-1 launcher; `GRAALGO_RUN=${PHASE1_DIR}/graalgo-run` |
+| `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | [backends-p3.json](backends-p3.json): product launcher `${PHASE3_DIR}/graalgo-sync-run` (P3SyncMain); [backends.json](backends.json): phase-1 `graalgo-run` (`batch: true`, typeparam adapter) |
 
-`PHASE1_DIR` is exported by `run.sh` (defaults to `<repo>/phases/phase1`);
-export it yourself for manual `diffharness` invocations. `gc-a` stays the
-reference: `validate` still compares gc-b against gc-a only.
-
-M2 status (2026-10-04): the frontend path is real — graalgo's `--check`
-accepts straight-line programs (exit 0) and rejects bad ones (exit 2 with
-gofrontend's message as the build log). Verified: gc-a vs graalgo on
-`sl06_multiassign` diverges ONLY on the Truffle `sun.misc.Unsafe`
-terminal-deprecation stderr warnings (build, exit code, stdout identical).
-Known M7 concern: the HotSpot Truffle runtime prints those warnings to
-stderr on every JVM launch; the stderr normalizer will need an allowlist
-entry for the graalgo backend before full-corpus differential runs.
+`PHASE3_DIR` defaults to `<repo>/internal/backend` in the Makefile and
+scripts. JVM backends declare `noiseSets: ["jvm"]`: one harness-owned
+definition of JVM stderr noise (Unsafe deprecation and HotSpot VM
+warnings). `diffharness run -backends gc-a,gc-b` selects backends.
 
 ## What is compared
 
@@ -73,23 +80,18 @@ working directory with a minimal environment (`PATH`, `HOME`, plus the
 backend's `env` overrides — `GOMAXPROCS=1` is pinned, never inherited),
 under a per-program timeout. Compared: build success + build log, stdout,
 stderr, exit code, timeout. Panic/fatal-error traces and printed addresses
-are normalized before comparison:
+are normalized before comparison — only what is genuinely
+nondeterministic ([normalize.go](internal/harness/normalize.go)):
 
-- `0x…` → `0xADDR` (code/data addresses, signal addrs, `%p` output)
-- `goroutine N [` → `goroutine # [`, `in goroutine N` → `in goroutine #`
-- `file.go:NNN` → `file.go:LINE` (line attribution may shift with inlining)
+- goroutine ids (`goroutine N [`, `in goroutine N`);
+- trace PC offsets (`main.go:12 +0x1d` → `main.go:12`) and register
+  annotations (`fp=/sp=/pc=0x…`);
+- hex inside trace frame argument lists and on `[signal …]` lines.
 
-Known limitation (R1 P2-1): the `0x…` rule is intentionally broad — it also
-matches *computed* `0x`-prefixed hex values a program prints (e.g. `%#x`
-output). Two backends printing different computed `0x` values would compare
-equal, a false "same". Verified not masking anything in the current corpus
-(only `%p` outputs carry `0x`; `%x` outputs have no `0x` prefix). Corpus
-discipline: programs must not print computed `0x`-prefixed values; if one
-ever needs to, narrow the rule first (e.g. address-length or
-pointer-context gating).
-
-Deliberately **not** normalized (a difference here is a real divergence):
-message text, exit codes, timeouts, build failures.
+Compared exactly: source line numbers in traces, any `0x…` a program
+computes and prints, message text, exit codes, timeouts, build outcome.
+Stdout is exact unless the program opts in via a `NORMALIZE` file
+(`pointers` rule for `%p` output, e.g. `20_fmt_formats`).
 
 ## Nondeterminism policy
 
@@ -101,17 +103,21 @@ Tamed, never silent (FEASIBILITY.md §7):
    key-sorted, goroutine results are combined order-independently
    (sums, WaitGroups), no wall-clock or address values escape
    unnormalized, no `time.Now`/`rand` without fixed seeds.
-3. Documented exclusions live in `backends.json` → `exclusions` with a
-   **reason code** (per §7 the list may only grow through review):
-   `nondeterministic-output`, `backend-specific`, `flaky`, `other:<text>`.
-   Currently empty — every corpus program passes unmutated gc-vs-gc.
+3. Expected graalgo-vs-gc divergences live in
+   [corpus-exclusions.yaml](corpus-exclusions.yaml) with a SPEC §5.6
+   reason code (`backend-specific` / `unspecified-behavior` /
+   `deferred-parity`); the list may only grow through review, and listed
+   programs still run (STALE once they match gc). Order-unspecified or
+   address-printing output is annotated per program (`NORMALIZE` file),
+   never normalized globally.
 4. The `validate` rerun control (same program twice under the reference
    backend) mechanically guards against flakiness: any divergence there
    fails validation (kill trigger K3).
 
-## Oracle validation (red-green)
+## Comparator self-test (gc-vs-gc)
 
-`diffharness validate` does three things:
+Oracle validation against graalgo is `make mutation` (see above).
+`diffharness validate` only self-tests the comparator, and does three things:
 
 1. **Green run** — unmutated corpus, gc-a vs gc-b: expects zero divergences
    (false-positive record).

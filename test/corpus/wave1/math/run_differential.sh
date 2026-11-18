@@ -3,33 +3,17 @@
 # runs under stock gc 1.27.1 and under graalgo. Compares stdout bytes
 # (programs print with %x / %.17g to catch single-bit differences).
 #
-# GR defaults to $HOME/workspace/graalgo (the integrated tree); override
-# with GRAALGO_HOME for worktree testing.
+# Exit status: 0 pass, 1 divergence, 3 infrastructure error (launcher,
+# java, backend build or gc toolchain missing; JVM class-load failure) —
+# see test/lib/infra.sh. Needs `make build` + `make generate` first.
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GRAALGO_HOME:-$HOME/workspace/graalgo}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
-export PATH="$HOME/tools/go/bin:$PATH"
-export TMPDIR="$P3/hidden_files/m7-tmp/math"
-export GOCACHE="$HOME/workspace/.gocache-m7-math"
-mkdir -p "$TMPDIR"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
-
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-
-TMP="$(mktemp -d)"
-trap 'rm -rf "$TMP"' EXIT
+# shellcheck source=../../../lib/infra.sh
+. "../../../lib/infra.sh"
+infra_setup_go
+infra_setup_graalgo
+infra_mktemp corpus-math
 
 pass=0; fail=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
@@ -41,6 +25,7 @@ run_one() { # $1 = go file
     go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
     "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
     "${GRAALGO_RUN[@]}" --gmp=1 "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
+    infra_check_run "$base" "$gr_exit" "$TMP/gr.err"
 
     local ok=1
     cmp -s "$TMP/gc.out" "$TMP/gr.out" || { ok=0; echo "FAIL $base: stdout differs"; diff "$TMP/gc.out" "$TMP/gr.out" | head -5; }

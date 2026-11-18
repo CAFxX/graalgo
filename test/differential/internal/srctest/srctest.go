@@ -1,37 +1,28 @@
 // Package srctest implements the GOROOT/test differential adapter
-// (conformance layer: phases/phase3/PLAN.md §5 layer 2, GG-0029/GG-0032).
+// (conformance layer: SPEC §5.2 layer 2, GG-0029/GG-0032).
 //
 // Go's test/ tree (356 *.go files directly under GOROOT/test) is the
 // language spec-semantics anchor: conformance programs run by gc's own
 // test driver (test/run.go). The adapter classifies every file and runs
-// the included ones differential gc-a vs graalgo through the shared
-// harness backends. The phase-1 graalgo-run launcher is the frontend's
-// test consumer (same backend the typeparam adapter uses).
+// the runnable ones differential gc-a vs graalgo through the shared
+// harness backends, using the product launcher.
 //
-// Classification (phases/phase1/PLAN.md §5 item I: "GOROOT/test 356 files
-// via adapter (filtered: no imports beyond builtins; exclusions
-// versioned)"):
+// Classification:
 //
-//	run                 package main + func main, imports ⊆ {fmt, runtime,
-//	                    unsafe} — the language-conformance subset. fmt
-//	                    resolves via the frontend's phase-1 import overlay
-//	                    stub (D4); runtime/unsafe are overlay-supported.
-//	                    Programs importing sync/time/context/sync-atomic
-//	                    test stdlib semantics, not language semantics;
-//	                    they belong to layer 3's wave corpora.
+//	run                 package main + func main: build+run parity under
+//	                    the product launcher (P3SyncMain, backends-p3.json).
 //	errorcheck          negative tests (gc itself rejects them — detected
 //	                    by a gc build probe at scan time — plus negative
 //	                    syntax tests): build-failure parity — both backends
 //	                    must reject.
-//	exclude:<reason>    versioned YAML exclusions (srctest-exclusions.yaml,
-//	                    GG-0033) + structural exclusions:
-//	                    - //go:build ignore or otherwise unsatisfiable in
-//	                      this environment -> backend-specific
-//	                    - not package main, or no func main -> not-runnable
-//	                      (backend-specific)
-//	                    - import "C" -> backend-specific (graalgo has no cgo)
-//	                    - imports beyond the language subset, or use of
-//	                      chan/go/select -> deferred-parity
+//	notrun:<why>        not a standalone program for this target (not
+//	                    package main, no func main, //go:build unsatisfiable
+//	                    on linux/amd64+gc): nothing to compare.
+//
+// There are NO automatic exclusions. A runnable file that diverges is
+// listed explicitly, with a SPEC §5.6 reason code, in
+// srctest-exclusions.yaml; listed files still run, and one that matches gc
+// is reported STALE and fails the run (prune the entry).
 //
 // The differential execution reuses typeparam.Run (same build+run parity
 // operation); only the classifier is srctest-specific.
@@ -87,8 +78,11 @@ func Scan(testDir string, yamlExcl map[string]typeparam.Exclusion) ([]typeparam.
 			}
 		}
 		if x, ok := yamlExcl[tf.Name]; ok {
-			tf.Class = "exclude:" + x.Reason
-			tf.Detail = "excluded by " + ExclusionsFileName() + ": " + x.Detail
+			// Reviewed expected divergence: the file still runs; the
+			// run verdict is EXPECTED while it diverges and STALE (a
+			// failure) once it matches gc.
+			tf.Expected = x.Reason
+			tf.Detail = "expected divergence (" + ExclusionsFileName() + "): " + x.Detail
 		}
 		out = append(out, tf)
 	}
@@ -128,13 +122,6 @@ func gcBuilds(goBin, src string) bool {
 	return cmd.Run() == nil
 }
 
-// languageImports is the import set the conformance layer covers: the
-// language-conformance subset (see package doc). Everything else is
-// stdlib semantics (layer 3) or unsupported (backend-specific).
-var languageImports = map[string]bool{
-	"fmt": true, "runtime": true, "unsafe": true,
-}
-
 // classify determines a file's class from its build constraints, package
 // clause, func main presence, and import set.
 func classify(testDir, name string) typeparam.TFile {
@@ -144,7 +131,7 @@ func classify(testDir, name string) typeparam.TFile {
 	constraint := readBuildConstraint(path)
 	if constraint != "" {
 		if !satisfiable(constraint) {
-			tf.Class = "exclude:backend-specific"
+			tf.Class = typeparam.ClassNotRun
 			tf.Detail = "//go:build " + constraint + " unsatisfiable on linux/amd64+gc"
 			return tf
 		}
@@ -161,8 +148,8 @@ func classify(testDir, name string) typeparam.TFile {
 		return tf
 	}
 	if f.Name.Name != "main" {
-		tf.Class = "exclude:backend-specific"
-		tf.Detail = "not-runnable: package " + f.Name.Name + " (not package main)"
+		tf.Class = typeparam.ClassNotRun
+		tf.Detail = "not a program: package " + f.Name.Name + " (not package main)"
 		return tf
 	}
 	// Need the full AST for func main detection.
@@ -174,33 +161,17 @@ func classify(testDir, name string) typeparam.TFile {
 		return tf
 	}
 	if !hasFuncMain(f2) {
-		tf.Class = "exclude:backend-specific"
-		tf.Detail = "not-runnable: package main without func main"
+		tf.Class = typeparam.ClassNotRun
+		tf.Detail = "not a program: package main without func main"
 		return tf
 	}
-	for _, imp := range f.Imports {
-		ipath := strings.Trim(imp.Path.Value, "\"`")
-		if ipath == "C" {
-			tf.Class = "exclude:backend-specific"
-			tf.Detail = "import \"C\": graalgo has no cgo support"
-			return tf
-		}
-		if !languageImports[ipath] {
-			tf.Class = "exclude:deferred-parity"
-			tf.Detail = "imports " + ipath + ": stdlib semantics, covered by layer-3 wave corpora"
-			return tf
-		}
-	}
-	// Concurrency primitives (chan types, go statements, select, channel
-	// send/receive) need the phase-2 scheduler; the phase-1 pipeline is
-	// single-threaded. These programs belong to layer 3 (P3SyncMain).
-	if usesConcurrency(f2) {
-		tf.Class = "exclude:deferred-parity"
-		tf.Detail = "needs concurrency (chan/go/select): phase-2 scheduler domain, covered by layer 3"
-		return tf
-	}
+	// No automatic exclusions: cgo, stdlib imports and concurrency used
+	// to be excluded by rule (298 of 356 files never compared). Every
+	// runnable program now runs under the product launcher; a divergence
+	// is either fixed or listed explicitly, reason-coded, in
+	// srctest-exclusions.yaml (SPEC 5.6).
 	tf.Class = runClass
-	tf.Detail = "language-conformance subset"
+	tf.Detail = "runnable program"
 	if constraint != "" {
 		tf.Detail += " (//go:build " + constraint + ")"
 	}
@@ -217,33 +188,6 @@ func firstErrLine(err error) string {
 		s = s[:120] + "…"
 	}
 	return s
-}
-
-// usesConcurrency reports whether the file uses channel/goroutine/select
-// primitives (phase-2 scheduler domain).
-func usesConcurrency(f *ast.File) bool {
-	found := false
-	ast.Inspect(f, func(n ast.Node) bool {
-		if found {
-			return false
-		}
-		switch n := n.(type) {
-		case *ast.ChanType:
-			found = true
-		case *ast.GoStmt:
-			found = true
-		case *ast.SelectStmt:
-			found = true
-		case *ast.SendStmt:
-			found = true
-		case *ast.UnaryExpr:
-			if n.Op == token.ARROW {
-				found = true
-			}
-		}
-		return !found
-	})
-	return found
 }
 
 // hasFuncMain reports whether the file declares func main().
