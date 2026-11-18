@@ -433,14 +433,43 @@ def render_go(new_json):
     return GO_TEMPLATE % new_json
 
 
+PINNED = "go1.27.1"
+
+
+def default_goroot():
+    """The pinned toolchain root: ~/tools/go-1.27.1 when present, else the
+    GOROOT of the `go` in $GO/PATH -- but only if its VERSION is the pinned
+    one (the inventory is pinned; another version must fail loudly)."""
+    p = os.path.expanduser("~/tools/go-1.27.1")
+    if os.path.isdir(os.path.join(p, "src")):
+        return p
+    import shutil
+    import subprocess
+    gobin = os.environ.get("GO") or shutil.which("go")
+    if not gobin:
+        raise SystemExit("gen-asm-inventory: no ~/tools/go-1.27.1 and no go toolchain found")
+    root = subprocess.run([gobin, "env", "GOROOT"], capture_output=True,
+                          text=True, check=True).stdout.strip()
+    try:
+        version = open(os.path.join(root, "VERSION")).readline().strip()
+    except OSError:
+        version = "unknown"
+    if version != PINNED:
+        raise SystemExit(f"gen-asm-inventory: {root} is {version}, not the pinned {PINNED}")
+    return root
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--goroot", default=os.path.expanduser("~/tools/go-1.27.1"),
-                    help="Go toolchain root (default: %(default)s)")
+    ap.add_argument("--goroot", default=None,
+                    help="Go toolchain root (default: ~/tools/go-1.27.1, else "
+                         "the GOROOT of $GO / go on PATH if it is go1.27.1)")
     ap.add_argument("--check", action="store_true",
                     help="verify the committed JSON is complete and current")
     args = ap.parse_args()
 
+    if args.goroot is None:
+        args.goroot = default_goroot()
     src = os.path.join(args.goroot, "src")
     if not os.path.isdir(src):
         raise SystemExit(f"gen-asm-inventory: no src dir at {src}")
