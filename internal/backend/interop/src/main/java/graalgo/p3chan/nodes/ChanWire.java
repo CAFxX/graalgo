@@ -329,7 +329,8 @@ final class ChanWire {
         // The nil channel has no id; -1 is the established "no single
         // channel" marker (SelectOp uses it for multi-channel select).
         JfrEvents.channelBlock(sched.currentGoroutine(), -1, op);
-        sched.parkCurrent(null, ParkReason.CHANNEL);
+        sched.parkCurrent(null, ParkReason.CHANNEL,
+                op == ChannelOp.SEND ? "chan send (nil chan)" : "chan receive (nil chan)");
         throw new IllegalStateException("unreachable: nil-channel " + op + " woke");
     }
 

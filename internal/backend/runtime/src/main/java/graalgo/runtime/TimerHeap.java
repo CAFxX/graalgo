@@ -307,6 +307,27 @@ public final class TimerHeap {
         return id;
     }
 
+    /**
+     * Entries popped for a sleep/callback fire whose wakeup has not been
+     * offered yet (guarded by {@link #lock}). Counted as pending so the
+     * drainer's deadlock check never sees "no timers, no tokens" inside
+     * the pop-to-unpark window.
+     */
+    private int firing;
+
+    /**
+     * True while any timer may still fire (gc checkdead: a P with timers
+     * is not dead). Lock-held read: a channel fire offers its wakeup with
+     * the lock held and a sleep/callback fire is counted in
+     * {@link #firing} until its wakeup is offered, so a false result
+     * means every fired wakeup is already in the drainer's inbox.
+     */
+    public boolean hasPending() {
+        synchronized (lock) {
+            return !byId.isEmpty() || firing > 0;
+        }
+    }
+
     /** Pending (uncancelled, unfired) entry count; tests only. */
     int pendingCount() {
         synchronized (lock) {
@@ -356,11 +377,33 @@ public final class TimerHeap {
                     // our trySend never blocks). Lock order throughout is
                     // heap → owner → chan (leaf); trySend/unpark never
                     // block and never acquire heap/owner locks.
-                    fireChanLocked(e);
+                    try {
+                        fireChanLocked(e);
+                    } finally {
+                        retiredLocked();
+                    }
                     continue;
                 }
+                firing++;
             }
-            fireNonChan(e);
+            try {
+                fireNonChan(e);
+            } finally {
+                synchronized (lock) {
+                    firing--;
+                    retiredLocked();
+                }
+            }
+        }
+    }
+
+    /**
+     * After a fire: when no timer remains, poke the drainer so it
+     * re-evaluates deadlock (the last timer may have woken nobody).
+     */
+    private void retiredLocked() {
+        if (byId.isEmpty() && firing == 0) {
+            sched.pokeScheduler();
         }
     }
 

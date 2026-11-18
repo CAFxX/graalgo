@@ -47,10 +47,10 @@ public final class MakeChanNode extends GoExprNode {
     public Object executeObject(VirtualFrame frame) {
         long n = size == null ? 0L : size.executeLong(frame);
         if (n < 0) {
-            Panic.throwPanic(GoString.fromUtf8("makechan: negative size"));
+            Panic.throwPanic(graalgo.runtime.GoErrors.plain("makechan: size out of range"));
         }
         if (n > Integer.MAX_VALUE) {
-            Panic.throwPanic(GoString.fromUtf8("makechan: size out of range"));
+            Panic.throwPanic(graalgo.runtime.GoErrors.plain("makechan: size out of range"));
         }
         return new GoChan((int) n, zeroValue);
     }

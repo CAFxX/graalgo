@@ -1,0 +1,14 @@
+-- stdout --
+index: error=true runtime.Error=true msg="runtime error: index out of range [5] with length 0" rt="runtime error: index out of range [5] with length 0" v=runtime error: index out of range [5] with length 0 T=runtime.boundsError
+slice: error=true runtime.Error=true msg="runtime error: slice bounds out of range [:5] with capacity 0" rt="runtime error: slice bounds out of range [:5] with capacity 0" v=runtime error: slice bounds out of range [:5] with capacity 0 T=runtime.boundsError
+nilmap: error=true runtime.Error=true msg="assignment to entry in nil map" rt="assignment to entry in nil map" v=assignment to entry in nil map T=runtime.plainError
+nilderef: error=true runtime.Error=true msg="runtime error: invalid memory address or nil pointer dereference" rt="runtime error: invalid memory address or nil pointer dereference" v=runtime error: invalid memory address or nil pointer dereference T=runtime.errorString
+divzero: error=true runtime.Error=true msg="runtime error: integer divide by zero" rt="runtime error: integer divide by zero" v=runtime error: integer divide by zero T=runtime.errorString
+assert: error=true runtime.Error=true msg="interface conversion: interface {} is string, not int" rt="interface conversion: interface {} is string, not int" v=interface conversion: interface {} is string, not int T=*runtime.TypeAssertionError
+assertiface: error=true runtime.Error=true msg="interface conversion: string is not main.I: missing method M" rt="interface conversion: string is not main.I: missing method M" v=interface conversion: string is not main.I: missing method M T=*runtime.TypeAssertionError
+panicnil: error=true runtime.Error=true msg="runtime error: panic called with nil argument" rt="runtime error: panic called with nil argument" v=runtime error: panic called with nil argument T=*runtime.PanicNilError
+custom: error=true runtime.Error=false msg="custom 1" v=custom 1 T=*errors.errorString
+closed: error=true runtime.Error=true msg="close of closed channel" rt="close of closed channel" v=close of closed channel T=runtime.plainError
+
+-- stderr (normalized) --
+-- exit 0 --

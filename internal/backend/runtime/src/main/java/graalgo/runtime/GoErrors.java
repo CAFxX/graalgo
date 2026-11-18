@@ -70,6 +70,16 @@ public final class GoErrors {
         return bounds(BoundsCode.INDEX, idx, len, signed);
     }
 
+    /**
+     * A gc {@code runtime.plainError}: a runtime error whose
+     * {@code Error()} text has no {@code "runtime error: "} prefix (channel
+     * misuse, nil-map writes, makechan size errors). Implements
+     * {@code runtime.Error} like every runtime panic value.
+     */
+    public static GoErrorValue plain(String s) {
+        return new GoErrorValue(s, false, "runtime.plainError", quote(s), s);
+    }
+
     /** Assignment to an entry in a nil map. */
     public static GoErrorValue assignmentToNilMap() {
         // P0-fmt-016: gc's plainError is a string kind; %#v quotes the
@@ -111,6 +121,24 @@ public final class GoErrors {
         return new GoErrorValue(
                 "interface conversion: " + iface + " is " + dynamic + ", not " + asserted,
                 false, "*runtime.TypeAssertionError", null, null);
+    }
+
+    /**
+     * gc's {@code *runtime.TypeAssertionError} for a failed assertion to an
+     * interface type: {@code "interface conversion: <dynamic> is not
+     * <asserted>: missing method <M>"}, or, for a nil operand,
+     * {@code "interface conversion: interface is nil, not <asserted>"}
+     * (runtime/error.go {@code (*TypeAssertionError).Error}).
+     *
+     * @param dynamic the dynamic type name, or null for a nil interface
+     */
+    public static GoErrorValue interfaceConversionMissing(String dynamic, String asserted,
+            String missingMethod) {
+        String msg = dynamic == null
+                ? "interface conversion: interface is nil, not " + asserted
+                : "interface conversion: " + dynamic + " is not " + asserted
+                        + ": missing method " + missingMethod;
+        return new GoErrorValue(msg, false, "*runtime.TypeAssertionError", null, null);
     }
 
     /** Go-quotes a string as UTF-8 bytes (strconv.Quote). */

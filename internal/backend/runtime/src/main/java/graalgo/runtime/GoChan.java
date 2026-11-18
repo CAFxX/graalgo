@@ -404,7 +404,7 @@ public class GoChan implements ChanOps.Chan {
         while (!enqueued) {
             synchronized (this) {
                 if (closed) {
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                    Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                 }
                 SendAttempt a = trySend(v, sched);
                 if (a == SendAttempt.SENT) {
@@ -427,10 +427,10 @@ public class GoChan implements ChanOps.Chan {
         // UNPARK stashed by the drainer — no wakeup lost.
         // P2-M6: the send genuinely blocks — record it before parking.
         JfrEvents.channelBlock(w.handle, channelId, ChannelOp.SEND);
-        sched.parkCurrent(null, ParkReason.CHANNEL);
+        sched.parkCurrent(null, ParkReason.CHANNEL, "chan send");
         synchronized (this) {
             if (w.panicOnWake) {
-                Panic.throwPanic(GoStrings.of("send on closed channel"));
+                Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
             }
             // Otherwise a receiver took our value via direct handoff.
         }
@@ -467,7 +467,7 @@ public class GoChan implements ChanOps.Chan {
         }
         // P2-M6: the receive genuinely blocks — record it before parking.
         JfrEvents.channelBlock(w.handle, channelId, ChannelOp.RECV);
-        sched.parkCurrent(null, ParkReason.CHANNEL);
+        sched.parkCurrent(null, ParkReason.CHANNEL, "chan receive");
         synchronized (this) {
             return new RecvResult(w.value, w.ok);
         }
@@ -490,7 +490,7 @@ public class GoChan implements ChanOps.Chan {
         List<ChanWaiter> deferred = new ArrayList<>();
         synchronized (this) {
             if (closed) {
-                Panic.throwPanic(GoStrings.of("close of closed channel"));
+                Panic.throwPanic(graalgo.runtime.GoErrors.plain("close of closed channel"));
             }
             closed = true;
             Iterator<ChanWaiter> rit = recvWaiters.iterator();

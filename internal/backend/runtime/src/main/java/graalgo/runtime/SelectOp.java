@@ -190,7 +190,7 @@ public final class SelectOp {
             // A ready case above already won, so poison is only reached
             // when nothing is ready.
             if (poison) {
-                Panic.throwPanic(GoStrings.of("send on closed channel"));
+                Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
             }
             if (defaultIndex >= 0) {
                 return defaultIndex;
@@ -287,7 +287,7 @@ public final class SelectOp {
                 sched.parkCurrent(null, ParkReason.SELECT);
                 try {
                     if (resultPoison) {
-                        Panic.throwPanic(GoStrings.of("send on closed channel"));
+                        Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                     }
                     return resultIndex;
                 } finally {
@@ -297,14 +297,14 @@ public final class SelectOp {
             if (mine.isEmpty()) {
                 if (poison) {
                     // Every case was a send on a closed channel.
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                    Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                 }
                 // Zero cases: `select {}` blocks forever (gc deadlock).
                 // Park indefinitely; the deadlock detector (P2-M10) owns it.
                 // P2-M6: it genuinely blocks — record with channelId -1
                 // (multi-channel select has no single channel).
                 JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);
-                sched.parkCurrent(null, ParkReason.SELECT);
+                sched.parkCurrent(null, ParkReason.SELECT, "select (no cases)");
                 throw new IllegalStateException("unreachable: empty select woke");
             }
             // Scheduler-aware park. A waker that claimed us before we park
@@ -315,7 +315,7 @@ public final class SelectOp {
             sched.parkCurrent(null, ParkReason.SELECT);
             try {
                 if (resultPoison) {
-                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                    Panic.throwPanic(graalgo.runtime.GoErrors.plain("send on closed channel"));
                 }
                 return resultIndex;
             } finally {

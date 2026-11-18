@@ -1,0 +1,7 @@
+-- stdout --
+
+-- stderr (normalized) --
+panic: boom in goroutine
+
+goroutine N [running]:
+-- exit 2 --

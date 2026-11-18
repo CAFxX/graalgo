@@ -68,6 +68,11 @@ public final class SchedulerCore {
         return sc;
     }
 
+    /** The installed scheduler, or null when none is installed. */
+    public static SchedulerCore installedOrNull() {
+        return installed;
+    }
+
     /**
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
@@ -81,8 +86,14 @@ public final class SchedulerCore {
         sc.pollCurrentThread();
     }
 
-    private final int cap;
-    private final int requestedCap;
+    /**
+     * Effective in-flight cap = min(GOMAXPROCS, carrier parallelism).
+     * Volatile: {@code runtime.GOMAXPROCS(n)} changes it at run time
+     * (SCHED-0003); the drainer reads it on every admission.
+     */
+    private volatile int cap;
+    private volatile int requestedCap;
+    private final Object capLock = new Object();
     private final int carrierParallelism;
     private final long quantumNanos;
     private final Drainer drainer;
@@ -125,6 +136,29 @@ public final class SchedulerCore {
 
     public int requestedCap() {
         return requestedCap;
+    }
+
+    /**
+     * {@code runtime.GOMAXPROCS(n)} (gc parity): returns the previous
+     * setting; {@code n < 1} only queries. The change takes effect for
+     * admissions immediately: raising the cap admits queued goroutines at
+     * once (the drainer is poked); lowering it lets the goroutines already
+     * in flight run to their next park/quantum boundary — no admission
+     * happens until in-flight drops below the new cap (gc stops the world
+     * and resizes the P set; here the excess drains at the next quantum
+     * boundary, where gc's preempted Gs would also lose their P). The
+     * effective cap stays clamped to the carrier parallelism (SPEC §3.5).
+     */
+    public int setGomaxprocs(int n) {
+        synchronized (capLock) {
+            int prev = requestedCap;
+            if (n >= 1) {
+                requestedCap = n;
+                cap = Math.min(n, carrierParallelism);
+                drainer.offer(ResumeToken.poke());
+            }
+            return prev;
+        }
     }
 
     public int carrierParallelism() {
@@ -268,16 +302,47 @@ public final class SchedulerCore {
      * event committed on resume.
      */
     public void parkCurrent(Runnable onWake, ParkReason reason) {
+        parkCurrent(onWake, reason, defaultWaitReason(reason));
+    }
+
+    /**
+     * Park with gc's wait-reason string ({@code runtime/runtime2.go}
+     * {@code waitReasonStrings}: {@code "chan receive"},
+     * {@code "sync.Mutex.Lock"}, ...), rendered in the
+     * {@code goroutine N [reason]:} header of a deadlock dump.
+     *
+     * <p>{@link ParkReason#NETPOLL} parks are woken by the netpoller's
+     * selector thread, not by a goroutine: they mark the goroutine
+     * externally wakeable, so they never count toward deadlock.
+     */
+    public void parkCurrent(Runnable onWake, ParkReason reason, String waitReason) {
         GoroutineHandle h = requireHandle();
         long t = armPark(h);
         JfrEvents.notePark(h, reason);
         h.wakeAction.set(onWake);
+        h.waitReason = waitReason;
+        h.externalWake = reason == ParkReason.NETPOLL;
+        // The Go stack a deadlock dump renders: the state live NOW (the
+        // program root installs its own GoroutineState for main).
+        h.state = GoroutineState.current();
         drainer.offer(new ResumeToken(ResumeToken.Kind.PARKED, h, t));
         awaitAck(h, t);
+        h.externalWake = false;
         Runnable action = h.wakeAction.getAndSet(null);
         if (action != null) {
             action.run();
         }
+    }
+
+    /** gc wait reason for a park that did not name one explicitly. */
+    static String defaultWaitReason(ParkReason reason) {
+        return switch (reason) {
+            case CHANNEL -> "chan receive";
+            case SELECT -> "select";
+            case TIMER -> "sleep";
+            case NETPOLL, IO -> "IO wait";
+            default -> "semacquire";
+        };
     }
 
     /**
@@ -321,6 +386,21 @@ public final class SchedulerCore {
         if (PinLock.isHeldByCurrentThread()) {
             return;
         }
+        if (exiting) {
+            if (h == fatalOwner) {
+                // The fatal reporter runs Error()/String() with the world
+                // stopped: it must never quantum-park (no admission
+                // happens any more), so it runs to completion.
+                return;
+            }
+            // Process exit in progress (main returned, os.Exit, fatal
+            // panic/deadlock): freeze this goroutine at its safepoint so
+            // it produces no further output while the launcher exits
+            // (gc: exit/fatalpanic stop the world first). After the pin
+            // check, so a frozen goroutine never holds PinLock (the
+            // reporter's fmt calls pin sync.Pool).
+            freezeForExit();
+        }
         if (System.nanoTime() >= h.quantumDeadlineNanos) {
             quantumPark(h);
         }
@@ -362,12 +442,57 @@ public final class SchedulerCore {
      * (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
+        return spawn(body, false, false);
+    }
+
+    /**
+     * Spawns the program's main goroutine: when its body returns, the
+     * process exits 0 (gc: {@code main} returning calls {@code exit(0)}
+     * without waiting for other goroutines); if it calls
+     * {@code runtime.Goexit}, the program continues until the remaining
+     * goroutines finish or deadlock (gc {@code checkdead}).
+     */
+    public GoroutineHandle spawnMain(Runnable body) {
+        return spawn(body, true, false);
+    }
+
+    /**
+     * Spawns a runtime-internal goroutine (gc {@code isSystemGoroutine}):
+     * it never appears in deadlock dumps and does not keep a deadlock
+     * from being reported.
+     */
+    public GoroutineHandle spawnSystem(Runnable body) {
+        return spawn(body, false, true);
+    }
+
+    private GoroutineHandle spawn(Runnable body, boolean main, boolean system) {
         GoroutineHandle h = new GoroutineHandle(body);
+        h.isMain = main;
+        h.system = system;
+        if (main) {
+            // Deadlock detection is a property of a Go PROGRAM (gc
+            // checkdead): armed only once a main goroutine exists, so
+            // embedders and unit tests that drive goroutines from outside
+            // (unparking them from a platform thread) never trip it.
+            mainSpawned = true;
+        }
+        // "created by" provenance for tracebacks: the spawning goroutine
+        // and its innermost Go frame (the go statement's function).
+        GoroutineHandle parent = currentHandle.get();
+        if (parent != null) {
+            h.creatorId = parent.id;
+            GoroutineState ps = GoroutineState.current();
+            if (ps != null && ps.goStack() != null && !ps.goStack().isEmpty()) {
+                h.creatorFunc = ps.goStack().funcName();
+                h.creatorSection = ps.goStack().section();
+            }
+        }
         long t = armPark(h);
         Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {
             currentHandle.set(h);
             h.thread = Thread.currentThread();
             GoroutineState state = new GoroutineState();
+            h.state = state;
             GoroutineState prev = GoroutineState.install(state);
             try {
                 // Wait for the drainer's first admission.
@@ -379,11 +504,21 @@ public final class SchedulerCore {
                 JfrEvents.goroutineStart(h);
                 h.quantumDeadlineNanos = System.nanoTime() + quantumNanos;
                 body.run();
+                if (h.isMain) {
+                    // gc: main returning exits the process with status 0,
+                    // abandoning every other goroutine (runtime.main).
+                    requestExit(0);
+                }
             } catch (graalgo.runtime.PanicException pe) {
                 recordPanic(pe);
             } catch (graalgo.runtime.Goexit g) {
-                // Non-main goroutine Goexit: just dies. (Main's Goexit
-                // is handled by the launcher's own catch, inside.)
+                // Goexit: this goroutine just dies. For main, the program
+                // keeps running until the other goroutines finish or
+                // block (gc: "no goroutines (main called
+                // runtime.Goexit) - deadlock!" via the drainer's check).
+                if (h.isMain) {
+                    mainGoexited = true;
+                }
             } catch (StackOverflowError soe) {
                 recordCrash("stack overflow", soe);
             } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
@@ -394,11 +529,19 @@ public final class SchedulerCore {
                 }
             } catch (RuntimeException e) {
                 recordCrash("internal error", e);
+            } catch (Error e) {
+                // Any other JVM error (AssertionError, OutOfMemoryError,
+                // ...): the program can no longer be trusted — loud exit,
+                // never a silently dead goroutine and a hung process.
+                recordCrash("internal error", e);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
                 GoroutineState.restore(prev);
                 currentHandle.remove();
+                if (!h.system) {
+                    liveUser.decrementAndGet();
+                }
                 synchronized (quiescenceLock) {
                     if (liveGoroutines.decrementAndGet() == 0) {
                         quiescenceLock.notifyAll();
@@ -408,6 +551,9 @@ public final class SchedulerCore {
             }
         });
         h.thread = vthread;
+        if (!system) {
+            liveUser.incrementAndGet();
+        }
         // Start BEFORE accounting: if start() throws, no slot is leaked
         // and the live count is untouched. The vthread blocks in awaitAck
         // until the drainer admits it, so early start is safe.
@@ -421,41 +567,48 @@ public final class SchedulerCore {
 
     private final AtomicInteger panicCount = new AtomicInteger();
     private final AtomicInteger crashCount = new AtomicInteger();
-    private volatile String firstPanicMessage;
 
+    /**
+     * An uncaught Go panic is fatal to the whole process, in any
+     * goroutine (gc {@code fatalpanic}): print the panic chain and this
+     * goroutine's traceback, then exit 2 immediately — other goroutines
+     * are frozen, never awaited.
+     */
     private void recordPanic(graalgo.runtime.PanicException pe) {
-        if (panicCount.getAndIncrement() == 0) {
-            firstPanicMessage = String.valueOf(pe.goValue());
+        panicCount.incrementAndGet();
+        if (!beginFatal()) {
+            return; // another fatal error owns the report; process is exiting
         }
-        // P3-M4 (WS C, ADR-0004 D3): full gc-style traceback, sharing the
-        // phase-1 rendering (header via PanicRendering, frames via
-        // Intrinsics.renderGoStack). Previously only the raw value was
-        // printed (no trace; error values rendered via toString, diverging
-        // from gc and from the phase-1 launcher). The goroutine id is the
-        // scheduler handle id (main is 1, like gc).
+        // gc preprintpanics: Error()/String() run on the panicking
+        // goroutine, before the world is considered dead.
+        String header = graalgo.runtime.PanicRendering.renderPanicChain(pe);
+        StringBuilder sb = new StringBuilder(header);
         Object v = pe.goValue();
-        if (v == null && graalgo.runtime.Panic.isPanicNilOldBehavior()) {
-            // P2-M5: with GODEBUG=panicnil=1, an uncaught panic(nil) prints
-            // "panic: nil" like pre-1.21 gc (instead of "panic: null").
-            System.err.println("panic: nil");
-        } else {
-            System.err.println(graalgo.runtime.PanicRendering.renderPanicLine(pe));
-        }
         if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
-            System.err.println("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0xADDR]");
+            sb.append("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n");
         }
-        System.err.println();
+        sb.append('\n');
         com.oracle.truffle.api.source.SourceSection throwSec = null;
         if (pe.throwSite() != null && pe.throwSite().getSourceSection() != null) {
             throwSec = pe.throwSite().getSourceSection();
         }
-        graalgo.sched.GoroutineHandle h = currentHandle.get();
+        GoroutineHandle h = currentHandle.get();
         long gid = h != null ? h.id : 1;
-        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, pe.stackTop(), throwSec));
+        sb.append(graalgo.runtime.Intrinsics.renderGoStack(gid, "running", pe.stackTop(), throwSec));
+        if (h != null) {
+            sb.append(createdBy(h));
+        }
+        System.out.flush();
+        System.err.print(sb);
+        System.err.flush();
+        requestExit(2);
     }
 
     private void recordCrash(String what, Throwable t) {
         crashCount.incrementAndGet();
+        if (!beginFatal()) {
+            return;
+        }
         // M10 (self-attack D3): a class-loading failure while fds are
         // exhausted is resource exhaustion, not a logic bug. The JVM loads
         // node classes lazily; a guest that consumed every fd breaks that
@@ -465,9 +618,182 @@ public final class SchedulerCore {
         if (isClassLoadingFailure(t) && fdExhausted()) {
             System.err.println("graalgo-run: fatal fd exhaustion in goroutine: " + t
                     + " (too many open files)");
+        } else {
+            System.err.println("graalgo-run: fatal " + what + " in goroutine: " + t);
+        }
+        System.err.flush();
+        requestExit(1);
+    }
+
+    // ================= process lifecycle =================
+
+    private final java.util.concurrent.CompletableFuture<Integer> exitCode =
+            new java.util.concurrent.CompletableFuture<>();
+    /** Set once the process is exiting: admissions stop, safepoints freeze. */
+    private volatile boolean exiting;
+    /** First fatal reporter wins the right to print (gc: one fatal trace). */
+    private final java.util.concurrent.atomic.AtomicBoolean fatal =
+            new java.util.concurrent.atomic.AtomicBoolean();
+    /** The goroutine printing the fatal report (exempt from the freeze). */
+    private volatile GoroutineHandle fatalOwner;
+    /** Live non-system goroutines (gc checkdead's user goroutine count). */
+    private final AtomicInteger liveUser = new AtomicInteger();
+    /** A main goroutine was spawned: deadlock detection is armed. */
+    private volatile boolean mainSpawned;
+
+    /** True when deadlock detection applies (a Go program is running). */
+    boolean deadlockArmed() {
+        return mainSpawned;
+    }
+
+    /** Main goroutine called runtime.Goexit. */
+    private volatile boolean mainGoexited;
+
+    /**
+     * Asks the drainer to re-evaluate scheduler-global conditions (the
+     * timer heap calls this when its last timer retires, so a deadlock
+     * that a pending timer was masking gets reported).
+     */
+    public void pokeScheduler() {
+        drainer.offer(ResumeToken.poke());
+    }
+
+    /** True once the main goroutine called runtime.Goexit. */
+    boolean mainGoexited() {
+        return mainGoexited;
+    }
+
+    /** Claims the single fatal-report slot; false if another fatal won. */
+    private boolean beginFatal() {
+        if (!fatal.compareAndSet(false, true)) {
+            return false;
+        }
+        // The reporting goroutine keeps running (it may call Go
+        // Error()/String() methods while rendering); everyone else freezes.
+        fatalOwner = currentHandle.get();
+        exiting = true;
+        return true;
+    }
+
+    /**
+     * Requests process exit with {@code code} (main returned: 0; uncaught
+     * panic / deadlock: 2; {@code os.Exit(n)}: n). The first request
+     * wins; the launcher's {@link #awaitExit} returns it. Admissions stop
+     * immediately and running goroutines freeze at their next safepoint.
+     */
+    public void requestExit(int code) {
+        exiting = true;
+        exitCode.complete(code);
+    }
+
+    /** True when the calling thread is a scheduler goroutine. */
+    public boolean onGoroutine() {
+        return currentHandle.get() != null;
+    }
+
+    /** True once process exit has been requested. */
+    public boolean isExiting() {
+        return exiting;
+    }
+
+    /**
+     * Blocks until the program requests process exit; returns the exit
+     * code. This replaces waiting for quiescence: gc never waits for
+     * goroutines other than main.
+     */
+    public int awaitExit() throws InterruptedException {
+        try {
+            return exitCode.get();
+        } catch (java.util.concurrent.ExecutionException e) {
+            throw new IllegalStateException(e.getCause());
+        }
+    }
+
+    /**
+     * Stops the calling goroutine for good during process exit: it parks
+     * forever (no defers run — gc's exit runs none either), so it can
+     * produce no further output while the launcher exits the process.
+     * No-op off scheduler goroutines.
+     */
+    public void freezeForExit() {
+        if (currentHandle.get() == null) {
             return;
         }
-        System.err.println("graalgo-run: fatal " + what + " in goroutine: " + t);
+        for (;;) {
+            LockSupport.park(this);
+        }
+    }
+
+    /**
+     * Drainer callback: no goroutine can run and nothing outside the
+     * scheduler (timer, I/O, netpoller) can wake one (gc
+     * {@code checkdead}). {@code parked} are the parked goroutines.
+     * Called on the drainer thread with the drainer lock held.
+     *
+     * @return true if a fatal deadlock was reported
+     */
+    boolean onAllParked(java.util.List<GoroutineHandle> parked, boolean timersPending) {
+        if (exiting) {
+            return false;
+        }
+        java.util.List<GoroutineHandle> user = new java.util.ArrayList<>();
+        for (GoroutineHandle h : parked) {
+            if (!h.system) {
+                user.add(h);
+            }
+        }
+        if (user.isEmpty() && liveUser.get() == 0) {
+            if (!mainGoexited) {
+                return false; // main not started yet / already exiting
+            }
+            if (!beginFatal()) {
+                return false;
+            }
+            System.out.flush();
+            System.err.print("fatal error: no goroutines (main called runtime.Goexit) - deadlock!\n");
+            System.err.flush();
+            requestExit(2);
+            return true;
+        }
+        if (timersPending || user.isEmpty() || user.size() != liveUser.get()) {
+            // A timer may still wake someone (gc returns from checkdead
+            // while any P has timers), or a user goroutine is not parked
+            // (still starting/exiting): not a deadlock.
+            return false;
+        }
+        if (!beginFatal()) {
+            return false;
+        }
+        user.sort(java.util.Comparator.comparingLong(h -> h.id));
+        StringBuilder sb = new StringBuilder();
+        sb.append("fatal error: all goroutines are asleep - deadlock!\n");
+        for (GoroutineHandle h : user) {
+            sb.append('\n');
+            String reason = h.waitReason != null ? h.waitReason : "semacquire";
+            graalgo.runtime.GoStackFrame top = h.state != null ? h.state.goStack() : null;
+            sb.append(graalgo.runtime.Intrinsics.renderGoStack(h.id, reason, top, null));
+            sb.append(createdBy(h));
+        }
+        System.out.flush();
+        System.err.print(sb);
+        System.err.flush();
+        requestExit(2);
+        return true;
+    }
+
+    /** gc's {@code created by F in goroutine N} trailer (empty for main). */
+    private static String createdBy(GoroutineHandle h) {
+        if (h.isMain || h.creatorId == 0 || h.creatorFunc == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("created by ").append(graalgo.runtime.Intrinsics.goFrameName(h.creatorFunc))
+          .append(" in goroutine ").append(h.creatorId).append('\n');
+        if (h.creatorSection != null) {
+            sb.append('\t').append(graalgo.runtime.Intrinsics.sourcePath(h.creatorSection))
+              .append(':').append(h.creatorSection.getStartLine()).append('\n');
+        }
+        return sb.toString();
     }
 
     private static boolean isClassLoadingFailure(Throwable t) {

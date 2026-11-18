@@ -51,7 +51,7 @@ public final class GoWaitGroup {
             h = sched.currentGoroutine();
             waiters.addLast(h);
         }
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, "sync.WaitGroup.Wait");
     }
 
     /** For tests. */

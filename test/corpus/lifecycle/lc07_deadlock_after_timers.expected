@@ -1,0 +1,10 @@
+-- stdout --
+timer fired
+timer received
+sleeper woke
+
+-- stderr (normalized) --
+fatal error: all goroutines are asleep - deadlock!
+
+goroutine N [chan receive]:
+-- exit 2 --

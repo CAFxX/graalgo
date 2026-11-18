@@ -187,39 +187,28 @@ public final class SchedMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
-        final int[] exitCode = {EXIT_OK};
+        final int exitCode;
         try {
-            sched.spawn(() -> {
+            sched.spawnMain(() -> {
                 VirtualFrame frame = Truffle.getRuntime()
                         .createVirtualFrame(new Object[0], program.descriptor());
-                try {
-                    program.root().execute(frame);
-                } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
-                    // goroutine is live; otherwise main just dies.
-                    if (sched.runnableCount() > 1) {
-                        return;
-                    }
-                    System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
-                    exitCode[0] = EXIT_PANIC;
-                }
+                program.root().execute(frame);
             });
-            sched.awaitQuiescence();
+            // T0.A (gc runtime.main): exit when the program requests it —
+            // main returns (0), a goroutine panics (2), deadlock or main's
+            // Goexit with nothing left (2), os.Exit, internal crash (1).
+            // Other goroutines are never awaited.
+            exitCode = sched.awaitExit();
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
-            System.err.println("graalgo-run: interrupted while awaiting quiescence");
+            System.err.println("graalgo-run: interrupted while awaiting program exit");
             return EXIT_INPUT_ERROR;
         } finally {
             SchedulerCore.install(prev);
         }
-        if (sched.panicked()) {
-            return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
-        }
-        if (sched.crashed()) {
-            return EXIT_INPUT_ERROR; // internal error, already reported on stderr
-        }
-        return exitCode[0];
+        System.out.flush();
+        System.err.flush();
+        return exitCode;
     }
 
     /**

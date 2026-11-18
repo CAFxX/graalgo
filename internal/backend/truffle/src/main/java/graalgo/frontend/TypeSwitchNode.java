@@ -158,7 +158,7 @@ public final class TypeSwitchNode extends GoStmtNode {
             return false;
         }
         java.util.Set<String> dynMethods =
-                dynamicMethodSets.getOrDefault(dyn.name(), java.util.Set.of());
+                TypeAssertNode.dynamicMethodSetOf(dynamicMethodSets, dyn.name());
         if (dynMethods.contains(NodeFactory.TEMPLATE_METHODS_SKIPPED)) {
             throw new FrontendException("cannot switch generic instantiation "
                     + dyn.name() + " on interface: method tables for instantiated methods"

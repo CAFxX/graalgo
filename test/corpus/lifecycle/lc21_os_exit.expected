@@ -1,0 +1,4 @@
+-- stdout --
+partial line no newline
+-- stderr (normalized) --
+-- exit 3 --

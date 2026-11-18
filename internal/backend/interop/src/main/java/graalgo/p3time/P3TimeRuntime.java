@@ -52,7 +52,10 @@ public final class P3TimeRuntime {
             background.add(timer);
             backgroundLive.incrementAndGet();
             try {
-                sched.spawn(body);
+                // Translators are runtime plumbing (gc implements timers
+                // without goroutines): system goroutines, invisible to
+                // deadlock detection and dumps.
+                sched.spawnSystem(body);
             } catch (RuntimeException e) {
                 background.remove(timer);
                 backgroundLive.decrementAndGet();

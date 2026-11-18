@@ -115,10 +115,18 @@ public final class Panic {
         // downstream interface consumers failed (snapshot 48: bare
         // empty-interface descriptor at buildInterfaceView).
         if (v instanceof GoErrorValue gev && d == null) {
-            String typeName = gev.errorString().startsWith("interface conversion: ")
-                    ? "*runtime.TypeAssertionError"
-                    : "runtime.errorString";
-            d = new GoTypeDescriptor(typeName, GoKind.STRING, false);
+            // T0.A: the value's own gc type when it records one (bounds
+            // errors are runtime.boundsError, nil-map writes
+            // runtime.plainError, ...), else the message-based inference.
+            // Canonical runtime descriptors (RuntimeErrorTypes) carry the
+            // error/runtime.Error method set for assertions and switches.
+            String typeName = gev.typeName();
+            if (RuntimeErrorTypes.descriptor(typeName) == null) {
+                typeName = gev.errorString().startsWith("interface conversion: ")
+                        ? "*runtime.TypeAssertionError"
+                        : "runtime.errorString";
+            }
+            d = RuntimeErrorTypes.descriptor(typeName);
         }
         throw new PanicException(v, d, goTypeName, throwSite);
     }

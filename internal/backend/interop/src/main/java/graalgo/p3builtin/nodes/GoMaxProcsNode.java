@@ -1,5 +1,7 @@
 package graalgo.p3builtin.nodes;
 
+import graalgo.sched.SchedulerCore;
+
 import java.util.concurrent.atomic.AtomicInteger;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -19,9 +21,11 @@ import graalgo.values.GoKind;
  * {@code NodeFactory} change.
  *
  * <p>Sets the GOMAXPROCS value and returns the previous one, matching gc
- * semantics. The value is tracked per-process (a static cell); it has no
- * effect on the JVM scheduler — it exists so programs that save/restore
- * GOMAXPROCS (the common {@code defer} pattern) round-trip correctly.
+ * semantics. With a scheduler installed (every launcher run) the value
+ * IS the scheduler's: {@link SchedulerCore#setGomaxprocs} changes the
+ * in-flight cap (SCHED-0003) and the launcher seeds it from the
+ * {@code GOMAXPROCS} environment variable. Without a scheduler (bare AST
+ * runs) a process-wide cell keeps save/restore round-trips correct.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook.
@@ -40,7 +44,8 @@ public final class GoMaxProcsNode extends GoExprNode {
      * {@code sync.Pool.pinSlow} relies on when sizing its per-P array.
      */
     public static int current() {
-        return CURRENT.get();
+        SchedulerCore sc = SchedulerCore.installedOrNull();
+        return sc != null ? sc.requestedCap() : CURRENT.get();
     }
 
     @Child private GoExprNode n;
@@ -53,6 +58,10 @@ public final class GoMaxProcsNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         int want = (int) n.executeLong(frame);
+        SchedulerCore sc = SchedulerCore.installedOrNull();
+        if (sc != null) {
+            return sc.setGomaxprocs(want);
+        }
         if (want > 0) {
             return CURRENT.getAndSet(want);
         }

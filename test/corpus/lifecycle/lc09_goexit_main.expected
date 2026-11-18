@@ -1,0 +1,7 @@
+-- stdout --
+deferred in main
+other goroutine done
+
+-- stderr (normalized) --
+fatal error: no goroutines (main called runtime.Goexit) - deadlock!
+-- exit 2 --

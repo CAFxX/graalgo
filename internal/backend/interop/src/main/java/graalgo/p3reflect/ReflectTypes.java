@@ -1883,6 +1883,33 @@ public final class ReflectTypes {
             }
             return dup;
         }
+        if (kind == GoKind.POINTER && qname.startsWith("*")
+                && graalgo.runtime.RuntimeErrorTypes.descriptor(qname) != null) {
+            // T0.A: a runtime panic type behind a pointer
+            // (*runtime.PanicNilError, *runtime.TypeAssertionError). Its
+            // element is the runtime's own opaque struct — every field is
+            // unexported, exactly how the frontend's synthetic runtime
+            // view declares it (an empty struct) — so the shape is the
+            // declared one, not invented. %T and fmt's error path need
+            // only the name and kind.
+            String elemName = qname.substring(1);
+            TypeInfo elemInfo = infoForName(elemName);
+            long elemTok;
+            if (elemInfo != null) {
+                elemTok = elemInfo.tok;
+            } else {
+                int edot = elemName.lastIndexOf('.');
+                elemTok = table.byTok.size();
+                table.keyToTok.put("dynamic:" + elemName, elemTok);
+                table.byTok.add(new TypeInfo(elemTok, GoKind.STRUCT, elemName,
+                        edot >= 0 ? elemName.substring(0, edot) : "", 0, 1,
+                        null, null, 0, null, List.of(), List.of(),
+                        List.of(), List.of(), false, List.of(), "", -1));
+            }
+            long ptr = ptrTo(elemTok);
+            table.keyToTok.put(key, ptr);
+            return ptr;
+        }
         String basicName = switch (kind) {
             case BOOL -> "bool";
             case INT8 -> "int8";

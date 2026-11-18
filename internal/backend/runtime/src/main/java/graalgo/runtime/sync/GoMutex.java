@@ -40,7 +40,7 @@ public final class GoMutex {
         }
         // Park until unlock() unparks us. The drainer matches UNPARK by
         // handle even if it arrives before we park (stashed) — no lost wakeup.
-        sched.parkCurrent(null);
+        sched.parkCurrent(null, graalgo.jfr.ParkReason.UNKNOWN, "sync.Mutex.Lock");
         // On resume we own the lock (unlock() transferred it to us).
     }
 
