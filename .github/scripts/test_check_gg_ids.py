@@ -19,6 +19,9 @@ import check_gg_ids as g  # noqa: E402
 # Fake ids are assembled at run time so tools/req lint does not see them.
 FAKE = "GG" + "-0777"
 FAKE_NS = "GG" + "-WAKE-0042"
+# A superseded id of the fixture registry (assembled for the same reason:
+# tools/req lint rule (b) rejects live references to superseded ids).
+OLD = "GG" + "-0012"
 
 
 def tree(files):
@@ -33,7 +36,7 @@ def tree(files):
 
 REG = {"requirements/GG-0011.yaml": "id: GG-0011\nstatus: active\n",
        "requirements/GG-SCHED-0001.yaml": "id: GG-SCHED-0001\n",
-       "requirements/GG-0012.yaml": "id: GG-0012\nstatus: superseded\nsuperseded_by: GG-0011\n"}
+       f"requirements/{OLD}.yaml": f"id: {OLD}\nstatus: superseded\nsuperseded_by: GG-0011\n"}
 
 
 class Gate(unittest.TestCase):
@@ -52,18 +55,18 @@ class Gate(unittest.TestCase):
         self.assertEqual(len(g.scan(d, ["docs/a.md"])), 1)
 
     def test_superseded_id_cited_live_fails(self):
-        d = tree({**REG, "docs/a.md": "intro\n\nThe frontend (`GG-0012`) is verbatim.\n\nend\n",
-                  "internal/x.go": "// verifies: GG-0012\n"})
+        d = tree({**REG, "docs/a.md": f"intro\n\nThe frontend (`{OLD}`) is verbatim.\n\nend\n",
+                  "internal/x.go": f"// verifies: {OLD}\n"})
         errs = g.scan(d, ["docs/a.md", "internal/x.go"])
         self.assertEqual(len(errs), 2, errs)
         self.assertTrue(all("superseded/retired" in e for e in errs), errs)
 
     def test_superseded_id_marked_as_history_passes(self):
         d = tree({**REG,
-                  "docs/a.md": "GG-0012 was superseded by GG-0011.\n",
-                  "docs/b.md": "The old rule\n(`GG-0012`)\n— history only.\n",
-                  "docs/dev/adr/ADR-1.md": "Decision: GG-0012 stands.\n",
-                  "requirements/GG-0011.yaml": "id: GG-0011\nstatus: active\nhistory: [GG-0012]\n"})
+                  "docs/a.md": f"{OLD} was superseded by GG-0011.\n",
+                  "docs/b.md": f"The old rule\n(`{OLD}`)\n— history only.\n",
+                  "docs/dev/adr/ADR-1.md": f"Decision: {OLD} stands.\n",
+                  "requirements/GG-0011.yaml": f"id: GG-0011\nstatus: active\nhistory: [{OLD}]\n"})
         self.assertEqual(g.scan(d, ["docs/a.md", "docs/b.md", "docs/dev/adr/ADR-1.md",
                                     "requirements/GG-0011.yaml"]), [])
 
