@@ -60,15 +60,18 @@ type TFile struct {
 	Detail string `json:"detail"`
 	// Expected is the reason code of a reviewed expected-divergence entry
 	// (srctest): the file still RUNS, and matching gc makes it STALE.
-	Expected string   `json:"expected,omitempty"`
-	Srcs     []string `json:"-"`
+	Expected string `json:"expected,omitempty"`
+	// ExpectedSig is the entry's pinned DiffSignature, if any (G2).
+	ExpectedSig string   `json:"expectedSig,omitempty"`
+	Srcs        []string `json:"-"`
 }
 
 // Exclusion is one entry of the versioned exclusion list (GG-0033).
 type Exclusion struct {
-	File   string
-	Reason string
-	Detail string
+	File      string
+	Reason    string
+	Detail    string
+	Signature string
 }
 
 var directiveRe = regexp.MustCompile(`^//\s*(run|rundir|compile|compiledir|errorcheck|build)\b`)
@@ -89,8 +92,14 @@ func Scan(tpDir string, yamlExcl map[string]Exclusion) ([]TFile, error) {
 		tf := classify(tpDir, e.Name())
 		tf.Srcs = []string{filepath.Join(tpDir, e.Name())}
 		if x, ok := yamlExcl[tf.Name]; ok {
-			tf.Class = "exclude:" + x.Reason
-			tf.Detail = "excluded by " + ExclusionsFileName() + ": " + x.Detail
+			// Reviewed expected divergence: the file still RUNS (global
+			// review G4: it used to be dropped as exclude:<reason>, so a
+			// stale entry was never reported). EXPECTED while it diverges,
+			// STALE once it matches gc. Files that are not programs
+			// (notrun) stay notrun.
+			tf.Expected = x.Reason
+			tf.ExpectedSig = x.Signature
+			tf.Detail = "expected divergence (" + ExclusionsFileName() + "): " + x.Detail
 		}
 		out = append(out, tf)
 	}
@@ -191,7 +200,7 @@ func LoadExclusions(path string) (version string, excl map[string]Exclusion, err
 	}
 	excl = make(map[string]Exclusion, len(rx))
 	for k, e := range rx {
-		excl[k] = Exclusion{File: e.File, Reason: e.Reason, Detail: e.Detail}
+		excl[k] = Exclusion{File: e.File, Reason: e.Reason, Detail: e.Detail, Signature: e.Signature}
 	}
 	return v, excl, nil
 }
@@ -210,6 +219,8 @@ type Comparison struct {
 	Same     bool     `json:"same"`
 	Reasons  []string `json:"reasons"`
 	Expected string   `json:"expected,omitempty"`
+	// ExpectedSig is the pinned DiffSignature of the expected divergence.
+	ExpectedSig string `json:"expectedSig,omitempty"`
 	// Infra marks a comparison that could not produce a verdict (the
 	// graalgo batch JVM failed, staging failed): never a pass.
 	Infra bool `json:"infra,omitempty"`
@@ -301,6 +312,7 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 			}
 			for k, idx := range mine {
 				results[k].Expected = included[idx].Expected
+				results[k].ExpectedSig = included[idx].ExpectedSig
 				comps[idx] = results[k]
 			}
 		}(j)
@@ -330,8 +342,8 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		dir := filepath.Join(workRoot, fmt.Sprintf("job%d", job), tf.Name)
 		src, err := stageFile(tf, dir)
 		if err != nil {
-			comps[k].Same = false
-			comps[k].Reasons = append(comps[k].Reasons, fmt.Sprintf("stage: %v", err))
+			comps[k].Same, comps[k].Infra = false, true
+			comps[k].Reasons = append(comps[k].Reasons, fmt.Sprintf("infra: stage: %v", err))
 			continue
 		}
 		srcs[k] = src
@@ -405,12 +417,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			}
 			continue
 		case ClassErrorCheck:
-			if bRef.BuildOK {
-				fail("errorcheck: ref built ok, expected failure")
-			}
-			if bAlt.BuildOK {
-				fail("errorcheck: alt built ok, expected failure (gc rejects this program)")
-			}
+			checkErrorcheck(bRef, bAlt, fail)
 			continue
 		}
 
@@ -424,8 +431,15 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			}
 			continue
 		}
+		oAlt, ok := batchOut[batchKey("run", srcs[k])]
+		if !ok {
+			// G3: a missing run result used to read as a zero Outcome
+			// (exit 0, empty output), which "matched" silent programs.
+			c.Same, c.Infra = false, true
+			c.Reasons = append(c.Reasons, "infra: no graalgo batch run result (batch JVM failed or output unparsable)")
+			continue
+		}
 		oRef := harness.RunProgram(cfg, ref, prog, workRoot)
-		oAlt := batchOut[batchKey("run", srcs[k])]
 		// RunProgram does BuildOnly first; our batch already did the build.
 		// For the run outcome, use the batch's run result directly.
 		// But we need to construct an Outcome for Compare.
@@ -479,12 +493,7 @@ func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 					fail("build: alt failed: %s", firstLines(bAlt.BuildLog, 4))
 				}
 			} else {
-				if bRef.BuildOK {
-					fail("errorcheck: ref built ok, expected failure")
-				}
-				if bAlt.BuildOK {
-					fail("errorcheck: alt built ok, expected failure (gc rejects this program)")
-				}
+				checkErrorcheck(bRef, bAlt, fail)
 			}
 			continue
 		}
@@ -492,6 +501,28 @@ func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		c.Same, c.Reasons = hc.Same, hc.Reasons
 	}
 	return comps
+}
+
+// crashRe matches a build log that reports a crash of the tool rather than
+// a compile diagnostic: a negative test only passes when graalgo REJECTS
+// the program the way a compiler does (G4: a JVM/frontend crash used to
+// count as "both builds fail").
+var crashRe = regexp.MustCompile(`(?i)exception|internal error|fatal error|panic:|stack overflow|\tat |signal [A-Z]+`)
+
+// checkErrorcheck enforces errorcheck parity: gc rejects the program, and
+// graalgo rejects it with a diagnostic — not by crashing.
+func checkErrorcheck(bRef, bAlt harness.Outcome, fail func(string, ...any)) {
+	if bRef.BuildOK {
+		fail("errorcheck: ref built ok, expected failure")
+	}
+	switch {
+	case bAlt.BuildOK:
+		fail("errorcheck: alt built ok, expected failure (gc rejects this program)")
+	case strings.TrimSpace(bAlt.BuildLog) == "":
+		fail("errorcheck: alt failed without a diagnostic")
+	case crashRe.MatchString(bAlt.BuildLog):
+		fail("errorcheck: alt crashed instead of rejecting: %s", firstLines(bAlt.BuildLog, 4))
+	}
 }
 
 // overrideEnv applies KEY=VAL overrides onto a base environment.

@@ -63,6 +63,13 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 		if known[c.Code] {
 			add("reason_codes: duplicate code %q", c.Code)
 		}
+		specOK := false
+		for _, s := range SpecReasonCodes {
+			specOK = specOK || c.Class == s
+		}
+		if !specOK {
+			add("reason_codes: code %q has class %q, want one of the SPEC §5.6 codes %v", c.Code, c.Class, SpecReasonCodes)
+		}
 		known[c.Code] = true
 	}
 	if len(known) == 0 {

@@ -151,6 +151,7 @@ type snapshotFlags struct {
 	jobs         int
 	timeout      int
 	retries      int
+	retryBudget  int
 	failFast     bool
 }
 
@@ -173,6 +174,7 @@ func baseSnapshotFlags(fs *flag.FlagSet, mode string) *snapshotFlags {
 		fs.StringVar(&sf.programs, "programs", "", "comma-separated program names to check (default: whole corpus)")
 		fs.StringVar(&sf.verifyRef, "verify-ref", "", "also re-run this reference backend and fail on drift from the snapshot")
 		fs.IntVar(&sf.retries, "infra-retries", 2, "re-runs of a program whose failure has an infrastructure signature")
+		fs.IntVar(&sf.retryBudget, "retry-budget", 0, "max programs that may pass only after an infra retry; above it the check FAILS (a retried-away failure is usually a product flake, e.g. the gofrontend NUL-byte JSON bug)")
 		fs.BoolVar(&sf.failFast, "fail-fast", false, "run programs one at a time and stop at the first DRIFT/STALE (mutation testing)")
 	}
 	return sf
@@ -465,6 +467,7 @@ func cmdSnapshotCheck(args []string) error {
 	defer os.RemoveAll(workRoot)
 
 	var verdicts []verdict
+	var retriedAway []string
 	if sf.verifyRef != "" {
 		rb, err := findBackend(cfg, sf.verifyRef)
 		if err != nil {
@@ -490,10 +493,15 @@ func cmdSnapshotCheck(args []string) error {
 		}
 		got := entryFromOutcome(p, oc, corpusRoot)
 		d := diffBehavior(want[p.Name], got)
+		retried := false
 		for try := 0; d != "" && isInfra(got) && try < sf.retries; try++ {
 			fmt.Printf("RETRY %-28s infrastructure signature: %s\n", p.Name, d)
+			retried = true
 			got = entryFromOutcome(p, harness.RunProgram(cfg, b, p, workRoot), corpusRoot)
 			d = diffBehavior(want[p.Name], got)
+		}
+		if retried && !isInfra(got) {
+			retriedAway = append(retriedAway, p.Name)
 		}
 		v := classify(p.Name, d, isInfra(got), expected)
 		verdicts = append(verdicts, v)
@@ -502,10 +510,34 @@ func cmdSnapshotCheck(args []string) error {
 			break
 		}
 	}
-	return report(verdicts, len(live), snap, b.Name)
+	if err := report(verdicts, len(live), snap, b.Name); err != nil {
+		return err
+	}
+	return checkRetryBudget(retriedAway, sf.retryBudget)
 }
 
-// classify turns one comparison into a verdict.
+// checkRetryBudget fails the check when more programs than budget passed
+// only after an infrastructure retry (global review G6): a failure that a
+// retry makes disappear is a flake, and in practice a product flake (the
+// gofrontend's intermittent NUL byte in its JSON output) — retrying it away
+// silently hid the bug.
+func checkRetryBudget(retriedAway []string, budget int) error {
+	if len(retriedAway) == 0 {
+		return nil
+	}
+	fmt.Printf("RETRIED %d program(s) passed only after an infra retry: %s\n",
+		len(retriedAway), strings.Join(retriedAway, ", "))
+	if len(retriedAway) > budget {
+		return fmt.Errorf("%d program(s) needed an infra retry (budget %d): a flake is a bug, not noise", len(retriedAway), budget)
+	}
+	return nil
+}
+
+// classify turns one comparison into a verdict. An expected divergence must
+// be the PINNED one (global review G2): an entry without a signature is
+// UNPINNED (a failure that prints the signature to pin), and a divergence
+// whose signature differs from the pinned one is DRIFT — otherwise a new
+// crash of a listed program would pass as EXPECTED.
 func classify(name, diff string, infra bool, expected map[string]harness.ReviewedExclusion) verdict {
 	x, isExpected := expected[name]
 	switch {
@@ -515,6 +547,10 @@ func classify(name, diff string, infra bool, expected map[string]harness.Reviewe
 		return verdict{name, "STALE", fmt.Sprintf("listed as expected divergence (%s: %s) but matches gc — prune the entry", x.Reason, x.Detail)}
 	case diff == "":
 		return verdict{name, "MATCH", ""}
+	case isExpected && x.Signature == "":
+		return verdict{name, "UNPINNED", fmt.Sprintf("expected divergence has no signature: pin `signature: %s` (%s)", harness.DiffSignature(diff), diff)}
+	case isExpected && x.Signature != harness.DiffSignature(diff):
+		return verdict{name, "DRIFT", fmt.Sprintf("expected divergence changed (pinned %s, got %s): %s", x.Signature, harness.DiffSignature(diff), diff)}
 	case isExpected:
 		return verdict{name, "EXPECTED", x.Reason + ": " + diff}
 	default:
@@ -530,11 +566,11 @@ func report(vs []verdict, n int, snap *SnapshotFile, backend string) error {
 			fmt.Printf("%-9s %-28s %s\n", v.kind, v.name, v.detail)
 		}
 	}
-	fmt.Printf("check: %d programs under %s vs %s snapshot (%s): match=%d expected=%d drift=%d stale=%d infra=%d ref-drift=%d\n",
+	fmt.Printf("check: %d programs under %s vs %s snapshot (%s): match=%d expected=%d drift=%d stale=%d unpinned=%d infra=%d ref-drift=%d\n",
 		n, backend, snap.Reference, snap.Toolchain, counts["MATCH"], counts["EXPECTED"],
-		counts["DRIFT"], counts["STALE"], counts["INFRA"], counts["REF-DRIFT"])
-	if bad := counts["DRIFT"] + counts["STALE"] + counts["REF-DRIFT"]; bad > 0 {
-		return fmt.Errorf("%d unexpected results (drift/stale/ref-drift)", bad)
+		counts["DRIFT"], counts["STALE"], counts["UNPINNED"], counts["INFRA"], counts["REF-DRIFT"])
+	if bad := counts["DRIFT"] + counts["STALE"] + counts["UNPINNED"] + counts["REF-DRIFT"]; bad > 0 {
+		return fmt.Errorf("%d unexpected results (drift/stale/unpinned/ref-drift)", bad)
 	}
 	if counts["INFRA"] > 0 {
 		return fmt.Errorf("%w: %d programs could not be checked", errInfra, counts["INFRA"])
@@ -619,11 +655,17 @@ func selectChecked(snap *SnapshotFile, progs []harness.Program, expected map[str
 		sort.Strings(problems)
 		return nil, fmt.Errorf("snapshot/corpus inconsistency:\n  %s", strings.Join(problems, "\n  "))
 	}
+	if sel != nil && len(sel) == 0 {
+		return nil, fmt.Errorf("-programs %q names no program (zero cases is never a pass)", only)
+	}
 	var live []harness.Program
 	for _, p := range progs {
 		if sel == nil || sel[p.Name] {
 			live = append(live, p)
 		}
+	}
+	if len(live) == 0 {
+		return nil, fmt.Errorf("no programs to check (empty corpus?): zero cases is never a pass")
 	}
 	return live, nil
 }

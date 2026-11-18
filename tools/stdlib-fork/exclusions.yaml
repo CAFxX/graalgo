@@ -45,22 +45,34 @@
 #                         backend-specific behavior that is not a
 #                         portability observable (mirrors GG-0033
 #                         unspecified-behavior).
-version: 2
+# v3 (2026-11-18): one vocabulary across every exclusion list — each code
+# declares the SPEC §5.6 reason code it refines (`class:`, validated):
+# PLATFORM/CGO/UNSUPPORTED_FEATURE -> backend-specific (decided v1 scope),
+# ASM_UNSUPPORTED/LINKNAME_MISSING/DEFERRED_WAVE -> deferred-parity,
+# NONPORTABLE_BEHAVIOR -> unspecified-behavior.
+version: 3
 reason_codes:
 - code: PLATFORM
   description: outside OS/arch scope (linux/amd64 first; darwin deferred; Windows out of v1 per SPEC §3.8 GG-0023)
+  class: backend-specific
 - code: CGO
   description: requires import "C"; banned in module code by verifier rule GG-0058 (SPEC §3.7)
+  class: backend-specific
 - code: ASM_UNSUPPORTED
   description: package's .s/.S/.sx files are in the asm inventory's unsupported (fail-fast) category -- no replacement strategy decided yet (SPEC §2.8; ADR-0007)
+  class: deferred-parity
 - code: LINKNAME_MISSING
   description: needs a //go:linkname symbol the intrinsic surface does not provide
+  class: deferred-parity
 - code: UNSUPPORTED_FEATURE
   description: feature stubbed as unsupported by a DECIDED spec statement
+  class: backend-specific
 - code: DEFERRED_WAVE
   description: triaged by the M7–M9 four-way classification to a later package wave
+  class: deferred-parity
 - code: NONPORTABLE_BEHAVIOR
   description: tests nondeterministic or backend-specific behavior, not a portability observable
+  class: unspecified-behavior
 exclusions:
 - file: runtime/cgo
   reason: CGO

@@ -256,11 +256,25 @@ func (c *config) gate(copyDir, dh, programs string) (string, string) {
 	switch {
 	case err == nil:
 		return "green", ""
-	case errors.As(err, &ee) && ee.ExitCode() == 1:
+	case errors.As(err, &ee) && ee.ExitCode() == 1 && reportsDivergence(string(out)):
 		return "red", firstFailures(string(out))
 	default:
+		// Exit 1 without a DRIFT/STALE verdict line is a harness error
+		// (bad flags, corpus/snapshot inconsistency, ...), not a kill
+		// (global review G5).
 		return "infra", firstFailures(string(out)) + " " + err.Error()
 	}
+}
+
+// reportsDivergence reports whether the gate output carries a divergence
+// verdict: the only thing that may count as killing a mutant.
+func reportsDivergence(out string) bool {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") {
+			return true
+		}
+	}
+	return false
 }
 
 func firstFailures(out string) string {

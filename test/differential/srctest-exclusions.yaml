@@ -16,7 +16,12 @@
 #       append.go, chancap.go, cmp.go newly compared and diverging (added).
 #       The remaining ~120 newly-compared runnable files are NOT yet triaged:
 #       the first full run will list them as DIVERGE for triage.
-version: 2
+#   3 (2026-11-18): the 32 `backend-specific` entries were graalgo bugs
+#       (v1 frontend scope gaps and F-2..F-6), not backend-specific behavior
+#       (SPEC §5.6 reserves that code for behavior gc leaves to the
+#       implementation): recoded `deferred-parity`, each citing its bug id
+#       in docs/dev/bugs.md.
+version: 3
 exclusions:
 - file: append.go
   reason: deferred-parity
@@ -28,101 +33,101 @@ exclusions:
   reason: deferred-parity
   detail: graalgo build crash - 'illegal binary op/kind combination EQ operand=CHAN' (channel equality)
 - file: 235.go
-  reason: backend-specific
-  detail: F-2: named result assignment frontend bug (reference to unknown object id)
+  reason: deferred-parity
+  detail: BUG-0002: named result assignment frontend bug (reference to unknown object id)
 - file: bigmap.go
-  reason: backend-specific
-  detail: map key of kind ARRAY not supported in Phase 1
+  reason: deferred-parity
+  detail: BUG-0008: map key of kind ARRAY not supported in Phase 1
 - file: closure2.go
-  reason: backend-specific
-  detail: range variable *ast.IndexExpr not in frontend/v1 scope (WS D)
+  reason: deferred-parity
+  detail: BUG-0001: range variable *ast.IndexExpr not in frontend/v1 scope (WS D)
 - file: complit2.go
-  reason: backend-specific
-  detail: frontend scope gap (composite literal)
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap (composite literal)
 - file: const3.go
-  reason: backend-specific
-  detail: const type info propagation gap
+  reason: deferred-parity
+  detail: BUG-0001: const type info propagation gap
 - file: convert4.go
-  reason: backend-specific
-  detail: frontend type error (conversion scope gap)
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error (conversion scope gap)
 - file: convert5.go
-  reason: backend-specific
-  detail: frontend type error (conversion scope gap)
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error (conversion scope gap)
 - file: ddd.go
-  reason: backend-specific
-  detail: method call on non-named receiver (WS H)
+  reason: deferred-parity
+  detail: BUG-0001: method call on non-named receiver (WS H)
 - file: devirt.go
-  reason: backend-specific
-  detail: ifacemethod expression kind not supported
+  reason: deferred-parity
+  detail: BUG-0001: ifacemethod expression kind not supported
 - file: divmod.go
-  reason: backend-specific
-  detail: multi-valued call result not in frontend/v1 scope (WS D)
+  reason: deferred-parity
+  detail: BUG-0001: multi-valued call result not in frontend/v1 scope (WS D)
 - file: func.go
-  reason: backend-specific
-  detail: frontend scope gap
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap
 - file: func6.go
-  reason: backend-specific
-  detail: frontend scope gap
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap
 - file: inline_caller.go
-  reason: backend-specific
-  detail: frontend type error (inlining scope)
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error (inlining scope)
 - file: inline_callers.go
-  reason: backend-specific
-  detail: frontend type error (inlining scope)
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error (inlining scope)
 - file: method.go
-  reason: backend-specific
-  detail: method call on non-named receiver struct{main.T} (WS H)
+  reason: deferred-parity
+  detail: BUG-0001: method call on non-named receiver struct{main.T} (WS H)
 - file: method3.go
-  reason: backend-specific
-  detail: identifier T denotes *types.TypeName (method scope)
+  reason: deferred-parity
+  detail: BUG-0001: identifier T denotes *types.TypeName (method scope)
 - file: method5.go
-  reason: backend-specific
-  detail: interface method with 2 results not supported
+  reason: deferred-parity
+  detail: BUG-0001: interface method with 2 results not supported
 - file: method7.go
-  reason: backend-specific
-  detail: method expression via interface not supported
+  reason: deferred-parity
+  detail: BUG-0001: method expression via interface not supported
 - file: nilptr.go
-  reason: backend-specific
-  detail: & on *ast.ParenExpr not in frontend/v1 scope (WS D)
+  reason: deferred-parity
+  detail: BUG-0001: & on *ast.ParenExpr not in frontend/v1 scope (WS D)
 - file: nilptr4.go
-  reason: backend-specific
-  detail: frontend scope gap (nil pointer)
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap (nil pointer)
 - file: peano.go
-  reason: backend-specific
-  detail: frontend type error
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error
 - file: range4.go
-  reason: backend-specific
-  detail: range variable *ast.StarExpr not in frontend/v1 scope
+  reason: deferred-parity
+  detail: BUG-0001: range variable *ast.StarExpr not in frontend/v1 scope
 - file: recover1.go
-  reason: backend-specific
-  detail: frontend type error (recover scope)
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error (recover scope)
 - file: rename.go
-  reason: backend-specific
-  detail: frontend type error
+  reason: deferred-parity
+  detail: BUG-0001: frontend type error
 - file: slicecap.go
-  reason: backend-specific
-  detail: frontend scope gap
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap
 - file: uintptrescapes3.go
-  reason: backend-specific
-  detail: frontend scope gap (uintptr)
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap (uintptr)
 - file: unsafe_string.go
-  reason: backend-specific
-  detail: frontend scope gap (unsafe)
+  reason: deferred-parity
+  detail: BUG-0001: frontend scope gap (unsafe)
 - file: defer.go
-  reason: backend-specific
-  detail: F-3: variadic interface forwarding bug (fmt.Sprint(v...) gives [9][8] not 98)
+  reason: deferred-parity
+  detail: BUG-0004: variadic interface forwarding bug (fmt.Sprint(v...) gives [9][8] not 98)
 - file: defernil.go
-  reason: backend-specific
-  detail: F-3: variadic interface forwarding bug (same root cause)
+  reason: deferred-parity
+  detail: BUG-0004: variadic interface forwarding bug (same root cause)
 - file: literal2.go
-  reason: backend-specific
-  detail: F-5: complex number comparison bug ((0+1.8e308i) != itself)
+  reason: deferred-parity
+  detail: BUG-0006: complex number comparison bug ((0+1.8e308i) != itself)
 - file: newexpr.go
-  reason: backend-specific
-  detail: F-4: new(x) with non-constant x returns zero value
+  reason: deferred-parity
+  detail: BUG-0005: new(x) with non-constant x returns zero value
 - file: solitaire.go
-  reason: backend-specific
-  detail: F-6: peg-solitaire solver finds no solution (search divergence)
+  reason: deferred-parity
+  detail: BUG-0007: peg-solitaire solver finds no solution (search divergence)
 - file: zerosize.go
   reason: unspecified-behavior
   detail: pointer equality for zero-size allocations is unspecified

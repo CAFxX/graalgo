@@ -72,7 +72,11 @@ func Scan(testDir string, yamlExcl map[string]typeparam.Exclusion) ([]typeparam.
 		tf := classify(testDir, e.Name())
 		tf.Srcs = []string{filepath.Join(testDir, e.Name())}
 		if tf.Class == runClass && goBin != "" {
-			if !gcBuilds(goBin, tf.Srcs[0]) {
+			builds, err := gcBuilds(goBin, tf.Srcs[0])
+			if err != nil {
+				return nil, err
+			}
+			if !builds {
 				tf.Class = "errorcheck"
 				tf.Detail = "negative test: gc rejects it; build-failure parity"
 			}
@@ -82,6 +86,7 @@ func Scan(testDir string, yamlExcl map[string]typeparam.Exclusion) ([]typeparam.
 			// run verdict is EXPECTED while it diverges and STALE (a
 			// failure) once it matches gc.
 			tf.Expected = x.Reason
+			tf.ExpectedSig = x.Signature
 			tf.Detail = "expected divergence (" + ExclusionsFileName() + "): " + x.Detail
 		}
 		out = append(out, tf)
@@ -108,18 +113,33 @@ func isExec(p string) bool {
 	return err == nil && !st.IsDir() && st.Mode()&0o111 != 0
 }
 
-// gcBuilds reports whether gc can build the single-file program.
-func gcBuilds(goBin, src string) bool {
+// gcBuilds reports whether gc can build the single-file program. Only a
+// compile REJECTION (go build exited non-zero with a diagnostic naming the
+// source) makes a file a negative test; any other probe failure (no temp
+// dir, toolchain cannot start, a toolchain-level error) is an
+// infrastructure error, never "gc rejects it" (global review G4).
+func gcBuilds(goBin, src string) (bool, error) {
 	dir, err := os.MkdirTemp("", "srctest-probe-*")
 	if err != nil {
-		return true // probe inconclusive: don't reclassify
+		return false, fmt.Errorf("infra: srctest build probe: %w", err)
 	}
 	defer os.RemoveAll(dir)
 	cmd := exec.Command(goBin, "build", "-o", filepath.Join(dir, "prog"), src)
 	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GO111MODULE=off")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run() == nil
+	var out strings.Builder
+	cmd.Stdout = &out
+	cmd.Stderr = &out
+	err = cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if _, isExit := err.(*exec.ExitError); !isExit {
+		return false, fmt.Errorf("infra: srctest build probe of %s: %w", src, err)
+	}
+	if !strings.Contains(out.String(), filepath.Base(src)) {
+		return false, fmt.Errorf("infra: srctest build probe of %s failed without a diagnostic for it: %s", src, out.String())
+	}
+	return false, nil
 }
 
 // classify determines a file's class from its build constraints, package

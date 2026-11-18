@@ -41,8 +41,10 @@ func writeTemp(t *testing.T, dir, name, content string) string {
 const testVocab = `reason_codes:
 - code: PLATFORM
   description: out of OS/arch scope
+  class: backend-specific
 - code: CGO
   description: requires import "C"
+  class: backend-specific
 `
 
 func testList(t *testing.T, dir, name, version, entries string) string {
@@ -462,4 +464,18 @@ func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 		t.Fatal("non-tree dir: expected refusal, got a tree")
 	}
 	mustContain(t, err.Error(), "not a stdlib src root", "refusal diagnosis")
+}
+
+// Every stdlib code must refine a SPEC §5.6 code (one vocabulary).
+func TestValidateRejectsCodeWithoutSpecClass(t *testing.T) {
+	dir := t.TempDir()
+	src := fixtureSrc(t, "runtime/cgo")
+	list := writeTemp(t, dir, "list.yaml", "version: 1\nreason_codes:\n- code: CGO\n  description: y\n"+
+		"exclusions:\n- file: runtime/cgo\n  reason: CGO\n  detail: SPEC\n")
+	base := testList(t, dir, "base.yaml", "0", "")
+	_, stderr, err := runValidateOK(t, list, src, base, 1000, 25)
+	if err == nil {
+		t.Fatal("a code without a SPEC §5.6 class must be rejected")
+	}
+	mustContain(t, stderr, "SPEC §5.6", "missing-class rejection")
 }

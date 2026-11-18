@@ -400,12 +400,12 @@ func cmdValidate(args []string) error {
 		c := harness.Compare(origOut[m.target], mutOut)
 		res.Detected = !c.Same
 		res.Reasons = c.Reasons
+		status, ok := mutantStatus(mutOut.BuildOK, res.Detected)
 		if !mutOut.BuildOK {
+			res.Detected = false
 			res.RefLog = mutOut.BuildLog
 		}
-		status := "DETECTED"
-		if !res.Detected {
-			status = "MISSED   "
+		if !ok {
 			rep.MutationsMissed++
 		}
 		fmt.Printf("%s %-12s %-24s %s\n", status, m.class, m.target, mut.Description)
@@ -515,32 +515,43 @@ func cmdTypeparamRun(args []string) error {
 	if err != nil {
 		return err
 	}
-	div := 0
+	// Same verdicts as srctest: listed files run (G4), EXPECTED while they
+	// diverge as pinned, STALE once they match gc; INFRA is never a pass.
+	counts := map[string]int{}
 	for _, c := range comps {
-		status := "SAME    "
-		if !c.Same {
-			status = "DIVERGE "
-			div++
+		v := srctestVerdict(c)
+		counts[v]++
+		if v == "MATCH" {
+			continue
 		}
-		fmt.Printf("%s %s", status, c.Program)
+		fmt.Printf("%-9s %s", v, c.Program)
+		if v == "STALE" {
+			fmt.Printf("\n           - listed in %s (%s) but matches gc: prune the entry", filepath.Base(*exclusions), c.Expected)
+		}
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
 		}
 		fmt.Println()
 	}
-	skipped := 0
+	notrun := 0
 	for _, f := range files {
-		if strings.HasPrefix(f.Class, "exclude") {
-			skipped++
+		if strings.HasPrefix(f.Class, typeparam.ClassNotRun) {
+			notrun++
 		}
 	}
-	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+	if err := typeparam.WriteReportJSON(*out, comps, notrun); err != nil {
 		return err
 	}
-	fmt.Printf("typeparam run: %d comparisons, %d diverged, %d excluded, report %s\n",
-		len(comps), div, skipped, *out)
-	if div > 0 {
-		return fmt.Errorf("%d divergences", div)
+	fmt.Printf("typeparam run: %d comparisons: match=%d expected=%d diverge=%d stale=%d infra=%d; %d not programs; report %s\n",
+		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], notrun, *out)
+	if bad := counts["DIVERGE"] + counts["STALE"]; bad > 0 {
+		return fmt.Errorf("%d divergences (unlisted divergences / stale entries)", bad)
+	}
+	if counts["INFRA"] > 0 {
+		return fmt.Errorf("%w: %d files could not be compared", errInfra, counts["INFRA"])
+	}
+	if len(comps) == 0 {
+		return fmt.Errorf("%w: zero comparisons (wrong -dir?)", errInfra)
 	}
 	return nil
 }
@@ -670,9 +681,10 @@ func cmdSrctestRun(args []string) error {
 	return nil
 }
 
-// srctestVerdict classifies one srctest comparison: MATCH, EXPECTED (listed
-// and diverging), DIVERGE (unlisted divergence), STALE (listed but matching
-// gc), INFRA (no verdict).
+// srctestVerdict classifies one srctest/typeparam comparison: MATCH,
+// EXPECTED (listed and diverging as pinned), DIVERGE (unlisted divergence,
+// or a listed one whose pinned signature changed — G2), STALE (listed but
+// matching gc), INFRA (no verdict).
 func srctestVerdict(c typeparam.Comparison) string {
 	switch {
 	case c.Infra:
@@ -681,10 +693,27 @@ func srctestVerdict(c typeparam.Comparison) string {
 		return "STALE"
 	case c.Same:
 		return "MATCH"
+	case c.Expected != "" && c.ExpectedSig != "" && c.ExpectedSig != harness.DiffSignature(strings.Join(c.Reasons, "\n")):
+		return "DIVERGE"
 	case c.Expected != "":
 		return "EXPECTED"
 	default:
 		return "DIVERGE"
+	}
+}
+
+// mutantStatus classifies one comparator-self-test mutant. A mutant that
+// does not BUILD tests nothing about the comparator (any build failure
+// "differs"): it is STILLBORN, a failure of the self-test, never a
+// detection (global review G5).
+func mutantStatus(buildOK, differs bool) (status string, ok bool) {
+	switch {
+	case !buildOK:
+		return "STILLBORN", false
+	case !differs:
+		return "MISSED   ", false
+	default:
+		return "DETECTED", true
 	}
 }
 
