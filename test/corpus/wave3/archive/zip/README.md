@@ -33,9 +33,16 @@ no network.
 ## Scope limits
 
 - The synthetic `archive/zip` source exists in
-  [internal/frontend/](../../../../../internal/frontend/) (`synth_archive_zip.go`),
-  but the programs are `.scopelimited` until the carried FixedZone fix
-  lands (branch `review-1105-zip-fixedzone`:
-  `synth_archive_zip.go:2397`, `time.FixedZone`) — the synthetic package
-  does not type-check without it. The gc leg validates each program is
-  real deterministic Go with exit 0.
+  [internal/frontend/](../../../../../internal/frontend/) (`synth_archive_zip.go`)
+  and type-checks since the carried FixedZone fix landed
+  (`review-1118-p0-zip-multipart`: `synth_archive_zip.go:2397`,
+  `time.FixedZone`), but the programs stay `.scopelimited` on the
+  path/filepath `lstat` export bug (carried lane
+  `review-1105-filepath-lstat`): every program fails export with
+  `variable "lstat" used before declaration` (observed 2026-11-18 in
+  the `review-1118-p0-zip-multipart` differential probe, 0/10 legs).
+  `00_write_read.go` is additionally blocked by the P0-2 time
+  civil-date accessor stubs (`Year`/`Second`/`Minute`); the Deflate
+  legs of `00`/`02`/`03` are not yet exercised end-to-end (masked by
+  the `lstat` bug). The gc leg validates each program is real
+  deterministic Go with exit 0.

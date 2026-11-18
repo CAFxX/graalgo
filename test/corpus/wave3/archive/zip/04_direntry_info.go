@@ -3,9 +3,10 @@
 // SCOPE-LIMITED: the m7 desugar rows for fileListEntry.Info,
 // openDir.Stat, openDir.Read and headerFileInfo.Info landed in
 // review-1105-mr-table-missing (A-P1-11, REVIEW-2026-11-05-15, plus the
-// NEEDS-FIX fix-up adding the headerFileInfo.Info row); the carried
-// archive/zip FixedZone fix is still open (see
-// 04_direntry_info.scopelimited).
+// NEEDS-FIX fix-up adding the headerFileInfo.Info row), and the carried
+// archive/zip FixedZone fix landed in review-1118-p0-zip-multipart;
+// the program is now blocked by the path/filepath `lstat` export bug
+// (see 04_direntry_info.scopelimited).
 package main
 
 import (

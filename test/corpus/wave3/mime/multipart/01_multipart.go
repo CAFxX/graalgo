@@ -1,12 +1,13 @@
 // P3-M9 wave3: mime/multipart — Writer→Reader round-trip, nested parts,
 // ReadForm spilling, adversarial inputs.
-// SCOPE-LIMITED: the synthetic mime/multipart source exists and the m7
+// SCOPE-LIMITED: the synthetic mime/multipart source exists, the m7
 // desugar rows for Reader.ReadForm / FileHeader.Open landed
-// (review-1105-mr-table-missing, A-P1-11), but the program is still
-// blocked by the carried type-error fix (branch
-// review-1105-multipart-typeerr: synth_mime_multipart.go:934), the
-// path/filepath `lstat` export bug (own lane
-// review-1105-filepath-lstat), and the hand-written
+// (review-1105-mr-table-missing, A-P1-11), and the carried type-error
+// fix landed in review-1118-p0-zip-multipart
+// (synth_mime_multipart.go:934) — but the program is still blocked by
+// the Writer.CreatePart signature mismatch (takes __mpMIMEHeader,
+// user code passes textproto.MIMEHeader), the path/filepath `lstat`
+// export bug (own lane review-1105-filepath-lstat), and the hand-written
 // mime/multipart.readMIMEHeader M9-scope panic stub (no __-helper, no
 // desugar row; called by (*Part).populateHeaders for every part) — see
 // 01_multipart.scopelimited.

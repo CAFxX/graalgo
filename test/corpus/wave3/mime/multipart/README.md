@@ -16,15 +16,18 @@ worker). Conventions are the wave-1 ones (`../../wave1/README.md`).
 ## Scope limits
 
 - The program is `.scopelimited` (see `01_multipart.scopelimited`):
-  the synthetic `mime/multipart` source exists, and the m7 desugar
-  rows for `Reader.ReadForm` / `FileHeader.Open` landed in
-  review-1105-mr-table-missing (A-P1-11), but the package still does
-  not type-check until the carried type-error fix lands (branch
-  review-1105-multipart-typeerr: `synth_mime_multipart.go:934`), and
-  the program is further blocked by the carried `path/filepath`
-  `lstat` export bug (own lane `review-1105-filepath-lstat`) and by
-  the hand-written `mime/multipart.readMIMEHeader` M9-scope panic stub
-  (no `__`-helper, no desugar row; `(*Part).populateHeaders` calls it
-  for every part). The gc leg validates it is real deterministic Go.
+  the synthetic `mime/multipart` source exists and type-checks since
+  the carried type-error fix landed in `review-1118-p0-zip-multipart`
+  (`synth_mime_multipart.go:934`), and the m7 desugar rows for
+  `Reader.ReadForm` / `FileHeader.Open` landed in
+  review-1105-mr-table-missing (A-P1-11) — but the program is blocked
+  by the `Writer.CreatePart` signature mismatch (takes
+  `__mpMIMEHeader`, user code passes `textproto.MIMEHeader`; observed
+  2026-11-18 in the `review-1118-p0-zip-multipart` differential probe,
+  0/2 legs), the carried `path/filepath` `lstat` export bug (own lane
+  `review-1105-filepath-lstat`), and the hand-written
+  `mime/multipart.readMIMEHeader` M9-scope panic stub (no `__`-helper,
+  no desugar row; `(*Part).populateHeaders` calls it for every part).
+  The gc leg validates it is real deterministic Go.
 - The `ReadForm` spill path uses the wave-3 `TMPDIR` discipline via
   `os.CreateTemp` internals; no paths are printed.
