@@ -1,6 +1,5 @@
 package graalgo.frontend;
 
-import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -34,14 +33,14 @@ public final class UnimplementedRootNode extends RootNode {
     private SourceSection sourceSection;
 
     public UnimplementedRootNode(String funcName, String pkgPath) {
-        super((TruffleLanguage<?>) null, FrameDescriptor.newBuilder().build());
+        super(graalgo.language.GoLanguage.currentOrNull(), FrameDescriptor.newBuilder().build());
         this.funcName = funcName;
         this.pkgPath = pkgPath;
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Safepoint.poll();
+        Safepoint.poll(this);
         String msg = "unimplemented: " + pkgPath + "." + funcName
                 + " (assembly function not implemented in graalgo)";
         // A GoString value, not a java.lang.String: PanicRendering only

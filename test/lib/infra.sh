@@ -16,7 +16,7 @@
 #
 # Layout (docs/REPO_STRUCTURE.md): product launcher
 # internal/backend/graalgo-sync-run (P3SyncMain), backend classes under
-# internal/backend/{truffle,runtime,interop}/out/classes (built by
+# internal/backend/{truffle,interop}/out/classes (built by
 # `make build`), frontend binary internal/frontend/gofrontend (built by
 # `make generate`). This library never builds anything: a missing build
 # is an INFRA error telling the user what to run.
@@ -66,8 +66,8 @@ infra_setup_graalgo() {
         local b="$GRAALGO_ROOT/internal/backend"
         [ -f "$b/interop/out/classes/graalgo/p3sync/launcher/P3SyncMain.class" ] \
             || infra_die "backend not built ($b/interop/out/classes lacks P3SyncMain) — run \`make build\` at the repo root"
-        [ -d "$b/runtime/out/classes" ] && [ -d "$b/truffle/out/classes" ] \
-            || infra_die "backend not built (runtime/truffle out/classes missing) — run \`make build\` at the repo root"
+        [ -d "$b/truffle/out/classes" ] \
+            || infra_die "backend not built (truffle/out/classes missing) — run \`make build\` at the repo root"
         [ -x "${GRAALGO_GOFRONTEND:-$GRAALGO_ROOT/internal/frontend/gofrontend}" ] \
             || infra_die "gofrontend not built — run \`make generate\` at the repo root"
     fi

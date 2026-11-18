@@ -37,7 +37,7 @@ export GOTOOLCHAIN=local
 if [ -z "${PHASE3_DIR:-}" ]; then
   export PHASE3_DIR="$PWD/../../internal/backend"
 fi
-# The P3SyncMain backend needs truffle+runtime+interop classes built.
+# The P3SyncMain backend needs truffle+interop classes built.
 if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ]; then
   echo "run.sh: $PHASE3_DIR/graalgo-sync-run missing/not executable" >&2
   exit 2

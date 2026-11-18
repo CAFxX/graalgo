@@ -35,7 +35,7 @@ The short version:
 - [cmd/graalgo/](cmd/graalgo/) — the binary: `build`, `run`, `test`, `vet`,
   `fmt`.
 - [internal/](internal/) — the implementation: `frontend/` (Go source → IR),
-  `ir/`, `backend/` (`truffle/`, `runtime/`, `interop/`), `driver/` (build
+  `ir/`, `backend/` (`truffle/` — nodes + runtime, `interop/`), `driver/` (build
   orchestration).
 - [stdlib/](stdlib/) — stdlib support: `synthetic/` (documented
   workarounds), `patches/` (minimal diffs vs upstream Go).

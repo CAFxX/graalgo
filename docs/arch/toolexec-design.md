@@ -595,7 +595,7 @@ are deleted at cutover (M3). Call sites hold a direct reference to the callee's
 `FunctionUnit`, so a not-yet-decoded callee costs one branch.
 
 Class-path layout: one backend jar set under `$GRAALGO_HOME/lib`
-(RECOVERY T0.D flattens the current three-directory same-FQN overlay first;
+(RECOVERY T0.D has flattened the former three-directory same-FQN overlay;
 this design assumes the flattened module).
 
 ## 5. The standard library through this path

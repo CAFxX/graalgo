@@ -1,79 +1,14 @@
 package graalgo.p3sync.launcher;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-import com.oracle.truffle.api.Truffle;
-import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.source.Source;
 
-import graalgo.frontend.FrontendException;
-import graalgo.frontend.NodeFactory;
-import graalgo.iface.IfaceDispatchBuilder;
-import graalgo.iface.IfaceMethodTable;
-import graalgo.iface.IfaceMethodTables;
-import graalgo.p3builtin.nodes.ClearNode;
-import graalgo.p3builtin.nodes.GoMaxProcsNode;
-import graalgo.p3builtin.nodes.GoschedNode;
-import graalgo.p3builtin.nodes.MinMaxNode;
-import graalgo.p3builtin.nodes.NumCPUNode;
-import graalgo.p3builtin.nodes.NumGoroutineNode;
-import graalgo.p3chan.nodes.ChanCloseNode;
-import graalgo.p3chan.nodes.ChanLenCapNode;
-import graalgo.p3chan.nodes.ChanRecvNode;
-import graalgo.p3chan.nodes.ChanSendNode;
-import graalgo.p3chan.nodes.MakeChanNode;
-import graalgo.p3chan.nodes.SelectNode;
-import graalgo.rtmemstats.RuntimeGoRootNode;
-import graalgo.rtmemstats.RuntimeReadMemStatsNode;
-import graalgo.rtmemstats.RuntimeStackNode;
-import graalgo.rtmemstats.RuntimeVersionNode;
-import graalgo.rtstack.RuntimeCallerNode;
-import graalgo.rtstack.RuntimeCallersFramesNode;
-import graalgo.rtstack.RuntimeCallersNode;
-import graalgo.rtstack.RuntimeFramesNextNode;
-import graalgo.rtstack.RuntimeFuncEntryNode;
-import graalgo.rtstack.RuntimeFuncFileLineNode;
-import graalgo.rtstack.RuntimeFuncForPCNode;
-import graalgo.rtstack.RuntimeFuncNameNode;
-import graalgo.p3link.LinknameIntrinsics;
-import graalgo.p3os.GoOs;
-import graalgo.p3sync.nodes.AtomicAddrNode;
-import graalgo.p3sync.nodes.AtomicPtrOpNode;
-import graalgo.p3sync.nodes.AtomicOpNode;
-import graalgo.p3sync.nodes.SyncNewNode;
-import graalgo.p3sync.nodes.SyncOpNode;
-import graalgo.p3unsafe.UnsafeAddNode;
-import graalgo.p3unsafe.UnsafeDeriveNode;
-import graalgo.p3unsafe.UnsafeFromPtrNode;
-import graalgo.p3unsafe.UnsafeFromUintNode;
-import graalgo.p3unsafe.UnsafeSliceDataNode;
-import graalgo.p3unsafe.UnsafeSliceNode;
-import graalgo.p3unsafe.UnsafeStringDataNode;
-import graalgo.p3unsafe.UnsafeStringNode;
-import graalgo.p3unsafe.UnsafeTable;
-import graalgo.p3unsafe.UnsafeToPtrNode;
-import graalgo.p3math.nodes.MathF32BitsNode;
-import graalgo.p3math.nodes.MathF32FromBitsNode;
-import graalgo.p3math.nodes.MathF64BitsNode;
-import graalgo.p3math.nodes.MathF64FromBitsNode;
-import graalgo.p3math.nodes.MathFmaNode;
-import graalgo.p3math.nodes.MathSqrtNode;
-import graalgo.p3time.nodes.TimeAfterFuncNode;
-import graalgo.p3time.nodes.TimeAfterNode;
-import graalgo.p3time.nodes.TimeCNode;
-import graalgo.p3time.nodes.TimeNewNode;
-import graalgo.p3time.nodes.TimeNowNode;
-import graalgo.p3time.nodes.TimeOpNode;
-import graalgo.p3time.nodes.TimeSleepNode;
-import graalgo.p3time.nodes.TimeTickNode;
-import graalgo.sched.SchedulerCore;
+import graalgo.launcher.GoPolyglot;
 import graalgo.sched.launcher.GoDebug;
-import graalgo.sched.nodes.GoStatementNode;
 
 /**
  * Phase-3 launcher for {@code sync}-binding programs (P3-M2b, WS D,
@@ -296,296 +231,68 @@ public final class P3SyncMain {
             return EXIT_OK;
         }
 
-        // Build one Truffle Source per input file; the frontend's position
-        // "file" index selects among them (frontend/v1 wire format).
-        // O5 (continued): a --wire-input run has no input files, but
-        // NodeFactory requires at least one Source. Sources back
-        // positions only (sectionFor falls back to sources[0] and
-        // clamps out-of-range sections, the path synthetic nodes
-        // already take), and a wire run by design has no original
-        // source text at run time — the artifact embeds the frontend
-        // output precisely so it is not needed — so supply one empty
-        // placeholder Source instead of failing the construction.
-        Source[] sources;
-        if (wireInput != null) {
-            sources = new Source[]{Source.newBuilder("go", "", "wire").build()};
-        } else {
-            sources = new Source[paths.size()];
-            for (int i = 0; i < paths.size(); i++) {
-                final String srcText;
-                try {
-                    srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
-                } catch (IOException e) {
-                    System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
-                    return EXIT_INPUT_ERROR;
-                }
-                sources[i] = Source.newBuilder("go", srcText,
-                        paths.get(i).getFileName().toString()).build();
-            }
-        }
-        final NodeFactory.Program program;
-        try {
-            NodeFactory factory = new NodeFactory(sources);
-            // P3-M2b (WS D, ADR-0002): the sync wire kinds. Public
-            // extension hook — no Phase-1 NodeFactory change.
-            factory.registerExprKind("syncnew", (node, ctx) -> SyncNewNode.build(node, ctx, factory));
-            // fix-linkname (Caddy/godebug lane): the atomicaddr wire node
-            // (package-level sync/atomic word ops).
-            factory.registerExprKind("atomicaddr",
-                    (node, ctx) -> AtomicAddrNode.build(node, ctx, factory));
-            // fix-redmaster-r39: the atomicptrop wire node
-            // (atomic.SwapPointer / CompareAndSwapPointer, incl. the
-            // unqualified calls inside sync/atomic's Pointer[T] bodies).
-            factory.registerExprKind("atomicptrop",
-                    (node, ctx) -> AtomicPtrOpNode.build(node, ctx, factory));
-            // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*"
-            // synctyp dispatches to AtomicOpNode (real result kinds);
-            // the sync.* namespace keeps SyncOpNode.
-            factory.registerExprKind("syncop", (node, ctx) -> {
-                String synctyp = node.object("fields", "syncop")
-                        .string("synctyp", "syncop.fields");
-                if (synctyp.startsWith("atomic.")) {
-                    return AtomicOpNode.build(node, ctx, factory);
-                }
-                return SyncOpNode.build(node, ctx, factory);
-            });
-            // P3-M3 (WS D, ADR-0003): interface method dispatch. Public
-            // extension hook — no Phase-1 NodeFactory change.
-            factory.registerExprKind("ifacemethod", new IfaceDispatchBuilder(factory));
-            // P3-M5 (WS E, ADR-0005 D3): the synthetic time wire kinds.
-            // Public extension hook — no Phase-1 NodeFactory change.
-            factory.registerExprKind("timenew", (node, ctx) -> TimeNewNode.build(node, ctx, factory));
-            factory.registerExprKind("timeop", (node, ctx) -> TimeOpNode.build(node, ctx, factory));
-            factory.registerExprKind("timec", (node, ctx) -> TimeCNode.build(node, ctx, factory));
-            factory.registerExprKind("timenow", TimeNowNode::build);
-            factory.registerExprKind("timesleep", (node, ctx) -> TimeSleepNode.build(node, ctx, factory));
-            factory.registerExprKind("timeafter", (node, ctx) -> TimeAfterNode.build(node, ctx, factory));
-            factory.registerExprKind("timetick", (node, ctx) -> TimeTickNode.build(node, ctx, factory));
-            factory.registerExprKind("timeafterfunc",
-                    (node, ctx) -> TimeAfterFuncNode.build(node, ctx, factory));
-            // P3-M5 (WS E, ADR-0005 Appendix C): the channel wire kinds.
-            // Public extension hooks — no Phase-1/Phase-2 change.
-            factory.registerExprKind("makechan",
-                    (node, ctx) -> MakeChanNode.build(node, ctx, factory));
-            factory.registerStmtKind("send",
-                    (node, ctx) -> ChanSendNode.build(node, ctx, factory));
-            factory.registerExprKind("recv",
-                    (node, ctx) -> ChanRecvNode.build(node, ctx, factory));
-            // P3-M5 (WS E, ADR-0005 Appendix C): len/cap on channels (the
-            // frozen LenNode rejects CHAN, so the exporter emits additive
-            // chanlen/chancap nodes). Public extension hooks — no
-            // Phase-1/Phase-2 change.
-            factory.registerExprKind("chanlen",
-                    (node, ctx) -> ChanLenCapNode.build(node, ctx, factory, false));
-            factory.registerExprKind("chancap",
-                    (node, ctx) -> ChanLenCapNode.build(node, ctx, factory, true));
-            factory.registerStmtKind("chanclose",
-                    (node, ctx) -> ChanCloseNode.build(node, ctx, factory));
-            factory.registerStmtKind("select",
-                    (node, ctx) -> SelectNode.build(node, ctx, factory));
-            // P3-M7 (WS G, ADR-0007 D5): the synthetic math wire kinds
-            // (bit conversions, Sqrt, FMA). Public extension hooks — no
-            // Phase-1/Phase-2 change.
-            factory.registerExprKind("mathf64bits",
-                    (node, ctx) -> MathF64BitsNode.build(node, factory, ctx));
-            factory.registerExprKind("mathf64frombits",
-                    (node, ctx) -> MathF64FromBitsNode.build(node, factory, ctx));
-            factory.registerExprKind("mathf32bits",
-                    (node, ctx) -> MathF32BitsNode.build(node, factory, ctx));
-            factory.registerExprKind("mathf32frombits",
-                    (node, ctx) -> MathF32FromBitsNode.build(node, factory, ctx));
-            factory.registerExprKind("mathsqrt",
-                    (node, ctx) -> MathSqrtNode.build(node, factory, ctx));
-            factory.registerExprKind("mathfma",
-                    (node, ctx) -> MathFmaNode.build(node, factory, ctx));
-            // P4 (driver-harden): the min/max builtin wire kind. The frozen
-            // v1 builtin path rejects min/max (WS G), but real modules use
-            // them — the frontend lowers them to this additive node. Public
-            // extension hook — no Phase-1/Phase-2 change.
-            factory.registerExprKind("minmax",
-                    (node, ctx) -> MinMaxNode.build(node, ctx, factory));
-            // P4 (driver-harden): the clear builtin wire kind (same
-            // rationale as minmax above).
-            factory.registerExprKind("clear",
-                    (node, ctx) -> ClearNode.build(node, ctx, factory));
-            // P4 (driver-harden): runtime.NumCPU() (same rationale).
-            factory.registerExprKind("runtimenumcpu", NumCPUNode::build);
-            factory.registerExprKind("runtimenumgoroutine", NumGoroutineNode::build);
-            // P4 (driver-harden): runtime.GOMAXPROCS(n) (same rationale).
-            factory.registerExprKind("runtimegomaxprocs",
-                    (node, ctx) -> GoMaxProcsNode.build(node, ctx, factory));
-            // PKG-040: runtime.Gosched() — the "runtimegosched" statement
-            // wire node (Gosched returns no value); the backend yields via
-            // SchedulerCore.yieldCurrent.
-            factory.registerStmtKind("runtimegosched", GoschedNode::build);
-            // Stack-inspection family (synthetic runtime package):
-            // runtime.Callers/Caller/CallersFrames/FuncForPC and the
-            // Frames/Func methods. Public extension hooks — no Phase-1/
-            // Phase-2 change.
-            factory.registerExprKind("runtimecallers",
-                    (node, ctx) -> RuntimeCallersNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimecaller",
-                    (node, ctx) -> RuntimeCallerNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimecallersframes",
-                    (node, ctx) -> RuntimeCallersFramesNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimeframesnext",
-                    (node, ctx) -> RuntimeFramesNextNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimefuncforpc",
-                    (node, ctx) -> RuntimeFuncForPCNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimefuncname",
-                    (node, ctx) -> RuntimeFuncNameNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimefuncentry",
-                    (node, ctx) -> RuntimeFuncEntryNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimefuncfileline",
-                    (node, ctx) -> RuntimeFuncFileLineNode.build(node, ctx, factory));
-            // PKG-051 (MemStats family): runtime.ReadMemStats/GOROOT/
-            // Version/Stack. The frontend has emitted these additive wire
-            // nodes since 6bd652f4 ("backend intrinsics to follow") but no
-            // backend handler was ever registered — any program reaching
-            // runtime.Version() (e.g. via runtime/debug.ReadBuildInfo)
-            // died with "unsupported expression kind". The handlers
-            // implement the real gc semantics against JVM telemetry
-            // (graalgo.rtmemstats).
-            factory.registerExprKind("runtimereadmemstats",
-                    (node, ctx) -> RuntimeReadMemStatsNode.build(node, ctx, factory));
-            factory.registerExprKind("runtimegoroot",
-                    (node, ctx) -> RuntimeGoRootNode.build(node, ctx));
-            factory.registerExprKind("runtimeversion",
-                    (node, ctx) -> RuntimeVersionNode.build(node, ctx));
-            factory.registerExprKind("runtimestack",
-                    (node, ctx) -> RuntimeStackNode.build(node, ctx, factory));
-            // P3-M8: the synthetic unsafe wire kinds (Pointer conversions,
-            // Slice/SliceData/String/StringData, Add trap). Public extension
-            // hooks — no Phase-1/Phase-2 change. The per-run handle table is
-            // installed here (same pattern as LinknameIntrinsics.install
-            // below: static registries are re-installed on every build so a
-            // previous program's handles can never leak into this run).
-            factory.registerExprKind("unsafefromptr",
-                    (node, ctx) -> UnsafeFromPtrNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafetooptr",
-                    (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafefromuint",
-                    (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafederive",
-                    (node, ctx) -> UnsafeDeriveNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafeslice",
-                    (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafeslicedata",
-                    (node, ctx) -> UnsafeSliceDataNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafestring",
-                    (node, ctx) -> UnsafeStringNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafestringdata",
-                    (node, ctx) -> UnsafeStringDataNode.build(node, factory, ctx));
-            factory.registerExprKind("unsafeadd",
-                    (node, ctx) -> UnsafeAddNode.build(node, factory, ctx));
-            UnsafeTable.install();
-            // P3-M8 (wave 2, reflect): the "reflectop" wire node (single
-            // kind dispatching on "op"). Public extension hook — no
-            // Phase-1/Phase-2 change.
-            factory.registerExprKind("reflectop",
-                    (node, ctx) -> graalgo.p3reflect.ReflectOpNode.build(node, ctx, factory));
-            // real-reflect (Phase 1): the "abifuncpc" wire node for the
-            // internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsics
-            // (opaque stable func ids). Public extension hook — no
-            // Phase-1/Phase-2 change.
-            factory.registerExprKind("abifuncpc",
-                    (node, ctx) -> graalgo.p3abi.AbiFuncPCNode.build(node, factory, ctx));
-            // P2-M1 (WS A): the go statement, reused from Phase 2 via the
-            // same public hook (no Phase-2 change — GoStatementNode is a
-            // public class).
-            factory.registerStmtKind("gostmt",
-                    (node, ctx) -> GoStatementNode.build(node, ctx, factory));
-            program = factory.buildProgram(json);
-            // P3-M9: parse-once — the downstream installers reuse the parsed
-            // document instead of re-parsing the 200MB JSON text (was 5x).
-            graalgo.frontend.Json.Object doc = factory.document();
-            // P3-M3 (WS D, ADR-0003): install the interface method tables.
-            // Method objIDs resolve through Program.functions(); a missing
-            // objID fails fast here. Installed on every build (even empty)
-            // so a previous program's tables can never leak into this run.
-            IfaceMethodTable.install(IfaceMethodTables.resolve(doc, program.functions()));
-            // T0.A: the runtime's panic types implement error and
-            // runtime.Error (Java-bodied methods), and uncaught panics
-            // print Error()/String() text (gc preprintpanics).
-            graalgo.iface.RuntimeErrorMethods.install();
-            // P3-M8 (wave 2, reflect): install the GoRType table (canonical
-            // per structural identity) and the unsafe handle table. Installed
-            // on every build (even empty) so a previous program's tables can
-            // never leak into this run.
-            graalgo.p3unsafe.UnsafeTable.install();
-            graalgo.p3reflect.ReflectTypes.install(doc, program.functions());
-            // P3-M4 (WS C, ADR-0004): linkname symbol table (both
-            // directions), itabFor provider, interface method lists, and
-            // Go function bindings for callGo. Installed on every build
-            // (even empty) so a previous program's bindings can never
-            // leak into this run (registries are static).
-            LinknameIntrinsics.install(doc, program);
-        } catch (FrontendException e) {
-            System.err.println("graalgo-sync-run: internal error building AST: " + e.getMessage());
-            return EXIT_INPUT_ERROR;
-        }
-        if (check) {
-            return EXIT_OK;
-        }
-        // M10 (self-attack D3): preload all graalgo classes before guest
-        // execution, so a guest that exhausts the process's fds cannot
-        // break lazy class loading (notably on error-reporting paths).
-        graalgo.launcher.ClassPreloader.preload();
-        if (dumpPolymorphism) {
-            graalgo.values.InterfaceDispatchProbes.reset();
-            graalgo.values.InterfaceDispatchProbes.setEnabled(true);
-        }
-
-        // P3-M8 (wave 2, R6): initialize the os surface's process-wide
-        // state (virtual cwd, env overlay, stdio cookies, argv) BEFORE
-        // Go initialization runs — os.Args[i] must already be visible
-        // to package-var initializers.
-        //
-        // os.Args[0] parity (gc): under `go run`, argv[0] is always an
-        // absolute path (the compiled temp binary). Graalgo produces no
-        // binary artifact; the honest equivalent is the absolute,
-        // normalized path of the program entry point (the first input
-        // file). A relative argv[0] matches gc in no scenario, so the
-        // launcher resolves it here — the single choke point for all
+        // P3-M8 (wave 2, R6): os.Args parity (gc): under `go run`, argv[0]
+        // is always an absolute path (the compiled temp binary). Graalgo
+        // produces no binary artifact; the honest equivalent is the
+        // absolute, normalized path of the program entry point (the first
+        // input file). A relative argv[0] matches gc in no scenario, so
+        // the launcher resolves it here — the single choke point for all
         // entry paths (`graalgo run`, `graalgo test`, direct
-        // graalgo-sync-run, diffharness). For a --wire-input run there
-        // is no input file, so argv[0] is the artifact path the caller
-        // passed after `--` (previously this unconditionally read
-        // files.get(0), which would throw on every wire run).
+        // graalgo-sync-run, diffharness). For a --wire-input run there is
+        // no input file, so argv[0] is the artifact path the caller passed
+        // after `--`. The language's context initializes the os surface
+        // with it (GoOs, via OsSurfaceInitializer) before Go
+        // initialization runs, so os.Args is visible to package-var
+        // initializers.
         String argv0Source = wireInput != null ? dashdashArgs.get(0) : files.get(0);
         String[] goArgv = new String[goArgs.size() + 1];
         goArgv[0] = Paths.get(argv0Source).toAbsolutePath().normalize().toString();
         for (int i = 0; i < goArgs.size(); i++) {
             goArgv[i + 1] = goArgs.get(i);
         }
-        GoOs.init(goArgv);
 
-        // Install the scheduler and run main as the first goroutine
-        // (SchedMain's flow, verbatim).
-        assertSchedulerOverlay();
-        SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
-        SchedulerCore prev = SchedulerCore.install(sched);
-        sched.start();
+        if (!check) {
+            // M10 (self-attack D3): preload all graalgo classes before guest
+            // execution, so a guest that exhausts the process's fds cannot
+            // break lazy class loading (notably on error-reporting paths).
+            graalgo.launcher.ClassPreloader.preload();
+            if (dumpPolymorphism) {
+                graalgo.values.InterfaceDispatchProbes.reset();
+                graalgo.values.InterfaceDispatchProbes.setEnabled(true);
+            }
+        }
+
+        // TR-1 (truffle-design §2): the program is a source of the "go"
+        // language (graalgo.language.GoLanguage) evaluated in a polyglot
+        // Context. parse builds the AST (the --check step); eval builds it,
+        // runs package init and main as the first goroutine on the
+        // scheduler (goroutines are polyglot threads), and returns the
+        // exit status (T0.A contract: 0 main returned, 2 uncaught panic or
+        // deadlock, n os.Exit(n), 1 internal crash). Other goroutines are
+        // abandoned, as gc's exit abandons them — so the context is never
+        // closed here: the process exits with the status.
+        // The input files back source positions; a --wire-input run has
+        // none (the language supplies one placeholder source).
+        org.graalvm.polyglot.Context context =
+                GoPolyglot.newContext(gmp, goArgv, wireInput != null ? java.util.List.of() : paths);
+        org.graalvm.polyglot.Source program = GoPolyglot.wireSource(json,
+                wireInput != null ? "wire" : paths.get(0).getFileName().toString());
         final int exitCode;
         try {
-            sched.spawnMain(() -> {
-                VirtualFrame frame = Truffle.getRuntime()
-                        .createVirtualFrame(new Object[0], program.descriptor());
-                program.root().execute(frame);
-            });
-            // T0.A (gc runtime.main): the process lives exactly as long as
-            // the program has not requested exit — main returning (0), an
-            // uncaught panic in ANY goroutine (2), a detected deadlock (2),
-            // os.Exit(n), or an internal crash (1). Other goroutines are
-            // never awaited: gc's exit abandons them, blocked or spinning,
-            // along with pending timers.
-            exitCode = sched.awaitExit();
-        } catch (InterruptedException ie) {
-            Thread.currentThread().interrupt();
-            System.err.println("graalgo-sync-run: interrupted while awaiting program exit");
+            if (check) {
+                context.parse(program);
+                return EXIT_OK;
+            }
+            exitCode = context.eval(program).asInt();
+        } catch (org.graalvm.polyglot.PolyglotException e) {
+            if (e.isGuestException()) {
+                // GoParseException: the factory cannot build the document.
+                System.err.println("graalgo-sync-run: internal error building AST: "
+                        + e.getMessage());
+            } else {
+                System.err.println("graalgo-sync-run: internal error: " + e.getMessage());
+            }
             return EXIT_INPUT_ERROR;
-        } finally {
-            SchedulerCore.install(prev);
         }
         System.out.flush();
         System.err.flush();
@@ -615,27 +322,6 @@ public final class P3SyncMain {
                     + site.histogram().size() + " dispatches=" + site.total());
         }
         System.err.println("POLYMORPHISM-END");
-    }
-
-    /**
-     * Fail-fast that the Phase-2 overlay is active (P2-D8, same as
-     * SchedMain): the {@code graalgo.runtime.Scheduler} on the classpath
-     * must be the Phase-2 replacement, i.e. phase2/out/classes precedes
-     * phase1/out/classes. Never silent.
-     */
-    private static void assertSchedulerOverlay() {
-        try {
-            if (!graalgo.runtime.Scheduler.isPhase2()) {
-                throw new IllegalStateException(
-                        "graalgo.runtime.Scheduler.isPhase2() returned false");
-            }
-        } catch (NoSuchMethodError e) {
-            throw new IllegalStateException(
-                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
-                    + "overlay; phase2/out/classes must precede phase1/out/classes "
-                    + "on the classpath",
-                    e);
-        }
     }
 
     /**

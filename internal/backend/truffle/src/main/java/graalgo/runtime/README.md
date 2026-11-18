@@ -1,0 +1,39 @@
+# graalgo.runtime
+
+Runtime entry points callable from generated Truffle ASTs
+([Runtime.java](Runtime.java)).
+
+M1 scope: the print path only (`Runtime.println(String)` — writes the string
+plus a newline to stdout), exercised by the hand-built hello AST.
+
+WS G grows this package into the intrinsic surface (builtins + runtime
+stubs) under the frozen signature set (GG-0020/GG-0021, PLAN.md D4/D7).
+Parity stances for the real builtins (e.g. Go's print/println write to
+stderr, not stdout) are recorded in GG-0045 when they land — the M1 hello
+fixture's stdout routing is deliberate and documented in [Runtime.java](Runtime.java),
+not a parity claim.
+
+## WS G contents (M4)
+
+**Real implementations** (differential vs gc):
+- `Intrinsics`: memmove/memequal, makeslice/growslice (gc's growth policy
+  ported exactly), slicecopy, map ops, fastrand (wyrand port).
+- `BuiltinPrint`: `print`/`println` builtins → **stderr** (gc parity).
+- `Fmt`: the D4 `fmt` stub (7 pure functions) with verb-conformance matrix
+  (`corpus/fmt/matrix.tsv`, 122 rows vs gc). Replaceable-in-Phase-3.
+- `GoFloatFmt`, `GoQuote`, `GoIsPrint`: ported gc formatting logic.
+- `Atomics`: JVM-backed atomics. `Timers.nanotime()`: `System.nanoTime()`.
+
+**Scheduler-backed surfaces** (were throwing phase-1 stubs; the real
+implementations live here since the T0.D module merge, 2026-11-18):
+- `Timers`, `Scheduler`, `ChanOps`, `GcInterop`, `GoroutineState` and
+  [../safepoint/Safepoint.java](../safepoint/Safepoint.java) delegate to the
+  scheduler in [../sched/](../sched/). `Netpoll` documents its deletion
+  (GG-0018).
+
+**Worker-F** (panic/defer/goexit): `Panic`, `PanicException`, `DeferChain`,
+`GoroutineState`, etc. — the frozen `throwPanic`/`recover` interface that
+WS G's `PanicNode` wires to.
+
+See [docs/freeze-stub.md](../../../../../../../../docs/spec/freeze-stub.md) (freeze v2; v2 delta: ADR-0008 `elemDesc` on
+`makeslice`/`growslice`) for the full 58-function catalog.

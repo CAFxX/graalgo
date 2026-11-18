@@ -3327,8 +3327,7 @@ public final class NodeFactory {
         // P2-M4 (GC interop, ADR-0002 D4): runtime.SetFinalizer/KeepAlive/GC
         // via the synthetic runtime import overlay. The exporter marks the
         // call node with gcinterop:<Name> (no "fun" key, like goexit); the
-        // call delegates to graalgo.runtime.GcInterop (Phase-1 stub,
-        // Phase-2 real).
+        // call delegates to graalgo.runtime.GcInterop.
         if (f.has("gcinterop")) {
             String which = f.string("gcinterop", path);
             Json.Array gciArgs = f.array("args", path);

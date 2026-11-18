@@ -1,47 +1,64 @@
 package graalgo.runtime;
 
 /**
- * Frozen netpoller API contract (WS G, GG-0020, STUB).
+ * Netpoller contract — DELETED in v1 (P2-M3, WS C). The superseding
+ * requirement GG-0063 replaces this stub with a runtime epoll poller over
+ * raw fds (toolexec-design W8); until then v1 has no readiness poller.
  *
- * <p>Phase 2/3 own the network poller; these signatures freeze the
- * contract now so later phases build against it. Every method throws
- * {@link UnsupportedOperationException} with a Phase-2/3 message until
- * implemented. File descriptors are plain ints; the poller descriptor
- * is an opaque long handle.
+ * <p>Signatures are the frozen ones ({@code FreezeGapTest}); every
+ * method throws documenting the deletion rather than "not
+ * implemented".
+ *
+ * <p>There is no readiness-based network poller in graalgo. Blocking
+ * I/O runs directly on virtual threads: the calling goroutine brackets
+ * the blocking call with {@code SchedulerCore.ioEnter()} /
+ * {@code ioExit()}, which releases and re-acquires the in-flight
+ * scheduler slot (gc netpoller parity for GOMAXPROCS accounting — a
+ * goroutine blocked in I/O does not count against the cap). Loom
+ * unmounts the vthread on the blocking call, freeing the carrier.
+ *
+ * <p>v1 falsifier (P2-M3): any reachable netpoller code path, or any
+ * NIO bypassing the slot discipline, fails {@code make check}'s
+ * netpoller-deletion gate.
  */
 public final class Netpoll {
     private Netpoll() {}
 
-    /** STUB — initialize the network poller. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static UnsupportedOperationException deleted(String what) {
+        return new UnsupportedOperationException(
+                "v1 has no netpoller (P2-M3; replaced by the GG-0063 runtime poller in W8): " + what
+                        + " does not exist; blocking I/O uses "
+                        + "SchedulerCore.ioEnter/ioExit on virtual threads");
+    }
+
+    /** DELETED — v1 has no network poller (GG-0063 replaces this stub). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void init() {
-        throw new UnsupportedOperationException(
-                "Phase 2/3: the network poller is not implemented in Phase 1 (GG-0020)");
+        throw deleted("init");
     }
 
-    /** STUB — register {@code fd} for mode {@code mode} ('r'/'w'). */
+    /** DELETED — v1 has no network poller (GG-0063 replaces this stub). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long open(int fd, int mode) {
-        throw new UnsupportedOperationException(
-                "Phase 2/3: the network poller is not implemented in Phase 1 (GG-0020)");
+        throw deleted("open");
     }
 
-    /** STUB — unregister {@code fd}. */
+    /** DELETED — v1 has no network poller (GG-0063 replaces this stub). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void close(int fd) {
-        throw new UnsupportedOperationException(
-                "Phase 2/3: the network poller is not implemented in Phase 1 (GG-0020)");
+        throw deleted("close");
     }
 
-    /**
-     * STUB — wait for I/O readiness; returns true when events were
-     * delivered. {@code block} selects blocking vs polling.
-     */
+    /** DELETED — v1 has no network poller (GG-0063 replaces this stub). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean waitForEvents(boolean block) {
-        throw new UnsupportedOperationException(
-                "Phase 2/3: the network poller is not implemented in Phase 1 (GG-0020)");
+        throw deleted("waitForEvents");
     }
 
-    /** STUB — wake a thread blocked in {@link #waitForEvents}. */
+    /** DELETED — v1 has no network poller (GG-0063 replaces this stub). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void breakWait() {
-        throw new UnsupportedOperationException(
-                "Phase 2/3: the network poller is not implemented in Phase 1 (GG-0020)");
+        throw deleted("breakWait");
     }
 }

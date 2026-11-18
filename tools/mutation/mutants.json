@@ -125,7 +125,7 @@
      "description": "boxed float equality makes NaN equal to NaN (NaN map keys collapse)",
      "old": "return x == y && !Double.isNaN(x);",
      "new": "return x == y || (Double.isNaN(x) && Double.isNaN(y));"},
-    {"id": "M-DEFER-01", "class": "defer", "file": "internal/backend/runtime/src/main/java/graalgo/runtime/DeferChain.java",
+    {"id": "M-DEFER-01", "class": "defer", "file": "internal/backend/truffle/src/main/java/graalgo/runtime/DeferChain.java",
      "description": "defers run FIFO instead of LIFO",
      "old": "        chain.push(call);",
      "new": "        chain.addLast(call);"}

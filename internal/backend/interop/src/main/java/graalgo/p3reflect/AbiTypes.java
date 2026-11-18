@@ -783,7 +783,7 @@ public final class AbiTypes {
         if (equalFunc != null) {
             return equalFunc;
         }
-        RootNode root = new RootNode(null) {
+        RootNode root = new RootNode(graalgo.language.GoLanguage.currentOrNull()) {
             @Override
             public Object execute(VirtualFrame frame) {
                 Object[] args = frame.getArguments();

@@ -6,21 +6,18 @@
 # and then `git diff --exit-code` — if the build regenerates any tracked
 # file differently from what's committed, CI fails.
 #
-# Backend layout: [internal/backend/truffle](internal/backend/truffle) (Truffle
-# AST implementation + frozen phase-1 stubs), [internal/backend/runtime](
-# internal/backend/runtime) (Go runtime on the JVM: scheduler, netpoller,
-# maps, channels), [internal/backend/interop](internal/backend/interop)
-# (stdlib bindings: Go<->Java interop). Each module has its own Makefile;
-# this file orchestrates. Compile order is load-bearing: the runtime module
-# compiles the joint round first (its sources plus the truffle module's —
-# the two form a compile cycle), then truffle compiles the 8 frozen stubs
-# against runtime/out/classes, then interop builds against both.
+# Backend layout: [internal/backend/truffle](internal/backend/truffle) (the
+# core module: Truffle AST nodes, value model, and the Go runtime on the JVM
+# — scheduler, channels, maps, timers; one javac round, since nodes and
+# runtime call each other), [internal/backend/interop](internal/backend/interop)
+# (stdlib bindings, built downstream against truffle/out/classes). Each
+# module has its own Makefile; this file orchestrates.
 #
 # CI SCOPE — honest, not aspirational.
 #   `make all` = generate + build + snapshot-check + check + test-ci
 #                + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
-#     build     compiles all three phase modules (javac, -Werror)
+#     build     compiles both backend modules (javac, -Werror)
 #     snapshot-check
 #               behavior snapshots (SPEC 5.9): runs the differential
 #               corpus under graalgo and fails on any divergence from gc's
@@ -48,8 +45,8 @@
 #               + backend. Per-push: a re-break fails the gate.
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
-#   `make test` — the full differential suite (phase1 graalgo.test.Runner,
-#   phase2 SchedTestRunner, phase3 IfaceTestRunner, plus the wave1-3
+#   `make test` — the full differential suite (graalgo.test.Runner,
+#   SchedTestRunner, IfaceTestRunner, plus the wave1-3
 #   corpus differentials). It takes 30+ minutes and runs in local
 #   verification and nightly runs, not per-push. Invoke it explicitly.
 #
@@ -114,7 +111,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-jit bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression
 
@@ -135,7 +132,6 @@ generate: gen-synth
 
 build:
 	$(MAKE) -C internal/backend/truffle main
-	$(MAKE) -C internal/backend/runtime main
 	$(MAKE) -C internal/backend/interop main
 
 # The graalgo driver binary (Phase-4): `alias go=graalgo`.
@@ -145,7 +141,6 @@ graalgo:
 
 check:
 	$(MAKE) -C internal/backend/truffle check
-	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
 	python3 .github/scripts/check_duplicate_fqn.py
 	# dead-path gate: no executable reference to the deleted per-phase
@@ -178,6 +173,16 @@ test-ci: build
 test-jit: build
 	mkdir -p $(CURDIR)/test/jit/.tmp
 	TMPDIR="$(CURDIR)/test/jit/.tmp" test/jit/run_pe_guard.sh
+
+# Partial-evaluation gate over the benchmark set (minutes; truffle-design
+# §10.2 TR-0): every test/bench program runs with
+# engine.CompilationFailureAction=ExitVM and synchronous compilation; fails
+# on any failed compilation (bailout), a wrong output, or nothing compiled.
+# See test/jit/run_pe_check.sh. Not per-push (test-jit is the per-push guard).
+pe-check: build
+	mkdir -p $(CURDIR)/test/jit/.tmp
+	TMPDIR="$(CURDIR)/test/jit/.tmp" GO="$(GO)" test/jit/run_pe_check.sh $(PE_CHECK_PROGRAMS)
+PE_CHECK_PROGRAMS ?=
 
 # gc-vs-graalgo micro-benchmarks (minutes; not part of any gate): best-round
 # times and ratios, failing on output mismatch. See test/bench/run.sh.
@@ -290,7 +295,6 @@ gate1: build
 # for local verification and nightly runs, not per-push CI.
 test: build
 	$(MAKE) -C internal/backend/truffle test
-	$(MAKE) -C internal/backend/runtime test
 	$(MAKE) -C internal/backend/interop test
 
 # Backend Java unit tests, split by measured cost (SPEC §5.10: fast→slow).
@@ -314,9 +318,11 @@ test: build
 JT_BK := $(CURDIR)/internal/backend
 JT_JARS := $(subst $(eval) ,:,$(strip $(wildcard $(JT_BK)/truffle/lib/*.jar)))
 JT_RUNNER := $(CURDIR)/test/java/out
-JT_TRUFFLE_CP := $(JT_RUNNER):$(JT_BK)/truffle/out/test-classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
-JT_RUNTIME_CP := $(JT_RUNNER):$(JT_BK)/runtime/out/test-classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_BK)/interop/out/classes:$(JT_JARS)
-JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop/out/classes:$(JT_BK)/runtime/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
+JT_TRUFFLE_CP := $(JT_RUNNER):$(JT_BK)/truffle/out/test-classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
+# The runtime/scheduler lists run whole Go programs: interop's ServiceLoader
+# registrations (wire kinds, OS surface) must be on the run-time classpath.
+JT_RUNTIME_CP := $(JT_TRUFFLE_CP):$(JT_BK)/interop/out/classes
+JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
 JT_JAVA := $(or $(GRAALVM_HOME),$(HOME)/tools/graalvm-jdk-25)/bin/java
 JT_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
 JAVA_TEST_OPTS ?=
@@ -331,14 +337,13 @@ endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
 JAVA_FAST_TRUFFLE := graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest
 JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest graalgo.frontend.SectionClampTest
-JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.launcher.LauncherOverlayTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.PanicOverlayDriftTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
+JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
 JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
-JAVA_FAST_INTEROP := graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
+JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
 JAVA_SLOW_INTEROP := graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3net.GoNetpollTest graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
 
 java-test-classes: build
 	$(MAKE) -C internal/backend/truffle out/test-classes/.built
-	$(MAKE) -C internal/backend/runtime out/test-classes/.built
 	$(MAKE) -C internal/backend/interop out/test-classes/.built
 	mkdir -p $(JT_RUNNER) && $(dir $(JT_JAVA))javac -Werror -d $(JT_RUNNER) test/java/ClassListRunner.java
 
@@ -346,22 +351,22 @@ java-test-classes: build
 java-test-lists-check:
 	python3 test/java/check_lists.py \
 	  internal/backend/truffle/src/test/java/graalgo/test/Runner.java "$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE)" \
-	  internal/backend/runtime/src/test/java/graalgo/sched/SchedTestRunner.java "$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME)" \
+	  internal/backend/truffle/src/test/java/graalgo/sched/SchedTestRunner.java "$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME)" \
 	  internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java "$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP)"
 
 test-java-fast: java-test-classes java-test-lists-check
 	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE),$(JT_TRUFFLE_PROPS))
-	$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
+	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
 	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
 
 test-java-slow: java-test-classes java-test-lists-check
 	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
-	$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),)
+	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),)
 	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),)
 
 test-java-timing: java-test-classes
 	-$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
-	-$(call run_java_tests,runtime,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME),)
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME),)
 	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP),)
 
 # Behavior snapshots (SPEC §5.9, GG-0036). The committed snapshot
@@ -453,5 +458,4 @@ fast-watch:
 
 clean:
 	$(MAKE) -C internal/backend/truffle clean
-	$(MAKE) -C internal/backend/runtime clean
 	$(MAKE) -C internal/backend/interop clean

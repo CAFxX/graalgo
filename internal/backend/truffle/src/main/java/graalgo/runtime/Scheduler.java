@@ -3,47 +3,43 @@ package graalgo.runtime;
 import graalgo.values.GoFunc;
 
 /**
- * Frozen scheduler-glue intrinsic surface (WS G, GG-0020, STUB).
- *
- * <p>Phase 2 owns goroutine scheduling; these signatures are frozen now
- * so Phase-2 code and the Phase-1 AST build against the same contract.
- * Every method throws {@link UnsupportedOperationException} with a
- * Phase-2 message until Phase 2 implements it. (Goexit/defer/panic
- * machinery itself is worker-F's, WS F, GG-0019.)
+ * Scheduler-glue intrinsic surface (WS G, GG-0020): the entry points the
+ * AST nodes call for {@code go}, yield and park. Signatures are the frozen
+ * ones ({@code FreezeSignatureTest}); bodies delegate to
+ * {@link graalgo.sched.SchedulerCore}.
  */
 public final class Scheduler {
     private Scheduler() {}
 
     /**
-     * STUB — create a new goroutine running {@code fn}. Phase 2.
+     * Create a new goroutine running {@code fn} (no-arg functions in
+     * P2-M1; argument binding arrives with the call protocol in P2-M2+).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void spawn(GoFunc fn) {
-        throw new UnsupportedOperationException(
-                "Phase 2: goroutine creation needs the scheduler (GG-0020)");
+        graalgo.sched.SchedulerCore.current().spawnGoFunc(fn);
     }
 
-    /**
-     * STUB — voluntarily yield the processor. Phase 2.
-     */
+    /** Voluntarily yield the processor (quantum park). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void yield() {
-        throw new UnsupportedOperationException(
-                "Phase 2: scheduling needs the scheduler (GG-0020)");
+        graalgo.sched.SchedulerCore.current().yieldCurrent();
     }
 
     /**
-     * STUB — park the current goroutine until {@code wake} runs. Phase 2.
+     * Park the current goroutine indefinitely. The wake action {@code wake}
+     * runs on the <b>goroutine's own vthread</b> immediately after resume
+     * (before {@code parkCurrent} returns) — it is not run on the waker
+     * thread. Wake via {@code SchedulerCore.unpark} (channels in P2-M2).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void park(Runnable wake) {
-        throw new UnsupportedOperationException(
-                "Phase 2: parking needs the scheduler (GG-0020)");
+        graalgo.sched.SchedulerCore.current().parkCurrent(wake);
     }
 
-    /**
-     * STUB — number of runnable goroutines (for the netpoller contract).
-     * Phase 2.
-     */
+    /** Number of live goroutines (for the netpoller contract). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int runnableCount() {
-        throw new UnsupportedOperationException(
-                "Phase 2: scheduling needs the scheduler (GG-0020)");
+        return graalgo.sched.SchedulerCore.current().runnableCount();
     }
 }

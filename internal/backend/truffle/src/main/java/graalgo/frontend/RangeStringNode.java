@@ -206,7 +206,7 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
                 throw c;
             }
         }
-        Safepoint.poll(); // D8 seam.
+        Safepoint.poll(this); // D8 seam.
         return true;
     }
 }

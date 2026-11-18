@@ -1373,7 +1373,7 @@ public final class ReflectTypes {
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoFunc makeStructEmbedWrapper(GoFunc inner, int[] embPath,
             String methodName, boolean pointerReceiver) {
-        RootNode root = new RootNode(null) {
+        RootNode root = new RootNode(graalgo.language.GoLanguage.currentOrNull()) {
             @Override
             public Object execute(VirtualFrame frame) {
                 Object[] args = frame.getArguments();
@@ -1407,7 +1407,7 @@ public final class ReflectTypes {
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoFunc makeRedispatchFunc(String methodName, int[] embPath,
             int embeddedIfaceId, List<String> embMethodNames) {
-        RootNode root = new RootNode(null) {
+        RootNode root = new RootNode(graalgo.language.GoLanguage.currentOrNull()) {
             @Override
             public Object execute(VirtualFrame frame) {
                 Object[] args = frame.getArguments();
@@ -2194,7 +2194,7 @@ public final class ReflectTypes {
      */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoFunc makeDerefEmbedWrapper(GoFunc inner, int[] embPath) {
-        RootNode root = new RootNode(null) {
+        RootNode root = new RootNode(graalgo.language.GoLanguage.currentOrNull()) {
             @Override
             public Object execute(VirtualFrame frame) {
                 Object[] args = frame.getArguments();

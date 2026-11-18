@@ -69,7 +69,7 @@ import graalgo.sched.nodes.GoStatementNode;
  * <p>Implements {@link WireKindRegistrar} so the runtime launcher can
  * discover this via {@link java.util.ServiceLoader} without a compile-time
  * dependency on the interop module (which would be circular: interop needs
- * the runtime module's classes).
+ * the core (truffle) module's classes).
  */
 public final class P3KindRegistrations implements WireKindRegistrar {
     /**

@@ -102,7 +102,7 @@ pinned JDK shows `[PROTO]`:
   The launcher builds a frame by hand and calls `program.root().execute(frame)`
   inside a scheduler-spawned virtual thread
   ([P3SyncMain.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java),
-  [Main.java](../../internal/backend/runtime/src/main/java/graalgo/launcher/Main.java)).
+  [Main.java](../../internal/backend/truffle/src/main/java/graalgo/launcher/Main.java)).
   No `org.graalvm.polyglot` class is referenced anywhere.
 - The 104 files under
   [frontend/](../../internal/backend/truffle/src/main/java/graalgo/frontend/)
@@ -142,7 +142,7 @@ document that replaces the pattern in the new node package.
 
 | # | Pattern | Where | Effect | Fix |
 |---|---|---|---|---|
-| H1 | No `@TruffleBoundary` anywhere; nodes call straight into `java.util` collections, string formatting, locks and I/O | all of `runtime/src/main/java/graalgo/runtime/`, `interop/src/main/java/graalgo/p3*/` | PE inlines the JDK until "Too deep inlining"; every function bails out | §11 rule B1 |
+| H1 | No `@TruffleBoundary` anywhere; nodes call straight into `java.util` collections, string formatting, locks and I/O | all of `truffle/src/main/java/graalgo/runtime/`, `interop/src/main/java/graalgo/p3*/` | PE inlines the JDK until "Too deep inlining"; every function bails out | §11 rule B1 |
 | H2 | `GoroutineState.current()` (`ThreadLocal.get`) on every call, twice per indirect call, plus in every `defer` and panic | `F/GoFuncRootNode.java`, `F/FuncValueCallNode.java`, `F/DeferNode.java`, `F/RangeFuncNode.java`, `interop/…/iface/IfaceDispatchNode.java`; holder in `runtime/…/runtime/GoroutineState.java` | thread-local lookup and null checks on the hottest path | §2.5, §4.5 |
 | H3 | Shadow call stack: `state.pushGoStack(funcName, section)` allocates a `GoStackFrame` on every call; `updateTopFrameSection` writes it before every indirect call | `F/GoFuncRootNode.java`, `F/GoRootNode.java`, `F/FuncValueCallNode.java` | allocation and escaping writes per call | §6.5 |
 | H4 | `Safepoint.poll()` → static field → `ThreadLocal.get` → lock-ownership check → `System.nanoTime()` at every function entry and loop back-edge | `runtime/…/safepoint/Safepoint.java`, `runtime/…/sched/SchedulerCore.java` (`pollCurrentThread`) | a clock read per iteration | §2.7 |
@@ -1237,7 +1237,11 @@ tool, the DAP server, Insight, their shared JSON dependency, and the polyglot
 TCK for tests. The exact coordinates (`org.graalvm.tools:*-tool`,
 `org.graalvm.sdk:polyglot-tck`, `org.graalvm.truffle:truffle-tck*`) are to be
 confirmed against Maven Central when they are fetched; they were not
-verifiable offline.
+verifiable offline. **TR-0 (2026-11-18):** confirmed on Central at 25.0.4.1.1
+and added: `profiler-tool`, `chromeinspector-tool`, `dap-tool`,
+`coverage-tool`, `insight-tool`, `org.graalvm.shadowed:json`,
+`org.graalvm.sdk:polyglot-tck`; the JUnit-based `truffle-tck*` artifacts are
+deferred to TR-8 ([LIB.md](../../internal/backend/truffle/lib/LIB.md)).
 
 ### 6.2 Source sections
 
@@ -1444,8 +1448,8 @@ normalization of addresses and goroutine ids.
 
 | Item | Where | Problem | Resolution |
 |---|---|---|---|
-| same-FQN shadow classes resolved by class-path order | the 8 stubs listed in [truffle/Makefile](../../internal/backend/truffle/Makefile), shadowed by `runtime/` | the image builder sees two definitions of one class; which wins is an accident of path order | RECOVERY T0.D (flatten) — prerequisite for any image |
-| `ClassPreloader` (`Class.forName` over every `graalgo.*` class) | [ClassPreloader.java](../../internal/backend/runtime/src/main/java/graalgo/launcher/ClassPreloader.java) | meaningless in an image, and drags every class into reachability | JIT-mode only; guarded by `ImageInfo.inImageCode()` |
+| same-FQN shadow classes resolved by class-path order | (at `a0df481b`) 8 stubs in `truffle/`, shadowed by `runtime/` | the image builder sees two definitions of one class; which wins is an accident of path order | **done** — RECOVERY T0.D (2026-11-18) merged both into one module and deleted the stubs; [check_duplicate_fqn.py](../../.github/scripts/check_duplicate_fqn.py) keeps it so |
+| `ClassPreloader` (`Class.forName` over every `graalgo.*` class) | [ClassPreloader.java](../../internal/backend/truffle/src/main/java/graalgo/launcher/ClassPreloader.java) | meaningless in an image, and drags every class into reachability | JIT-mode only; guarded by `ImageInfo.inImageCode()` |
 | reflection | `GoOs` (`Class.forName("com.sun.security.auth.module.UnixSystem")`, `sun.misc.Signal`) | needs metadata; `sun.misc.Signal` is supported by Native Image but must be referenced directly | direct references or generated metadata (GG-0052) |
 | `ServiceLoader` registrars | `WireKindRegistrar`, `OsSurfaceInitializer` | work in images when the service files are present, but exist only to break the compile cycle between the three modules | disappear with T0.D and the v1 factory |
 | process-global mutable statics (H18, H20) | scheduler, descriptor maps, `FuncIds`, `GoOs` | initialized at build time they are frozen into the image; initialized at run time they still prevent a second context | §2.4 |
@@ -1907,6 +1911,48 @@ need no TR-1 build and run first.
 - `ToGoNode` for interface-typed parameters receiving foreign objects (TR-8).
 - Anything involving polyglot isolates for a third-party language (T3,
   GG-0027).
+
+### 13.4 TR-1 as built (2026-11-18)
+
+[GoLanguage](../../internal/backend/truffle/src/main/java/graalgo/language/GoLanguage.java)
+(id `go`, byte MIME types `application/x-graalgo-wire+json` — the v1 wire
+document — and the reserved bundle type) and
+[GoContext](../../internal/backend/truffle/src/main/java/graalgo/language/GoContext.java).
+The product launcher (P3SyncMain) runs every program as `Context.eval` of
+the wire document through
+[GoPolyglot](../../internal/backend/truffle/src/main/java/graalgo/launcher/GoPolyglot.java);
+`Context.parse` is `--check`; `eval` returns the exit status as an `int`.
+graalgo-run (`Main`) and `SchedMain` still run without a context (their
+root nodes keep a `null` language).
+
+- **Policy `EXCLUSIVE`**, as §2.4 prescribes until TR-5; a second context
+  is refused while another runs a program.
+- **Goroutine threads** come from `env.newTruffleThreadBuilder(..).virtual(true)`
+  (option `go.GoroutineThreads=platform` for platform threads); the Cleaner
+  (finalizer) thread enters the context around Go calls. `finalizeContext`
+  tears the scheduler down (parked goroutines unwind without running defers),
+  so an embedder can close a context whose program left goroutines blocked.
+- **`ContextThreadLocal`**: one `GoThreadSlot` per thread (the `M` of §2.5)
+  holds the current `GoroutineState` and the safepoint poll countdown.
+  Language-bound roots read it inline (`GoroutineState.current(RootNode)`,
+  `Safepoint.poll(Node)`); runtime code behind boundaries keeps the host
+  `ThreadLocal` (both are written together).
+- **Safepoints**: the counter fast path stays (P-B has not run; §2.7's
+  `ThreadLocalAction` scheme is not used). Measured reason for moving the
+  countdown into the slot: on polyglot threads the host `ThreadLocal` lookup
+  misses its first probe (JFR: `ThreadLocalMap.getEntryAfterMiss` topped the
+  profile) and cost ~20 % on `loop`.
+- **Not done**: `os.Exit` still goes through the scheduler's exit request
+  (not `closeExited`); the `--cpusampler` check; the static audit of TR-5.
+
+Benchmarks (`test/bench`, nice 19, `-Xmx2g -XX:ActiveProcessorCount=4`, three
+interleaved runs each, median best-round ms, TR-0 build vs TR-1 build):
+chanpingpong 1582 → 1609, fib 8.71 → 11.81, iface 20.6 → 19.8, loop 48.5 →
+17.3, maps 3.13 → 2.89, slicesum 16.5 → 9.26, strbuild 14.1 → 11.7,
+structs 59.4 → 59.6. `fib`'s best-of-15 is a warm-up artefact: its tier-2
+compilation (~300 ms) lands after round 15 because the earlier rounds are
+now faster (first 15 rounds: 377 ms → 292 ms of wall time); at 80 rounds the
+steady state is 8.5 → 6.5 ms. `make pe-check`: 0 bailouts.
 
 ## 14. Items for the owner
 

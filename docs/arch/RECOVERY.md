@@ -34,8 +34,9 @@ Integration branch: `wt/recovery/integration`.
 | T0.C test infrastructure (`wt/recovery/testinfra`) | landed |
 | T1 design ([toolexec-design.md](toolexec-design.md)), T2 design ([truffle-design.md](truffle-design.md)) | landed |
 | ABI spike ([abi-spike.md](abi-spike.md): P1 verbatim reflect, P2 syscall boundary) | completed, both **GO**; amendments applied |
-| SPEC amendments (`wt/recovery/spec-amend`) | this change ([ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)) |
-| Backend structure (`wt/recovery/backend-structure`), GIR + launcher (`wt/recovery/gir-launcher`) | in flight |
+| SPEC amendments (`wt/recovery/spec-amend`) | landed ([ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)) |
+| toolexec W1 launcher + W2 GIR (`wt/recovery/gir-launcher`) | landed |
+| T0.D + TR-0 + TR-1 backend structure (`wt/recovery/backend-structure`) | landed |
 
 ## Decision log
 
@@ -60,6 +61,10 @@ Integration branch: `wt/recovery/integration`.
   per-push gate that catches the `floorMod` mutant, remove `phases/` paths,
   widen layer-2 triggers, prune stale exclusions.
 - T0.D flatten the same-FQN stub overlay (truffle+runtime → one module).
+  Done 2026-11-18: [internal/backend/truffle/](../../internal/backend/truffle/)
+  is the one core module (nodes, values, runtime, scheduler); the 8 stubs,
+  the `isPhase2()` classpath-order guards and the overlay tests are
+  deleted; interop builds downstream.
 
 **T1 — architecture (SPEC §3.1–3.3)**: design, then build, the per-package
 `-toolexec` compile/link path: `compile` emits typed IR into the package
@@ -68,7 +73,10 @@ it; delete `synth_*.go` and the v1 JSON frontend. Design doc first
 (`toolexec-design.md`, written by lane T1).
 
 **T2 — language integration**: `TruffleLanguage` registration + polyglot
-`Context` (GG-0005/0024), then Go↔Java interop and debugging.
+`Context` (GG-0005/0024), then Go↔Java interop and debugging. TR-0 (tool/TCK
+jars, `make pe-check`) and TR-1 (language shell; the product launcher runs
+programs through `Context.eval`) landed 2026-11-18 — see
+[truffle-design.md §13.4](truffle-design.md).
 
 **T3 — modes** (gated on the P-D and P-F measurements, truffle-design
 §13.2): native-image AOT, hybrid, isolates, mode selection

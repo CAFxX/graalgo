@@ -1,6 +1,5 @@
 package graalgo.iface;
 
-import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -117,7 +116,7 @@ public final class RuntimeErrorMethods {
         private final boolean error;
 
         MethodRoot(boolean error) {
-            super((TruffleLanguage<?>) null, FrameDescriptor.newBuilder().build());
+            super(graalgo.language.GoLanguage.currentOrNull(), FrameDescriptor.newBuilder().build());
             this.error = error;
         }
 
