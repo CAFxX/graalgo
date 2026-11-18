@@ -3,7 +3,7 @@
 //
 // The Go stdlib source tree (~157M for go1.27.1) is too large to commit
 // into the git repo. stdlib-vendor copies $GOROOT/src to a pinned
-// EXTERNAL directory (default ~/workspace/graalgo-stdlib/<version>/) and
+// EXTERNAL directory (default ~/dev/graalgo-stdlib/<version>/) and
 // writes a byte-deterministic file manifest (relative path + SHA-256 +
 // size + mode) plus the pinned Go version into the repo at
 // tools/stdlib-fork/.
@@ -35,7 +35,7 @@ Usage:
   stdlib-vendor verify [--target DIR] [--manifest PATH] [--repo DIR]
 
 vendor copies $GOROOT/src into --target (default
-$HOME/workspace/graalgo-stdlib/<goVersion>/) and writes a deterministic
+$HOME/dev/graalgo-stdlib/<goVersion>/) and writes a deterministic
 manifest at --manifest (default <repo>/tools/stdlib-fork/vendor-manifest.json)
 plus the pinned version at <repo>/tools/stdlib-fork/pinned-version.txt.
 

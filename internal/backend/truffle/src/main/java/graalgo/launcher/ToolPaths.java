@@ -56,8 +56,9 @@ public final class ToolPaths {
                 return p;
             }
         }
-        // Note: the JVM's user.home is /root here while the shell HOME is
-        // /home/hatch (pinned toolchain lives under the latter) — try both.
+        // The JVM's user.home and the shell's HOME can differ (e.g. under
+        // sudo or a container user); the pinned toolchain lives under the
+        // shell HOME — try both.
         for (String home : new String[] {System.getenv("HOME"), System.getProperty("user.home")}) {
             if (home != null && !home.isEmpty()) {
                 Path p = Paths.get(home, "tools", "go", "bin", "go");

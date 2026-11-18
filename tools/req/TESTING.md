@@ -22,7 +22,7 @@ Shared fixtures live in [testutil_test.go](testutil_test.go): `testRoot`, `reqFi
 
 ```sh
 export PATH=~/tools/go/bin:$PATH
-cd ~/workspace/graalgo/tools/req
+cd ~/dev/graalgo/tools/req
 
 go build ./...            # must succeed
 go vet ./...              # must be clean
@@ -37,7 +37,7 @@ go tool cover -func=/tmp/cover.out | tail -1
 `req lint` over the repo must also stay clean (it runs in CI):
 
 ```sh
-go run . lint --root ~/workspace/graalgo
+go run . lint --root ~/dev/graalgo
 # lint ok: 70 requirement(s), 396 reference(s)
 ```
 

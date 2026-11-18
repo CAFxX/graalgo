@@ -229,7 +229,7 @@ func defaultSrcRoot(stderr io.Writer) (string, error) {
 // shared by validate and measure (tools/stdlib-linkdiff implements the
 // same rule; the two copies are documented as twins -- keep in sync):
 //
-//  1. Vendored tree when present: $HOME/workspace/graalgo-stdlib/<ver>/,
+//  1. Vendored tree when present: $HOME/dev/graalgo-stdlib/<ver>/,
 //     where <ver> is tools/stdlib-fork/pinned-version.txt. The
 //     vendor tool lays $GOROOT/src contents FLAT at the target dir --
 //     there is no src/ subdir (an earlier probe for <ver>/src could never
@@ -260,7 +260,7 @@ func resolveStdlibTree(repoRoot, home string, stderr io.Writer) (string, error) 
 		pinPath := filepath.Join(repoRoot, "tools", "stdlib-fork", "pinned-version.txt")
 		if data, err := os.ReadFile(pinPath); err == nil {
 			if ver := strings.TrimSpace(string(data)); ver != "" {
-				cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+				cand := filepath.Join(home, "dev", "graalgo-stdlib", ver)
 				if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
 					return useVendored(ver, cand)
 				}

@@ -16,9 +16,9 @@ to the upstream tree and diffing; do not let the two forks diverge silently.
 
 ```sh
 export PATH=~/tools/go/bin:$PATH
-cd ~/workspace/graalgo/tools/req
+cd ~/dev/graalgo/tools/req
 go run . add --title "..." --statement "..."   # mints next GG-XXXX
-go run . lint --root ~/workspace/graalgo
+go run . lint --root ~/dev/graalgo
 go run . trace GG-0007
 go run . lock GG-0001 --all                    # draft -> locked (SPEC acceptance)
 go run . activate GG-0027                      # locked -> active (implementation started)

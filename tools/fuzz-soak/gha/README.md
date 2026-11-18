@@ -19,7 +19,7 @@ projects/graalgo-fuzz/
 Built from a graalgo worktree at the pinned commit:
 
 ```bash
-cd ~/workspace/graalgo-m9   # at the commit to fuzz
+cd ~/dev/graalgo-wt/<lane>   # at the commit to fuzz
 tar -czf graalgo-slim.tar.gz \
   phases/phase1/src phases/phase1/lib internal/frontend \
   phases/phase1/Makefile \
@@ -32,7 +32,7 @@ changes (the image bakes the sources).
 
 ## Submitting a campaign
 
-Via the PAT Git Data API pattern (`~/workspace/skills/github-pat/bin/push_fanout.py`):
+Via the PAT Git Data API pattern (`push_fanout.py` from the previous host's skills tree; not available on the current box — push via `gh` instead):
 
 1. Push `projects/graalgo-fuzz/` (Dockerfile + tarball + driver) — the
    build-image.yml workflow builds `ghcr.io/CAFxX/fanout-graalgo-fuzz:latest`.

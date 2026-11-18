@@ -11,8 +11,8 @@
 // tables) via exportSyntheticPackages.
 //
 // Exact gc 1.27.1 public API signatures (verified against
-// ~/workspace/graalgo-stdlib/go1.27.1/strconv/*.go and
-// ~/workspace/graalgo-stdlib/go1.27.1/internal/strconv/*.go).
+// ~/dev/graalgo-stdlib/go1.27.1/strconv/*.go and
+// ~/dev/graalgo-stdlib/go1.27.1/internal/strconv/*.go).
 // Implementations are ports of gc's algorithms to self-contained pure Go
 // with no imports (PKG-022 cut the strconv->errors edge via the local
 // strconvError type below, breaking the errors->reflect->strconv->errors

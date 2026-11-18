@@ -49,7 +49,7 @@ done
 mkdir -p "$OUT"
 export TMPDIR="${TMPDIR:-$OUT/tmp}"
 mkdir -p "$TMPDIR"
-export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-fuzz-soak}"
+export GOCACHE="${GOCACHE:-$HOME/.cache/graalgo/gocache-fuzz-soak}"
 mkdir -p "$GOCACHE"
 export FUZZ_TMPDIR="$TMPDIR"
 

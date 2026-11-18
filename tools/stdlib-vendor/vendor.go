@@ -53,7 +53,7 @@ type manifest struct {
 
 type vendorOptions struct {
 	Goroot            string // GOROOT; "" => `go env GOROOT`
-	Target            string // vendored tree dir; "" => $HOME/workspace/graalgo-stdlib/<ver>/
+	Target            string // vendored tree dir; "" => $HOME/dev/graalgo-stdlib/<ver>/
 	ManifestPath      string // in-repo manifest; "" => <repo>/tools/stdlib-fork/vendor-manifest.json
 	PinPath           string // in-repo pin; "" => <repo>/.../stdlib-fork/pinned-version.txt
 	Repo              string // explicit repo root; "" => discover from CWD
@@ -95,7 +95,7 @@ func vendorTree(o vendorOptions, log io.Writer) error {
 		if err != nil {
 			return fmt.Errorf("cannot determine home dir for default target: %w", err)
 		}
-		target = filepath.Join(home, "workspace", "graalgo-stdlib", version)
+		target = filepath.Join(home, "dev", "graalgo-stdlib", version)
 	}
 	target = expandHome(target)
 	target, err = filepath.Abs(target)
@@ -353,7 +353,7 @@ func runVendorCmd(argv []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("vendor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	gorootFlag := fs.String("goroot", "", "GOROOT to vendor from (default: `go env GOROOT`)")
-	targetFlag := fs.String("target", "", "target directory (default: $HOME/workspace/graalgo-stdlib/<goVersion>/)")
+	targetFlag := fs.String("target", "", "target directory (default: $HOME/dev/graalgo-stdlib/<goVersion>/)")
 	manifestFlag := fs.String("manifest", "", "manifest output path (default: <repo>/tools/stdlib-fork/vendor-manifest.json)")
 	repoFlag := fs.String("repo", "", "repo root (default: discovered from CWD)")
 	forceFlag := fs.Bool("force", false, "vendor into an existing non-empty target directory")

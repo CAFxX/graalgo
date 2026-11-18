@@ -119,7 +119,7 @@ Tenant `projects/graalgo-fuzz/` in CAFxX/fanout:
 - Job spec: `--seeds 0..9999 --shards 20` pilot (1000 programs).
 
 Submission is via the PAT Git Data API pattern
-(`~/workspace/skills/github-pat/bin/push_fanout.py`), one approval per
+(`push_fanout.py` from the previous host's skills tree; not available on the current box — push via `gh` instead), one approval per
 campaign. **Not submitted in Phase 1** — files prepared, parent
 submits.
 

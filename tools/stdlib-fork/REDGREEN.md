@@ -38,7 +38,7 @@ Full-scale check on the real tree: vendored go1.27.1 twice
   `TestVerifyDetectsMissingAndExtra` covers missing/extra files.
 
 Full-scale check on the real tree: `verify` over
-`~/workspace/graalgo-stdlib/go1.27.1/`: **checked 12018 files, VERIFY OK**.
+`~/dev/graalgo-stdlib/go1.27.1/`: **checked 12018 files, VERIFY OK**.
 
 ## (c) GOROOT version differing from the pin is refused without --allow-version-drift
 
@@ -66,7 +66,7 @@ repo pin still reads `go1.27.1`.
 - Restored: green.
 
 Real-artifact check: `vendor` against the existing
-`~/workspace/graalgo-stdlib/go1.27.1/` without `--force`: refused —
+`~/dev/graalgo-stdlib/go1.27.1/` without `--force`: refused —
 `target directory already exists and is non-empty (use --force)`.
 
 ## Suite status

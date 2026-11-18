@@ -11,7 +11,7 @@ and the build-tag-filtered importer.
 | Artifact | Location | Committed? |
 |---|---|---|
 | Vendoring tool (Go, no external deps) | `tools/stdlib-vendor/` | yes |
-| Vendored stdlib tree (157M on disk for go1.27.1; 126 MiB file bytes) | `~/workspace/graalgo-stdlib/<goVersion>/` | **no** — external by design |
+| Vendored stdlib tree (157M on disk for go1.27.1; 126 MiB file bytes) | `~/dev/graalgo-stdlib/<goVersion>/` | **no** — external by design |
 | File manifest (path + SHA-256 + size + mode) | `phases/phase3/stdlib-fork/vendor-manifest.json` | yes (2.2M) |
 | Pinned Go version | `phases/phase3/stdlib-fork/pinned-version.txt` | yes |
 | Pinning decision | `phases/phase3/adr/ADR-0006-stdlib-vendoring.md` | yes |
@@ -23,8 +23,8 @@ Current pin: **go1.27.1** (vendored 2026-10-07 from
 ## 2. Routine integrity check
 
 ```sh
-cd ~/workspace/graalgo/tools/stdlib-vendor
-go run . verify --repo ~/workspace/graalgo
+cd ~/dev/graalgo/tools/stdlib-vendor
+go run . verify --repo ~/dev/graalgo
 ```
 
 `verify` re-hashes every file in the external tree against the in-repo
@@ -41,7 +41,7 @@ re-vendored atomically.
 **Which tree the tools read (resolution rule).** `stdlib-excl`
 (`validate`, `measure`) and `stdlib-linkdiff` resolve their stdlib
 tree the same way: (1) the vendored tree for the pinned version,
-`~/workspace/graalgo-stdlib/<ver>/` -- flat layout, the target dir IS
+`~/dev/graalgo-stdlib/<ver>/` -- flat layout, the target dir IS
 the src root, there is no `src/` subdir -- used only when the committed
 `vendor-manifest.json` records the same `goVersion` as
 `pinned-version.txt` (a manifest/pin skew fails loud); (2) otherwise
@@ -56,9 +56,9 @@ Steps:
    `go version` and `<new-goroot>/VERSION` must agree.
 2. **Vendor with explicit version drift**, into a *new* target directory:
    ```sh
-   cd ~/workspace/graalgo/tools/stdlib-vendor
-   go run . vendor --repo ~/workspace/graalgo \
-       --goroot <new-goroot> --target ~/workspace/graalgo-stdlib/<new-version>/ \
+   cd ~/dev/graalgo/tools/stdlib-vendor
+   go run . vendor --repo ~/dev/graalgo \
+       --goroot <new-goroot> --target ~/dev/graalgo-stdlib/<new-version>/ \
        --allow-version-drift
    ```
    Without `--allow-version-drift` the tool refuses: the source version
@@ -68,7 +68,7 @@ Steps:
 3. **Diff the manifests** (old vs new). The manifest is deterministic,
    so the diff is exactly the upstream churn:
    ```sh
-   git -C ~/workspace/graalgo show HEAD:phases/phase3/stdlib-fork/vendor-manifest.json > /tmp/manifest-old.json
+   git -C ~/dev/graalgo show HEAD:phases/phase3/stdlib-fork/vendor-manifest.json > /tmp/manifest-old.json
    # compare entry sets with jq/python: added / removed / modified paths
    ```
    Review the churn for anything touching the ~78 coupled packages or
@@ -79,8 +79,8 @@ Steps:
    default resolution still follows the old pin until step 5):
    - the linkname-diff tooling (GG-0021):
      ```sh
-     cd ~/workspace/graalgo/tools/stdlib-linkdiff
-     go run . --goroot ~/workspace/graalgo-stdlib/<new-version>/ \
+     cd ~/dev/graalgo/tools/stdlib-linkdiff
+     go run . --goroot ~/dev/graalgo-stdlib/<new-version>/ \
          --json ../../phases/phase3/stdlib-fork/linkname-trial-<new-version>.json \
          --md ../../phases/phase3/stdlib-fork/linkname-trial-<new-version>.md
      ```
@@ -88,15 +88,15 @@ Steps:
      `routes.txt` diff, provided-snapshot diff).
    - the coupled-package measurement:
      ```sh
-     cd ~/workspace/graalgo/tools/stdlib-excl
-     go run . measure --src ~/workspace/graalgo-stdlib/<new-version>/ \
+     cd ~/dev/graalgo/tools/stdlib-excl
+     go run . measure --src ~/dev/graalgo-stdlib/<new-version>/ \
          --out ../../phases/phase3/stdlib-fork/coupled-packages-<new-version>.json \
          --go-version <new-version>
      ```
      Re-run the P3-D1 drift check against the new report.
    - the Plan 9 assembly inventory (P3-M6 asm strategy):
      ```sh
-     cd ~/workspace/graalgo
+     cd ~/dev/graalgo
      python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --goroot <new-goroot>
      ```
      The generator enumerates every `.s`/`.S`/`.sx` file, fails on any
@@ -117,7 +117,7 @@ Steps:
    on a `--allow-version-drift` run — the pin is a reviewed decision,
    not a side effect.
 6. **Retire or keep the old tree**: downstream tooling references trees
-   by path (`~/workspace/graalgo-stdlib/<version>/`), so old and new
+   by path (`~/dev/graalgo-stdlib/<version>/`), so old and new
    trees coexist. Delete the old tree only when nothing references it.
 
 ## 4. Rationale: external tree + in-repo manifest

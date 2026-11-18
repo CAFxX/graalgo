@@ -19,7 +19,7 @@ infra_setup_graalgo
 infra_mktemp corpus-traceback
 
 pass=0; fail=0
-filter_noise() { grep -v '^WARNING: ' | grep -v '^/home/hatch/tools' | grep -v '^make:' || true; }
+filter_noise() { grep -v '^WARNING: ' | grep -v "^$HOME/tools" | grep -v '^make:' || true; }
 
 run_one() { # $1 = go file
     local go="$1" base="${1%.go}"

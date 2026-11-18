@@ -344,11 +344,11 @@ func fakeRepoRoot(t *testing.T, pin, manifestVer string) string {
 	return root
 }
 
-// fakeVendoredTree builds $HOME/workspace/graalgo-stdlib/<ver>/ with the
+// fakeVendoredTree builds $HOME/dev/graalgo-stdlib/<ver>/ with the
 // stdlib marker dirs the resolver sanity-checks.
 func fakeVendoredTree(t *testing.T, home, ver string) string {
 	t.Helper()
-	tree := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+	tree := filepath.Join(home, "dev", "graalgo-stdlib", ver)
 	for _, m := range []string{"runtime", "fmt", "sync", "net", "os"} {
 		if err := os.MkdirAll(filepath.Join(tree, m), 0755); err != nil {
 			t.Fatal(err)
@@ -451,7 +451,7 @@ func TestGoBinaryDiscovery(t *testing.T) {
 // (P1-2) a same-named dir that is not a stdlib src root is refused.
 func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 	home := t.TempDir()
-	tree := filepath.Join(home, "workspace", "graalgo-stdlib", "go1.27.1")
+	tree := filepath.Join(home, "dev", "graalgo-stdlib", "go1.27.1")
 	if err := os.MkdirAll(tree, 0755); err != nil {
 		t.Fatal(err)
 	}

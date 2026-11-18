@@ -44,7 +44,7 @@ mkdir -p "$OUTDIR"
 # Tmp discipline: never write to /tmp (512M tmpfs on the VM).
 export TMPDIR="${TMPDIR:-$OUTDIR/tmp}"
 mkdir -p "$TMPDIR"
-export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-stdlib-gate}"
+export GOCACHE="${GOCACHE:-$HOME/.cache/graalgo/gocache-stdlib-gate}"
 mkdir -p "$GOCACHE"
 
 echo "== [0/3] build =="

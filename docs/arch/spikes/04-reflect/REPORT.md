@@ -197,3 +197,7 @@ that actually churned is TD-R (module/type-offset resolution) — ranked Tier 1.
 - **Tier 2 (medium):** `growslice`/`unsafeslice` (slice growth is a perennial
   optimization target); `ifaceE2I` (interface representation); 
 ...[truncated 3828 chars]
+
+## Removed artifacts
+
+`go1.26.src.tar.gz` (34 MB upstream source archive) and a stray `.pyc` were removed from the repo 2026-11-18; [logs/SHA256SUMS](logs/SHA256SUMS) still records the archive's hash — re-download it from https://go.dev/dl/ and verify against that hash to reproduce.
