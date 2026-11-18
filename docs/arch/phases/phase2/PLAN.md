@@ -24,7 +24,7 @@ NIO on virtual threads; timers; GC interop (exact roots, write barriers free
 from JVM); `GODEBUG` surface triage; JFR goroutine/channel events.
 
 In scope: the Phase-2 GG IDs below (SCHED/WAKE/FAIR families owned here;
-GG-0017 core slice, `GG-0018`, GG-0048, GG-0055, GG-0057, GG-0008 JFR slice).
+GG-0017 core slice, `GG-0018`, GG-0048, `GG-0055`, GG-0057, GG-0008 JFR slice).
 Out of scope: stdlib bring-up beyond what the stress suites need (Phase 3),
 `-toolexec` driver wiring (Phase 4), AOT/JIT modes (Phase 5). The Phase-1
 freeze doc's scheduler-glue signatures (D7) are the contract — Phase 2 builds
@@ -60,7 +60,7 @@ bump), not a quiet edit.
 | B | Channels + select: scheduler-aware send/recv park (buffered + unbuffered), close semantics (waking parked senders via aborted path), select with fairness across cases, select in-flight stale-signal handling | GG-0017 (chan slice) | 1 |
 | C | Timers/sleep + netpoller deletion: timer heap, `sleep`; blocking NIO with slot-releasing `ioEnter`/`ioExit` (wakeFifo re-acquire, unpaired-ioEnter fail-fast assert); netpoller deleted per `GG-0018` | `GG-0018`, GG-SCHED-0004 | 1 |
 | D | GC interop: exact root enumeration (goroutine stacks, globals, channel/timer structures) via the JVM GC; write-barrier integrity — JVM barriers cover all Go stores, no Truffle-level barrier (ADR-0002 D3); Go-observable GC surface (SetFinalizer/KeepAlive/GC/weak/memstats) on JVM primitives; barrier + root-correctness differential vs gc | [OPEN: heap layout — see §3; closed by ADR-0002] | 1 (part) |
-| E | `GODEBUG` surface triage: versioned registry (emulated / no-op / unsupported-with-justification per knob); unknown knobs deny-with-error; `godebug-diff` tooling | GG-0055 | 5 |
+| E | `GODEBUG` surface triage: versioned registry (emulated / no-op / unsupported-with-justification per knob); unknown knobs deny-with-error; `godebug-diff` tooling | `GG-0055` | 5 |
 | F | JFR events: goroutine lifecycle + channel events flowing; `jdk.VirtualThreadPinned` consumption for the pinning audit | GG-0008 (JFR slice) | 3 |
 | G | Pinning audit: `jdk.VirtualThreadPinned` shows zero unexpected pins on the conformance corpus; cgo/FFM + blocking file I/O off the carrier pool or in the budgeted +k carriers | GG-0057 | 2 |
 | H | Preemption-torture re-run on the production path: spike 2b F1–F6 reproduced against production (O1 torture, O2–O5 correctness, quiescence, overhead budget, GOMAXPROCS fidelity incl. pinned matrix + mixed I/O+compute, cap-exhaustion); `runtime`/`sync`/`context` stress suites differential vs gc | GG-0048, GG-FAIR-0001/0002/0003, GG-SCHED-0001/0003 (re-verified) | 1 |
@@ -142,7 +142,7 @@ before.
   primitives; barrier/root differential vs gc → blocking closeout checklist
   in ADR-0002 ("P2-M4 closeout checklist")
 - P2-M5: GODEBUG triage (WS E) — versioned registry published, unknown-knob
-  deny-with-error, `godebug-diff` green (GG-0055→active) → gate 5 (part)
+  deny-with-error, `godebug-diff` green (`GG-0055`→active) → gate 5 (part)
 - P2-M6: JFR events (WS F) — goroutine/channel events flowing on the
   conformance corpus (GG-0008 JFR slice→active) → gate 3
 - P2-M7: pinning audit (WS G) — `jdk.VirtualThreadPinned` zero unexpected
@@ -295,6 +295,6 @@ divergence list closed or accepted (`phases/phase2/DIVERGENCES.md`)
 - `GG-0018`: netpoller code path reachable, or NIO bypassing slot discipline → red
 - GG-0048: scheduling observable diverges systematically and unclosably →
   kill criterion 1
-- GG-0055: unknown GODEBUG knob not denied, or registry unreviewed → red
+- `GG-0055`: unknown GODEBUG knob not denied, or registry unreviewed → red
 - GG-0057: unexpected `jdk.VirtualThreadPinned` event → red
 - GG-0008: JFR goroutine/channel events absent on conformance corpus → red

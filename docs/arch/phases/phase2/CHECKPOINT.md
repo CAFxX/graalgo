@@ -755,7 +755,7 @@ after DELTA-GO from both.
 **Goal:** versioned registry of every GODEBUG knob (emulated / no-op /
 unsupported-with-justification); unknown knobs deny-with-error (never
 silently ignore); `godebug-diff` tooling diffing emulated-knob behavior vs
-gc. GG-0055→active. Gate 5 (part).
+gc. `GG-0055`→active. Gate 5 (part).
 
 **Knob universe** (from go1.27.1 source): 33 `dbgvars` in
 `src/runtime/runtime1.go` + `memprofilerate` + 10 removed

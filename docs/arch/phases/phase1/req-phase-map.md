@@ -49,7 +49,7 @@ Phase definitions used (from task brief):
 | GG-0044 | cross-cutting | Local patches against vendored Go sources kept near zero; rebase conflicts ≤5 files per upgrade. | Applies from Phase 1 vendoring onward. |
 | GG-0045 | cross-cutting | For every runtime-internal behavior with no JVM analog, the parity stance is decided once and recorded; never re-debated. | Phase-1 slice: record stances for language/runtime-internal behaviors as they arise. |
 | GG-0047 | cross-cutting | Sulong-vs-direct-AST fork decided by Phase-0 scored spike; default = direct Truffle AST [PROPOSAL]. | Decision consumed in Phase 0; Phase-1 slice: direct AST is the settled architecture. |
-| GG-0055 | cross-cutting | Every GODEBUG knob classified per release (emulated / no-op / unsupported); unknown knobs deny-with-error; reviewed per release. | Phase-1 slice: seed the registry for runtime-coupled knobs reachable from language tests. |
+| `GG-0055` | cross-cutting | Every GODEBUG knob classified per release (emulated / no-op / unsupported); unknown knobs deny-with-error; reviewed per release. | Phase-1 slice: seed the registry for runtime-coupled knobs reachable from language tests. |
 | GG-0056 | cross-cutting | No agent-leverage discount in the 20–40 PY estimate; agent leverage measured and calibrated empirically. | Applies from Phase 1: measure actual vs estimated agent-hours. |
 
 ### 1c. Cross-cutting, no Phase-1 slice (future-phase concerns)
@@ -149,7 +149,7 @@ Requirements Phase 1 owns or exercises during Phase 1:
 25. GG-0044
 26. GG-0045 (parity stances recorded as they arise slice)
 27. GG-0047 (direct-AST architecture confirmed)
-28. GG-0055 (registry seed slice)
+28. `GG-0055` (registry seed slice)
 29. GG-0056 (agent-hour calibration slice)
 30. GG-0059
 31. GG-0017 (Safepoint instrumentation-seam slice only — full scheduling is Phase 2; see §3 flag 3)

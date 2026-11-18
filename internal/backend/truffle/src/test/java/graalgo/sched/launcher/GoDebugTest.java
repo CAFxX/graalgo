@@ -15,7 +15,7 @@ import java.util.concurrent.TimeUnit;
  * <p>Unit tests cover the parser/validator and the versioned registry;
  * subprocess tests cover the SchedMain startup hook end-to-end.
  *
- * <p>verifies: GG-0055 (GODEBUG triage: versioned registry, unknown-knob
+ * <p>verifies: GG-0065 (GODEBUG triage: versioned registry, unknown-knob
  * deny-with-error, godebug-diff green)
  */
 public final class GoDebugTest {
@@ -24,13 +24,13 @@ public final class GoDebugTest {
     // Registry machine checks
     // ------------------------------------------------------------------
 
-    /** verifies: GG-0055 (registry versioned; knob add/remove must bump). */
+    /** verifies: GG-0065 (registry versioned; knob add/remove must bump). */
     public void testRegistryVersion() {
         assertEquals(3, GoDebug.registryVersion(), "registry version");
     }
 
     /**
-     * verifies: GG-0055 (any knob add/remove/rename breaks the hash until
+     * verifies: GG-0065 (any knob add/remove/rename breaks the hash until
      * the version bump + hash update is made deliberately).
      */
     public void testRegistryKnobHash() throws Exception {
@@ -53,7 +53,7 @@ public final class GoDebugTest {
         assertEquals(EXPECTED_HASH, hash, "registry knob-set hash");
     }
 
-    /** verifies: GG-0055 (every knob documented). */
+    /** verifies: GG-0065 (every knob documented). */
     public void testEveryKnobHasJustification() {
         for (String name : GoDebug.knobNames()) {
             GoDebug.Knob k = GoDebug.knob(name);
@@ -64,7 +64,7 @@ public final class GoDebugTest {
         }
     }
 
-    /** verifies: GG-0055 (registry covers the gc knob universe). */
+    /** verifies: GG-0065 (registry covers the gc knob universe). */
     public void testRegistryKnobCount() {
         // 33 dbgvars + memprofilerate + 45 non-runtime godebugs = 79.
         assertEquals(78, GoDebug.knobNames().size(), "knob count");
@@ -74,7 +74,6 @@ public final class GoDebugTest {
     // Parser / validator unit tests (pure, no subprocess)
     // ------------------------------------------------------------------
 
-    /** verifies: GG-0055 (unknown knob is a hard error — the falsifiable core). */
     public void testUnknownKnobDenied() {
         GoDebug.GoDebugException e = assertThrows("bogusknob=1");
         assertTrue(e.getMessage().contains("unknown GODEBUG"),
@@ -83,27 +82,24 @@ public final class GoDebugTest {
                 "message names the knob: " + e.getMessage());
     }
 
-    /** verifies: GG-0055 (typo-class: near-miss of a real knob). */
     public void testNearMissKnobDenied() {
         // "schedtace" (missing r) must not silently behave like unset.
         GoDebug.GoDebugException e = assertThrows("schedtace=100");
         assertTrue(e.getMessage().contains("unknown GODEBUG"), e.getMessage());
     }
 
-    /** verifies: GG-0055 (bare field without '=' is an error, not skipped). */
     public void testBareFieldDenied() {
         GoDebug.GoDebugException e = assertThrows("schedtrace");
         assertTrue(e.getMessage().contains("without '='"), e.getMessage());
     }
 
-    /** verifies: GG-0055 (malformed value is an error, not kept-old). */
     public void testMalformedValueDenied() {
         assertThrows("schedtrace=abc");
         assertThrows("schedtrace=1.5");
         assertThrows("schedtrace=99999999999999999999");
     }
 
-    /** verifies: GG-0055 (unsupported knob denied on non-default). */
+    /** verifies: GG-0065 (unsupported knob denied on non-default). */
     public void testUnsupportedDeniedWhenNonDefault() throws Exception {
         GoDebug.GoDebugException e = assertThrows("scavtrace=1");
         assertTrue(e.getMessage().contains("scavtrace"), e.getMessage());
@@ -111,19 +107,19 @@ public final class GoDebugTest {
         assertThrows("gctrace=1,scavtrace=1"); // denied even among valid ones
     }
 
-    /** verifies: GG-0055 (unsupported knob accepted at default). */
+    /** verifies: GG-0065 (unsupported knob accepted at default). */
     public void testUnsupportedAcceptedWhenDefault() throws Exception {
         GoDebug.Settings s = GoDebug.parse("scavtrace=0");
         assertEquals(0, s.get("scavtrace"), "scavtrace");
     }
 
-    /** verifies: GG-0055 (no-op knobs accepted, any value). */
+    /** verifies: GG-0065 (no-op knobs accepted, any value). */
     public void testNoopAccepted() throws Exception {
         GoDebug.Settings s = GoDebug.parse("cgocheck=1,disablethp=1,http2debug=1");
         assertEquals(1, s.get("cgocheck"), "cgocheck");
     }
 
-    /** verifies: GG-0055 (emulated knobs parse). */
+    /** verifies: GG-0065 (emulated knobs parse). */
     public void testEmulatedParsed() throws Exception {
         GoDebug.Settings s = GoDebug.parse("schedtrace=100,scheddetail=1,gctrace=1,panicnil=1");
         assertEquals(100, s.get("schedtrace"), "schedtrace");
@@ -134,26 +130,26 @@ public final class GoDebugTest {
         assertEquals(0, s.get("asyncpreemptoff"), "default");
     }
 
-    /** verifies: GG-0055 (gc startup semantics: later overrides earlier). */
+    /** verifies: GG-0065 (gc startup semantics: later overrides earlier). */
     public void testLaterOverridesEarlier() throws Exception {
         GoDebug.Settings s = GoDebug.parse("schedtrace=100,schedtrace=0");
         assertEquals(0, s.get("schedtrace"), "override");
     }
 
-    /** verifies: GG-0055 (removed knob: old value denied like gc's fatal). */
+    /** verifies: GG-0065 (removed knob: old value denied like gc's fatal). */
     public void testRemovedOldValueDenied() {
         GoDebug.GoDebugException e = assertThrows("asynctimerchan=1");
         assertTrue(e.getMessage().contains("removed"), e.getMessage());
         assertThrows("asynctimerchan=2");
     }
 
-    /** verifies: GG-0055 (removed knob: non-old value accepted like gc). */
+    /** verifies: GG-0065 (removed knob: non-old value accepted like gc). */
     public void testRemovedNewValueAccepted() throws Exception {
         GoDebug.Settings s = GoDebug.parse("asynctimerchan=0");
         assertTrue(true, "accepted");
     }
 
-    /** verifies: GG-0055 (empty / null env is fine). */
+    /** verifies: GG-0065 (empty / null env is fine). */
     public void testEmptyEnv() throws Exception {
         GoDebug.Settings s = GoDebug.parse("");
         assertEquals(0, s.get("schedtrace"), "empty");
@@ -163,25 +159,24 @@ public final class GoDebugTest {
         assertEquals(100, s3.get("schedtrace"), "trailing comma");
     }
 
-    /** verifies: GG-0055 (gc fatals on cgocheck>1; we deny too). */
+    /** verifies: GG-0065 (gc fatals on cgocheck>1; we deny too). */
     public void testCgocheck2Denied() {
         GoDebug.GoDebugException e = assertThrows("cgocheck=2");
         assertTrue(e.getMessage().contains("cgocheck"), e.getMessage());
     }
 
-    /** verifies: GG-0055 (non-ASCII digits rejected like Go's ParseInt). */
     public void testNonAsciiDigitsDenied() {
         // Arabic-Indic digits: Long.parseLong accepts, Go rejects.
         assertThrows("schedtrace=١٢٣");
     }
 
-    /** verifies: GG-0055 (memprofilerate accepts full int range like gc). */
+    /** verifies: GG-0065 (memprofilerate accepts full int range like gc). */
     public void testMemprofilerateHugeAccepted() throws Exception {
         GoDebug.Settings s = GoDebug.parse("memprofilerate=99999999999");
         assertTrue(true, "accepted");
     }
 
-    /** verifies: GG-0055 (negative schedtrace accepted as off, like gc). */
+    /** verifies: GG-0065 (negative schedtrace accepted as off, like gc). */
     public void testNegativeSchedtraceMeansOff() throws Exception {
         // Must not throw, and must not start the daemon.
         GoDebug.applySettings(GoDebug.parse("schedtrace=-1"));
@@ -189,7 +184,7 @@ public final class GoDebugTest {
                 "value preserved");
     }
 
-    /** verifies: GG-0055 (gc enables old panicnil only for ==1 exactly). */
+    /** verifies: GG-0065 (gc enables old panicnil only for ==1 exactly). */
     public void testPanicnil2MeansNewBehavior() throws Exception {
         graalgo.runtime.Panic.setPanicNilOldBehavior(false);
         try {
@@ -205,7 +200,7 @@ public final class GoDebugTest {
     // applySettings side effects (with cleanup)
     // ------------------------------------------------------------------
 
-    /** verifies: GG-0055 (emulated knobs install). */
+    /** verifies: GG-0065 (emulated knobs install). */
     public void testApplySettingsInstalls() throws Exception {
         boolean prevPanicNil = graalgo.runtime.Panic.isPanicNilOldBehavior();
         try {
@@ -224,7 +219,6 @@ public final class GoDebugTest {
     // Subprocess tests: SchedMain startup hook end-to-end
     // ------------------------------------------------------------------
 
-    /** verifies: GG-0055 (unknown knob denies at startup, exit 2). */
     public void testUnknownKnobDeniesAtStartup() throws Exception {
         ProcessResult r = runSchedMain("bogusknob=1", "db01_hello.go");
         assertEquals(2, r.exitCode, "exit code");
@@ -233,14 +227,14 @@ public final class GoDebugTest {
         assertTrue(r.stderr.contains("bogusknob"), "stderr names the knob");
     }
 
-    /** verifies: GG-0055 (unsupported non-default denies at startup). */
+    /** verifies: GG-0065 (unsupported non-default denies at startup). */
     public void testUnsupportedDeniesAtStartup() throws Exception {
         ProcessResult r = runSchedMain("scavtrace=1", "db01_hello.go");
         assertEquals(2, r.exitCode, "exit code");
         assertTrue(r.stderr.contains("unsupported GODEBUG"), "stderr:\n" + r.stderr);
     }
 
-    /** verifies: GG-0055 (uncaught panic(nil) prints "panic: nil", like gc). */
+    /** verifies: GG-0065 (uncaught panic(nil) prints "panic: nil", like gc). */
     public void testPanicnilUncaughtRendering() throws Exception {
         ProcessResult r = runSchedMain("panicnil=1", "db05_panicnil_uncaught.go");
         assertEquals(2, r.exitCode, "exit code");
@@ -248,7 +242,7 @@ public final class GoDebugTest {
                 "expected 'panic: nil', stderr:\n" + r.stderr);
     }
 
-    /** verifies: GG-0055 (negative control: default prints the error, not "panic: nil"). */
+    /** verifies: GG-0065 (negative control: default prints the error, not "panic: nil"). */
     public void testPanicnilUncaughtDefaultNotNil() throws Exception {
         ProcessResult r = runSchedMain("", "db05_panicnil_uncaught.go");
         assertEquals(2, r.exitCode, "exit code");
@@ -258,7 +252,7 @@ public final class GoDebugTest {
                 "expected some panic line, stderr:\n" + r.stderr);
     }
 
-    /** verifies: GG-0055 (valid GODEBUG runs the program; schedtrace emits). */
+    /** verifies: GG-0065 (valid GODEBUG runs the program; schedtrace emits). */
     public void testSchedtraceEmitsLines() throws Exception {
         ProcessResult r = runSchedMain("schedtrace=50", "db04_spin.go");
         assertEquals(0, r.exitCode, "exit code\nstderr:\n" + r.stderr);

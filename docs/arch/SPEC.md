@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)) · **Requirements:** 74 records — `requirements/GG-0001`–`GG-0064`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0015`/0016/0018 superseded by GG-0061/0062/0063
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 75 records — `requirements/GG-0001`–`GG-0065`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0015`/0016/0018/0055 superseded by GG-0061/0062/0063/0065
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed
@@ -709,11 +709,18 @@ The wrapper's `tool -V=full` answer namespaces graalgo artifacts away from gc
 artifacts in a shared `GOCACHE` automatically `[VERIFIED]` on the hashing design.
 `GOCACHEPROG` remains a ready-made injection point.
 
-### 4.5 GODEBUG contract (GG-0055)
+### 4.5 GODEBUG contract (GG-0065)
 
 Every `GODEBUG` knob is classified per release — **emulated / no-op /
-unsupported-with-justification** — in a versioned registry `[DECIDED]`. Unknown
-knobs default to deny-with-error (never silent ignore). The registry is reviewed
+unsupported-with-justification** — in a versioned registry `[DECIDED]`.
+**Unknown keys are accepted and ignored silently, exactly as gc does**
+`[DECIDED]` 2026-11-18 (GG-0065, superseding `GG-0055`'s "unknown knobs
+default to deny-with-error", [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)):
+a key the tracked release does not define is not an error under gc, so
+denying it broke drop-in for programs and environments that set knobs of
+other releases. graalgo denies with an error only a **non-default value of a
+known knob classified unsupported** (and the values gc itself rejects
+fatally); the deny message names the knob and the registry entry. The registry is reviewed
 every upgrade as part of Phase 2 (`godebug-diff` against `doc/godebug.md`
 history). Parity-stance decisions for GC/scheduler knobs with no JVM analog are
 recorded once in the architecture log (GG-0045) and then mechanical forever —
@@ -1083,9 +1090,10 @@ consistently ≥2× across phases → the estimate is re-baselined with evidence
 
 ### 7.15 GODEBUG — versioned per-knob registry
 
-**Closure** `[DECIDED]` (GG-0055): §4.5 — every knob classified per release
-(emulated / no-op / unsupported + justification), unknown knobs deny-by-default,
-registry reviewed per release via `godebug-diff`. **Falsifier:** a release whose
+**Closure** `[DECIDED]` (GG-0065, amended 2026-11-18): §4.5 — every knob
+classified per release (emulated / no-op / unsupported + justification);
+unknown keys accepted silently like gc, non-default values of unsupported
+knobs denied; registry reviewed per release via `godebug-diff`. **Falsifier:** a release whose
 `doc/godebug.md` history adds a knob the registry cannot classify → the upgrade
 cannot close its Phase-2 gate until it can.
 
@@ -1281,7 +1289,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0052 | Reachability metadata pipeline | §7.6 |
 | GG-0053 | go vet reuse | §7.10 |
 | GG-0054 | OSR verification | §7.12 |
-| GG-0055 | GODEBUG registry | §4.5 (§7.15 closure) |
+| `GG-0055` | GODEBUG registry (unknown knobs denied) — superseded by GG-0065 | — |
 | GG-0056 | No agent-leverage discount | §7.14 (§9) |
 | GG-0057 | Pinning audit | §3.5, §8 |
 | GG-0058 | MM-0017 gate on FFI | §3.7 |
@@ -1291,6 +1299,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0062 | unsafe.Pointer and uintptr semantics | §3.4 (§7.3 closure) |
 | GG-0063 | Runtime epoll poller over raw fds | §3.5 (§7.4 closure) |
 | GG-0064 | Process creation via a spawn helper | §3.8 |
+| GG-0065 | GODEBUG registry, gc-compatible unknown keys | §4.5 (§7.15 closure) |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |
