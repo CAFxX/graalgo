@@ -28,8 +28,8 @@ not a parity claim.
 implementations live here since the T0.D module merge, 2026-11-18):
 - `Timers`, `Scheduler`, `ChanOps`, `GcInterop`, `GoroutineState` and
   [../safepoint/Safepoint.java](../safepoint/Safepoint.java) delegate to the
-  scheduler in [../sched/](../sched/). `Netpoll` documents its deletion
-  (GG-0018).
+  scheduler in [../sched/](../sched/). `Netpoll` documents the v1 netpoller
+  deletion (P2-M3; GG-0063's runtime epoll poller replaces it in W8).
 
 **Worker-F** (panic/defer/goexit): `Panic`, `PanicException`, `DeferChain`,
 `GoroutineState`, etc. — the frozen `throwPanic`/`recover` interface that
