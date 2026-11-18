@@ -221,6 +221,38 @@ toolexec M0–M5 and TR-0–TR-13. Superseded requirements (`GG-0012`,
 re-issued `GG-0065`, `GG-0066`, `GG-0067`, `GG-SCHED-0005`) are covered
 through their successors.
 
+## Layering debt
+
+The new path (`graalgo.go.*`, and `internal/toolexec`) must not depend on
+v1 code, which is deleted at M3. [check_layering.py](../../.github/scripts/check_layering.py)
+(`make check`) follows every reference transitively from `graalgo.go.*`
+through the shared code and fails on any edge into `graalgo.frontend`,
+`graalgo.values`, `graalgo.p3*`, `graalgo.iface`, `graalgo.rtstack` or
+`graalgo.rtmemstats`, and on any `internal/toolexec` import of
+`internal/{frontend,driver,vet}`. The 38 edges present when the gate landed
+(2026-11-18) are grandfathered, shrink-only, in
+[layering_allowlist.txt](../../.github/scripts/layering_allowlist.txt);
+`PanicNilError` was split off then (its v1 descriptor moved to
+`RuntimeErrorTypes`). The rest is not a mechanical split and is left to the
+owning lanes, in this order:
+
+1. `graalgo.language` (`GoLanguage`, `GoContext`, `GoProgramBuilder`,
+   `GoProgramRootNode` → `frontend.NodeFactory`, `WireKindRegistrar`,
+   `FrontendException`): the language shell serves both paths; the v1 wire
+   build moves behind a v1-only builder interface that the bundle path never
+   loads (T2, with the m1a-closeout/m1r-facade lanes, which edit this code
+   now). Deleted at M3 otherwise.
+2. `graalgo.runtime.Intrinsics` (→ `values.GoMap/GoSlice/GoKind/
+   GoTypeDescriptor/GoStructDescriptor/GoComplex*`, `frontend.Boxing`,
+   `FrontendException`): the v1 intrinsic surface; the new path has
+   `graalgo.go.runtime`. Split the entry points the new path reaches, the
+   rest goes at M3.
+3. `graalgo.runtime` helpers (`Panic`, `PanicRendering`, `RuntimeErrorTypes`,
+   `BuiltinPrint`, `DeferredCall`, `GoCalls`, `GoStrings`) and
+   `graalgo.sched.SchedulerCore` (→ `values.GoFunc`, `GoString`,
+   `GoTypeDescriptor`, `GoKind`): typed on the v1 value model; each splits
+   into a v1-free core and a v1 adapter deleted at M3 (T2 runtime/scheduler).
+
 ## Working rules
 
 [AGENTS.md](../../AGENTS.md) is the canonical working contract — worktrees

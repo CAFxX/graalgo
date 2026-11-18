@@ -43,13 +43,25 @@ public final class RuntimeErrorTypes {
      * their message as a {@code string} (gc: {@code type errorString
      * string}); the others are opaque (their fields are unexported).
      */
+    private static final GoTypeDescriptor PANIC_NIL_DESCRIPTOR =
+            new GoTypeDescriptor("*runtime.PanicNilError", GoKind.POINTER, false);
+
     private static final Map<String, GoTypeDescriptor> DESCRIPTORS = Map.of(
             "runtime.errorString", new GoTypeDescriptor("runtime.errorString", GoKind.STRING, false),
             "runtime.plainError", new GoTypeDescriptor("runtime.plainError", GoKind.STRING, false),
             "runtime.boundsError", new GoTypeDescriptor("runtime.boundsError", GoKind.STRING, false),
             "*runtime.TypeAssertionError",
             new GoTypeDescriptor("*runtime.TypeAssertionError", GoKind.STRING, false),
-            "*runtime.PanicNilError", PanicNilError.descriptor());
+            "*runtime.PanicNilError", PANIC_NIL_DESCRIPTOR);
+
+    /**
+     * The canonical descriptor of {@link PanicNilError#INSTANCE} (the
+     * recovered value of {@code panic(nil)}), kept here so that the value
+     * class itself stays free of v1 types.
+     */
+    public static GoTypeDescriptor panicNilDescriptor() {
+        return PANIC_NIL_DESCRIPTOR;
+    }
 
     /** All runtime error type names (method-table installation). */
     public static Set<String> typeNames() {

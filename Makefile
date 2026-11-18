@@ -32,7 +32,8 @@
 #               pin-audit smoke; duplicate FQN; dead paths; MR-table
 #               subset; check-repo (tracked-file size/binary, doc paths,
 #               GG ids, this Makefile's .PHONY/header, generated-files
-#               list, placeholder + runtime-unimplemented ratchets, every
+#               list, placeholder + runtime-unimplemented ratchets, the
+#               new-path/v1 layering gate, every
 #               .github/scripts/test_*.py, markdown links, `tools/req
 #               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
 #               tests, vendoring diff, frontend/v1 wire-format validator)
@@ -188,6 +189,7 @@ check-repo:
 	python3 .github/scripts/check_gg_ids.py
 	python3 .github/scripts/check_makefile.py
 	python3 .github/scripts/check_ratchets.py
+	python3 .github/scripts/check_layering.py
 	python3 .github/scripts/check_markdown_links.py --skip-external
 	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
 

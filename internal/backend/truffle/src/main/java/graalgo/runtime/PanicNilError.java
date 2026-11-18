@@ -1,8 +1,5 @@
 package graalgo.runtime;
 
-import graalgo.values.GoKind;
-import graalgo.values.GoTypeDescriptor;
-
 /**
  * The Go value {@code *runtime.PanicNilError} (M5, WS F; GG-0070).
  *
@@ -18,13 +15,13 @@ import graalgo.values.GoTypeDescriptor;
  * default (≥1.21) unconditionally. The {@code GODEBUG=panicnil=1} legacy mode
  * is out of scope, as are per-file {@code -lang} gates (those arrive with
  * WS G, GG-0013).
+ *
+ * <p>The value carries no v1 type descriptor (layering gate,
+ * check_layering.py): the v1 path's canonical descriptor lives in
+ * {@link RuntimeErrorTypes#panicNilDescriptor()}.
  */
 public final class PanicNilError extends GoErrorValue {
     public static final PanicNilError INSTANCE = new PanicNilError();
-
-    /** Canonical dynamic-type descriptor for the recovered value. */
-    private static final GoTypeDescriptor DESCRIPTOR =
-            new GoTypeDescriptor("*runtime.PanicNilError", GoKind.POINTER, false);
 
     private PanicNilError() {
         // P0-fmt-016: gc's %T is *runtime.PanicNilError; %#v is
@@ -33,9 +30,5 @@ public final class PanicNilError extends GoErrorValue {
         super("runtime error: panic called with nil argument", false,
                 "*runtime.PanicNilError",
                 "&runtime.PanicNilError{_:[0]*runtime.PanicNilError{}}", null);
-    }
-
-    public static GoTypeDescriptor descriptor() {
-        return DESCRIPTOR;
     }
 }
