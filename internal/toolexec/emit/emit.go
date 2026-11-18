@@ -589,7 +589,15 @@ func (e *emitter) emitVarInit() {
 			if len(in.Lhs) == 1 {
 				rhs = fs.convExpr(in.Rhs, in.Lhs[0].Type())
 			} else {
-				rhs = fs.commaOkExpr(in.Rhs)
+				var targets []types.Type
+				for _, v := range in.Lhs {
+					if v.Name() != "_" {
+						targets = append(targets, v.Type())
+					} else {
+						targets = append(targets, nil)
+					}
+				}
+				rhs = fs.multiExpr(in.Rhs, targets)
 			}
 			fs.body.Body = append(fs.body.Body, &ir.AssignStmt{Pos: fs.pos(in.Rhs), Op: ir.AssignOpPlain, Lhs: lhs, Rhs: []ir.Expr{rhs}})
 		}

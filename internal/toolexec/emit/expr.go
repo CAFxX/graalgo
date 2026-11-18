@@ -374,8 +374,9 @@ func (fs *fnState) methodRecv(x *ast.SelectorExpr, sel *types.Selection) (ir.Exp
 	_, wantPtr := types.Unalias(recvDecl).(*types.Pointer)
 	_, havePtr := types.Unalias(have).Underlying().(*types.Pointer)
 	if !isIface && wantPtr && !havePtr {
-		// implicit &: x (or the embedded field) must be addressable
-		if len(path) == 0 {
+		// implicit &: x (or the embedded field) must be addressable; x
+		// itself is when no pointer is followed on the way.
+		if !sel.Indirect() {
 			fs.markAddrTaken(x.X)
 		}
 	}

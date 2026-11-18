@@ -303,7 +303,11 @@ func (fs *fnState) stmt(s ast.Stmt) ir.Stmt {
 					st.Values = append(st.Values, fs.convExpr(v, vars[i].Type()))
 				}
 			default:
-				st.Values = []ir.Expr{fs.commaOkExpr(vs.Values[0])}
+				var targets []types.Type
+				for _, v := range vars {
+					targets = append(targets, v.Type())
+				}
+				st.Values = []ir.Expr{fs.multiExpr(vs.Values[0], targets)}
 			}
 			out = append(out, st)
 		}
@@ -403,27 +407,7 @@ func (fs *fnState) stmt(s ast.Stmt) ir.Stmt {
 		st.Body = fs.stmtList(s.Body.List)
 		return st
 	case *ast.RangeStmt:
-		st := &ir.RangeStmt{Pos: fs.pos(s), X: fs.expr(s.X), Define: s.Tok == token.DEFINE}
-		if st.Define {
-			for _, x := range []ast.Expr{s.Key, s.Value} {
-				id, ok := x.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				if v, ok := info.Defs[id].(*types.Var); ok && v != nil {
-					st.Fresh = append(st.Fresh, fs.declare(v, 0))
-				}
-			}
-			st.PerIter = fs.perIteration(s.Pos())
-		}
-		if s.Key != nil {
-			st.Key = fs.lhs(s.Key)
-		}
-		if s.Value != nil {
-			st.Value = fs.lhs(s.Value)
-		}
-		st.Body = fs.stmtList(s.Body.List)
-		return st
+		return fs.rangeStmt(s)
 	}
 	fs.e.unsupportedf(s.Pos(), "statement %T", s)
 	return nil
@@ -702,6 +686,110 @@ func (fs *fnState) switchStmt(s *ast.SwitchStmt) ir.Stmt {
 		}
 		cl.Body = fs.stmtList(cc.Body)
 		st.Clauses = append(st.Clauses, cl)
+	}
+	return st
+}
+
+// rangeTypes returns the iteration value types of ranging over a value of
+// type t (nil where the form has no such value).
+func rangeTypes(t types.Type) (key, val types.Type) {
+	switch u := coreType(t).(type) {
+	case *types.Basic:
+		if u.Info()&types.IsString != 0 {
+			return types.Typ[types.Int], types.Universe.Lookup("rune").Type()
+		}
+		return t, nil // range over an integer
+	case *types.Array:
+		return types.Typ[types.Int], u.Elem()
+	case *types.Pointer:
+		return types.Typ[types.Int], coreType(u.Elem()).(*types.Array).Elem()
+	case *types.Slice:
+		return types.Typ[types.Int], u.Elem()
+	case *types.Map:
+		return u.Key(), u.Elem()
+	case *types.Chan:
+		return u.Elem(), nil
+	case *types.Signature:
+		yield := coreType(u.Params().At(0).Type()).(*types.Signature).Params()
+		if yield.Len() > 0 {
+			key = yield.At(0).Type()
+		}
+		if yield.Len() > 1 {
+			val = yield.At(1).Type()
+		}
+		return key, val
+	}
+	return nil, nil
+}
+
+func (fs *fnState) rangeStmt(s *ast.RangeStmt) ir.Stmt {
+	info := fs.e.cfg.Info
+	st := &ir.RangeStmt{Pos: fs.pos(s), X: fs.expr(s.X), Define: s.Tok == token.DEFINE}
+	if st.Define {
+		for _, x := range []ast.Expr{s.Key, s.Value} {
+			id, ok := x.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			if v, ok := info.Defs[id].(*types.Var); ok && v != nil {
+				st.Fresh = append(st.Fresh, fs.declare(v, 0))
+			}
+		}
+		st.PerIter = fs.perIteration(s.Pos())
+	}
+	// for k, v = range x where an iteration value needs an implicit
+	// conversion to its target (interface, channel direction): the IR range
+	// assigns iteration values as they are, so this is lowered to
+	// for k', v' := range x { k, v = T(k'), T(v'); body } — the spec's
+	// per-iteration assignment, with the conversions explicit.
+	var pre ir.Stmt
+	if !st.Define && s.Tok == token.ASSIGN {
+		kt, vt := rangeTypes(info.Types[s.X].Type)
+		conv := false
+		for i, x := range []ast.Expr{s.Key, s.Value} {
+			from := []types.Type{kt, vt}[i]
+			if x != nil && from != nil && needsConversion(from, fs.lhsType(x)) {
+				conv = true
+			}
+		}
+		if conv {
+			as := &ir.AssignStmt{Pos: fs.pos(s), Op: ir.AssignOpPlain}
+			for i, x := range []ast.Expr{s.Key, s.Value} {
+				from := []types.Type{kt, vt}[i]
+				if x == nil {
+					continue
+				}
+				v := types.NewVar(token.NoPos, fs.e.cfg.Pkg, []string{"·key", "·value"}[i], from)
+				id := fs.declare(v, 0)
+				tmp := &ir.LocalExpr{Type: fs.e.typeID(from), Pos: fs.pos(x), Local: id}
+				st.Fresh = append(st.Fresh, id)
+				if i == 0 {
+					st.Key = tmp
+				} else {
+					st.Value = tmp
+				}
+				var rhs ir.Expr = tmp
+				if to := fs.lhsType(x); to != nil && needsConversion(from, to) {
+					rhs = &ir.ConvertExpr{Type: fs.e.typeID(to), Pos: fs.pos(x), X: tmp, Implicit: true}
+				}
+				as.Lhs = append(as.Lhs, fs.lhs(x))
+				as.Rhs = append(as.Rhs, rhs)
+			}
+			st.Define = true
+			pre = as
+		}
+	}
+	if pre == nil {
+		if s.Key != nil {
+			st.Key = fs.lhs(s.Key)
+		}
+		if s.Value != nil {
+			st.Value = fs.lhs(s.Value)
+		}
+	}
+	st.Body = fs.stmtList(s.Body.List)
+	if pre != nil {
+		st.Body = append([]ir.Stmt{pre}, st.Body...)
 	}
 	return st
 }

@@ -11,6 +11,7 @@ import (
 // Tests for the approximations toolexec-design.md §13 listed for W3. Each
 // was written against the W2 emitter and failed there.
 
+// Unnamed struct types with promoted methods get a TYPEDEFS entry
 // (underlying 0) carrying both method sets with their embedding paths.
 func TestUnnamedStructMethodSet(t *testing.T) {
 	f := emitSrc(t, `package p
@@ -135,7 +136,6 @@ func F(p *int, x int, a any) int {
 	}
 }
 
-// Unnamed struct types with promoted methods get a TYPEDEFS entry
 // A type declared in a generic function is a different type per
 // instantiation (gc: L[int]() != L[string]() even when T does not mention
 // the type parameter), so its key carries the enclosing type parameters.
@@ -178,4 +178,80 @@ func F[T interface{ Num; comparable }](x T) T { return x }
 			}
 		}
 	}
+}
+
+// for k, v = range x into variables of interface type converts each
+// iteration value: lowered to fresh := range + converting assignment.
+func TestRangeAssignConversion(t *testing.T) {
+	f := emitSrc(t, `package p
+func F(m map[string]int) {
+	var k, v any
+	for k, v = range m {
+	}
+	_, _ = k, v
+}
+`)
+	body := funcBody(t, f, "F")
+	rs := nodesOf[*ir.RangeStmt](body)
+	if len(rs) != 1 {
+		t.Fatal("no range")
+	}
+	if !rs[0].Define {
+		t.Fatalf("range with conversion not lowered to := form: %+v", rs[0])
+	}
+	as, ok := rs[0].Body[0].(*ir.AssignStmt)
+	if !ok || len(as.Rhs) != 2 {
+		t.Fatalf("first body statement: %#v", rs[0].Body[0])
+	}
+	for _, r := range as.Rhs {
+		if c, ok := r.(*ir.ConvertExpr); !ok || !c.Implicit || typeKey(f, c.Type) != "interface {}" {
+			t.Errorf("rhs not converted to any: %#v", r)
+		}
+	}
+}
+
+// var a, b I = f() converts element-wise, locally and at package level.
+func TestMultiVarConversion(t *testing.T) {
+	f := emitSrc(t, `package p
+func two() (int, string) { return 1, "a" }
+var A, B any = two()
+func F() {
+	var a, b any = two()
+	_, _ = a, b
+}
+`)
+	for _, name := range []string{"F", "init·vars"} {
+		if len(nodesOf[*ir.TupleConvertExpr](funcBody(t, f, name))) != 1 {
+			t.Errorf("%s: var a, b any = two() has no TupleConvert", name)
+		}
+	}
+}
+
+// x.M() with M a pointer method promoted through a non-pointer embedded
+// field takes &x.f: x must be flagged address-taken.
+func TestPromotedPtrMethodAddrTaken(t *testing.T) {
+	f := emitSrc(t, `package p
+type In struct{ n int }
+func (i *In) Inc() { i.n++ }
+type Out struct{ In }
+func F() int {
+	var o Out
+	o.Inc()
+	return o.n
+}
+`)
+	body := funcBody(t, f, "F")
+	for _, l := range body.Locals {
+		if l.Name == "o" && l.Flags&flagAddrTaken == 0 {
+			t.Errorf("o not flagged address-taken")
+		}
+	}
+}
+
+// Conversions of nil are typed nil values.
+func TestConvertNil(t *testing.T) {
+	f := emitSrc(t, `package p
+func F() ([]int, any, *int) { return []int(nil), any(nil), (*int)(nil) }
+`)
+	assertNoUntyped(t, f)
 }
