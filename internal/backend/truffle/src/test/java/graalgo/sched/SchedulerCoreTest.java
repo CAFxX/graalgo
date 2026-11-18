@@ -394,6 +394,79 @@ public final class SchedulerCoreTest {
         assertEquals(runner.id, admissions.get(3), "RUN last");
     }
 
+    /**
+     * verifies: GG-SCHED-0003 under a concurrent runtime.GOMAXPROCS change.
+     * The drainer must judge one iteration's admissions against the cap
+     * it admitted under. Pre-fix, admit() re-read the cap per admission
+     * and checkInvariants() read it again: raised 1→4 then lowered to 2
+     * while admitting (a concurrent GOMAXPROCS call, scripted here from
+     * the admission listener), the check saw inflight=3 against cap 2 and
+     * threw — in production a halt(1) of a correct program.
+     */
+    public void testCapChangeDuringAdmissionIsNotAViolation() {
+        SchedulerCore sched = new SchedulerCore(1, 3_600_000_000_000L);
+        if (sched.carrierParallelism() < 4) {
+            return; // cap is clamped to carriers; the race needs 4
+        }
+        Drainer d = sched.drainer(); // never started: driven synchronously
+        GoroutineHandle[] hs = new GoroutineHandle[4];
+        for (int i = 0; i < hs.length; i++) {
+            hs[i] = fakeHandle();
+        }
+        List<Long> admitted = new ArrayList<>();
+        d.setAdmissionListener(h -> {
+            admitted.add(h.id);
+            if (h == hs[2]) {
+                sched.setGomaxprocs(2); // the concurrent lowering
+            }
+        });
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, hs[0], 0));
+        for (int i = 1; i < hs.length; i++) {
+            d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, hs[i], 0));
+        }
+        assertEquals(1, admitted.size(), "cap 1 admits one");
+        sched.setGomaxprocs(4);
+        d.processOneForTest(ResumeToken.poke()); // admits under cap 4
+        d.processOneForTest(ResumeToken.poke()); // re-checked under cap 2
+        assertEquals(4, admitted.size(), "admissions: " + admitted);
+        // Draining below the lowered cap: no admission above it.
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, hs[0], -1));
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, hs[1], -1));
+        assertEquals(2, d.inflightForTest(), "excess drains");
+    }
+
+    /**
+     * Bounded stress (~2 s): spinners run while another goroutine toggles
+     * GOMAXPROCS between 1 and the carrier count as fast as it can. Any
+     * spurious drainer invariant violation halts the JVM (loud failure).
+     */
+    public void testConcurrentGomaxprocsToggleStress() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, 1_000_000L); // 1 ms quantum
+        sched.start();
+        java.util.concurrent.atomic.AtomicBoolean stop = new java.util.concurrent.atomic.AtomicBoolean();
+        int hi = Math.min(8, sched.carrierParallelism());
+        for (int i = 0; i < 6; i++) {
+            sched.spawn(() -> {
+                while (!stop.get()) {
+                    sched.pollCurrentThread();
+                }
+            });
+        }
+        for (int t = 0; t < 2; t++) {
+            sched.spawn(() -> {
+                int n = 0;
+                while (!stop.get()) {
+                    sched.setGomaxprocs((n++ & 1) == 0 ? hi : 1);
+                    sched.pollCurrentThread();
+                }
+            });
+        }
+        Thread.sleep(2000);
+        stop.set(true);
+        sched.awaitQuiescence();
+        assertTrue(sched.maxInflightObserved() <= hi, "max inflight " + sched.maxInflightObserved());
+    }
+
     /** Non-started handle; unpark on its dummy thread is harmless. */
     private static GoroutineHandle fakeHandle() {
         GoroutineHandle h = new GoroutineHandle(() -> {});
