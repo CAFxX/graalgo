@@ -41,6 +41,9 @@
       }
     },
     {
+      "argsPrefix": [
+        "--"
+      ],
       "build": [
         "{GRAALGO_RUN}",
         "--check",

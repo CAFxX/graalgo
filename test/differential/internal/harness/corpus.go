@@ -15,6 +15,13 @@ type Program struct {
 	// StdoutRules are the opt-in stdout normalization rules declared in
 	// the program's NORMALIZE file (see NormalizeStdout); usually none.
 	StdoutRules []string
+	// Args are the program's command-line arguments (os.Args[1:]); usually
+	// none. GOROOT/test declares them on the action line ("// run a b").
+	Args []string
+	// RunDir, when set, is the working directory of the run step instead
+	// of a fresh empty one (GOROOT/test programs run in GOROOT/test, as
+	// gc's own test driver runs them, and may read files there).
+	RunDir string
 }
 
 // DiscoverCorpus finds all corpus programs: immediate subdirectories of

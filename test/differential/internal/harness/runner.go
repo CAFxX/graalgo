@@ -91,12 +91,15 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 	defer os.RemoveAll(runDir)
 
 	bin := filepath.Join(workRoot, prog.Name, b.Name, "prog")
-	runCmd := b.RenderRun(prog.Main, bin)
+	runCmd := b.RenderRunArgs(prog.Main, bin, prog.Args)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, runCmd[0], runCmd[1:]...)
 	cmd.Dir = runDir
+	if prog.RunDir != "" {
+		cmd.Dir = prog.RunDir
+	}
 	cmd.Env = runEnv(b.Env)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

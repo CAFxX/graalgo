@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -107,5 +108,20 @@ func TestApplyExclusions(t *testing.T) {
 	}
 	if len(skipped) != 1 || skipped[0].Reason == "" {
 		t.Fatalf("skipped = %+v", skipped)
+	}
+}
+
+func TestRenderRunArgsAndUnrender(t *testing.T) {
+	b := &Backend{Name: "x", Run: []string{"{L}", "{SRC}"}, ArgsPrefix: []string{"--"},
+		Vars: map[string]string{"L": "/repo/launcher", "R": "/repo"}}
+	if got := b.RenderRunArgs("m.go", "bin", nil); !reflect.DeepEqual(got, []string{"/repo/launcher", "m.go"}) {
+		t.Fatalf("no args: %q", got)
+	}
+	if got := b.RenderRunArgs("m.go", "bin", []string{"a", "b"}); !reflect.DeepEqual(got, []string{"/repo/launcher", "m.go", "--", "a", "b"}) {
+		t.Fatalf("args: %q", got)
+	}
+	// Longest value first: the launcher path is not split into {R}/launcher.
+	if got := b.Unrender("run /repo/launcher in /repo/x"); got != "run {L} in {R}/x" {
+		t.Fatalf("Unrender: %q", got)
 	}
 }

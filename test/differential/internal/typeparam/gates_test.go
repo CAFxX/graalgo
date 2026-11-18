@@ -71,3 +71,19 @@ printf '[{"file":"%s","exit":0,"stdout":"","stderr":""}]' "$src"
 		t.Errorf("reason: %v", comps[0].Reasons)
 	}
 }
+
+func TestScrubOutcomeIsMachineIndependent(t *testing.T) {
+	ref := &harness.Backend{Name: "gc", Vars: map[string]string{"GO": "/opt/go"}}
+	alt := &harness.Backend{Name: "gg", Vars: map[string]string{"GRAALGO_RUN": "/ci/repo/internal/backend/graalgo-sync-run"}}
+	o := harness.Outcome{
+		Stderr:   "\t/tmp/tp-work-123/src/a.go/main.go:15",
+		BuildLog: "build [/ci/repo/internal/backend/graalgo-sync-run --check /tmp/tp-work-123/src/a.go/main.go] failed; /opt/go/src/x",
+	}
+	got := scrubOutcome(o, "/tmp/tp-work-123", ref, alt)
+	if got.Stderr != "\t{WORK}/src/a.go/main.go:15" {
+		t.Fatalf("stderr: %q", got.Stderr)
+	}
+	if got.BuildLog != "build [{GRAALGO_RUN} --check {WORK}/src/a.go/main.go] failed; {GO}/src/x" {
+		t.Fatalf("build log: %q", got.BuildLog)
+	}
+}

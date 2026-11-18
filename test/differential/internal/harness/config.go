@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -45,6 +46,11 @@ type Backend struct {
 	// does; the product launcher does not), letting the typeparam/srctest
 	// adapters amortize one JVM over many files.
 	Batch bool `json:"batch,omitempty"`
+	// ArgsPrefix is inserted between the run command and a program's
+	// arguments when it has any (Program.Args): a launcher that takes the
+	// source file as an operand needs a separator ("--") so the program's
+	// arguments are not read as more source files. A gc binary needs none.
+	ArgsPrefix []string `json:"argsPrefix,omitempty"`
 }
 
 // NoiseSets are the named stderr-noise filter sets a backend may opt into.
@@ -206,6 +212,39 @@ func (b *Backend) RenderBuild(src, bin string) []string {
 // RenderRun returns the run command with {SRC}/{BIN} substituted.
 func (b *Backend) RenderRun(src, bin string) []string {
 	return substitute(b.render(b.Run), map[string]string{"SRC": src, "BIN": bin})
+}
+
+// RenderRunArgs is RenderRun followed by the program arguments (behind
+// ArgsPrefix when there are any).
+func (b *Backend) RenderRunArgs(src, bin string, args []string) []string {
+	cmd := b.RenderRun(src, bin)
+	if len(args) == 0 {
+		return cmd
+	}
+	cmd = append(cmd, b.ArgsPrefix...)
+	return append(cmd, args...)
+}
+
+// Unrender replaces this backend's resolved variable values in s with
+// their {VAR} placeholders (longest value first), so text that echoes a
+// rendered command or a toolchain path is the same on every machine.
+func (b *Backend) Unrender(s string) string {
+	keys := make([]string, 0, len(b.Vars))
+	for k, v := range b.Vars {
+		if len(v) > 1 {
+			keys = append(keys, k)
+		}
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if li, lj := len(b.Vars[keys[i]]), len(b.Vars[keys[j]]); li != lj {
+			return li > lj
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		s = strings.ReplaceAll(s, b.Vars[k], "{"+k+"}")
+	}
+	return s
 }
 
 func substitute(tokens []string, vars map[string]string) []string {

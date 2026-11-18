@@ -82,7 +82,7 @@ func usage() {
   snapshot record -config PATH -corpus DIR -backend gc-a -out FILE [-toolchain V] [-runs N] [-jobs N]
   snapshot check  -config PATH -corpus DIR -backend graalgo -snapshot FILE [-expected FILE] [-programs a,b] [-verify-ref gc-a] [-jobs N]
   srctest scan -dir DIR -exclusions FILE -out PATH
-  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
+  srctest run  -dir DIR -exclusions FILE -out PATH [-files a.go,b.go] [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
 `)
 }
 
@@ -613,6 +613,7 @@ func cmdSrctestRun(args []string) error {
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
 	timeout := fs.Int("timeout", 0, "per-program timeout seconds (0 = config default)")
+	only := fs.String("files", "", "comma-separated file names: compare only these (a partial run for batching/triage; stale entries are only judged for the files compared)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -640,6 +641,12 @@ func cmdSrctestRun(args []string) error {
 	files, err := srctest.Scan(*dir, excl)
 	if err != nil {
 		return err
+	}
+	if *only != "" {
+		files, err = srctest.Select(files, strings.Split(*only, ","))
+		if err != nil {
+			return err
+		}
 	}
 	comps, err := typeparam.Run(cfg, files, *refName, *altName, *jobs)
 	if err != nil {

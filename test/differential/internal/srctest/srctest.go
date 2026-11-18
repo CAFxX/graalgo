@@ -95,6 +95,36 @@ func Scan(testDir string, yamlExcl map[string]typeparam.Exclusion) ([]typeparam.
 	return out, nil
 }
 
+// Select keeps only the named files of a scan (a partial run); naming a
+// file the scan does not have is an error, never an empty pass.
+func Select(files []typeparam.TFile, names []string) ([]typeparam.TFile, error) {
+	want := map[string]bool{}
+	for _, n := range names {
+		if n = strings.TrimSpace(n); n != "" {
+			want[n] = true
+		}
+	}
+	if len(want) == 0 {
+		return nil, fmt.Errorf("-files names no file")
+	}
+	var out []typeparam.TFile
+	for _, f := range files {
+		if want[f.Name] {
+			out = append(out, f)
+			delete(want, f.Name)
+		}
+	}
+	if len(want) > 0 {
+		var missing []string
+		for n := range want {
+			missing = append(missing, n)
+		}
+		sort.Strings(missing)
+		return nil, fmt.Errorf("-files: not in the scanned directory: %s", strings.Join(missing, ","))
+	}
+	return out, nil
+}
+
 // findGo locates a Go toolchain for the build probe (DH_GO, then PATH).
 func findGo() string {
 	if dh := os.Getenv("DH_GO"); dh != "" {
@@ -192,10 +222,69 @@ func classify(testDir, name string) typeparam.TFile {
 	// srctest-exclusions.yaml (SPEC 5.6).
 	tf.Class = runClass
 	tf.Detail = "runnable program"
+	// The action line gc's own test driver (cmd/internal/testdir) obeys:
+	// `// skip` files are not run at all; `// compile` and `// build`
+	// files are only compiled (sieve.go runs forever); `// run` words
+	// after the build flags are program arguments, and `// run` programs
+	// run in GOROOT/test (testdir's default working directory).
+	action, words := readAction(path)
+	switch action {
+	case "skip":
+		tf.Class = typeparam.ClassNotRun
+		tf.Detail = "// skip: gc's test driver does not run it"
+		return tf
+	case "compile", "build":
+		tf.Class = typeparam.ClassCompile
+		tf.Detail = "// " + action + ": compile-only (build parity), as gc's test driver"
+	case "run", "runoutput":
+		tf.RunDir = testDir
+		tf.Args = runArgs(words)
+		if len(tf.Args) > 0 {
+			tf.Detail += " (args " + strings.Join(tf.Args, " ") + ")"
+		}
+	}
 	if constraint != "" {
 		tf.Detail += " (//go:build " + constraint + ")"
 	}
 	return tf
+}
+
+// readAction returns the test-driver action of a GOROOT/test file — the
+// first word of its first line when that line is a `//` comment, as
+// cmd/internal/testdir reads it — and the words that follow it.
+func readAction(path string) (string, []string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", nil
+	}
+	first, _, _ := strings.Cut(string(data), "\n")
+	rest, ok := strings.CutPrefix(strings.TrimSpace(first), "//")
+	if !ok {
+		return "", nil
+	}
+	f := strings.Fields(rest)
+	if len(f) == 0 {
+		return "", nil
+	}
+	return f[0], f[1:]
+}
+
+// runArgs extracts the program arguments from a `// run` line's words:
+// testdir passes leading -flags to the go command and extra *.go files
+// as sources; the remaining words are the program's arguments.
+func runArgs(words []string) []string {
+	i := 0
+	for i < len(words) && strings.HasPrefix(words[i], "-") {
+		i++
+	}
+	var args []string
+	for _, w := range words[i:] {
+		if strings.HasSuffix(w, ".go") {
+			continue
+		}
+		args = append(args, w)
+	}
+	return args
 }
 
 // firstErrLine condenses a parse error to one line for the detail field.

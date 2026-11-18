@@ -64,6 +64,11 @@ type TFile struct {
 	// ExpectedSig is the entry's pinned DiffSignature, if any (G2).
 	ExpectedSig string   `json:"expectedSig,omitempty"`
 	Srcs        []string `json:"-"`
+	// Args are the program arguments and RunDir the run working
+	// directory (srctest: from the GOROOT/test action line, and
+	// GOROOT/test itself, as gc's test driver runs `// run` files).
+	Args   []string `json:"args,omitempty"`
+	RunDir string   `json:"-"`
 }
 
 // Exclusion is one entry of the versioned exclusion list (GG-0033).
@@ -311,6 +316,7 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 				results = runPerFile(cfg, ref, alt, included, mine, workRoot, job)
 			}
 			for k, idx := range mine {
+				results[k].Reasons = scrubReasons(results[k].Reasons, workRoot, ref, alt)
 				results[k].Expected = included[idx].Expected
 				results[k].ExpectedSig = included[idx].ExpectedSig
 				comps[idx] = results[k]
@@ -339,7 +345,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 	for k, idx := range mine {
 		tf := included[idx]
 		comps[k] = Comparison{Program: tf.Name, Same: true}
-		dir := filepath.Join(workRoot, fmt.Sprintf("job%d", job), tf.Name)
+		dir := filepath.Join(workRoot, "src", tf.Name)
 		src, err := stageFile(tf, dir)
 		if err != nil {
 			comps[k].Same, comps[k].Infra = false, true
@@ -389,7 +395,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			continue
 		}
 		tf := included[idx]
-		prog := harness.Program{Name: tf.Name, Dir: dirs[k], Main: srcs[k]}
+		prog := harness.Program{Name: tf.Name, Dir: dirs[k], Main: srcs[k], Args: tf.Args, RunDir: tf.RunDir}
 		c := &comps[k]
 		fail := func(format string, args ...any) {
 			c.Same = false
@@ -397,10 +403,11 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		}
 
 		// gc backend (fast, per-case).
-		bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
+		bRef := scrubOutcome(harness.BuildOnly(cfg, ref, prog, workRoot), workRoot, ref, alt)
 
 		// graalgo build result from batch.
 		bAlt, ok := batchOut[batchKey("check", srcs[k])]
+		bAlt = scrubOutcome(bAlt, workRoot, ref, alt)
 		if !ok {
 			c.Same, c.Infra = false, true
 			c.Reasons = append(c.Reasons, "infra: no graalgo batch result (batch JVM failed or output unparsable)")
@@ -454,7 +461,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			TimedOut: oAlt.TimedOut,
 			Duration: oAlt.Duration,
 		}
-		hc := harness.Compare(oRef, oAltFull)
+		hc := harness.Compare(scrubOutcome(oRef, workRoot, ref, alt), scrubOutcome(oAltFull, workRoot, ref, alt))
 		c.Same = hc.Same
 		c.Reasons = hc.Reasons
 	}
@@ -473,18 +480,18 @@ func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			c.Same = false
 			c.Reasons = append(c.Reasons, fmt.Sprintf(format, args...))
 		}
-		dir := filepath.Join(workRoot, fmt.Sprintf("job%d", job), tf.Name)
+		dir := filepath.Join(workRoot, "src", tf.Name)
 		src, err := stageFile(tf, dir)
 		if err != nil {
 			c.Same, c.Infra = false, true
 			fail("infra: stage: %v", err)
 			continue
 		}
-		prog := harness.Program{Name: tf.Name, Dir: dir, Main: src}
+		prog := harness.Program{Name: tf.Name, Dir: dir, Main: src, Args: tf.Args, RunDir: tf.RunDir}
 		switch tf.Class {
 		case ClassCompile, ClassErrorCheck:
-			bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
-			bAlt := harness.BuildOnly(cfg, alt, prog, workRoot)
+			bRef := scrubOutcome(harness.BuildOnly(cfg, ref, prog, workRoot), workRoot, ref, alt)
+			bAlt := scrubOutcome(harness.BuildOnly(cfg, alt, prog, workRoot), workRoot, ref, alt)
 			if tf.Class == ClassCompile {
 				if !bRef.BuildOK {
 					fail("build: ref failed: %s", firstLines(bRef.BuildLog, 4))
@@ -497,7 +504,8 @@ func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			}
 			continue
 		}
-		hc := harness.Compare(harness.RunProgram(cfg, ref, prog, workRoot), harness.RunProgram(cfg, alt, prog, workRoot))
+		hc := harness.Compare(scrubOutcome(harness.RunProgram(cfg, ref, prog, workRoot), workRoot, ref, alt),
+			scrubOutcome(harness.RunProgram(cfg, alt, prog, workRoot), workRoot, ref, alt))
 		c.Same, c.Reasons = hc.Same, hc.Reasons
 	}
 	return comps
@@ -668,6 +676,35 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		out[batchKey(mode, src)] = oc
 	}
 	return out
+}
+
+// scrubOutcome replaces the run's temporary work root with "{WORK}" and
+// the backends' resolved toolchain/launcher paths with their {VAR}
+// placeholders in an outcome's texts, before comparison and before any
+// excerpt is truncated: gc embeds the absolute build path in panic traces
+// and the root is random per run; build logs echo machine-specific paths.
+// Both sides are scrubbed identically, so no program-computed difference
+// is hidden; divergence texts (and the pinned signatures hashed from them,
+// G2) become stable across runs and hosts.
+func scrubOutcome(o harness.Outcome, workRoot string, ref, alt *harness.Backend) harness.Outcome {
+	f := func(s string) string {
+		return alt.Unrender(ref.Unrender(strings.ReplaceAll(s, workRoot, "{WORK}")))
+	}
+	o.Stdout, o.Stderr, o.BuildLog = f(o.Stdout), f(o.Stderr), f(o.BuildLog)
+	return o
+}
+
+// scrubReasons makes divergence texts machine-independent: the work root
+// becomes {WORK} and each backend's resolved toolchain/launcher paths
+// become their {VAR} placeholders, so a pinned signature (G2) computed
+// on one host matches on another (CI vs local).
+func scrubReasons(reasons []string, workRoot string, ref, alt *harness.Backend) []string {
+	for i, r := range reasons {
+		r = strings.ReplaceAll(r, workRoot, "{WORK}")
+		r = alt.Unrender(ref.Unrender(r))
+		reasons[i] = r
+	}
+	return reasons
 }
 
 // stageFile copies the program's single source into dir/main.go.
