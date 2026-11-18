@@ -115,7 +115,20 @@ public final class NodeFactory {
     private boolean openDefers;
     private int deferBits = -1;
     private final List<int[]> deferSites = new ArrayList<>();
-    private static final int MAX_OPEN_DEFERS = 8;
+    /**
+     * The open-coding limit L of GG-0071: a function with at most this many {@code defer}
+     * statements, none of which can run twice, is open-coded (gc's maxOpenDefers is also 8).
+     * Pinned by test/m1a/defer_path.sh at L and L+1.
+     */
+    public static final int MAX_OPEN_DEFERS = 8;
+    /**
+     * Test hooks of GG-0071's verification plan, read once: {@code graalgo.go.traceDeferPath}
+     * prints which path each deferring function takes when its tree is built (stderr,
+     * {@code graalgo: defer path <function> open-coded|chain}); {@code graalgo.go.forceDeferChain}
+     * puts every deferring function on the chain, to show the choice is unobservable.
+     */
+    private static final boolean TRACE_DEFER_PATH = Boolean.getBoolean("graalgo.go.traceDeferPath");
+    private static final boolean FORCE_DEFER_CHAIN = Boolean.getBoolean("graalgo.go.forceDeferChain");
     private boolean inThunk;
     /**
      * The body is a generated forwarding literal (GIR {@code FuncLit.wrapper}, gc's WRAPPER):
@@ -163,7 +176,7 @@ public final class NodeFactory {
             }
         });
         // gc's rule: open-code only when no defer statement can execute twice.
-        this.openDefers = hasDefer && !repeatable[0] && defers[0] <= MAX_OPEN_DEFERS;
+        this.openDefers = hasDefer && !repeatable[0] && defers[0] <= MAX_OPEN_DEFERS && !FORCE_DEFER_CHAIN;
         if (openDefers) {
             deferBits = fdb.addSlot(FrameSlotKind.Int, null, null);
         }
@@ -218,6 +231,9 @@ public final class NodeFactory {
         Stmt[] prologue = pro.toArray(new Stmt[0]);
         FrameDescriptor fd = fdb.build();
         Calls.FuncRoot root;
+        if (TRACE_DEFER_PATH && hasDefer) {
+            System.err.println("graalgo: defer path " + name + " " + (openDefers ? "open-coded" : "chain"));
+        }
         if (openDefers) {
             int[] targetSlots = new int[deferSites.size()];
             int[] argsSlots = new int[deferSites.size()];
@@ -836,6 +852,10 @@ public final class NodeFactory {
             case Gir.Expr.Global g:
                 return global(pkg, g.obj(), ty(g.type()), e);
             case Gir.Expr.Ext x: {
+                RootCallTarget ext = externalIntrinsic(x);
+                if (ext != null) {
+                    return new N.ConstRef(new graalgo.go.values.Closure(ext, null));
+                }
                 Gir.SymRef sym = sec.symRefs[x.sym()];
                 PackageUnit u = pkg.packageOf(sym);
                 return global(u, u.objectNamed(pkg.str(sym.name())), ty(x.type()), e);
@@ -1323,6 +1343,20 @@ public final class NodeFactory {
         return null;
     }
 
+    /**
+     * The intrinsic a reference to a function of a package outside the bundle resolves to, or
+     * null (also for packages in the bundle). Until the facade runtime (toolexec W5) exists this
+     * is how {@code runtime.Goexit} and {@code os.Exit} are reached.
+     */
+    private RootCallTarget externalIntrinsic(Gir.Expr fn) {
+        if (fn instanceof Gir.Expr.Ext x) {
+            Gir.SymRef sym = sec.symRefs[x.sym()];
+            String path = pkg.str(sym.pkg());
+            return pkg.program.externalIntrinsic(path, path + "." + pkg.str(sym.name()));
+        }
+        return null;
+    }
+
     /** The statically known callee of a call's function operand, or null. */
     private FunctionUnit.Instance staticCallee(Gir.Expr fn) {
         if (fn instanceof Gir.Expr.Inst in) {
@@ -1436,6 +1470,10 @@ public final class NodeFactory {
     private Expr call(Gir.Expr.Call c) {
         GoType sig = ty(c.fn());
         GoType result = ty(c.type());
+        RootCallTarget ext = externalIntrinsic(c.fn());
+        if (ext != null) {
+            return typed(result, new Calls.Call(() -> ext, args(c.args(), sig, c.spread())));
+        }
         FunctionUnit.Instance callee = staticCallee(c.fn());
         Expr[] a = args(c.args(), sig, c.spread());
         if (callee != null) {
@@ -1900,14 +1938,14 @@ public final class NodeFactory {
             case Gir.Stmt.Send sn:
                 return new Chans.Send(expr(sn.ch()), value(sn.value()));
             case Gir.Stmt.Go g:
-                return new Calls.Go(prepared(g.call()));
+                return new Calls.Go(prepared(g.call(), tempObject()));
             case Gir.Stmt.Defer d: {
                 if (!openDefers) {
-                    return new Calls.Defer(prepared(d.call()));
+                    return new Calls.Defer(prepared(d.call(), tempObject()));
                 }
                 int[] site = {tempObject(), tempObject()};
                 deferSites.add(site);
-                return new Calls.OpenDefer(prepared(d.call()), deferSites.size() - 1, deferBits, site[0], site[1]);
+                return new Calls.OpenDefer(prepared(d.call(), site[0]), deferSites.size() - 1, deferBits, site[1]);
             }
             case Gir.Stmt.Return r:
                 return ret(r);
@@ -2173,16 +2211,21 @@ public final class NodeFactory {
     }
 
     /** The function and arguments of a {@code defer}/{@code go} call, evaluated at the statement. */
-    private Calls.Prepared prepared(Gir.Expr call) {
+    private Calls.Prepared prepared(Gir.Expr call, int targetSlot) {
         switch (call) {
             case Gir.Expr.Call c: {
                 GoType sig = ty(c.fn());
                 Expr[] a = args(c.args(), sig, c.spread());
+                RootCallTarget ext = externalIntrinsic(c.fn());
+                if (ext != null) {
+                    return new Calls.PrepStatic(targetSlot, () -> ext, a);
+                }
                 FunctionUnit.Instance callee = staticCallee(c.fn());
-                return callee != null ? new Calls.PrepStatic(callee, a) : new Calls.PrepClosure(expr(c.fn()), a);
+                return callee != null ? new Calls.PrepStatic(targetSlot, callee, a)
+                        : new Calls.PrepClosure(targetSlot, expr(c.fn()), a);
             }
             case Gir.Expr.MethodCall mc:
-                return new Calls.PrepStatic(methodInstance(mc.method(), mc.recvType(), mc.targs()),
+                return new Calls.PrepStatic(targetSlot, methodInstance(mc.method(), mc.recvType(), mc.targs()),
                         withRecv(value(mc.recv()),
                                 args(mc.args(), methodSig(mc.method(), mc.recvType(), mc.targs()), mc.spread())));
             case Gir.Expr.IfaceCall ic: {
@@ -2190,11 +2233,11 @@ public final class NodeFactory {
                 String key = methodKey(pkg.str(ic.name()), pkg.str(ic.pkg()));
                 if (rt.isInterface()) {
                     int index = methodIndex(rt, key);
-                    return new Calls.PrepIface(expr(ic.recv()), rt, index,
+                    return new Calls.PrepIface(targetSlot, expr(ic.recv()), rt, index,
                             args(ic.args(), rt.u().imethods[index].sig, ic.spread()));
                 }
                 Method m = methodOf(rt, key);
-                return new Calls.PrepStatic(m::target,
+                return new Calls.PrepStatic(targetSlot, m::target,
                         withRecv(new Calls.Adapt(m, expr(ic.recv())), plainArgs(ic.args())));
             }
             case Gir.Expr.BuiltinCall bc: {
@@ -2212,7 +2255,7 @@ public final class NodeFactory {
                 inThunk = true;
                 RootCallTarget t = thunk("defer", builtin(bc, later));
                 inThunk = saved;
-                return new Calls.PrepStatic(() -> t, now);
+                return new Calls.PrepStatic(targetSlot, () -> t, now);
             }
             default:
                 throw new IllegalStateException("defer/go of " + call.getClass().getSimpleName());

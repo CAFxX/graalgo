@@ -1,5 +1,6 @@
 package graalgo.go.loader;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import graalgo.gir.Gir;
 import graalgo.gir.GirFile;
@@ -8,6 +9,7 @@ import graalgo.go.runtime.RuntimeTypes;
 import graalgo.go.types.TypeTable;
 import graalgo.go.values.Flat;
 import graalgo.language.GoLanguage;
+import graalgo.sched.SchedulerCore;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,7 +40,36 @@ public final class Program {
         this.language = language;
         this.runtime = language.runtimeTypes();
         this.types = runtime.table;
+        // The intrinsic registry until the facade runtime (toolexec W5) provides the package
+        // surface: keyed by gc symbol, reached by a body-less function's linkname or, for a
+        // package the bundle does not carry, by a direct reference ({@link #externalIntrinsic}).
         intrinsics.put("runtime.nanotime", runtime.nativeTarget("runtime.nanotime", args -> System.nanoTime()));
+        intrinsics.put("runtime.Goexit", runtime.nativeTarget("runtime.Goexit", args -> {
+            graalgo.runtime.Goexit.goexit();
+            return null;
+        }));
+        intrinsics.put("os.Exit", runtime.nativeTarget("os.Exit", args -> exit((long) args[1])));
+    }
+
+    /** {@code os.Exit}: the scheduler's exit request; the calling goroutine never returns. */
+    @TruffleBoundary
+    private static Object exit(long code) {
+        SchedulerCore sc = SchedulerCore.installedOrNull();
+        if (sc == null || !sc.onGoroutine()) {
+            throw new IllegalStateException("os.Exit outside a goroutine");
+        }
+        sc.requestExit((int) code);
+        sc.freezeForExit();
+        throw new IllegalStateException("os.Exit returned");
+    }
+
+    /**
+     * The intrinsic for function {@code symbol} ({@code path.Name}) of a package the bundle does
+     * not carry (the unforked standard library), or null: the facade runtime of toolexec W5
+     * replaces this lookup by real package units.
+     */
+    public RootCallTarget externalIntrinsic(String path, String symbol) {
+        return byPath.containsKey(path) ? null : intrinsics.get(symbol);
     }
 
     /** Decodes a bundle; function bodies stay undecoded. */

@@ -26,7 +26,10 @@ public final class G {
 
     /** Top of the defer chain; a function's own records are those above its entry mark. */
     public Defer defers;
-    /** The panic whose deferred calls are running, or null. */
+    /**
+     * The panic whose deferred calls are running, or null — also while a Goexit's deferred
+     * calls run, which is what makes {@code recover()} return nil during a Goexit (GG-0070).
+     */
     public GoPanic panic;
     /**
      * The argument array of the deferred call being run for {@link #panic}: {@code recover()}

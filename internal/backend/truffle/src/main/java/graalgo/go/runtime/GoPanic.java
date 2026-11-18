@@ -15,6 +15,8 @@ public final class GoPanic extends AbstractTruffleException {
     public final transient Object value;
     public transient GoPanic link;
     public boolean recovered;
+    /** The Goexit this panic interrupted (raised by a deferred call during it), or null. */
+    public transient graalgo.runtime.Goexit resumeExit;
 
     public GoPanic(Node location, Object value) {
         super(location);

@@ -64,7 +64,7 @@ func corpusPrograms(t *testing.T) []program {
 // m1aPrograms lists test/m1a/programs, the M1a gate's own programs
 // (test/m1a/run.sh runs them on the node package): the reference
 // interpreter must agree with gc on them too — except programs with go
-// statements, which it does not run (it has no scheduler).
+// statements (it has no scheduler) or imports (it has no intrinsics).
 func m1aPrograms(t *testing.T) []program {
 	files, err := filepath.Glob("../../../test/m1a/programs/*.go")
 	if err != nil || len(files) == 0 {
@@ -76,7 +76,7 @@ func m1aPrograms(t *testing.T) []program {
 		if err != nil {
 			t.Fatal(err)
 		}
-		goStmt := false
+		goStmt := len(af.Imports) > 0
 		ast.Inspect(af, func(n ast.Node) bool {
 			_, ok := n.(*ast.GoStmt)
 			goStmt = goStmt || ok
