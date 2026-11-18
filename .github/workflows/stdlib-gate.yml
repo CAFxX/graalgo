@@ -7,10 +7,15 @@
 # nondeterminism-normalization) is recorded in the run's report.json.
 name: stdlib-gate
 
+# DISABLED (schedule removed 2026-11-18, ci-green2 lane): red on every run
+# since inception (5/5) — BUG-0027. The weekly runs failed before running a
+# single program (the runners built the deleted phase-3 module: `make: ***
+# No rule to make target 'main'`); today's runners work, but the wave
+# corpora carry untriaged real divergences (e.g. wave1 errors/08_as:
+# `panic: clear: errP should be nil`). Re-enable the cron when the corpora
+# are triaged (fix or reason-coded exclusion per GG-0033). Manual dispatch
+# stays for that triage.
 on:
-  schedule:
-    # Weekly per-release gate: Sunday 03:00 UTC.
-    - cron: '0 3 * * 0'
   workflow_dispatch:
 
 jobs:
