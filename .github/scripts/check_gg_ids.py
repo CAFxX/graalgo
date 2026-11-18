@@ -24,7 +24,7 @@ ID = re.compile(r"\bGG-(?:[A-Z]+-)?\d{4}\b")
 # Test fixtures that cite fake ids on purpose (the req CLI's own tests
 # and this gate's test).
 FIXTURES = re.compile(r"^(tools/req/.*_test\.go|\.github/scripts/test_check_gg_ids\.py)$")
-ARCHIVED = ("docs/arch/phases/", "docs/arch/reviews/", "docs/arch/spikes/",
+ARCHIVED = ("docs/arch/phases/", "docs/arch/reviews/", "docs/arch/spikes/",  # dead-path-ok (archive)
             "docs/arch/research/", "research/")
 
 

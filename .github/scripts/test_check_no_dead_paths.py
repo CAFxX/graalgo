@@ -55,11 +55,26 @@ class Gate(unittest.TestCase):
     def test_comments_docs_data_and_optout_are_ignored(self):
         d = tree({"tools/x/run.sh": f"#!/bin/bash\n# moved from {DEAD}\n  // {DEAD}\n",
                   "tools/x/README.md": f"see {DEAD}\n",
-                  "tools/x/inv.json": f'{{"by": "{DEAD}"}}\n',
+                  "tools/x/inv.txt": f"by {DEAD}\n",
                   "test/x/testdata/fixture.sh": f"{DEAD}\n",
                   "tools/x/check.py": f'BAN = "{BANNED}"  # dead-path-ok\n'})
         self.assertEqual(g.scan(d), [])
 
+
+    def test_widened_scope_java_json_frontend_cmd(self):
+        # G9: .java/.json files and the internal/frontend, cmd trees were
+        # not scanned; javadoc stays a comment.
+        for rel, content in {
+            "internal/frontend/x.go": f'const p = "{DEAD}"\n',
+            "cmd/graalgo/main.go": f'var p = "{BANNED}"\n',
+            "internal/backend/truffle/src/main/java/A.java": f'String p = "{DEAD}";\n',
+            "test/differential/backends.json": f'{{"run": "{DEAD}"}}\n',
+        }.items():
+            d = tree({rel: content})
+            self.assertEqual(len(g.scan(d)), 1, rel)
+        d = tree({"internal/backend/truffle/src/main/java/B.java": f"/**\n * see {DEAD}\n */\nclass B {{}}\n",
+                  "internal/frontend/go/types/api.go": f'const p = "{DEAD}"\n'})
+        self.assertEqual(g.scan(d), [])
 
 if __name__ == "__main__":
     unittest.main()

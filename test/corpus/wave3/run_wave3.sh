@@ -209,4 +209,9 @@ echo "== differential: $pass passed, $scopelimited scope-limited, $fail failed, 
 # An infra error means part of the corpus produced no verdict: exit 3
 # (never a pass, never a divergence) — the counts above say what ran.
 [ "$infra" = 0 ] || exit "$INFRA_EXIT"
+# Zero differential cases is never a pass (wrong dir, empty package).
+if [ $((pass + fail)) -eq 0 ]; then
+    echo "INFRA: no differential case ran" >&2
+    exit "$INFRA_EXIT"
+fi
 [ "$fail" = 0 ]

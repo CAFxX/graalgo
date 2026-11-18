@@ -19,9 +19,11 @@ on:
   workflow_dispatch:
     inputs:
       hours:
-        description: 'Soak duration in hours'
+        # <= 5: the job's 360-minute timeout must also cover setup, build
+        # and triage (a 6-hour soak was killed by the timeout every night).
+        description: 'Soak duration in hours (max 5)'
         required: false
-        default: '6'
+        default: '5'
 
 jobs:
   fuzz-soak:
@@ -57,7 +59,7 @@ jobs:
           mkdir -p "$GO_BIN_DIR"
           ln -sf "$(which go)" "$GO_BIN_DIR/go"
           ./tools/fuzz-soak/run_soak.sh \
-            --hours "${{ inputs.hours || '6' }}" \
+            --hours "${{ inputs.hours || '5' }}" \
             --out "$GITHUB_WORKSPACE/fuzz-soak-out"
 
       - name: Layer 4b — native testing.F differential fuzzing

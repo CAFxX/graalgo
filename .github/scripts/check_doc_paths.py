@@ -37,7 +37,7 @@ import sys
 from pathlib import Path
 
 ARCHIVED = (
-    "docs/arch/phases/", "docs/arch/reviews/", "docs/arch/spikes/",
+    "docs/arch/phases/", "docs/arch/reviews/", "docs/arch/spikes/",  # dead-path-ok (the archive exists)
     "docs/arch/research/", "research/", "internal/frontend/go/",
     "test/corpus/",  # per-wave run logs of the research era
 )

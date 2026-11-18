@@ -42,6 +42,12 @@ TIMEOUT="${PECHECK_TIMEOUT:-600}"
 if [ $# -eq 0 ]; then
   set -- $(cd "$BENCH" && for d in */; do [ -f "$d/main.go" ] && echo "${d%/}"; done)
 fi
+# Zero programs is never a pass (`set -- $(...)` does not trip set -e when
+# the listing comes back empty).
+if [ $# -eq 0 ]; then
+  echo "INFRA: no benchmark programs under $BENCH" >&2
+  exit 3
+fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/graalgo-pecheck.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
