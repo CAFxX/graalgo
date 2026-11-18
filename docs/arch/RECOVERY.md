@@ -38,7 +38,7 @@ Integration branch: `wt/recovery/integration`.
 | toolexec W1 launcher + W2 GIR (`wt/recovery/gir-launcher`) | landed |
 | T0.D + TR-0 + TR-1 backend structure (`wt/recovery/backend-structure`) | landed |
 | Spec reconciliation (`wt/spec/reconcile`): global spec-conformance review items | done 2026-11-18 ([ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md), [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md), coverage below) |
-| toolexec M1r, first slice (`wt/m1r/facade`): W5 fork tooling + facade `runtime`, W6 intrinsic registry + link-time resolution and reachability | landed 2026-11-18: real std source runs on the node package for the packages whose closure needs no `internal/reflectlite`, `sync` or `syscall` (`make test-m1r`; [toolexec-design.md](toolexec-design.md) §13). **Open in M1r:** W13 pointer model, W9a descriptor images + `reflectlite` intrinsics (gate for `errors` and everything above it), W8a syscalls |
+| toolexec M1r, first slice (`wt/m1r/facade`): W5 fork tooling + facade `runtime`, W6 intrinsic registry + link-time resolution and reachability | landed 2026-11-18: upstream's std source runs on the node package for 18 importable packages — those that at run time need no `internal/reflectlite` descriptor read, no semaphore and no system call (`make test-m1r` 10/10; [toolexec-design.md](toolexec-design.md) §13); all of std compiles against the facade. **Open in M1r:** W13 pointer model ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), draft for the owner — also a soundness gate: `unsafe.Pointer` conversions are an unchecked identity today), W9a descriptor images + `reflectlite` intrinsics (gate for `errors` and everything above it), W8a syscalls; then `sync`'s semaphores (11 symbols) |
 
 ## Decision log
 

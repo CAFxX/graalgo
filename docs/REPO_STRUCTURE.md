@@ -289,6 +289,9 @@ Related: [Makefile](../Makefile) (root build entry point),
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
     compares stdout, normalized stderr and exit status with gc.
+    [quarantine/](../test/m1r/quarantine/) holds reproducers of runtime
+    defects the gate found outside its subject (not run by default; each
+    file states the defect).
   - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
     runs named backend unit-test classes with per-test timing
     (`make test-java-fast` / `test-java-slow`);

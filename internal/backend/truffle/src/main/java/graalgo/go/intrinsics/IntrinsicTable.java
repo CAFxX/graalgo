@@ -16,7 +16,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "63541606e5514977";
+    public static final String HASH = "a30e864850a67f31";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -59,6 +59,84 @@ public final class IntrinsicTable {
                 return new R_runtime_nanotime(language);
             case "runtime.runtimeError":
                 return new R_runtime_runtimeError(language);
+            case "sync/atomic.AddInt32":
+                return new R_sync_atomic_AddInt32(language);
+            case "sync/atomic.AddInt64":
+                return new R_sync_atomic_AddInt64(language);
+            case "sync/atomic.AddUint32":
+                return new R_sync_atomic_AddUint32(language);
+            case "sync/atomic.AddUint64":
+                return new R_sync_atomic_AddUint64(language);
+            case "sync/atomic.AddUintptr":
+                return new R_sync_atomic_AddUintptr(language);
+            case "sync/atomic.AndInt32":
+                return new R_sync_atomic_AndInt32(language);
+            case "sync/atomic.AndInt64":
+                return new R_sync_atomic_AndInt64(language);
+            case "sync/atomic.AndUint32":
+                return new R_sync_atomic_AndUint32(language);
+            case "sync/atomic.AndUint64":
+                return new R_sync_atomic_AndUint64(language);
+            case "sync/atomic.AndUintptr":
+                return new R_sync_atomic_AndUintptr(language);
+            case "sync/atomic.CompareAndSwapInt32":
+                return new R_sync_atomic_CompareAndSwapInt32(language);
+            case "sync/atomic.CompareAndSwapInt64":
+                return new R_sync_atomic_CompareAndSwapInt64(language);
+            case "sync/atomic.CompareAndSwapPointer":
+                return new R_sync_atomic_CompareAndSwapPointer(language);
+            case "sync/atomic.CompareAndSwapUint32":
+                return new R_sync_atomic_CompareAndSwapUint32(language);
+            case "sync/atomic.CompareAndSwapUint64":
+                return new R_sync_atomic_CompareAndSwapUint64(language);
+            case "sync/atomic.CompareAndSwapUintptr":
+                return new R_sync_atomic_CompareAndSwapUintptr(language);
+            case "sync/atomic.LoadInt32":
+                return new R_sync_atomic_LoadInt32(language);
+            case "sync/atomic.LoadInt64":
+                return new R_sync_atomic_LoadInt64(language);
+            case "sync/atomic.LoadPointer":
+                return new R_sync_atomic_LoadPointer(language);
+            case "sync/atomic.LoadUint32":
+                return new R_sync_atomic_LoadUint32(language);
+            case "sync/atomic.LoadUint64":
+                return new R_sync_atomic_LoadUint64(language);
+            case "sync/atomic.LoadUintptr":
+                return new R_sync_atomic_LoadUintptr(language);
+            case "sync/atomic.OrInt32":
+                return new R_sync_atomic_OrInt32(language);
+            case "sync/atomic.OrInt64":
+                return new R_sync_atomic_OrInt64(language);
+            case "sync/atomic.OrUint32":
+                return new R_sync_atomic_OrUint32(language);
+            case "sync/atomic.OrUint64":
+                return new R_sync_atomic_OrUint64(language);
+            case "sync/atomic.OrUintptr":
+                return new R_sync_atomic_OrUintptr(language);
+            case "sync/atomic.StoreInt32":
+                return new R_sync_atomic_StoreInt32(language);
+            case "sync/atomic.StoreInt64":
+                return new R_sync_atomic_StoreInt64(language);
+            case "sync/atomic.StorePointer":
+                return new R_sync_atomic_StorePointer(language);
+            case "sync/atomic.StoreUint32":
+                return new R_sync_atomic_StoreUint32(language);
+            case "sync/atomic.StoreUint64":
+                return new R_sync_atomic_StoreUint64(language);
+            case "sync/atomic.StoreUintptr":
+                return new R_sync_atomic_StoreUintptr(language);
+            case "sync/atomic.SwapInt32":
+                return new R_sync_atomic_SwapInt32(language);
+            case "sync/atomic.SwapInt64":
+                return new R_sync_atomic_SwapInt64(language);
+            case "sync/atomic.SwapPointer":
+                return new R_sync_atomic_SwapPointer(language);
+            case "sync/atomic.SwapUint32":
+                return new R_sync_atomic_SwapUint32(language);
+            case "sync/atomic.SwapUint64":
+                return new R_sync_atomic_SwapUint64(language);
+            case "sync/atomic.SwapUintptr":
+                return new R_sync_atomic_SwapUintptr(language);
             default:
                 return null;
         }
@@ -325,6 +403,519 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_runtimeError(this, (long) a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.AddInt32}: {@code func(*int32, int32) int32}. */
+    static final class R_sync_atomic_AddInt32 extends Root {
+        R_sync_atomic_AddInt32(GoLanguage language) {
+            super(language, "sync/atomic.AddInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AddInt32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AddInt64}: {@code func(*int64, int64) int64}. */
+    static final class R_sync_atomic_AddInt64 extends Root {
+        R_sync_atomic_AddInt64(GoLanguage language) {
+            super(language, "sync/atomic.AddInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AddInt64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AddUint32}: {@code func(*uint32, uint32) uint32}. */
+    static final class R_sync_atomic_AddUint32 extends Root {
+        R_sync_atomic_AddUint32(GoLanguage language) {
+            super(language, "sync/atomic.AddUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AddUint32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AddUint64}: {@code func(*uint64, uint64) uint64}. */
+    static final class R_sync_atomic_AddUint64 extends Root {
+        R_sync_atomic_AddUint64(GoLanguage language) {
+            super(language, "sync/atomic.AddUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AddUint64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AddUintptr}: {@code func(*uintptr, uintptr) uintptr}. */
+    static final class R_sync_atomic_AddUintptr extends Root {
+        R_sync_atomic_AddUintptr(GoLanguage language) {
+            super(language, "sync/atomic.AddUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AddUintptr(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AndInt32}: {@code func(*int32, int32) int32}. */
+    static final class R_sync_atomic_AndInt32 extends Root {
+        R_sync_atomic_AndInt32(GoLanguage language) {
+            super(language, "sync/atomic.AndInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AndInt32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AndInt64}: {@code func(*int64, int64) int64}. */
+    static final class R_sync_atomic_AndInt64 extends Root {
+        R_sync_atomic_AndInt64(GoLanguage language) {
+            super(language, "sync/atomic.AndInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AndInt64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AndUint32}: {@code func(*uint32, uint32) uint32}. */
+    static final class R_sync_atomic_AndUint32 extends Root {
+        R_sync_atomic_AndUint32(GoLanguage language) {
+            super(language, "sync/atomic.AndUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AndUint32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AndUint64}: {@code func(*uint64, uint64) uint64}. */
+    static final class R_sync_atomic_AndUint64 extends Root {
+        R_sync_atomic_AndUint64(GoLanguage language) {
+            super(language, "sync/atomic.AndUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AndUint64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.AndUintptr}: {@code func(*uintptr, uintptr) uintptr}. */
+    static final class R_sync_atomic_AndUintptr extends Root {
+        R_sync_atomic_AndUintptr(GoLanguage language) {
+            super(language, "sync/atomic.AndUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_AndUintptr(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.CompareAndSwapInt32}: {@code func(*int32, int32, int32) bool}. */
+    static final class R_sync_atomic_CompareAndSwapInt32 extends Root {
+        R_sync_atomic_CompareAndSwapInt32(GoLanguage language) {
+            super(language, "sync/atomic.CompareAndSwapInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_CompareAndSwapInt32(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code sync/atomic.CompareAndSwapInt64}: {@code func(*int64, int64, int64) bool}. */
+    static final class R_sync_atomic_CompareAndSwapInt64 extends Root {
+        R_sync_atomic_CompareAndSwapInt64(GoLanguage language) {
+            super(language, "sync/atomic.CompareAndSwapInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_CompareAndSwapInt64(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code sync/atomic.CompareAndSwapPointer}: {@code func(*unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) bool}. */
+    static final class R_sync_atomic_CompareAndSwapPointer extends Root {
+        R_sync_atomic_CompareAndSwapPointer(GoLanguage language) {
+            super(language, "sync/atomic.CompareAndSwapPointer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_CompareAndSwapPointer(this, a[1], a[2], a[3]);
+        }
+    }
+
+    /** {@code sync/atomic.CompareAndSwapUint32}: {@code func(*uint32, uint32, uint32) bool}. */
+    static final class R_sync_atomic_CompareAndSwapUint32 extends Root {
+        R_sync_atomic_CompareAndSwapUint32(GoLanguage language) {
+            super(language, "sync/atomic.CompareAndSwapUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_CompareAndSwapUint32(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code sync/atomic.CompareAndSwapUint64}: {@code func(*uint64, uint64, uint64) bool}. */
+    static final class R_sync_atomic_CompareAndSwapUint64 extends Root {
+        R_sync_atomic_CompareAndSwapUint64(GoLanguage language) {
+            super(language, "sync/atomic.CompareAndSwapUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_CompareAndSwapUint64(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code sync/atomic.CompareAndSwapUintptr}: {@code func(*uintptr, uintptr, uintptr) bool}. */
+    static final class R_sync_atomic_CompareAndSwapUintptr extends Root {
+        R_sync_atomic_CompareAndSwapUintptr(GoLanguage language) {
+            super(language, "sync/atomic.CompareAndSwapUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_CompareAndSwapUintptr(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code sync/atomic.LoadInt32}: {@code func(*int32) int32}. */
+    static final class R_sync_atomic_LoadInt32 extends Root {
+        R_sync_atomic_LoadInt32(GoLanguage language) {
+            super(language, "sync/atomic.LoadInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_LoadInt32(this, a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.LoadInt64}: {@code func(*int64) int64}. */
+    static final class R_sync_atomic_LoadInt64 extends Root {
+        R_sync_atomic_LoadInt64(GoLanguage language) {
+            super(language, "sync/atomic.LoadInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_LoadInt64(this, a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.LoadPointer}: {@code func(*unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_sync_atomic_LoadPointer extends Root {
+        R_sync_atomic_LoadPointer(GoLanguage language) {
+            super(language, "sync/atomic.LoadPointer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_LoadPointer(this, a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.LoadUint32}: {@code func(*uint32) uint32}. */
+    static final class R_sync_atomic_LoadUint32 extends Root {
+        R_sync_atomic_LoadUint32(GoLanguage language) {
+            super(language, "sync/atomic.LoadUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_LoadUint32(this, a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.LoadUint64}: {@code func(*uint64) uint64}. */
+    static final class R_sync_atomic_LoadUint64 extends Root {
+        R_sync_atomic_LoadUint64(GoLanguage language) {
+            super(language, "sync/atomic.LoadUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_LoadUint64(this, a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.LoadUintptr}: {@code func(*uintptr) uintptr}. */
+    static final class R_sync_atomic_LoadUintptr extends Root {
+        R_sync_atomic_LoadUintptr(GoLanguage language) {
+            super(language, "sync/atomic.LoadUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_LoadUintptr(this, a[1]);
+        }
+    }
+
+    /** {@code sync/atomic.OrInt32}: {@code func(*int32, int32) int32}. */
+    static final class R_sync_atomic_OrInt32 extends Root {
+        R_sync_atomic_OrInt32(GoLanguage language) {
+            super(language, "sync/atomic.OrInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_OrInt32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.OrInt64}: {@code func(*int64, int64) int64}. */
+    static final class R_sync_atomic_OrInt64 extends Root {
+        R_sync_atomic_OrInt64(GoLanguage language) {
+            super(language, "sync/atomic.OrInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_OrInt64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.OrUint32}: {@code func(*uint32, uint32) uint32}. */
+    static final class R_sync_atomic_OrUint32 extends Root {
+        R_sync_atomic_OrUint32(GoLanguage language) {
+            super(language, "sync/atomic.OrUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_OrUint32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.OrUint64}: {@code func(*uint64, uint64) uint64}. */
+    static final class R_sync_atomic_OrUint64 extends Root {
+        R_sync_atomic_OrUint64(GoLanguage language) {
+            super(language, "sync/atomic.OrUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_OrUint64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.OrUintptr}: {@code func(*uintptr, uintptr) uintptr}. */
+    static final class R_sync_atomic_OrUintptr extends Root {
+        R_sync_atomic_OrUintptr(GoLanguage language) {
+            super(language, "sync/atomic.OrUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_OrUintptr(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.StoreInt32}: {@code func(*int32, int32)}. */
+    static final class R_sync_atomic_StoreInt32 extends Root {
+        R_sync_atomic_StoreInt32(GoLanguage language) {
+            super(language, "sync/atomic.StoreInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.sync_atomic_StoreInt32(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync/atomic.StoreInt64}: {@code func(*int64, int64)}. */
+    static final class R_sync_atomic_StoreInt64 extends Root {
+        R_sync_atomic_StoreInt64(GoLanguage language) {
+            super(language, "sync/atomic.StoreInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.sync_atomic_StoreInt64(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync/atomic.StorePointer}: {@code func(*unsafe.Pointer, unsafe.Pointer)}. */
+    static final class R_sync_atomic_StorePointer extends Root {
+        R_sync_atomic_StorePointer(GoLanguage language) {
+            super(language, "sync/atomic.StorePointer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.sync_atomic_StorePointer(this, a[1], a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync/atomic.StoreUint32}: {@code func(*uint32, uint32)}. */
+    static final class R_sync_atomic_StoreUint32 extends Root {
+        R_sync_atomic_StoreUint32(GoLanguage language) {
+            super(language, "sync/atomic.StoreUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.sync_atomic_StoreUint32(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync/atomic.StoreUint64}: {@code func(*uint64, uint64)}. */
+    static final class R_sync_atomic_StoreUint64 extends Root {
+        R_sync_atomic_StoreUint64(GoLanguage language) {
+            super(language, "sync/atomic.StoreUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.sync_atomic_StoreUint64(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync/atomic.StoreUintptr}: {@code func(*uintptr, uintptr)}. */
+    static final class R_sync_atomic_StoreUintptr extends Root {
+        R_sync_atomic_StoreUintptr(GoLanguage language) {
+            super(language, "sync/atomic.StoreUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.sync_atomic_StoreUintptr(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync/atomic.SwapInt32}: {@code func(*int32, int32) int32}. */
+    static final class R_sync_atomic_SwapInt32 extends Root {
+        R_sync_atomic_SwapInt32(GoLanguage language) {
+            super(language, "sync/atomic.SwapInt32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_SwapInt32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.SwapInt64}: {@code func(*int64, int64) int64}. */
+    static final class R_sync_atomic_SwapInt64 extends Root {
+        R_sync_atomic_SwapInt64(GoLanguage language) {
+            super(language, "sync/atomic.SwapInt64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_SwapInt64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.SwapPointer}: {@code func(*unsafe.Pointer, unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_sync_atomic_SwapPointer extends Root {
+        R_sync_atomic_SwapPointer(GoLanguage language) {
+            super(language, "sync/atomic.SwapPointer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_SwapPointer(this, a[1], a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.SwapUint32}: {@code func(*uint32, uint32) uint32}. */
+    static final class R_sync_atomic_SwapUint32 extends Root {
+        R_sync_atomic_SwapUint32(GoLanguage language) {
+            super(language, "sync/atomic.SwapUint32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_SwapUint32(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.SwapUint64}: {@code func(*uint64, uint64) uint64}. */
+    static final class R_sync_atomic_SwapUint64 extends Root {
+        R_sync_atomic_SwapUint64(GoLanguage language) {
+            super(language, "sync/atomic.SwapUint64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_SwapUint64(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.SwapUintptr}: {@code func(*uintptr, uintptr) uintptr}. */
+    static final class R_sync_atomic_SwapUintptr extends Root {
+        R_sync_atomic_SwapUintptr(GoLanguage language) {
+            super(language, "sync/atomic.SwapUintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return AtomicIntrinsics.sync_atomic_SwapUintptr(this, a[1], (long) a[2]);
         }
     }
 }

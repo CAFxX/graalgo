@@ -1276,23 +1276,43 @@ bundle of another registry, and initializes `runtime` first. A build against
 an **unforked** runtime now fails at link with the runtime's own undefined
 assembly symbols, instead of producing a program that cannot start.
 
-*What runs.* Nineteen registry entries (facade `runtime` 6, `math`
-assembly 8, `math` bit casts 4, `maps.clone`) carry these importable
-packages, compiled from upstream's source: `unicode/utf8`, `unicode/utf16`,
-`unicode`, `math/bits`, `math`, `math/cmplx`, `cmp`, `slices`, `maps`,
-`container/list`, `container/ring`, `image/color`, `image/color/palette`
-(and `encoding`, `structs`, which are declarations only). The `math`
-assembly intrinsics are ports of the amd64 instruction sequences, so the
-corpus's sweep of the package's functions over 23 arguments (322 output
-lines) is bit-identical to gc.
-Not yet: anything that ranges over a function iterator inside std
-(`maps.Keys`, `slices.Sorted`, …), which the node package does not build.
+*What runs.* Fifty-eight registry entries (facade `runtime` 6, `math`
+assembly 8, `math` bit casts 4, `maps.clone`, `sync/atomic` 39) carry these
+importable packages, compiled from upstream's source: `unicode/utf8`,
+`unicode/utf16`, `unicode`, `math/bits`, `math`, `math/cmplx`, `cmp`,
+`slices`, `maps`, `sort` (everything but the three `reflectlite`-based
+`Slice` functions), `container/heap`, `container/list`, `container/ring`,
+`image/color`, `image/color/palette`, `sync/atomic` (the functions and the
+typed wrappers; not `atomic.Value`, which reinterprets an interface header)
+and `encoding`, `structs`, which are declarations only. The `math` assembly
+intrinsics are ports of the amd64 instruction sequences, so the corpus's
+sweep of the package's functions over 23 arguments (322 output lines) is
+bit-identical to gc. The atomics are `VarHandle` accesses to the addressed
+slot of the referent's scalar or reference array; 32-bit additions
+re-normalize the canonical extended form in a compare-and-set loop, and
+pointer compare-and-swap compares locations, not Java identity. Not yet:
+anything that ranges over a function iterator inside std (`maps.Keys`,
+`slices.Sorted`, …), which the node package does not build.
+
+*Found by the gate, outside its subject* (reported to the owning lanes, not
+fixed here): (1) a conversion between `unsafe.Pointer` and `*T` is the
+identity in the node package, so `(*U)(unsafe.Pointer(p))` with another
+pointee type reads `U`'s slots from `T`'s object **silently** — W13 is a
+soundness gate for every further std package, not only a feature
+([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), draft); (2) `&T{}`
+for a slice-typed `T` yields a pointer whose pointee is not a variable
+(`container/heap`'s usual `pq := &PriorityQueue{}`); (3) operand order:
+gc reads plain variables after the calls of the same expression list
+(`println(f(&x), x)` prints the updated `x`), the node package strictly
+left to right; (4) an eight-goroutine program hangs at startup about one
+run in six with goroutines unmounted inside JDK/Truffle internals and idle
+carriers ([quarantine/](../../test/m1r/quarantine/)).
 
 *The worklist the linker now prints* (undefined reachable symbols of a
 one-call program, same build): `errors` 2 (`internal/reflectlite`
-`resolveNameOff`/`resolveTypeOff`), `sort` 0, `strconv` 2, `sync/atomic` 1
-per function used, `sync` 11, `strings`/`bytes` 26, `time` 30, `os` 62,
-**`fmt` 86** (reflect 14, `sync/atomic` 13, runtime 13 + 2 methods,
+`resolveNameOff`/`resolveTypeOff`), `sort` 0, `strconv` 2, `sync` 11,
+`strings`/`bytes` 26, `time` 30, `os` 62, **`fmt` 86** (reflect 14,
+`sync/atomic` 13 — since registered —, runtime 13 + 2 methods,
 `internal/poll` 8, `sync` 8, `internal/sync` 7, `os` 4, `syscall` 4, 11 in
 seven further packages). Link-clean is not run-clean: `errors`'s package
 initializer calls `reflectlite.TypeOf`, which reads an interface header and

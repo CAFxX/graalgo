@@ -66,3 +66,46 @@ replace math.Float64bits     MathIntrinsics func(float64) uint64
 replace math.Float64frombits MathIntrinsics func(uint64) float64
 replace math.Float32bits     MathIntrinsics func(float32) uint32
 replace math.Float32frombits MathIntrinsics func(uint32) float32
+
+# --- sync/atomic: the assembly functions (doc.go, doc_64.go) and the
+# pointer forms the runtime provides by //go:linkname
+# (runtime/atomic_pointer.go) ------------------------------------------------
+intrinsic sync/atomic.SwapInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.CompareAndSwapInt32 AtomicIntrinsics func(*int32, int32, int32) bool
+intrinsic sync/atomic.AddInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.AndInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.OrInt32 AtomicIntrinsics func(*int32, int32) int32
+intrinsic sync/atomic.LoadInt32 AtomicIntrinsics func(*int32) int32
+intrinsic sync/atomic.StoreInt32 AtomicIntrinsics func(*int32, int32)
+intrinsic sync/atomic.SwapUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.CompareAndSwapUint32 AtomicIntrinsics func(*uint32, uint32, uint32) bool
+intrinsic sync/atomic.AddUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.AndUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.OrUint32 AtomicIntrinsics func(*uint32, uint32) uint32
+intrinsic sync/atomic.LoadUint32 AtomicIntrinsics func(*uint32) uint32
+intrinsic sync/atomic.StoreUint32 AtomicIntrinsics func(*uint32, uint32)
+intrinsic sync/atomic.SwapInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.CompareAndSwapInt64 AtomicIntrinsics func(*int64, int64, int64) bool
+intrinsic sync/atomic.AddInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.AndInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.OrInt64 AtomicIntrinsics func(*int64, int64) int64
+intrinsic sync/atomic.LoadInt64 AtomicIntrinsics func(*int64) int64
+intrinsic sync/atomic.StoreInt64 AtomicIntrinsics func(*int64, int64)
+intrinsic sync/atomic.SwapUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.CompareAndSwapUint64 AtomicIntrinsics func(*uint64, uint64, uint64) bool
+intrinsic sync/atomic.AddUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.AndUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.OrUint64 AtomicIntrinsics func(*uint64, uint64) uint64
+intrinsic sync/atomic.LoadUint64 AtomicIntrinsics func(*uint64) uint64
+intrinsic sync/atomic.StoreUint64 AtomicIntrinsics func(*uint64, uint64)
+intrinsic sync/atomic.SwapUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.CompareAndSwapUintptr AtomicIntrinsics func(*uintptr, uintptr, uintptr) bool
+intrinsic sync/atomic.AddUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.AndUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.OrUintptr AtomicIntrinsics func(*uintptr, uintptr) uintptr
+intrinsic sync/atomic.LoadUintptr AtomicIntrinsics func(*uintptr) uintptr
+intrinsic sync/atomic.StoreUintptr AtomicIntrinsics func(*uintptr, uintptr)
+intrinsic sync/atomic.SwapPointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer) unsafe.Pointer
+intrinsic sync/atomic.CompareAndSwapPointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) bool
+intrinsic sync/atomic.LoadPointer AtomicIntrinsics func(*unsafe.Pointer) unsafe.Pointer
+intrinsic sync/atomic.StorePointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer)
