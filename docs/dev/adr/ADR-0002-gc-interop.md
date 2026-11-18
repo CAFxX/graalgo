@@ -156,7 +156,11 @@ Decision per primitive (all rows are P2-M4 implementation work unless noted):
   not a goroutine — finalizer bodies touching scheduler state fail-fast;
   constrain finalizer bodies, or route them through a scheduler trampoline so
   they run as real goroutines (P2-M4 decides; default: constrain +
-  document).
+  document). *Resolved 2026-11-18:* the trampoline — the Cleaner action
+  spawns the finalizer as a system goroutine of the registering program's
+  scheduler (it may block, freezes at exit, a panic is fatal as in gc), and
+  pending finalizers count as deadlock-detection wakers
+  ([GcInterop.java](../../../internal/backend/truffle/src/main/java/graalgo/runtime/GcInterop.java)).
 - *Removal:* `SetFinalizer(x, nil)` needs explicit deregistration (Cleaner
   has no unregister — wrapper with a cancelable registration).
 - *Residual risk (exporter mapping):* the Java object registered with the
