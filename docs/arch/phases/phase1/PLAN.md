@@ -29,7 +29,7 @@ direct `graalgo-run` launcher, never the wrapper (req-phase-map §3 flag 8).
 | C | Value model (`graalgo.values`): descriptors, GoStruct{long[],Object[]}, GoSlice, GoMap (open-addressing), GoString{byte[]}, GoInterface{(descriptor,data),itab}, GoFunc{RootCallTarget,Frame}, handle-table unsafe.Pointer | `GG-0015`, `GG-0016` | 1 |
 | D | Expression nodes: typed execute methods, unboxed primitives; **Safepoint.poll() seam** at function entries; polymorphism probe hooks at interface dispatch | GG-0014, GG-0017 (seam slice) | 1 |
 | E | Statement nodes incl. loops (`LoopNode`/`RepeatingNode`, `@ExplodeLoop`-friendly); **Safepoint.poll() seam** at loop back-edges; accurate SourceSections on every node | GG-0014, GG-0024 (inspect slice) | 1 |
-| F | defer (explicit per-goroutine chain) / panic (`AbstractTruffleException`, lazy traces) / recover / Goexit (`ControlFlowException`); panic(nil)→*PanicNilError* | GG-0019 | 1 |
+| F | defer (explicit per-goroutine chain) / panic (`AbstractTruffleException`, lazy traces) / recover / Goexit (`ControlFlowException`); panic(nil)→*PanicNilError* | `GG-0019` | 1 |
 | G | Intrinsics: builtins (len/cap/make/new/append/copy/delete/complex/real/imag/print/println/panic/recover) + runtime stubs (memmove/memequal, makeslice/growslice, map ops, itab, fastrand, traceback) + minimal `fmt` stub with verb-conformance matrix; versioned signatures for the **full ~60–70 catalog** (stubs where Phase 2 owns the impl) | GG-0020 (stub slice), GG-0021 (symbol-name slice), GG-0059 (part) | 1, 3 |
 | H | Generics: **monomorphize at the frontend** — one RootNode per go/types instantiation (D2, [DECIDED] below) | GG-0014 | 1 |
 | I | diffharness `graalgo` backend + corpus: 45 smoke + GOROOT/test 356 + test/typeparam 266 (filtered; exclusions versioned per GG-0033) + generated programs | GG-0010, GG-0029/0030/0031/0032, GG-0036, GG-0038 | 1 |
@@ -105,7 +105,7 @@ API wherever possible — enforced by `-Xlint:deprecation -Werror` in the build
 - M2: `gofrontend` emits typed AST; NodeFactory builds straight-line programs (`GG-0012`→active)
 - M3: expressions + values differential-green on arithmetic corpus (`GG-0015`→active)
 - M4: control flow, composite types, maps green (GG-0014→active)
-- M5: defer/panic/recover/Goexit green incl. adversarial (GG-0019→active)
+- M5: defer/panic/recover/Goexit green incl. adversarial (`GG-0019`→active)
 - M6: generics green incl. pathological (test/typeparam differential)
 - M7: full corpus differential green, zero unexplained divergences → gate 1
 - M8: fuzz-soak operational + mutation-validated → gate 2
@@ -167,7 +167,7 @@ reviews each, every finding remediated at named targets and re-tested)
 - GG-0014: any mode-specific AST assumption or second backend → review fail
 - `GG-0015`: value-semantics divergence (copy/reference/nil) vs gc → red
 - `GG-0016`: escaping unsafe arithmetic that doesn't trap, or any silent divergence → P0
-- GG-0019: defer/panic/recover/Goexit/panic(nil) ≠ gc → red
+- `GG-0019`: defer/panic/recover/Goexit/panic(nil) ≠ gc → red
 - GG-0020: AST calls a non-frozen signature → CI freeze gate red
 - GG-0021: stub symbol-name mismatch vs catalog → freeze review fail
 - GG-0059: freeze incomplete at M9 → gate 3 red; Phase 4 blocked

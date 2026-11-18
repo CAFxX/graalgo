@@ -55,7 +55,9 @@ Integration branch: `wt/recovery/integration`.
 | 2026-11-18 | Slot-releasing wrapper restated for syscall downcalls; `GG-SCHED-0004` superseded by GG-SCHED-0005; goroutine state in `G`, not thread-scoped holders | SPEC §3.5, ADR-0011 |
 | 2026-11-18 | The W1 launcher's `go version` suffix, `GOTOOLCHAIN=local`, `CGO_ENABLED=0`, `-tags=purego` and visible `-toolexec` are temporary deviations with retirement triggers; requirements unchanged | ADR-0010; SPEC `[DEVIATION, ADR-0010]` |
 | 2026-11-18 | M1 re-sequenced: new milestone M1r (registry, pointer model, descriptor images, reflectlite intrinsics, four syscalls) before M1b | toolexec-design §8.1 |
-| pending | Proposed amendments A7 (safepoint preemption), A8 (open-coded defers), A9 (closures over typed cells): implementation follows SPEC until the owner decides | truffle-design §14, §14.1 |
+| 2026-11-18 | A8 **accepted**: open-coded defers (statically lowered for top-level defers not in loops under the limit; explicit per-goroutine chain as fallback and as panic/recover/Goexit unwinding path; `recover`/`Goexit`/`runtime.Caller` match gc); `GG-0019` superseded by GG-0067; SPEC §3.5 and Appendix B amended | [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md), SPEC §3.5, truffle-design §4.5, §14 |
+| 2026-11-18 | A7 (safepoint preemption) **accepted conditionally on P-B** `[OPEN]`: the owner switches only if prototype P-B validates; SPEC, GG-SCHED-0001 and GG-0017 unchanged and `Safepoint.poll()` stays until then | ADR-0012, truffle-design §13.2, §14 |
+| 2026-11-18 | A9 (closures over typed cells) **deferred pending benchmarks**: SPEC §3.4 unchanged (`MaterializedFrame` closures) until the owner decides after the closure benchmarks | ADR-0012, truffle-design §14 |
 
 ## Tracks
 
@@ -156,8 +158,8 @@ rule (Sulong vs direct AST) whose re-test triggers are watched, not built.
 | GG-0011 Driver wrapper via `-toolexec` | W1 (landed), WP-DEV (DV5) |
 | GG-0013 No language pinning | W3, M1a gate |
 | GG-0014 One Truffle AST | W4/TR-3, TR-4, TR-13 |
-| GG-0017 Goroutines on virtual threads | shared scheduler (landed), TR-1, TR-5, TR-6 (A7 pending), WP-SCHED |
-| GG-0019 Panic/defer/Goexit | T0.A (landed), TR-3 (A8 pending), TR-7 |
+| GG-0017 Goroutines on virtual threads | shared scheduler (landed), TR-1, TR-5, TR-6 (A7 conditional on P-B), WP-SCHED |
+| GG-0067 Panic/defer/Goexit (open-coded defers; supersedes `GG-0019`) | T0.A (landed), TR-3 (A8 accepted), TR-7 |
 | GG-0020 Intrinsic surface | W5, W6, W8, W9, M5 coverage audit |
 | GG-0021 Linkname by symbol name | W6, M5 linkname-diff, WP-UPG1 (`rtlink`) |
 | GG-0022 cgo via Panama | WP-CGO1, WP-CGO2 |
@@ -204,7 +206,7 @@ rule (Sulong vs direct AST) whose re-test triggers are watched, not built.
 | GG-0064 Spawn helper | W8b |
 | GG-0065 GODEBUG registry | WP-GODEBUG, W5, WP-UPG1 |
 | GG-0066 Frontend of the tracked toolchain | W1/W2 (landed: tracked-release assertion), WP-UPG2 |
-| GG-SCHED-0001–0003 | shared scheduler (landed), TR-6 (A7 pending), WP-SCHED |
+| GG-SCHED-0001–0003 | shared scheduler (landed), TR-6 (A7 conditional on P-B), WP-SCHED |
 | GG-SCHED-0005 | W8a, W8b, WP-PIN |
 | GG-WAKE-0001–0003 | shared scheduler (landed), WP-SCHED |
 | GG-FAIR-0001–0003 | shared scheduler (landed), WP-SCHED |

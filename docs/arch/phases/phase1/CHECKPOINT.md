@@ -568,7 +568,7 @@ shift-double-add sequence; uint64→float32 correctly rounded (0 mismatches
 
 ## M5-F in progress 2026-10-04 (worker: F)
 
-**M5 acceptance ([PLAN.md](PLAN.md) §4): defer/panic/recover/Goexit green incl. adversarial (GG-0019→active).**
+**M5 acceptance ([PLAN.md](PLAN.md) §4): defer/panic/recover/Goexit green incl. adversarial (`GG-0019`→active).**
 
 ### Design (gc-oracle verified, go1.27.1 sources read)
 - Panic = `PanicException extends AbstractTruffleException` (lazy trace via
@@ -670,7 +670,7 @@ panic, fmt stub, map lifecycle. Expected outputs captured from gc.
 ## M5 complete 2026-10-04 (worker: M5-completion, coordinator-verified)
 
 **Acceptance ([PLAN.md](PLAN.md) §4): defer/panic/recover/Goexit green incl. adversarial
-(GG-0019→active).** All met: 102/102 tests green (81 pre-M5 + 21 new),
+(`GG-0019`→active).** All met: 102/102 tests green (81 pre-M5 + 21 new),
 differential vs stock gc on all 20 panic-corpus programs.
 
 ### What landed
@@ -703,7 +703,7 @@ StraightLine/Arithmetic harness style:
 DeferChain fix → pn07/pn09 fail exactly as predicted; reverted cleanly
 (md5-verified).
 
-**GG-0019 → active** (`req activate GG-0019` in tools/req).
+**`GG-0019` → active** (`req activate GG-0019` in tools/req).
 
 ### Evidence
 - `hidden_files/m5_red1.log`, `m5_mutant_red.log`, `/tmp/m5_verify.log`

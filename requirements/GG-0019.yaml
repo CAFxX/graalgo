@@ -3,8 +3,8 @@ title: Panic/defer/Goexit model
 statement: panic SHALL be an AbstractTruffleException carrying the value (lazy traces); runtime.Goexit SHALL be a ControlFlowException; defer SHALL be an explicit per-goroutine chain; panic(nil) SHALL produce *PanicNilError.
 rationale: Pins the control-flow design, including the rejected ControlFlowException-for-panic alternative.
 parent: ""
-status: active
-superseded_by: ""
+status: superseded
+superseded_by: GG-0067
 verification_plan: Defer/panic/recover conformance including adversarial defer storms.
 history:
     - '2026-10-03: created (draft)'
@@ -12,3 +12,4 @@ history:
     - '2026-10-03: active — Phase 1 started (coordinator)'
     - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
     - '2026-10-04: activated (implementation started)'
+    - '2026-11-18: superseded by GG-0067'

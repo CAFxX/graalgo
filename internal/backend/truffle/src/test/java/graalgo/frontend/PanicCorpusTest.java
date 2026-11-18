@@ -78,7 +78,7 @@ import java.util.stream.Stream;
  * <p>Run from the phase1 directory ({@code make test}); override with
  * {@code -Dgraalgo.phase1.dir=...}.
  */
-// verifies: GG-0019 (M5: defer/panic/recover/Goexit differential-green vs
+// verifies: GG-0067 (M5: defer/panic/recover/Goexit differential-green vs
 // stock gc — recovered programs assert every observed value bit-identical;
 // fatal programs assert exit code 2, the normalized panic header block, and
 // the goroutine-trace header; panic(nil) renders as *PanicNilError,

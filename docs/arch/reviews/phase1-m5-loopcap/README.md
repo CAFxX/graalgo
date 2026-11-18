@@ -7,7 +7,7 @@ Carlo asked "How are changes being reviewed?" and approved, 2026-10-04:
 
 ## Scope under review
 
-- M5: defer/panic/recover/Goexit (GG-0019, `defer` per-goroutine chains,
+- M5: defer/panic/recover/Goexit (`GG-0019`, `defer` per-goroutine chains,
   `panic` = AbstractTruffleException, `recover`, `Goexit` = ControlFlowException,
   panic(nil) handling). Accepted 2026-10-04 with 102/102 tests green + mutation.
 - WS-G: builtins + runtime intrinsics + minimal `fmt` overlay (122/122 verb

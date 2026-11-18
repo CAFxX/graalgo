@@ -129,21 +129,21 @@ design; interface freeze impossible without breaking the toil bound (→ archite
     *"The fork re-opens only on spike 6's re-test triggers"* (GG-0047).
     → Paraphrase: Phase 1 proceeds on the direct-AST route, no fallback work needed.
 
-## D. defer / panic / Goexit (SPEC §3.5; GG-0019)
+## D. defer / panic / Goexit (SPEC §3.5; `GG-0019`)
 
-24. SPEC.md:441 — *"**Defer** = explicit per-goroutine chain (open-coded defers are a later phase, not v1)."* (GG-0019)
+24. SPEC.md:441 — *"**Defer** = explicit per-goroutine chain (open-coded defers are a later phase, not v1)."* (`GG-0019`)
     → Paraphrase: implement defer as an explicit per-goroutine defer chain in v1;
     open-coded (gc-style inline) defers are explicitly NOT required in Phase 1.
 
-25. SPEC.md:442–444 — *"**Panic** = `AbstractTruffleException` carrying the value with lazy traces (recovered panics stay cheap; the `ControlFlowException` alternative is rejected because fatal panics need printed traces anyway — scoped verdict, T5 §4.4)."* (GG-0019)
+25. SPEC.md:442–444 — *"**Panic** = `AbstractTruffleException` carrying the value with lazy traces (recovered panics stay cheap; the `ControlFlowException` alternative is rejected because fatal panics need printed traces anyway — scoped verdict, T5 §4.4)."* (`GG-0019`)
     → Paraphrase: panic is a Truffle `AbstractTruffleException` carrying the panicked
     value with lazily-computed stack traces; `ControlFlowException` for panic is
     rejected (§10.2 ledger).
 
-26. SPEC.md:445 — *"**Goexit** = `ControlFlowException`."* (GG-0019)
+26. SPEC.md:445 — *"**Goexit** = `ControlFlowException`."* (`GG-0019`)
     → Paraphrase: `runtime.Goexit()` unwinds via `ControlFlowException` (no trace needed).
 
-27. SPEC.md:445–446 — *"**panic(nil)** → `*PanicNilError` (Go ≥1.21 semantics, replicated exactly)."* (GG-0019)
+27. SPEC.md:445–446 — *"**panic(nil)** → `*PanicNilError` (Go ≥1.21 semantics, replicated exactly)."* (`GG-0019`)
     → Paraphrase: `panic(nil)` must produce `*PanicNilError`, replicating Go ≥1.21
     semantics exactly (differential-test the boundary).
 
@@ -273,7 +273,7 @@ design; interface freeze impossible without breaking the toil bound (→ archite
     `GG-0012` (verbatim frontend vendoring): SPEC §3.2 (items 1, 2, 4). GG-0013 (no language pinning): SPEC §3.2 (item 3).
     GG-0014 (one Truffle AST): SPEC §3.3 (items 17–20). `GG-0015` (Java-object value model): SPEC §3.4 (items 5–14).
     `GG-0016` (unsafe.Pointer v1): SPEC §3.4 + §7.3 (items 15, 16). GG-0017 (goroutines on vthreads — Phase 2, context only): SPEC §3.5 (item 28).
-    GG-0019 (panic/defer/Goexit model): SPEC §3.5 (items 24–27). GG-0020 (intrinsic surface): SPEC §3.6 (items 29, 30), §4.1 (items 40, 41).
+    `GG-0019` (panic/defer/Goexit model): SPEC §3.5 (items 24–27). GG-0020 (intrinsic surface): SPEC §3.6 (items 29, 30), §4.1 (items 40, 41).
     GG-0021 (linkname by symbol name): SPEC §3.6 (items 31, 32). GG-0024 (debugging/SourceSections): SPEC §3.10 (item 22).
     GG-0030/GG-0031 (differential oracle + nondeterminism controls): SPEC §5.5 (item 46). GG-0032 (conformance corpora): SPEC §5.2 (item 44).
     GG-0034 (mutation-validated oracles): SPEC §5.7 (item 47). GG-0037 (generative differential fuzzing): SPEC §5.4 (items 33, 45).

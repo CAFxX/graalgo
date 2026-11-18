@@ -22,7 +22,7 @@ Phase definitions used (from task brief):
 | GG-0014 | 1 | One Truffle AST from go/ast+go/types feeds all three execution modes; no second backend. | Direct Phase-1 scope: build the AST once, correctly. |
 | `GG-0015` | 1 | Go values as Java objects: descriptor-based structs, typed-array slices, (itab,data) interfaces, byte[] strings; opaque pointers. | Direct Phase-1 scope: the descriptor-based value model. |
 | `GG-0016` | 1 | `unsafe.Pointer` emulated via handle table; escaping arithmetic traps; restriction documented, never silent. | Language-level unsafe semantics for Phase-1 language tests. |
-| GG-0019 | 1 | panic as AbstractTruffleException, Goexit as ControlFlowException, explicit per-goroutine defer chain, panic(nil)→*PanicNilError. | Direct Phase-1 scope: defer/panic/Goexit model. |
+| `GG-0019` | 1 | panic as AbstractTruffleException, Goexit as ControlFlowException, explicit per-goroutine defer chain, panic(nil)→*PanicNilError. | Direct Phase-1 scope: defer/panic/Goexit model. |
 | GG-0020 | 1 (slice) | Versioned intrinsic surface of ~60–70 functions (memmove/memequal, makeslice/growslice, map/chan/select ops, itab, panic/defer, scheduler, atomics, timers, fastrand, traceback) + exact rtype/itab layouts. | Phase-1 slice: stubs for language tests. Full chan/select/scheduler/timer impl is Phase 2. |
 | GG-0021 | 1 (slice) | Linkname compatibility runtime↔stdlib by symbol name, not gc ABI; linkname-diff step scopes per-release churn. | Phase-1 slice: symbol-name linkage for the stubbed runtime. Per-release churn scoping is cross-cutting. |
 | GG-0059 | 1 | At Phase-1 interface freeze, AST↔runtime intrinsic signatures and `-toolexec` argv contract versioned and documented. | Explicitly a Phase-1 end-of-phase deliverable; Phase 4 start depends on it. |
@@ -130,7 +130,7 @@ Requirements Phase 1 owns or exercises during Phase 1:
 6. GG-0014 (AST construction slice)
 7. `GG-0015`
 8. `GG-0016`
-9. GG-0019
+9. `GG-0019`
 10. GG-0020 (stubs-for-language-tests slice)
 11. GG-0021 (symbol-name linkage slice)
 12. GG-0023 (linux/amd64 dev+CI slice)

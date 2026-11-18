@@ -54,7 +54,7 @@ WS G `println` intrinsic becomes the program-observable channel.
 
 ## M5 state (2026-10-04)
 
-`defer`/`panic`/`recover`/`Goexit` are live (GG-0019, `PanicCorpusTest`
+`defer`/`panic`/`recover`/`Goexit` are live (`GG-0019`, `PanicCorpusTest`
 differential vs stock gc on `corpus/panic/` — 20 programs). The fatal-path
 contract above (exit 2, gc-comparable stderr) is pinned by the test's
 `// panic:` cases with an explicit comparison scope: normalized panic

@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 77 records — `requirements/GG-0001`–`GG-0066`, `GG-SCHED-0001`–`0005`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0055 and `GG-SCHED-0004` superseded by GG-0066/0061/0062/0063/0065 and GG-SCHED-0005
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md); open-coded defers, [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)) · **Requirements:** 78 records — `requirements/GG-0001`–`GG-0067`, `GG-SCHED-0001`–`0005`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0019/0055 and `GG-SCHED-0004` superseded by GG-0066/0061/0062/0063/0067/0065 and GG-SCHED-0005
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed ·
@@ -347,7 +347,7 @@ Evidence: [abi-spike.md](abi-spike.md) §1 (verbatim reflect on byte-exact
 descriptor images: 607/607 answers identical to gc). **Falsifier:** a std or
 corpus program that gc runs without checkptr errors but that traps here.
 
-### 3.5 Concurrency runtime (GG-0017, GG-0063, GG-0019; GG-SCHED-0001–0003, GG-SCHED-0005, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
+### 3.5 Concurrency runtime (GG-0017, GG-0063, GG-0067; GG-SCHED-0001–0003, GG-SCHED-0005, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
 
 **Goroutine = virtual thread + scheduler token** `[DECIDED]`. `go f(args)` ≡
 `Thread.ofVirtual().start(...)` (JEP 444 `[VERIFIED]`); goroutine-local state
@@ -513,8 +513,17 @@ until measured: gating work item **P-F** ([truffle-design.md](truffle-design.md)
 **Channels** = Java objects (lock, circular buffer over a typed array, two
 wait-queues of scheduler-parked virtual threads); **select** ports
 `runtime/select.go` logic (lock channels in address order, poll, park one
-Parker on all, spurious-wakeup loop, `fastrand` among ready cases). **Defer** =
-explicit per-goroutine chain (open-coded defers are a later phase, not v1).
+Parker on all, spurious-wakeup loop, `fastrand` among ready cases). **Defer** `[DECIDED]`
+(2026-11-18, GG-0067, superseding `GG-0019`'s explicit chain; ADR-0012) =
+open-coded for the common case — a function whose defers are all outside
+loops and under the open-coded limit lowers them statically into frame slots
+and a defer-bits word, run at function exit with no per-call allocation and
+no `G` access on the non-panic path — with the explicit per-goroutine defer
+chain as the fallback (a defer in a loop, over the limit, or in a
+range-over-func body; one function never mixes the two) and as the
+panic/recover/`Goexit` unwinding path. Open-coding is not observable:
+`recover`, `Goexit`, panics in deferred calls and `runtime.Caller` match gc on
+both paths (design: [truffle-design.md](truffle-design.md) §4.5).
 **Panic** = `AbstractTruffleException` carrying the value with lazy traces
 (recovered panics stay cheap; the `ControlFlowException` alternative is rejected
 because fatal panics need printed traces anyway — scoped verdict, T5 §4.4).
@@ -1294,7 +1303,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | `GG-0016` | unsafe.Pointer v1 semantics — superseded by GG-0062 | — |
 | GG-0017 | Goroutines on virtual threads with user-space scheduler | §3.5 |
 | `GG-0018` | Netpoller deletion — superseded by GG-0063 | — |
-| GG-0019 | Panic/defer/Goexit model | §3.5 |
+| `GG-0019` | Panic/defer/Goexit model (explicit per-goroutine chain) — superseded by GG-0067 | — |
 | GG-0020 | Intrinsic surface | §3.6 |
 | GG-0021 | Linkname by symbol name | §3.6 |
 | GG-0022 | cgo via Panama FFI | §3.7 (§7.5 closure) |
@@ -1342,6 +1351,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0064 | Process creation via a spawn helper | §3.8 |
 | GG-0065 | GODEBUG registry, gc-compatible unknown keys | §4.5 (§7.15 closure) |
 | GG-0066 | Frontend: go/parser + go/types of the tracked toolchain | §3.2 |
+| GG-0067 | Panic/defer/Goexit model: open-coded defers with explicit-chain fallback | §3.5 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |

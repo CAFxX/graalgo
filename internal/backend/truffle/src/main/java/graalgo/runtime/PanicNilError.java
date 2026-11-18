@@ -4,7 +4,7 @@ import graalgo.values.GoKind;
 import graalgo.values.GoTypeDescriptor;
 
 /**
- * The Go value {@code *runtime.PanicNilError} (M5, WS F; GG-0019).
+ * The Go value {@code *runtime.PanicNilError} (M5, WS F; GG-0067).
  *
  * <p>Since Go 1.21, {@code panic(nil)} — and panicking with a nil interface
  * value — produces a {@code *PanicNilError} instead of a nil panic value
