@@ -58,10 +58,16 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		if inst := fs.instance(x.X); inst != nil {
 			return inst
 		}
+		if se := fs.genericMethodSel(x); se != nil {
+			return fs.instMethodVal(se, tv.Type) // s.M[T]: method value with type arguments
+		}
 		return &ir.IndexExpr{Type: typ(), Pos: fs.opPos(x, x.Lbrack), X: fs.expr(x.X), Index: fs.indexOperand(x.X, x.Index)}
 	case *ast.IndexListExpr:
 		if inst := fs.instance(x.X); inst != nil {
 			return inst
+		}
+		if se := fs.genericMethodSel(x); se != nil {
+			return fs.instMethodVal(se, tv.Type)
 		}
 	case *ast.SliceExpr:
 		if _, isArr := info.Types[x.X].Type.Underlying().(*types.Array); isArr {
@@ -255,6 +261,38 @@ func (fs *fnState) instance(fun ast.Expr) ir.Expr {
 		return fs.funcRef(f, id)
 	}
 	return nil
+}
+
+// genericMethodSel returns x.M for an explicit instantiation x.M[T...] of
+// a generic method (its type arguments are recorded on M).
+func (fs *fnState) genericMethodSel(x ast.Expr) *ast.SelectorExpr {
+	var base ast.Expr
+	switch y := x.(type) {
+	case *ast.IndexExpr:
+		base = y.X
+	case *ast.IndexListExpr:
+		base = y.X
+	default:
+		return nil
+	}
+	se, ok := unparen(base).(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	if sel, ok := fs.e.cfg.Info.Selections[se]; ok && sel.Kind() == types.MethodVal {
+		return se
+	}
+	return nil
+}
+
+// instMethodVal is the method value s.M[T...]: typed with the
+// instantiated signature (go/types records the generic one on s.M).
+func (fs *fnState) instMethodVal(se *ast.SelectorExpr, t types.Type) ir.Expr {
+	v := fs.selector(se)
+	if mv, ok := v.(*ir.MethodValExpr); ok {
+		mv.Type = fs.e.typeID(t)
+	}
+	return v
 }
 
 // fieldPathType returns the type reached by following field indices from t.
@@ -495,11 +533,18 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 	case funTV.IsBuiltin():
 		return fs.builtinCall(x, typ)
 	}
-	if se, ok := unparen(x.Fun).(*ast.SelectorExpr); ok {
+	fun := unparen(x.Fun)
+	if se := fs.genericMethodSel(fun); se != nil {
+		fun = se
+	}
+	if se, ok := fun.(*ast.SelectorExpr); ok {
 		if sel, ok := info.Selections[se]; ok && sel.Kind() == types.MethodVal {
 			m := sel.Obj().(*types.Func)
 			recv, isIface := fs.methodRecv(se, sel)
-			sig := info.Types[se].Type.(*types.Signature)
+			sig, _ := info.Types[x.Fun].Type.(*types.Signature) // instantiated for s.M[T](...)
+			if sig == nil {
+				sig = info.Types[se].Type.(*types.Signature)
+			}
 			args := fs.args(x, sig)
 			if isIface {
 				name, pkg := methodName(m)

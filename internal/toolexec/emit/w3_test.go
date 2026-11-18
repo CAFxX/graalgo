@@ -340,3 +340,27 @@ func F() (func(Out, int) int, func(*Out) int, func(POut) int, func(HasI, int) in
 		t.Errorf("wrappers do not call the method")
 	}
 }
+
+// Explicitly instantiated generic methods (go1.27): s.M[T](...) is a
+// method call with type arguments and s.M[T] a method value (found by
+// the differential harness: W2 lowered them as an index expression and
+// failed on the type argument).
+func TestExplicitGenericMethodInst(t *testing.T) {
+	f := emitSrc(t, `package p
+type S[T any] struct{ v T }
+func (s S[T]) Map[U any](f func(T) U) U { return f(s.v) }
+func F() (string, func(func(int) string) string) {
+	s := S[int]{1}
+	return s.Map[string](func(int) string { return "" }), s.Map[string]
+}
+`)
+	body := funcBody(t, f, "F")
+	mc := nodesOf[*ir.MethodCallExpr](body)
+	mv := nodesOf[*ir.MethodValExpr](body)
+	if len(mc) != 1 || len(mc[0].Targs) != 1 || typeKey(f, mc[0].Targs[0]) != "string" {
+		t.Errorf("method call: %+v", mc)
+	}
+	if len(mv) != 1 || len(mv[0].Targs) != 1 || typeKey(f, mv[0].Type) != "func(func(int) string) string" {
+		t.Errorf("method value: %+v (%s)", mv, typeKey(f, mv[0].Type))
+	}
+}
