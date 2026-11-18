@@ -3,7 +3,8 @@
 **Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 75 records — `requirements/GG-0001`–`GG-0065`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0015`/0016/0018/0055 superseded by GG-0061/0062/0063/0065
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
-`[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed
+`[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed ·
+`[DEVIATION, ADR-n]` the current implementation knowingly deviates from the marked text, temporarily, with a retirement trigger in ADR-n
 
 ## Table of contents
 
@@ -64,7 +65,10 @@ Go/no-go items are: the program
 requirements (§2), the §7 closures, and the §8 risks. Anything labeled
 `[ESTIMATE]` is a quantified judgment, never a measurement; `[SPECULATIVE]` and
 `[UNVERIFIED]` mark claims that must survive the falsifying experiments in §8
-before they are promoted.
+before they are promoted. `[DEVIATION, ADR-n]` (since 2026-11-18) never
+weakens the text it marks: the requirement stands, the implementation is
+recorded as failing it, and ADR-n names the trigger that retires the
+deviation.
 
 ### 1.4 Terminology
 
@@ -99,6 +103,14 @@ build-flag set, per-command flags (including `go test`'s two-phase flag parser),
 JSON protocol with two-level result caching, and `go vet` invocation. The 929
 txtar scripts in `src/cmd/go/testdata/script/` `[VERIFIED]` are the de-facto
 conformance suite for both boundaries.
+
+**Current deviations** `[DEVIATION, ADR-0010]` (2026-11-18, the W1 launcher):
+`go version` appends ` graalgo-<version>`; `GOTOOLCHAIN=local` and
+`CGO_ENABLED=0` are defaulted; `-toolexec=…` and `-tags=purego` are injected
+into `GOFLAGS` and therefore visible in `go env`. Each is temporary, is
+reported as a failure against GG-0001/GG-0002 (never as an exclusion), and
+has a retirement trigger in
+[ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md).
 
 What drop-in does **not** require `[DECIDED]`: byte-identical binaries, or
 byte-identical cross-backend build-cache sharing. Action IDs hash tool identity
@@ -214,6 +226,9 @@ asm (485 files / ~127k lines `[VERIFIED]`) is handled per category: runtime-core
 asm *evaporates* (no Go stacks on Truffle), atomics/bytealg are *intrinsified*,
 crypto is *emulate-then-intrinsify*, `math` is *covered by JVM IEEE754*
 `[DECIDED]`. Linkname compatibility is by symbol name, not gc ABI (GG-0021).
+Until the crypto assembly is intrinsified, the launcher builds with
+`-tags=purego` by default `[DEVIATION, ADR-0010]` (DV3), which changes which
+files of `purego`-aware packages compile.
 
 ### 2.9 Testing as a first-class deliverable (GG-0010)
 
@@ -555,7 +570,8 @@ matching Go's "cgo calls consume an M" economics, budgeted per GG-0057.
 Panama mapping) is banned in module code by verifier rule (GG-0058) `[DECIDED]` —
 C code defeats generation-relative addressing and generation tagging either way.
 **Falsifier:** spike 1 (asm/cgo) + the Phase-4 cgo corpus; kill trigger =
-systematic ABI divergence from the layout engine.
+systematic ABI divergence from the layout engine. Until the mapping exists the
+launcher defaults `CGO_ENABLED=0` `[DEVIATION, ADR-0010]` (DV4).
 
 ### 3.8 OS scope: Linux-first (GG-0023)
 
@@ -948,6 +964,10 @@ When a module's `go`/`toolchain` line is newer than the bundled toolchain, stock
 pushes more real-world modules into switch/refuse paths. `go version` output,
 `runtime.Version()`, the `toolchain` directive (incl. `toolchain default`), and
 `GOTOOLCHAIN` env/`go env -w` handling are version-faithful.
+`[DEVIATION, ADR-0010]` (2026-11-18): the launcher defaults
+`GOTOOLCHAIN=local` and refuses a switch to another release (DV2), and
+`go version` carries a ` graalgo-<version>` suffix (DV1); `runtime.Version()`
+is unaffected.
 
 ---
 

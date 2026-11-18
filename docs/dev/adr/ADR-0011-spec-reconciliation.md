@@ -19,7 +19,7 @@ SPEC.md is authoritative, and the recovery designs
 locked requirement text and the decided design or gc's own behaviour had
 drifted apart without an amendment. This ADR records the requirement-level
 fixes; the launcher's temporary deviations are recorded separately in
-ADR-0010.
+[ADR-0010](ADR-0010-launcher-deviations.md).
 
 ## Decisions
 
