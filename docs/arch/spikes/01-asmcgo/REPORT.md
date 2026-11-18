@@ -336,3 +336,14 @@ separately because it is a build artifact. Rebuild with
 ## Removed artifacts
 
 `panama/libchecksum.so` (a compiled shared object) was removed from the repo 2026-11-18 (no tracked binaries); rebuild it from the C source in [panama/](panama/) before running `PanamaDemo.java`.
+
+## Pruned run logs (2026-11-18)
+
+1 raw run logs that this report does not cite were removed from git
+(debris gate: per-tree log-size cap in `check_tracked_files.py`), from
+`logs/`. They remain in history:
+`git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
+--name-only 228dd7ab docs/arch/spikes/01-asmcgo` lists them). To regenerate,
+re-run the commands this report describes on the pinned toolchains (docs/dev/ENV.md); every log
+this report cites is kept.
+

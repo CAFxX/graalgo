@@ -38,7 +38,8 @@
 #               gate (bug id + signature per deferred-parity entry), every
 #               .github/scripts/test_*.py, markdown links, `tools/req
 #               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
-#               tests, vendoring diff, frontend/v1 wire-format validator)
+#               tests, vendoring diff, frontend/v1 wire-format validator);
+#               vet-spikes (go vet of the test/spikes/abi probe modules)
 #     test-v2 / test-toolexec / test-gir / test-p3frontend
 #               the Go/Java module suites (frontend v2, -toolexec wrapper,
 #               GIR Java codec, p3frontend loader)
@@ -135,7 +136,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression
 
@@ -174,6 +175,7 @@ check:
 	python3 .github/scripts/check_no_dead_paths.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
 	$(MAKE) check-repo
+	$(MAKE) vet-spikes
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
 	# wire-format validation (internal/frontend/build.sh check).
 	# /tmp is a 512M shared tmpfs: keep the fresh-export JSONs on the
@@ -181,6 +183,15 @@ check:
 	mkdir -p $(CURDIR)/internal/frontend/.tmp && \
 	cd internal/frontend && TMPDIR="$(CURDIR)/internal/frontend/.tmp" \
 	GOTMPDIR="$(CURDIR)/internal/frontend/.tmp" GO="$(GO)" ./build.sh check
+
+# The ABI spike's probe modules (test/spikes/abi/*, abi-spike.md) are built
+# by no other target and would rot silently: vet (which type-checks and
+# compiles) each one here, in `make check`.
+SPIKE_MODULES := $(sort $(dir $(wildcard test/spikes/abi/*/go.mod)))
+vet-spikes:
+	@set -e; test -n "$(SPIKE_MODULES)" || { echo "vet-spikes: no modules found"; exit 1; }; \
+	for m in $(SPIKE_MODULES); do echo "== vet $$m"; \
+	  (cd $$m && GOTOOLCHAIN=local PATH="$(dir $(GO)):$$PATH" $(GO) vet ./...); done
 
 # Repo-wide static gates (no build needed). Each check_*.py has a
 # test_*.py that plants the violation it guards; every test_*.py runs here.
