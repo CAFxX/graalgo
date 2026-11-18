@@ -66,6 +66,9 @@ func scanAll(c *workCtx) ([]Ref, []string, error) {
 			}
 			return nil
 		}
+		if path == filepath.Join(c.reqDir, textSumFile) {
+			return nil // the locked-text manifest lists ids; it cites none
+		}
 		rel, err := filepath.Rel(c.root, path)
 		if err != nil {
 			rel = path

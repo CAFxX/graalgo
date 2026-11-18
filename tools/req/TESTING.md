@@ -1,7 +1,8 @@
 # [TESTING.md](TESTING.md) — `req` CLI test suite
 
 Test suite for the `req` requirement-registry CLI (`tools/req/`: `add`,
-`lint`, `trace`, `tree`, `supersede`, `retire`). 127 test functions in
+`lint`, `trace`, `tree`, `supersede`, `retire`, `lock`, `activate`,
+`seal`). 156 test functions in
 package `main`, all hermetic.
 
 ## Hermeticity contract
@@ -81,6 +82,7 @@ change (see below).
 | RG3 | `verifies:` annotation no longer promoted to `KindVerifies` in `scanAll` | `TestScan_BasicRefAndVerifies`, `TestScan_VerifiesLineWithTwoIDs`, `TestScan_TestFilesOnlyVerifiesScanned`, `TestLint_Clean` (rule (c) collapses without verifies refs). `TestLint_RuleC_ActiveNeedsVerifies` still passed (negative case, unaffected). | green |
 | RG4 | `mintID`: `max+1` → `max` (off-by-one, reuses the max ID) | `TestMintID_Empty`, `TestMintID_GapNotFilled`, `TestMintID_NeverReusesRetired`, `TestCmdAdd_Monotonic`, `TestSupersede_ZeroHits` | green |
 | RG5 | `absRefPath` returns the repo-relative path unchanged (no `--root` anchoring — the old buggy behavior) | `TestAbsRefPath`, `TestPlanFileEdits_RootAnchored`, `TestSupersede_WithHits_InteractiveUpdate` | green |
+| RG6 | lint rule (e) disabled (`textSumProblems` result dropped in `cmdLint`) | 11 tests in [textsum_test.go](textsum_test.go): every rule-(e) failure case (`TestLint_RuleE_*`, `TestCmdLock_RecordsSum`); the positive cases (`TestLint_RuleE_DraftEditable`, `TestLint_RuleE_LifecycleFieldsNotHashed`) still passed | green |
 
 ## Failure injection
 

@@ -145,6 +145,10 @@ func cmdLock(args []string) error {
 			return fmt.Errorf("%s is not draft (status %q): only draft requirements can be locked", id, rec.Status)
 		}
 	}
+	sums, err := loadTextSums(c.reqDir)
+	if err != nil {
+		return err
+	}
 	for _, id := range ids {
 		rec := reg[id]
 		rec.Status = "locked"
@@ -152,9 +156,12 @@ func cmdLock(args []string) error {
 		if err := rec.save(); err != nil {
 			return err
 		}
+		sums[id] = textSum(rec)
 		fmt.Printf("locked %s\n", id)
 	}
-	return nil
+	// The sum records the text as signed off; lint rule (e) fails if it
+	// later changes in place.
+	return os.WriteFile(filepath.Join(c.reqDir, textSumFile), renderTextSums(sums), 0644)
 }
 
 // ---------- req activate ----------
@@ -277,6 +284,13 @@ func cmdLint(args []string) error {
 	for _, msg := range fmts {
 		problems = append(problems, "rule (d): "+msg)
 	}
+
+	// Rule (e): locked text is unchanged since lock (see textsum.go).
+	sums, err := loadTextSums(c.reqDir)
+	if err != nil {
+		return err
+	}
+	problems = append(problems, textSumProblems(reg, sums)...)
 
 	// Registry self-consistency: parent and superseded_by resolve; superseded
 	// requirements name a live successor.

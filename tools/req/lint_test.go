@@ -141,6 +141,7 @@ func TestLint_RuleC_NonActiveExempt(t *testing.T) {
 	writeFile(t, filepath.Join(reqDir, "GG-0004.yaml"), reqFile("GG-0004", "draft", "", ""))
 	writeFile(t, filepath.Join(reqDir, "GG-0005.yaml"), reqFile("GG-0005", "retired", "", ""))
 	writeFile(t, filepath.Join(reqDir, "GG-0006.yaml"), reqFile("GG-0006", "superseded", "", "GG-0001"))
+	sealFixture(t, reqDir)
 	out, err := runLint(t, root, reqDir)
 	if err != nil {
 		t.Fatalf("draft/retired/superseded need no verifies:: %v\n%s", err, out)
@@ -201,6 +202,7 @@ func TestLint_ChainIntermediateSupersededOK(t *testing.T) {
 	writeFile(t, filepath.Join(reqDir, "GG-0006.yaml"), reqFile("GG-0006", "active", "", ""))
 	writeFile(t, filepath.Join(root, "v_test.go"),
 		"package x\nimport \"testing\"\n// verifies: GG-0006\nfunc TestV(t *testing.T) {}\n")
+	sealFixture(t, reqDir)
 	out, err := runLint(t, root, reqDir)
 	if err != nil {
 		t.Fatalf("A -> B -> C chains with live terminus must pass: %v\n%s", err, out)

@@ -1,6 +1,6 @@
 // Command req manages the graalgo requirements registry.
 //
-// Subcommands: add | lint | trace | tree | supersede | retire | lock | activate
+// Subcommands: add | lint | trace | tree | supersede | retire | lock | activate | seal
 package main
 
 import (
@@ -39,6 +39,8 @@ func run(args []string) int {
 		err = cmdLock(rest)
 	case "activate":
 		err = cmdActivate(rest)
+	case "seal":
+		err = cmdSeal(rest)
 	case "help", "-h", "--help":
 		usage()
 		return 0
@@ -61,13 +63,14 @@ Usage: req <command> [flags]
 
 Commands:
   add        mint a new draft requirement ID
-  lint       check ID annotations and traceability rules (a)-(d)
+  lint       check ID annotations, traceability and locked text, rules (a)-(e)
   trace      show requirement -> code sites -> tests
   tree       render the requirement hierarchy
   supersede  retire/supersede a requirement (atomic workflow)
   retire     retire a requirement with no successor (atomic workflow)
   lock       lock draft requirement(s) at SPEC acceptance (atomic workflow)
   activate   activate locked requirement(s) as implementation starts (atomic)
+  seal       record locked-text sums for non-draft requirements lacking one
 
 Common flags: --root DIR  --req-dir DIR  --scan-dir DIR
 `)

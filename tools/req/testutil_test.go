@@ -68,7 +68,35 @@ func stdLayout(t *testing.T, files map[string]string) (root, reqDir string) {
 	if err := os.MkdirAll(reqDir, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if _, given := files["requirements/"+textSumFile]; !given {
+		sealFixture(t, reqDir)
+	}
 	return root, reqDir
+}
+
+// sealFixture writes the locked-text manifest for the fixture's non-draft
+// requirements, as `req lock` would have when they were locked, so fixtures
+// model a registry whose locks went through the tool. A fixture whose
+// registry does not load (load-error tests) is left unsealed. Tests of
+// rule (e) itself pass their own manifest (or none) explicitly.
+func sealFixture(t *testing.T, reqDir string) {
+	t.Helper()
+	reg, err := loadRegistry(reqDir)
+	if err != nil {
+		return
+	}
+	sums := map[string]string{}
+	for id, rec := range reg {
+		if rec.Status != "draft" {
+			sums[id] = textSum(rec)
+		}
+	}
+	if len(sums) == 0 {
+		return
+	}
+	if err := os.WriteFile(filepath.Join(reqDir, textSumFile), renderTextSums(sums), 0644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func writeFile(t *testing.T, path, content string) {
