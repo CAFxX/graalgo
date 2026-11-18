@@ -1054,7 +1054,10 @@ stock `go build -toolexec` over a two-package module:
 - Packages compiled with `-std` get no IR: the fork of §5 does not exist
   (W5). The skeleton's `-std` check is the only place where it departs from
   "compile whatever cmd/go hands over", and it disappears with W5.
-- No symbol resolution, init order or `-X` at link.
+  (Gone since W5's first slice, below.)
+- No symbol resolution, init order or `-X` at link. (Symbol resolution:
+  W6's first slice, below; init order and `-X` are still the loader's and
+  W7's.)
 
 **Since the skeleton (W2):** the IR member is GIR (§3.2), emitted by
 [emit/](../../internal/toolexec/emit/), which lowers all of std without an
@@ -1159,7 +1162,8 @@ packages:
   followed by the method's own type arguments.
 - Body-less functions resolve through a (so far one-entry) intrinsic table
   by `//go:linkname` remote name: `runtime.nanotime`, used by the M1a
-  benchmarks. The registry of §5.3 is W6.
+  benchmarks. The registry of §5.3 is W6. (Replaced by the registry and
+  the link's resolution table, below.)
 - Emitter bug found by the gate (W3, fixed): the receiver's type parameters
   and a generic method's own type parameters are registered under one
   owner (`emit.registerFunc`), and both lists are indexed from 0, so `T` and
@@ -1176,6 +1180,125 @@ packages:
 - Not built in the backend yet: range-over-func (the loop body must become
   a yield closure over the enclosing function's variables, which the IR
   does not flag as captured).
+
+**Since the skeleton (W5 + W6, first slice of M1r, 2026-11-18):** the
+standard library compiles through the path from upstream's source and the
+first packages run. Gate: `make test-m1r`
+([test/m1r/run.sh](../../test/m1r/run.sh)), plus the unit and end-to-end
+tests of [fork/](../../internal/toolexec/fork/),
+[link/](../../internal/toolexec/link/),
+[intrinsics/](../../internal/toolexec/intrinsics/) and
+[cmd/graalgo-tool/](../../internal/toolexec/cmd/graalgo-tool/) in
+`make test-toolexec`.
+
+*W5, the fork.* [stdlib/fork/](../../stdlib/fork/) holds replaced packages,
+[stdlib/patches/](../../stdlib/patches/) holds `<import path>/<file>.patch`
+diffs; [fork/](../../internal/toolexec/fork/) loads and validates them
+against the tracked release (a replaced package or patched file that
+upstream lacks, a non-diff under `patches`, a package both replaced and
+patched, or a patch that does not apply at exactly the lines it names is an
+error — no fuzz, no offsets) and
+[graalgo-goroot](../../internal/toolexec/cmd/graalgo-goroot/) turns the fork
+into a `go build -overlay` file (tests) or an assembled GOROOT (`make
+goroot`: everything but `src` links to the upstream distribution, `src` is a
+copy with the fork applied; `-shallow` links untouched source directories
+for per-test use). graalgo-tool emits GIR for every package, `-std`
+included, and has no package list. Measured:
+
+- Replaced packages: **2** — `runtime` (8 files, 980 lines, hiding 780
+  upstream files) and `runtime/race` (the empty package of §2.6, with the
+  no-op hooks pushed by the facade under the `race` tag). Patched files:
+  **0**.
+- The facade `runtime` declares the **35 identifiers** that Go source of std
+  outside `runtime` and `internal/runtime/*` names (syntactic scan of
+  `runtime.X` selectors over the 381 packages `go list std` reports with
+  `-tags purego`; §5.4's "54 objects" counted the linkname pulls as well,
+  which need no declaration) plus the five types their signatures mention.
+  Declarations and documentation are upstream's; functions are body-less.
+  With it **all of std compiles under the shadow gc compile** (`go build
+  std`, 31 CPU-seconds), `runtime/debug`, `runtime/pprof`, `runtime/trace`,
+  `runtime/metrics` and `os/signal` included: their runtime dependencies are
+  linkname pulls, which the linker resolves — the "patched thin" class of
+  §5.1 needs no patch to compile.
+- `internal/runtime/*` is **not replaced**: the packages are upstream's and
+  only enter a link that reaches them, where their assembly functions are
+  ordinary intrinsic candidates. A facade is written for one of them when
+  its upstream source cannot work (expected first: `internal/runtime/maps`
+  once `reflect` names its types). This answers P6 for the first slice.
+- `internal/cpu` needs no patch: nothing calls `Initialize`, so it reports
+  no feature ([limitations.md](limitations.md)).
+- `runtime.AddCleanup` is generic and gc rejects a generic function without
+  a body: its body forwards to the body-less `addCleanup`.
+- Go's `//go:linknamestd` (52 directives in go1.27 std, e.g. `iter`'s
+  coroutine hooks) is recorded like `//go:linkname`; a directive no longer
+  tags a method that shares the function's name (both emitter fixes,
+  `TestLinknameDirectives`).
+
+*W6, registry and link.*
+[registry.txt](../../internal/toolexec/intrinsics/registry.txt) is the one
+source of truth: `intrinsic SYMBOL CLASS SIGNATURE` for functions without a
+Go body, `replace SYMBOL CLASS SIGNATURE` for the functions gc's own
+compiler intrinsifies and whose Go body the backend cannot or should not run
+(today the four `math` bit casts, whose bodies reinterpret memory). The Go
+side embeds the file; `go generate ./intrinsics` writes the Java dispatch
+table (one root node per symbol calling a typed static method — a missing
+implementation is a javac error; a stale table fails a test). §5.3 says the
+registry is generated *from annotated Java methods*; as built the direction
+is data file → Java, which gives the linker the table without running Java
+and keeps WP-FRZ's freeze check a diff of one file.
+[link.Resolve](../../internal/toolexec/link/resolve.go) implements §5.3:
+
+1. a body-less function binds to the Go body defined under its symbol or
+   its `//go:linkname` remote (either direction; duplicated definitions are
+   an error);
+2. else to the registry entry of that symbol, **whose signature must equal
+   the declaration's canonical type key** — the versioned contract of SPEC
+   §4.1, checked at every link;
+3. else it is unbound: the link fails if it is reachable (`undefined:
+   pkg.F (no Go body and no graalgo intrinsic), referenced by pkg.G`, every
+   problem sorted, the first ten printed), and records nothing otherwise;
+4. variables that `//go:linkname` makes one symbol share the storage of the
+   package the remote name belongs to (`math/bits.overflowError` is
+   `runtime.overflowError`).
+
+Reachability: roots are `main.main` and every package's initializers; edges
+are `Func.syms`/`objs`. A method nobody names is reached when a reachable
+function has an expression of its receiver type — the emitter now records
+those types as `TypeName` references of the function — and some interface
+type of the link has a method of that name. gc also matches the signature
+and requires the conversion itself; the rule only over-approximates. (A
+first version reached every method whose name any interface declares; it
+failed the link of an M1a program whose interface has a `Name` method,
+through `runtime.(*Func).Name`.) The bundle (format version 3) carries the
+registry version and hash and the resolved table; the loader applies it and
+resolves nothing itself (`Program.bound`, `PackageUnit.global`), refuses a
+bundle of another registry, and initializes `runtime` first. A build against
+an **unforked** runtime now fails at link with the runtime's own undefined
+assembly symbols, instead of producing a program that cannot start.
+
+*What runs.* Nineteen registry entries (facade `runtime` 6, `math`
+assembly 8, `math` bit casts 4, `maps.clone`) carry these importable
+packages, compiled from upstream's source: `unicode/utf8`, `unicode/utf16`,
+`unicode`, `math/bits`, `math`, `math/cmplx`, `cmp`, `slices`, `maps`,
+`container/list`, `container/ring`, `image/color`, `image/color/palette`
+(and `encoding`, `structs`, which are declarations only). The `math`
+assembly intrinsics are ports of the amd64 instruction sequences, so the
+corpus's sweep of the package's functions over 23 arguments (322 output
+lines) is bit-identical to gc.
+Not yet: anything that ranges over a function iterator inside std
+(`maps.Keys`, `slices.Sorted`, …), which the node package does not build.
+
+*The worklist the linker now prints* (undefined reachable symbols of a
+one-call program, same build): `errors` 2 (`internal/reflectlite`
+`resolveNameOff`/`resolveTypeOff`), `sort` 0, `strconv` 2, `sync/atomic` 1
+per function used, `sync` 11, `strings`/`bytes` 26, `time` 30, `os` 62,
+**`fmt` 86** (reflect 14, `sync/atomic` 13, runtime 13 + 2 methods,
+`internal/poll` 8, `sync` 8, `internal/sync` 7, `os` 4, `syscall` 4, 11 in
+seven further packages). Link-clean is not run-clean: `errors`'s package
+initializer calls `reflectlite.TypeOf`, which reads an interface header and
+a type descriptor through `unsafe` — W13 and W9a, the next rung, on which
+`strconv`, `strings`, `bytes`, `sort.Slice`, `sync.Map` and `time` all
+stand.
 
 ## 14. Amendments (2026-11-18)
 

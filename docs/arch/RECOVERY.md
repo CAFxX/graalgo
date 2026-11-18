@@ -38,6 +38,7 @@ Integration branch: `wt/recovery/integration`.
 | toolexec W1 launcher + W2 GIR (`wt/recovery/gir-launcher`) | landed |
 | T0.D + TR-0 + TR-1 backend structure (`wt/recovery/backend-structure`) | landed |
 | Spec reconciliation (`wt/spec/reconcile`): global spec-conformance review items | done 2026-11-18 ([ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md), [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md), coverage below) |
+| toolexec M1r, first slice (`wt/m1r/facade`): W5 fork tooling + facade `runtime`, W6 intrinsic registry + link-time resolution and reachability | landed 2026-11-18: real std source runs on the node package for the packages whose closure needs no `internal/reflectlite`, `sync` or `syscall` (`make test-m1r`; [toolexec-design.md](toolexec-design.md) §13). **Open in M1r:** W13 pointer model, W9a descriptor images + `reflectlite` intrinsics (gate for `errors` and everything above it), W8a syscalls |
 
 ## Decision log
 
