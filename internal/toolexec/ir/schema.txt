@@ -1,0 +1,382 @@
+# GIR schema: the single source of truth for graalgo's per-package typed IR
+# (docs/arch/toolexec-design.md §3.2, decision D5). The Go encoder/decoder
+# (ir/gir_gen.go) and the Java decoder/encoder
+# (internal/backend/gir/src/main/java/graalgo/gir/Gir*.java) are generated
+# from this file by `go generate ./ir` (ir/gen). Any edit changes the schema
+# hash in every file header and in graalgo-tool's -V=full answer, which
+# invalidates cached archives; bump `version` for incompatible edits.
+#
+# Grammar (one declaration per line, '#' starts a comment):
+#   version N
+#   maxdepth N
+#   enum NAME            then indented lines:  VALUE NAME   (comment)
+#   record NAME [scope] field:TYPE ...
+#   union NAME           then indented lines:  KIND MEMBER field:TYPE ...
+#   section ID NAME field TYPE   or   section ID NAME field raw
+#                        (raw sections have hand-written codecs: STRINGS is
+#                        uvarint count + (uvarint length, bytes)*; BODIES
+#                        is the FuncBody blobs of FUNCINDEX, contiguous in
+#                        FUNCINDEX order; DATA is opaque bytes)
+# Field types:
+#   uint int bool        uvarint, zig-zag varint, one byte 0/1
+#   bytes                uvarint length + raw bytes
+#   str                  index into STRINGS (uvarint)
+#   type                 TYPES entry, 1-based; 0 = none (uvarint)
+#   (type, sym, obj and fn refer to the sections TYPES, SYMREFS, OBJECTS and
+#   FUNCINDEX; the decoder learns their sizes before decoding anything.)
+#   pos                  position in the enclosing scope's `positions`,
+#                        1-based; 0 = none (uvarint)
+#   sym obj fn           SYMREFS / OBJECTS / FUNCINDEX index (uvarint)
+#   local label          index into the enclosing scope's `locals`/`labels`
+#   X?                   optional reference: uvarint(value+1), 0 = none
+#   E                    enum E (uvarint, validated)
+#   R                    record R inline;   ?R  presence byte + R
+#   U                    union U: uvarint kind (>= 1) + member fields;
+#                        ?U  kind 0 = absent
+#   []T                  uvarint count + elements
+# A `scope` record opens a new local scope: its fields named positions,
+# locals and labels define the tables that pos/local/label refer to inside
+# it. Nested scopes (function literals) do not see outer tables except
+# through explicit captures.
+
+version 1
+
+# Decoders reject node nesting deeper than this (unions nested in unions),
+# so that a recursive decoder cannot exhaust its stack on malformed input.
+# std nests at most 36 deep (emitter TestStd keeps 4x headroom).
+maxdepth 1000
+
+# ---------------------------------------------------------------- enums
+
+enum SymKind
+  1 Func
+  2 Var
+  3 Const
+  4 TypeName
+  5 Method      # name is "T.M" or "(*T).M", gc's symbol naming
+
+enum ConstKind
+  1 Bool        # text "true"/"false"
+  2 String      # text: the bytes of the string (not necessarily UTF-8)
+  3 Int         # text: decimal
+  4 Float       # text: exact value, constant.Value.ExactString (a/b or decimal)
+  5 Complex     # text: real part, imag: imaginary part (ExactString)
+
+enum BasicKind  # go/types BasicKind, renumbered
+  1 Bool
+  2 Int
+  3 Int8
+  4 Int16
+  5 Int32
+  6 Int64
+  7 Uint
+  8 Uint8
+  9 Uint16
+  10 Uint32
+  11 Uint64
+  12 Uintptr
+  13 Float32
+  14 Float64
+  15 Complex64
+  16 Complex128
+  17 String
+  18 UnsafePointer
+  19 UntypedBool
+  20 UntypedInt
+  21 UntypedRune
+  22 UntypedFloat
+  23 UntypedComplex
+  24 UntypedString
+  25 UntypedNil
+
+enum ChanDir
+  1 Both
+  2 Send
+  3 Recv
+
+enum UnOp
+  1 Pos         # +x
+  2 Neg         # -x
+  3 Not         # !x
+  4 BitNot      # ^x
+
+enum BinOp
+  1 Add
+  2 Sub
+  3 Mul
+  4 Quo
+  5 Rem
+  6 And
+  7 Or
+  8 Xor
+  9 Shl
+  10 Shr
+  11 AndNot
+  12 LAnd       # && (short-circuit)
+  13 LOr        # || (short-circuit)
+  14 Eql
+  15 Neq
+  16 Lss
+  17 Leq
+  18 Gtr
+  19 Geq
+
+enum AssignOp   # Assign.op: plain or compound assignment
+  1 Plain
+  2 Add
+  3 Sub
+  4 Mul
+  5 Quo
+  6 Rem
+  7 And
+  8 Or
+  9 Xor
+  10 Shl
+  11 Shr
+  12 AndNot
+
+enum BranchTok
+  1 Break
+  2 Continue
+  3 Goto
+  4 Fallthrough
+
+enum Builtin    # universe and unsafe functions that are calls in the IR
+  1 Append
+  2 Cap
+  3 Clear
+  4 Close
+  5 Complex
+  6 Copy
+  7 Delete
+  8 Imag
+  9 Len
+  10 Make
+  11 Max
+  12 Min
+  13 New
+  14 Panic
+  15 Print
+  16 Println
+  17 Real
+  18 Recover
+  19 UnsafeAdd
+  20 UnsafeSlice
+  21 UnsafeSliceData
+  22 UnsafeString
+  23 UnsafeStringData
+  24 UnsafeSizeof    # only where not constant: operands of type-parameter type
+  25 UnsafeAlignof   # ditto
+  26 UnsafeOffsetof  # ditto; the argument is the Field selection
+
+# ---------------------------------------------------------------- file-level records
+
+# PKG. flags: 1 = compiled with -std, 2 = package has cgo-generated files.
+record Package path:str name:str lang:str flags:uint files:[]str imports:[]str linknames:[]Linkname
+
+# //go:linkname local remote, verbatim (remote "" for the one-argument form).
+record Linkname local:str remote:str
+
+# A package-level object of another package (or a method symbol of any
+# package, including this one): (import path, gc symbol name, kind).
+record SymRef pkg:str name:str kind:SymKind
+
+record ConstValue kind:ConstKind text:str imag:str
+
+# TYPES entry: canonical type key (§3.4) + structure. Type ids are 1-based.
+record TypeEntry key:str type:Type
+
+union Type
+  1 Basic kind:BasicKind
+  2 Pointer elem:type
+  3 Slice elem:type
+  4 Array len:uint elem:type
+  5 Map key:type elem:type
+  6 Chan dir:ChanDir elem:type
+  7 Struct fields:[]Field
+  8 Signature params:[]type results:[]type variadic:bool
+  # methods: the complete method set (embedded interfaces expanded), sorted
+  # by (pkg, name); embeddeds: the explicitly embedded non-interface
+  # elements (type-set terms of constraints); implicit: `[T ~int]` form.
+  9 Interface methods:[]IfaceMethod embeddeds:[]type implicit:bool
+  10 Tuple elems:[]type
+  # A defined (named) type, possibly an instantiation (targs non-empty).
+  # Its definition is the TYPEDEFS entry of the declaring package's GIR,
+  # found through sym (kind TypeName); universe types (error, comparable)
+  # have sym pkg "".
+  11 Named sym:sym targs:[]type
+  # Type parameter `index` of the generic function, method or type `owner`.
+  12 TypeParam owner:sym index:uint name:str constraint:type
+  13 Union terms:[]Term
+
+# pkg: import path qualifying an unexported name ("" when exported).
+record Field name:str pkg:str type:type embedded:bool tag:str
+record IfaceMethod name:str pkg:str sig:type
+record Term tilde:bool type:type
+
+# TYPEDEFS: one entry per defined type declared in this package (and per
+# unnamed struct type with promoted methods: underlying 0). layout:
+# size/align/field offsets from types.SizesFor("gc", GOARCH); size -1 for
+# generic types (layout depends on type arguments).
+record TypeDef type:type underlying:type tparams:[]type methods:[]Method mset:[]MsetEntry ptrMset:[]MsetEntry size:int align:int offsets:[]int
+
+# A method declared on the type: fn is its FUNCINDEX entry.
+record Method name:str pkg:str ptrRecv:bool fn:fn
+
+# A method-set entry of a type: path is the embedded-field index path to
+# the receiver (empty: declared on the type itself), indirect whether the
+# path passes through an embedded pointer, recvType the named type that
+# declares the method (or interface type for promoted interface methods),
+# method its symbol (sym kind Method; absent for interface methods).
+record MsetEntry name:str pkg:str path:[]uint indirect:bool recvType:type method:sym?
+
+# OBJECTS: package-level consts, vars, funcs and type names (methods are
+# FUNCINDEX entries only). kind uses SymKind. flags: 1 = exported.
+record Object name:str kind:SymKind type:type flags:uint fn:fn? value:?ConstValue
+
+# INIT (§3.6): varInit is the synthesized function whose body is the
+# package-variable initializers in Info.InitOrder order; inits are the
+# init functions in command-line file order, then source order.
+record Init varInit:fn? inits:[]fn
+
+# FUNCINDEX: one entry per function, method, init function and synthesized
+# initializer. name: gc symbol name without the package ("F", "T.M",
+# "(*T).M", "init.0", "init·vars"). recv: declared receiver type (0 for
+# functions). flags: 1 bodyless, 2 generic, 4 method, 8 init function,
+# 16 variable initializer. body/size: blob in BODIES (size 0 when
+# bodyless). syms/objs: SYMREFS and OBJECTS the body references (link-time
+# reachability, §5.3).
+record Func name:str recv:type sig:type tparams:[]type flags:uint linkname:str file:str line:uint body:uint size:uint syms:[]sym objs:[]obj
+
+# ---------------------------------------------------------------- function bodies
+
+# One BODIES blob. locals: every local variable, parameter, named or
+# unnamed result and receiver, in declaration order. flags: 1 param,
+# 2 result, 4 receiver, 8 captured by a closure, 16 address taken.
+# For a function literal the first len(captures) locals are the captured
+# variables of the enclosing function (by reference), in capture order.
+# file: the file of the function's positions (trimpath-applied).
+record FuncBody scope file:str positions:[]Pos locals:[]Local labels:[]str params:[]local results:[]local recv:local? body:[]Stmt
+
+# A source position (for Truffle SourceSections, truffle-design §6.2).
+# file: "" for the body's file, else a //line-adjusted file name. line:
+# delta from the previous entry's line (the first entry: from 0); col:
+# 1-based byte column; len: byte length of the node's source text.
+record Pos file:str line:int col:uint len:uint
+
+record Local name:str type:type pos:pos flags:uint
+
+union Stmt
+  1 Expr pos:pos x:Expr
+  # lhs = rhs (op Plain, parallel assignment or one multi-value rhs) or
+  # lhs op= rhs (exactly one lhs and rhs).
+  2 Assign pos:pos op:AssignOp lhs:[]Expr rhs:[]Expr
+  # lhs := rhs; fresh lists the locals this statement declares.
+  3 Define pos:pos lhs:[]Expr rhs:[]Expr fresh:[]local
+  # var a, b T [= values]: zero-initialized when values is empty.
+  4 Var pos:pos locals:[]local values:[]Expr
+  5 IncDec pos:pos x:Expr inc:bool
+  6 Send pos:pos ch:Expr value:Expr
+  7 Go pos:pos call:Expr
+  8 Defer pos:pos call:Expr
+  # results empty in a function with named results = naked return.
+  9 Return pos:pos results:[]Expr
+  10 Branch pos:pos tok:BranchTok label:label?
+  11 Labeled pos:pos label:label stmt:Stmt
+  12 Block pos:pos stmts:[]Stmt
+  13 If pos:pos init:?Stmt cond:Expr then:[]Stmt else:?Stmt
+  14 Switch pos:pos init:?Stmt tag:?Expr clauses:[]CaseClause
+  # switch bind := x.(type); bind is absent without a binding; each clause
+  # declares its own local.
+  15 TypeSwitch pos:pos init:?Stmt x:Expr clauses:[]TypeClause
+  16 Select pos:pos clauses:[]CommClause
+  # perIter: loop variables declared by init that get a fresh copy per
+  # iteration (file language version >= go1.22); empty otherwise.
+  17 For pos:pos init:?Stmt cond:?Expr post:?Stmt body:[]Stmt perIter:[]local
+  # for key, value := range x. define: := form (fresh lists the
+  # variables), else assignment to key/value expressions. perIter as for.
+  18 Range pos:pos key:?Expr value:?Expr x:Expr define:bool fresh:[]local body:[]Stmt perIter:bool
+
+record CaseClause pos:pos isDefault:bool exprs:[]Expr body:[]Stmt
+# types: 0 stands for the `nil` case. local: the clause's binding.
+record TypeClause pos:pos isDefault:bool types:[]type local:local? body:[]Stmt
+# comm: a Send, an Expr (receive), or an Assign/Define with a receive rhs;
+# absent for default.
+record CommClause pos:pos isDefault:bool comm:?Stmt body:[]Stmt
+
+# Every expression carries its type (go/types) and position. Expressions
+# with a constant value are Const, whatever their syntax.
+union Expr
+  1 Const type:type pos:pos value:ConstValue
+  2 Nil type:type pos:pos
+  3 Local type:type pos:pos local:local
+  # package-level var or func of this package
+  4 Global type:type pos:pos obj:obj
+  # package-level var or func of another package
+  5 Ext type:type pos:pos sym:sym
+  # explicit or inferred instantiation of a generic function
+  6 Inst type:type pos:pos fn:Expr targs:[]type
+  # `_` as an assignment target
+  7 Blank type:type pos:pos
+  8 Unary type:type pos:pos op:UnOp x:Expr
+  9 Binary type:type pos:pos op:BinOp x:Expr y:Expr
+  10 Deref type:type pos:pos x:Expr
+  11 Addr type:type pos:pos x:Expr
+  12 Recv type:type pos:pos ch:Expr commaOk:bool
+  # x.f: path is the field-index path through embedded fields; implicit
+  # pointer dereferences along the path follow from the field types.
+  13 Field type:type pos:pos x:Expr path:[]uint
+  # x[i] on array, pointer to array, slice, string or map; commaOk for
+  # v, ok := m[k].
+  14 Index type:type pos:pos x:Expr index:Expr commaOk:bool
+  15 Slice type:type pos:pos x:Expr lo:?Expr hi:?Expr max:?Expr
+  16 TypeAssert type:type pos:pos x:Expr target:type commaOk:bool
+  # T(x), or an implicit conversion inserted by the frontend (value to
+  # interface, channel direction, ...).
+  17 Convert type:type pos:pos x:Expr implicit:bool
+  # call of a func value or function; spread: f(xs...)
+  18 Call type:type pos:pos fn:Expr args:[]Expr spread:bool
+  # static method call; recv is already adjusted (& or *) to the method's
+  # receiver type, through the embedding path. recvType: the receiver's
+  # named type (instantiated for generic receivers); targs: the method's
+  # own type arguments.
+  19 MethodCall type:type pos:pos recv:Expr method:sym recvType:type targs:[]type args:[]Expr spread:bool
+  # dynamic call of interface method (name, pkg) on interface value recv
+  20 IfaceCall type:type pos:pos recv:Expr name:str pkg:str args:[]Expr spread:bool
+  21 BuiltinCall type:type pos:pos builtin:Builtin targ:type args:[]Expr spread:bool
+  # bound method value x.M (recv evaluated at binding)
+  22 MethodVal type:type pos:pos recv:Expr method:sym recvType:type targs:[]type
+  23 IfaceMethodVal type:type pos:pos recv:Expr name:str pkg:str
+  # method expression T.M / (*T).M; recvType is T or *T
+  24 MethodExpr type:type pos:pos method:sym recvType:type targs:[]type
+  25 IfaceMethodExpr type:type pos:pos iface:type name:str pkg:str
+  26 StructLit type:type pos:pos fields:[]FieldInit
+  # array or slice literal; elements with their resolved indices
+  27 ArrayLit type:type pos:pos elems:[]Elem
+  28 MapLit type:type pos:pos entries:[]MapEntry
+  # function literal: captures are locals of the enclosing scope, bound to
+  # the first len(captures) locals of body
+  29 FuncLit type:type pos:pos captures:[]local body:FuncBody
+  # a multi-value x (call or comma-ok form) converted element-wise to the
+  # tuple type `type`: f(g()), return g(), a, b = g() where some element
+  # needs an implicit conversion (to interface or channel direction)
+  30 TupleConvert type:type pos:pos x:Expr
+
+# path: field indices from the literal's struct type (more than one for a
+# promoted field of an embedded struct, go1.27)
+record FieldInit path:[]uint value:Expr
+record Elem index:uint value:Expr
+record MapEntry key:Expr value:Expr
+
+# ---------------------------------------------------------------- sections
+
+section 1 STRINGS strings raw
+section 2 PKG pkg Package
+section 3 SYMREFS symRefs []SymRef
+section 4 TYPES types []TypeEntry
+section 5 TYPEDEFS typeDefs []TypeDef
+section 6 OBJECTS objects []Object
+section 7 INIT init Init
+section 8 FUNCINDEX funcs []Func
+section 9 BODIES bodies raw
+section 10 DATA data raw

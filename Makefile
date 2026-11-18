@@ -114,9 +114,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-jit bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-jit bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-toolexec test-p3frontend test-ci test-java-fast test-regression
+all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -130,6 +130,8 @@ gen-synth:
 # vendored frontend sources (internal/frontend/*.go + internal/frontend/go overlay).
 generate: gen-synth
 	cd internal/frontend && ./build.sh build
+	# GIR codecs (Go + Java) from internal/toolexec/ir/schema.txt
+	cd internal/toolexec && PATH="$(dir $(GO)):$$PATH" $(GO) generate ./ir
 
 build:
 	$(MAKE) -C internal/backend/truffle main
@@ -256,6 +258,14 @@ test-toolexec:
 	mkdir -p $(TOOLEXEC_TMP) && \
 	cd internal/toolexec && PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) vet ./... && \
 	PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) test ./...
+
+# GIR Java decoder (W2): [internal/backend/gir](internal/backend/gir),
+# JDK-only, generated from internal/toolexec/ir/schema.txt. Decodes,
+# validates and re-encodes the golden vectors of internal/toolexec/ir/testdata
+# byte for byte, checks the malformed vectors are rejected, and fuzzes the
+# decoder. The Go side is in test-toolexec (ir/, emit/).
+test-gir:
+	$(MAKE) -C internal/backend/gir test
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
