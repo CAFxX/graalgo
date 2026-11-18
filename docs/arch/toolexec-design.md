@@ -367,6 +367,11 @@ checked-in output is stale. Refinements of the sketch above:
   builtins. Method calls carry an already adjusted receiver (`&`/`*`
   through the embedding path); calls of a method of a type-parameter value
   are `IfaceCall`s on that value, resolved per instantiation (D6).
+- (W3) `Data` (member 31): a string whose bytes are a range of the `DATA`
+  section — the contents of `//go:embed` files (§3.6). Encoders refuse
+  nesting deeper than `maxdepth`, exactly as the decoders do, so an
+  over-deep program fails its compile instead of producing a cached
+  archive that fails at run time.
 
 Measured (P3, `girstat` over the 374 non-empty std packages, purego, no
 cgo, this box): the emitter lowers every function body without an
@@ -546,6 +551,9 @@ output := ELF launcher stub (prebuilt, static, gc-compiled)
           | bundle
           | trailer (bundle offset, length, "GGB1")
 bundle := manifest | per-package GIR files, concatenated, uncompressed
+          (as built: bundle/ format version 2 carries runner, main package,
+          the link -X settings and the main module's modinfo, then the
+          package table)
 manifest := format version, runtime manifest hash, GOOS/GOARCH,
             main package, package table (import path -> offset, length),
             init order, -X assignments,
@@ -988,7 +996,7 @@ stock `go build -toolexec` over a two-package module:
 | Patching the ID into the stub's ELF note gives cmd/go a readable, rewritable build ID (§2.4) | `go tool buildid` returns a four-field content ID; with the patch removed the test fails **and** every warm build re-runs `link` |
 | Warm cache = zero tool runs; gc and graalgo entries are disjoint in one `GOCACHE` (§2.1, GG-0028) | tool log is empty on the second build; `go list -export` returns different archives per backend; answering `-V=full` with the stock line makes the test fail (the backends then share entries) |
 | Compile diagnostics are gc's (§4.1) | wrapped and stock `go build` output of an ill-typed package are byte-identical |
-| Unsupported input fails the build with the package named, and no executable is written | `select` statement test |
+| Unsupported input fails the build with the package named, and no executable is written | over-deep nesting test (W3; was `//go:embed`, now lowered) |
 | The stub hands the executable and argv to the runner and propagates its exit status | stand-in runner test |
 
 **Not done, deliberately:**
@@ -1008,16 +1016,79 @@ stock `go build -toolexec` over a two-package module:
 - No symbol resolution, init order or `-X` at link.
 
 **Since the skeleton (W2):** the IR member is GIR (§3.2), emitted by
-[emit/](../../internal/toolexec/emit/) — the W3 starting point, which
-already lowers all of std without an unsupported construct (`TestStd`);
-`//go:embed` still fails loudly. Known approximations W3 must close:
-method sets of unnamed struct types with promoted methods are not emitted;
-keys of local types in generic functions do not include the
-instantiation; constraint-interface keys flatten embedded type sets;
-range assignments (`=`, not `:=`) to interface-typed variables get no
-conversion node; `Const` nodes keep go/types' recorded type, which can be
-untyped (shift operands, `print` arguments); the call-position convention
-for `runtime.Caller` is not yet pinned against gc (TR-7).
+[emit/](../../internal/toolexec/emit/), which lowers all of std without an
+unsupported construct (`TestStd`).
+
+**W3 (emitter completion).** The approximations W2 left are closed, each
+by a test in [emit/](../../internal/toolexec/emit/) that failed on the W2
+emitter:
+
+| W2 approximation | W3 lowering |
+|---|---|
+| method sets of unnamed struct types with promoted methods not emitted | a `TYPEDEFS` entry (underlying 0) for every unnamed struct type in the type table whose value or pointer method set is non-empty, keyed by the struct's type entry |
+| keys of local types in generic functions lack the instantiation | a type declared in a generic function or method is keyed and represented as a generic type instantiated with the enclosing type parameters (receiver's first): `p.T·F·0[$p.F.0]`; its `TYPEDEFS` entry declares them as `tparams`. gc makes it a distinct type per instantiation even when it does not mention them (measured) |
+| constraint-interface keys flatten embedded type sets | keys and `Interface.embeddeds` encode the normalized type set as go/types defines identity ([ir/typeset.go](../../internal/toolexec/ir/typeset.go)): `comparable` flag, term list (intersection of embedded elements, overlapping terms merged), methods; key equality == `types.Identical` (`TestConstraintKeys`) |
+| `for k, v = range` into interface-typed variables unconverted | lowered to `for k', v' := range x { k, v = T(k'), T(v'); body }` |
+| `Const` nodes may be untyped | no expression has an untyped type (asserted over all of std): default type for `print`/`println` arguments, conditions and comparison results; `uint` for constant shift counts; the type parameter for a constant converted to one (materialized per instantiation; go/types records the default type, which may not hold the value); typed `nil` for `T(nil)` and `case nil` |
+| `runtime.Caller` call position not pinned | measured with `runtime.Caller`/`Callers` on go1.27.1 and pinned: call-family nodes start at their `(`, `Index`/`Slice` at `[`, `Binary` at the operator, `TypeAssert` at `.` (length to the node end); a body without results that can fall off its end ends with an explicit `Return` at its closing brace (the line a deferred call's caller reports) |
+| `//go:embed` fails loudly | lowered as cmd/compile does (directive parser, file list rules, `embed.FS` image with gc's content hashes; `TestEmbed` compares with gc's own FS image); graalgo-tool reads `-embedcfg` |
+
+Found and fixed along the way (each with a test): `var a, b I = f()`
+(local and package level) converts element-wise; `x.M()` with a pointer
+method promoted through non-pointer embedded fields flags `x`
+address-taken; `switch x { case iface: }` with a non-interface tag is
+lowered to a tagless switch comparing `I(tag)`; method expressions of
+promoted methods (`T.M`, previously unsupported) become a wrapper
+`FuncLit`; explicit instantiation of go1.27 generic methods (`s.M[T](…)`,
+`s.M[T]`, `T.M[U]`) are `MethodCall`/`MethodVal`/`MethodExpr` with type
+arguments.
+
+**Validation without the JVM.** [girinterp/](../../internal/toolexec/girinterp/)
+is a test-only reference interpreter of GIR that executes the emitter's
+output (after an encode/decode round trip) and takes it at its word:
+method sets, capture lists, address-taken flags, implicit conversions,
+init order and positions come from the GIR, and an inconsistency (a
+missing flag or method-set entry, a type key that does not match its
+structure) aborts the run. `TestDifferential` compares it with gc on
+stdout, exit status and normalized stderr (println output, panic text,
+traceback frames and lines): **150/150 identical** — the 138 corpus
+programs that import nothing (the M1a gate set; 134 when the gate was
+sized) and 12 programs for the constructs and edges W3 names.
+`TestMutants` kills 12 simulated emitter bugs (dropped conversions, wrong
+iota, reversed init order, dropped per-iteration loop variables or
+capture flags, missing promoted methods, local generic types without the
+instantiation, call positions, shift-count typing, …). Std: 374 packages,
+22,524/22,524 bodies, 23.6 MB of GIR (3.0 MB `DATA`), all round-tripped by
+the Go and Java decoders.
+
+**What W4 can rely on.** Every expression has a concrete type (never an
+untyped kind); every implicit conversion is an explicit `Convert`
+(`Implicit`) or `TupleConvert` node, including range assignments, switch
+cases and multi-value `var`; a `select` receive clause's right-hand side
+may be wrapped in `Convert`/`TupleConvert`; every type with methods that
+can reach an interface — defined types and unnamed structs with promoted
+methods — has its complete value and pointer method sets with embedding
+paths in `TYPEDEFS` (`MsetEntry.indirect` is go/types'
+`Selection.Indirect`, which counts the pointer receiver itself);
+captured and address-taken locals are flagged, and only those need
+cells; `ForStmt.perIter`/`RangeStmt.perIter` carry go1.22 loop-variable
+semantics; positions follow gc's attribution above; generic bodies,
+including their local types, instantiate uniformly by substituting
+`TypeParam (owner, index)`; package initialization is `init·vars`
+(embedded variables first, then `Info.InitOrder`) followed by the `init`
+functions; across packages the linker uses gc's order (§3.6), which
+girinterp implements and the multi-package harness program checks.
+Not lowered by the emitter on purpose (decided per instantiation by the
+backend): operator selection, zero values, conversions' run-time effect.
+
+**Review fixes (W3 lane, 2026-11-18):** the IR targets the compile's
+GOOS/GOARCH (cmd/go's tool environment), not the host; link carries every
+`-X` setting and the module build info into the bundle (format version
+2) — applying them is W7's; `GRAALGO_RUNNER`/`GRAALGO_RACE` are part of
+the link tool's `-V=full` identity; a signalled tool is mirrored; every
+`-d` is checked for `libfuzzer`; file names use a verbatim port of
+`objabi.AbsFile`; the launcher treats empty go environment variables as
+unset, as cmd/go does.
 
 **Since the skeleton (W1):** the launcher of §1; response-file expansion and
 in-place rewriting (§2.2 step 1); `-chain`; tracked-release checks;

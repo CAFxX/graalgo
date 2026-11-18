@@ -48,7 +48,11 @@ Related: [Makefile](../Makefile) (root build entry point),
     the generated Go codec, canonical type keys, golden and malformed
     vectors ([testdata/](../internal/toolexec/ir/testdata/));
     [emit/](../internal/toolexec/emit/) lowers go/types-checked packages to
-    GIR; [cmd/girstat/](../internal/toolexec/cmd/girstat/) measures emitter
+    GIR; [girinterp/](../internal/toolexec/girinterp/) is a test-only
+    reference interpreter of GIR with the differential harness against gc
+    (its programs in [testdata/progs/](../internal/toolexec/girinterp/testdata/progs/))
+    and the emitter mutation test;
+    [cmd/girstat/](../internal/toolexec/cmd/girstat/) measures emitter
     coverage and GIR size/speed over std;
     [archive/](../internal/toolexec/archive/) reads/extends gc package
     archives; [bundle/](../internal/toolexec/bundle/) is the program-bundle
