@@ -104,6 +104,47 @@ public final class LifecycleTest {
         assertTrue(r.stderr().isEmpty(), "no output on clean exit, got: " + r.stderr());
     }
 
+    /**
+     * Exit freezes a running goroutine at its very next
+     * {@code Safepoint.poll()}, even mid-stride: the JIT fast path skips
+     * the full quantum check for up to STRIDE-1 polls, and must not skip
+     * the exit freeze with it (integration of the lifecycle model with
+     * the strided poll). The spinner positions its countdown mid-stride
+     * (one full-path poll, then 10 fast polls), waits for main to request
+     * exit, then polls in a loop counting completed polls: with the freeze
+     * honored it completes none; a strided exit check lets ~117 through.
+     */
+    public void testExitFreezesAtNextStridedPoll() throws Exception {
+        java.util.concurrent.atomic.AtomicLong after = new java.util.concurrent.atomic.AtomicLong();
+        CountDownLatch ready = new CountDownLatch(1);
+        AtomicBoolean go = new AtomicBoolean();
+        Run r = run(2, s -> {
+            s.spawn(() -> {
+                for (int i = 0; i < 11; i++) {
+                    graalgo.safepoint.Safepoint.poll();
+                }
+                ready.countDown();
+                while (!go.get()) {
+                    Thread.onSpinWait(); // no polls while waiting
+                }
+                for (;;) {
+                    graalgo.safepoint.Safepoint.poll();
+                    after.incrementAndGet();
+                }
+            });
+            try {
+                ready.await();
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+            s.requestExit(0);
+            go.set(true);
+        });
+        assertEquals(0, exitOf(r), "exit code");
+        Thread.sleep(200); // give a non-frozen spinner time to run on
+        assertEquals(0, after.get(), "polls completed after exit was requested");
+    }
+
     // ---------- fatal panic ----------
 
     /** An uncaught panic in a non-main goroutine prints and exits 2 at once. */
