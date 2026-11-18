@@ -87,6 +87,36 @@ func (fs *fnState) pos(n ast.Node) ir.PosID {
 	return fs.posAt(n.Pos(), max(length, 0))
 }
 
+// opPos is the position of an operation at its operator token: '(' of a
+// call, '[' of an index or slice, the operator of a binary expression,
+// '.' of a type assertion — the token gc attributes the operation to
+// (runtime.Caller, traceback and run-time panic lines). Its length runs to
+// the end of the node.
+func (fs *fnState) opPos(n ast.Node, op token.Pos) ir.PosID {
+	if !op.IsValid() {
+		return fs.pos(n)
+	}
+	fset := fs.e.cfg.Fset
+	length := fset.PositionFor(n.End(), false).Offset - fset.PositionFor(op, false).Offset
+	return fs.posAt(op, max(length, 0))
+}
+
+// endReturn appends an explicit Return positioned at the closing brace to
+// a body without results that can fall off its end: gc attributes the
+// implicit return (and the deferred calls it runs) to that brace.
+func (fs *fnState) endReturn(sig *types.Signature, rbrace token.Pos) {
+	if sig != nil && sig.Results().Len() > 0 {
+		return
+	}
+	b := fs.body.Body
+	if len(b) > 0 {
+		if _, ok := b[len(b)-1].(*ir.ReturnStmt); ok {
+			return
+		}
+	}
+	fs.body.Body = append(b, &ir.ReturnStmt{Pos: fs.posAt(rbrace, 1)})
+}
+
 // posKey identifies a position before delta encoding.
 type posKey struct {
 	file           string

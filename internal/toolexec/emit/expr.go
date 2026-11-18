@@ -58,7 +58,7 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		if inst := fs.instance(x.X); inst != nil {
 			return inst
 		}
-		return &ir.IndexExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X), Index: fs.indexOperand(x.X, x.Index)}
+		return &ir.IndexExpr{Type: typ(), Pos: fs.opPos(x, x.Lbrack), X: fs.expr(x.X), Index: fs.indexOperand(x.X, x.Index)}
 	case *ast.IndexListExpr:
 		if inst := fs.instance(x.X); inst != nil {
 			return inst
@@ -67,7 +67,7 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		if _, isArr := info.Types[x.X].Type.Underlying().(*types.Array); isArr {
 			fs.markAddrTaken(x.X)
 		}
-		return &ir.SliceExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X), Lo: fs.optExpr(x.Low), Hi: fs.optExpr(x.High), Max: fs.optExpr(x.Max)}
+		return &ir.SliceExpr{Type: typ(), Pos: fs.opPos(x, x.Lbrack), X: fs.expr(x.X), Lo: fs.optExpr(x.Low), Hi: fs.optExpr(x.High), Max: fs.optExpr(x.Max)}
 	case *ast.StarExpr:
 		return &ir.DerefExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X)}
 	case *ast.UnaryExpr:
@@ -107,11 +107,11 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		if n, ok := r.(*ir.NilExpr); ok {
 			n.Type = e.typeID(lt)
 		}
-		return &ir.BinaryExpr{Type: typ(), Pos: fs.pos(x), Op: op, X: l, Y: r}
+		return &ir.BinaryExpr{Type: typ(), Pos: fs.opPos(x, x.OpPos), Op: op, X: l, Y: r}
 	case *ast.CallExpr:
 		return fs.call(x)
 	case *ast.TypeAssertExpr:
-		return &ir.TypeAssertExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X), Target: e.typeID(info.Types[x.Type].Type)}
+		return &ir.TypeAssertExpr{Type: typ(), Pos: fs.opPos(x, x.Lparen-1), X: fs.expr(x.X), Target: e.typeID(info.Types[x.Type].Type)}
 	case *ast.KeyValueExpr:
 		e.unsupportedf(x.Pos(), "key-value expression outside a composite literal")
 	}
@@ -439,9 +439,9 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 			args := fs.args(x, sig)
 			if isIface {
 				name, pkg := methodName(m)
-				return &ir.IfaceCallExpr{Type: typ, Pos: fs.pos(x), Recv: recv, Name: name, Pkg: pkg, Args: args, Spread: spread}
+				return &ir.IfaceCallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Recv: recv, Name: name, Pkg: pkg, Args: args, Spread: spread}
 			}
-			return &ir.MethodCallExpr{Type: typ, Pos: fs.pos(x), Recv: recv, Method: fs.methodSymRef(m), RecvType: fs.recvTypeID(recv), Targs: fs.methodTargs(se), Args: args, Spread: spread}
+			return &ir.MethodCallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Recv: recv, Method: fs.methodSymRef(m), RecvType: fs.recvTypeID(recv), Targs: fs.methodTargs(se), Args: args, Spread: spread}
 		}
 	}
 	sig, ok := coreType(funTV.Type).(*types.Signature)
@@ -449,7 +449,7 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 		e.unsupportedf(x.Pos(), "call of non-function %s", funTV.Type)
 	}
 	fn := fs.expr(x.Fun)
-	return &ir.CallExpr{Type: typ, Pos: fs.pos(x), Fn: fn, Args: fs.args(x, sig), Spread: spread}
+	return &ir.CallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Fn: fn, Args: fs.args(x, sig), Spread: spread}
 }
 
 // args emits call arguments converted to the parameter types.
@@ -517,7 +517,7 @@ func (fs *fnState) builtinCall(x *ast.CallExpr, typ ir.TypeID) ir.Expr {
 	if !ok {
 		e.unsupportedf(x.Pos(), "builtin %s", b.Name())
 	}
-	call := &ir.BuiltinCallExpr{Type: typ, Pos: fs.pos(x), Builtin: bi, Spread: x.Ellipsis.IsValid()}
+	call := &ir.BuiltinCallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Builtin: bi, Spread: x.Ellipsis.IsValid()}
 	args := x.Args
 	switch bi {
 	case ir.BuiltinMake, ir.BuiltinNew:
@@ -662,6 +662,7 @@ func (fs *fnState) funcLit(x *ast.FuncLit) ir.Expr {
 	}
 	child.depth = fs.depth
 	child.body.Body = child.stmtList(x.Body.List)
+	child.endReturn(sig, x.Body.Rbrace)
 	e.stats.FuncsOK++
 	lit.Body = *child.body
 	return lit

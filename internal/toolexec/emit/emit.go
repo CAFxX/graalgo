@@ -550,6 +550,7 @@ func (e *emitter) run() {
 				fs.body.Results = append(fs.body.Results, fs.declareParam(sig.Results().At(i), 2))
 			}
 			fs.body.Body = fs.stmtList(d.fd.Body.List)
+			fs.endReturn(sig, d.fd.Body.Rbrace)
 		})
 		if fs.ok {
 			e.file.Bodies[i] = fs.body

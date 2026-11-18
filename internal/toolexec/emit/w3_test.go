@@ -255,3 +255,63 @@ func F() ([]int, any, *int) { return []int(nil), any(nil), (*int)(nil) }
 `)
 	assertNoUntyped(t, f)
 }
+
+// Call-family nodes are positioned at their '(' — the line gc attributes
+// to the call (runtime.Caller, tracebacks; measured on go1.27.1: a call
+// split after '(' reports the '(' line, a call whose selector is split
+// reports the line of the '(' after the method name). Index and slice
+// nodes are at '[', binary operations at the operator (the line of an
+// index or divide panic). A function without results that can fall off
+// its end ends with a Return at the closing brace (the line a deferred
+// call's caller frame reports).
+func TestCallPositions(t *testing.T) {
+	f := emitSrc(t, `package p
+
+func g(a, b int) int { return a }
+
+type T struct{}
+
+func (T) M(a int) int { return a }
+
+func F(s []int, d int) {
+	_ = g(1, // 10
+		2)
+	_ = g(
+		1, 2) // 12 is the '(' line
+	_ = T{}.
+		M(1) // 15
+	_ = s[ // 16
+		0]
+	_ = 1 / // 18
+		d
+	println( // 20
+		1)
+} // 22
+`)
+	body := funcBody(t, f, "F")
+	var calls []int
+	for _, c := range nodesOf[*ir.CallExpr](body) {
+		calls = append(calls, posLine(body, c.Pos))
+	}
+	for _, c := range nodesOf[*ir.MethodCallExpr](body) {
+		calls = append(calls, posLine(body, c.Pos))
+	}
+	for _, c := range nodesOf[*ir.BuiltinCallExpr](body) {
+		calls = append(calls, posLine(body, c.Pos))
+	}
+	if !slices.Equal(calls, []int{10, 12, 15, 20}) {
+		t.Errorf("call lines %v, want [10 12 15 20]", calls)
+	}
+	ix := nodesOf[*ir.IndexExpr](body)
+	if len(ix) != 1 || posLine(body, ix[0].Pos) != 16 {
+		t.Errorf("index line: %v", ix)
+	}
+	bin := nodesOf[*ir.BinaryExpr](body)
+	if len(bin) != 1 || posLine(body, bin[0].Pos) != 18 {
+		t.Errorf("binary line: %v", bin)
+	}
+	last, ok := body.Body[len(body.Body)-1].(*ir.ReturnStmt)
+	if !ok || posLine(body, last.Pos) != 22 {
+		t.Errorf("no trailing return at the closing brace: %#v", body.Body[len(body.Body)-1])
+	}
+}
