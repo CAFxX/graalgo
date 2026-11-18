@@ -123,11 +123,10 @@ public final class NodeFactory {
     public static final int MAX_OPEN_DEFERS = 8;
     /**
      * Test hooks of GG-0071's verification plan, read once: {@code graalgo.go.traceDeferPath}
-     * prints which path each deferring function takes when its tree is built (stderr,
-     * {@code graalgo: defer path <function> open-coded|chain}); {@code graalgo.go.forceDeferChain}
+     * prints which path each deferring function takes when its tree is built
+     * ({@link DeferPathTrace}); {@code graalgo.go.forceDeferChain}
      * puts every deferring function on the chain, to show the choice is unobservable.
      */
-    private static final boolean TRACE_DEFER_PATH = Boolean.getBoolean("graalgo.go.traceDeferPath");
     private static final boolean FORCE_DEFER_CHAIN = Boolean.getBoolean("graalgo.go.forceDeferChain");
     private boolean inThunk;
     /** Nesting depth of range-over-func bodies being built (their defers and recover differ). */
@@ -237,8 +236,8 @@ public final class NodeFactory {
         Stmt[] prologue = pro.toArray(new Stmt[0]);
         FrameDescriptor fd = fdb.build();
         Calls.FuncRoot root;
-        if (TRACE_DEFER_PATH && hasDefer) {
-            System.err.println("graalgo: defer path " + name + " " + (openDefers ? "open-coded" : "chain"));
+        if (DeferPathTrace.ENABLED && hasDefer) {
+            DeferPathTrace.report(name, openDefers);
         }
         if (openDefers) {
             int[] targetSlots = new int[deferSites.size()];
