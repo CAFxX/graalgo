@@ -3,7 +3,7 @@ package graalgo.runtime;
 import graalgo.sched.SchedulerCore;
 
 /**
- * Go timer/ticker (P2-M3, WS C; GG-SCHED-0005).
+ * Go timer/ticker (P2-M3, WS C; GG-SCHED-0006).
  *
  * <p>Models {@code time.Timer} / {@code time.Ticker}: a timer channel
  * (physical 1-slot buffer for the fire nanotime, observed as unbuffered
@@ -44,7 +44,7 @@ import graalgo.sched.SchedulerCore;
  * {@code DIV-M3-1} re-test trigger is discharged by the differential
  * timer corpus (tm15) re-run.
  *
- * <p>verifies: GG-SCHED-0005 (timer slice)
+ * <p>Requirement: GG-SCHED-0006 (timer slice)
  */
 public final class GoTimer implements TimerHeap.ChanOwner {
     private final TimerHeap heap;

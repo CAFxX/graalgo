@@ -4,7 +4,7 @@ import com.oracle.truffle.api.exception.AbstractTruffleException;
 import com.oracle.truffle.api.nodes.Node;
 
 /**
- * Go's {@code panic} as a Truffle exception (M5, WS F; SPEC §3.5, GG-0067).
+ * Go's {@code panic} as a Truffle exception (M5, WS F; SPEC §3.5, GG-0071).
  *
  * <p>Per D3 [DECIDED by SPEC], panic is an {@link AbstractTruffleException}
  * (lazy traces — recovered panics stay cheap; the

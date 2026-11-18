@@ -283,6 +283,8 @@ Related: [Makefile](../Makefile) (root build entry point),
     [toolexec-design.md](arch/toolexec-design.md) is its track-T1 design for
     the per-package `-toolexec` compile/link path (tool protocol, IR,
     stdlib fork boundary, measured intrinsic surface, milestones).
+    [traceback-normalization.md](arch/traceback-normalization.md) defines
+    what "same caller frames and tracebacks as gc" compares (GG-0070).
   - [dev/](../docs/dev/) — environment ([ENV.md](dev/ENV.md)), the bug
     register cited by exclusions and quarantines ([bugs.md](dev/bugs.md)),
     and architecture decision records (ADRs; research-era ones moved here from

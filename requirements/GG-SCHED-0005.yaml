@@ -3,9 +3,10 @@ title: Scheduler-aware blocking; slot release around blocking downcalls
 statement: 'All blocking in the runtime and its intrinsics (including patched stdlib code) SHALL go through scheduler-aware primitives (channel park, timer park, sleep, select park, scheduler-token sleep, poller park); raw Java blocking that bypasses the scheduler (e.g. CountDownLatch.await()) is banned there. A goroutine that blocks in a host call outside those parks - a blocking system-call downcall through the Panama syscall executor, or any other blocking host or foreign call - SHALL be bracketed by the slot-releasing wrapper: ioEnter releases the in-flight slot while blocked, ioExit re-acquires it via the wakeFifo lane on completion; an unpaired ioEnter SHALL trip a fail-fast assert. Readiness waits on file descriptors SHALL park in the runtime epoll poller (GG-0063), never in a blocking downcall.'
 rationale: 'GG-SCHED-0004 named the wrapper after blocking NIO, which GG-0063 removed: with verbatim syscall/internal/poll/net, I/O reaches the runtime as raw syscalls through the Panama executor. The mechanism (ioEnter/ioExit, wakeFifo re-acquire, unpaired-ioEnter assert, the CapExhaustion falsifier) is unchanged; only what it brackets is restated. ADR-0011 decision 3.'
 parent: GG-0017
-status: locked
-superseded_by: ""
+status: superseded
+superseded_by: GG-SCHED-0006
 verification_plan: 'Spike 2b F5; the CapExhaustion falsifier ported to fds and to blocking downcalls (N blocked goroutines at cap=N never starve a runnable one); static audit of the runtime and the syscall role table: every may-block entry is bracketed; unpaired-ioEnter assert test; Phase-2 fault-injection suite.'
 history:
     - '2026-11-18: created (draft), supersedes GG-SCHED-0004'
     - '2026-11-18: locked'
+    - '2026-11-18: superseded by GG-SCHED-0006'

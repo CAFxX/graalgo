@@ -20,7 +20,7 @@ import java.util.Deque;
  * panics ("sync: unlock of unlocked mutex", gc parity); unlocking from a
  * different goroutine than the locker is allowed (as in gc).
  *
- * <p>verifies: GG-SCHED-0005 (scheduler-aware blocking).
+ * <p>Requirement: GG-SCHED-0006 (scheduler-aware blocking).
  */
 public final class GoMutex {
     private boolean locked;

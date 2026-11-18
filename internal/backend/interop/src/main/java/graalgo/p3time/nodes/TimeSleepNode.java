@@ -13,7 +13,7 @@ import graalgo.values.GoKind;
  * {@code "timesleep"} wire node (void).
  *
  * <p>Uses the Phase-2 sleep path ({@link Timers#sleep}): the goroutine
- * parks scheduler-aware on the timer heap (GG-SCHED-0005) — it never pins
+ * parks scheduler-aware on the timer heap (GG-SCHED-0006) — it never pins
  * a carrier thread and does not count against the in-flight cap while
  * parked. {@code d <= 0} returns immediately (gc parity, inside
  * {@code Timers.sleep}).

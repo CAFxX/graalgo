@@ -35,7 +35,7 @@ public final class ResumeToken {
          */
         UNPARK,
         /**
-         * Goroutine entering blocking I/O (P2-M3, GG-0063/GG-SCHED-0005).
+         * Goroutine entering blocking I/O (P2-M3, GG-0063/GG-SCHED-0006).
          * The drainer releases its in-flight slot (it no longer counts
          * against GOMAXPROCS while blocked, gc netpoller parity) and
          * records the handle in the in-I/O set. The vthread then blocks

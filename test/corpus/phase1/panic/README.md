@@ -1,6 +1,6 @@
 # Panic corpus (M5)
 
-Differential corpus for defer/panic/recover/Goexit (GG-0067): every program
+Differential corpus for defer/panic/recover/Goexit (GG-0070): every program
 is a single `func main` (plus `import "runtime"` for the Goexit programs,
 via the frontend's Phase-1 `runtime.Goexit` overlay carve-out), exercised
 both by stock gc (the oracle) and by `gofrontend` → `NodeFactory`.

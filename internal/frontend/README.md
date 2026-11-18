@@ -76,7 +76,8 @@ registration) and `Json` unit checks.
 
 ## GG status
 
-The requirement status of GG-0066 (which superseded `GG-0012`), GG-0013 and
-GG-0044 lives in [requirements/](../../requirements/) (`tools/req trace GG-0066`); this
+The requirement status of GG-0069 (which superseded `GG-0066` and, before it,
+`GG-0012`), GG-0013 and GG-0044 lives in [requirements/](../../requirements/)
+(`tools/req trace GG-0069`); this
 README does not duplicate it. History:
 [CHECKPOINT.md](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).

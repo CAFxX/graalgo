@@ -256,7 +256,7 @@ public final class SchedulerCore {
     }
 
     /**
-     * Enter blocking I/O (P2-M3, GG-0063/GG-SCHED-0005 — v1 netpoller
+     * Enter blocking I/O (P2-M3, GG-0063/GG-SCHED-0006 — v1 netpoller
      * deletion): releases the goroutine's in-flight slot synchronously
      * (returns only after the drainer has released it), so the slot is
      * immediately available to other goroutines. The vthread then blocks

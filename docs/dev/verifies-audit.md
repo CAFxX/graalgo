@@ -15,11 +15,20 @@ test-side annotations found wrong while reconciling the requirements of
 after the 2026-11-18 supersessions. Counts per requirement were taken with
 the linter's own matching rules (Markdown code spans and fences ignored).
 
+**Update 2026-11-18 (requirement re-issue, [ADR-0012](adr/ADR-0012-open-coded-defers.md)
+decision 4):** the rows for `GG-0063`/`GG-SCHED-0005` (IoSlotsTest),
+`GG-0065` (GoDebugTest), `GG-0066` ×4 and the three `GG-SCHED-0005`
+implementation annotations are resolved — see the Action column; the
+`GG-0066` rows were marked OK here and were not: v1 tests do not verify the
+frontend requirement. `PanicCorpusTest`'s `GG-0067` annotation, which this
+audit missed, is in the same class.
+
 **Rule to add:** `verifies:` only in tests — `*_test.go`, `src/test/`, and
 corpus inputs under [test/](../../test/) — never in `src/main`, registry
 history or Markdown prose. `req lint` cannot enforce this today (it scans
 every file the same way), so the rule is a **tools/req follow-up**: a lint
-rule (e) "`verifies:` outside a test source", with
+rule (f) "`verifies:` outside a test source" (rule (e) is now the
+locked-text sum check), with
 [requirements/](../../requirements/) history and
 [docs/arch/reviews/](../arch/reviews/) snapshots excluded from rule (c)
 counting. Removing every annotation below keeps rule (c) green: each active
@@ -32,9 +41,10 @@ requirement involved keeps test-side annotations, except as noted for
 |---|---|---|---|
 | `GG-0027 (M2: launcher executes real programs …)` | [MainTest.java](../../internal/backend/truffle/src/test/java/graalgo/launcher/MainTest.java):18 | WRONG — GG-0027 is the pinned GraalVM distribution and the SpawnIsolate/OSR re-verification on it; the test runs programs end to end | write a real verifier first (e.g. the build checks the pinned jars against [LIB.md](../../internal/backend/truffle/lib/LIB.md)'s checksums; WP-OSR's dated results), then delete. GG-0027 is **active** and this is its only annotation: deleting it alone turns rule (c) red |
 | `GG-0061 (M3: expressions + values …)` | [ArithmeticCorpusTest.java](../../internal/backend/truffle/src/test/java/graalgo/frontend/ArithmeticCorpusTest.java):40 | WRONG — re-pointed mechanically from `GG-0015` by the ADR-0009 supersession; it tests v1's nested `GoStruct`, which GG-0061 declares non-conforming | delete (GG-0061 is locked; W4/W13 tests carry it) |
-| `GG-0063, GG-SCHED-0005 (io slice)` | [IoSlotsTest.java](../../internal/backend/truffle/src/test/java/graalgo/sched/IoSlotsTest.java):17 | PARTLY WRONG — the test checks `ioEnter`/`ioExit` slot accounting (GG-SCHED-0005); the epoll poller of GG-0063 does not exist yet | drop `GG-0063` from the annotation; the W8b poller tests carry it |
-| `GG-0065 (GODEBUG triage: … unknown-knob deny-with-error …)` | [GoDebugTest.java](../../internal/backend/truffle/src/test/java/graalgo/sched/launcher/GoDebugTest.java):18 | STALE TEXT — the parenthetical describes the superseded rule | rewrite with WP-GODEBUG ([RECOVERY.md](../arch/RECOVERY.md)), which also inverts the six tests whose annotations were removed |
-| `GG-0066` ×4 | [StraightLineCorpusTest.java](../../internal/backend/truffle/src/test/java/graalgo/frontend/StraightLineCorpusTest.java):38, [export_test.go](../../internal/frontend/p3frontend/export_test.go):145, :187, [loader_test.go](../../internal/frontend/p3frontend/loader_test.go):151 | OK until M3 — v1 frontend tests exercise `go/parser` + `go/types`; they are deleted with v1 | add `verifies: GG-0066` to [release_test.go](../../internal/toolexec/release/release_test.go):10 (`TestBuiltByTrackedToolchain`, the real verifier) before M3, or GG-0066 (active) loses its last annotation |
+| `GG-0063, GG-SCHED-0005 (io slice)` | [IoSlotsTest.java](../../internal/backend/truffle/src/test/java/graalgo/sched/IoSlotsTest.java):17 | PARTLY WRONG — the test checks `ioEnter`/`ioExit` slot accounting; the epoll poller of GG-0063 does not exist yet | **done 2026-11-18:** now `verifies: GG-SCHED-0006 (io slice: ioEnter/ioExit slot accounting)`; the W8b poller tests carry GG-0063 |
+| `GG-0065 (GODEBUG triage: … unknown-knob deny-with-error …)` | [GoDebugTest.java](../../internal/backend/truffle/src/test/java/graalgo/sched/launcher/GoDebugTest.java):18 | STALE TEXT — the parenthetical describes the superseded rule | **partly done 2026-11-18:** every annotation re-pointed to GG-0068 (draft) and the class parenthetical no longer claims the deny rule; WP-GODEBUG ([RECOVERY.md](../arch/RECOVERY.md)) still inverts the six tests whose annotations were removed |
+| `GG-0066` ×4 | [StraightLineCorpusTest.java](../../internal/backend/truffle/src/test/java/graalgo/frontend/StraightLineCorpusTest.java):38, [export_test.go](../../internal/frontend/p3frontend/export_test.go):145, :187, [loader_test.go](../../internal/frontend/p3frontend/loader_test.go):151 | WRONG (marked OK by the first version of this audit) — v1 frontend tests exercise v1's JSON export, not the requirement (tracked-release provenance, GIR) | **done 2026-11-18:** annotations removed; the only annotation of the successor GG-0069 (draft) is on [release_test.go](../../internal/toolexec/release/release_test.go) (`TestBuiltByTrackedToolchain`) |
+| `GG-0067 (M5: defer/panic/recover/Goexit …)` | [PanicCorpusTest.java](../../internal/backend/truffle/src/test/java/graalgo/frontend/PanicCorpusTest.java):81 | WRONG — a v1 test; `GG-0067` was activated on it alone | **done 2026-11-18:** annotation removed; GG-0070/GG-0071 (drafts) get theirs with TR-3 |
 
 ## 2. Annotations outside tests
 
@@ -88,13 +98,13 @@ Verdicts: **DECORATIVE** — on implementation or prose, verifies nothing;
 | `GG-0020 (WS G builtin)` | [PanicNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/PanicNode.java):8 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-0020 keeps 18 test-side annotations) |
 | `GG-0020 (WS G builtin)` | [PrintNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/PrintNode.java):9 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-0020 keeps 18 test-side annotations) |
 | `GG-0020 (WS G intrinsic surface)` | [BuiltinPrint.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/BuiltinPrint.java):2 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-0020 keeps 18 test-side annotations) |
-| `GG-SCHED-0005 (timer slice)` | [GoTimer.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GoTimer.java):47 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-SCHED-0005 keeps 4 test-side annotations; locked, rule (c) does not apply) |
+| `GG-SCHED-0005 (timer slice)` | [GoTimer.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/GoTimer.java):47 | DECORATIVE — annotation on implementation (src/main), not on a test | **done 2026-11-18:** now a plain reference to GG-SCHED-0006 |
 | `GG-0020 (WS G intrinsic surface)` | [Intrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Intrinsics.java):2 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-0020 keeps 18 test-side annotations) |
 | `GG-0020` | [Linknames.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Linknames.java):38 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-0020 keeps 18 test-side annotations) |
 | `GG-0048 (timer slice)` | [TimerChan.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/TimerChan.java):23 | WRONG — on implementation, and GG-0048 is the scheduling-observables bar (verified by the torture and latency suites), not timer channels | delete the annotation |
-| `GG-SCHED-0005 (timer slice)` | [TimerHeap.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/TimerHeap.java):38 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-SCHED-0005 keeps 4 test-side annotations; locked, rule (c) does not apply) |
+| `GG-SCHED-0005 (timer slice)` | [TimerHeap.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/TimerHeap.java):38 | DECORATIVE — annotation on implementation (src/main), not on a test | **done 2026-11-18:** now a plain reference to GG-SCHED-0006 |
 | `GG-0020 (timer slice)` | [Timers.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/Timers.java):17 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-0020 keeps 18 test-side annotations) |
-| `GG-SCHED-0005 (scheduler-aware blocking)` | [GoMutex.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/sync/GoMutex.java):23 | DECORATIVE — annotation on implementation (src/main), not on a test | delete (GG-SCHED-0005 keeps 4 test-side annotations; locked, rule (c) does not apply) |
+| `GG-SCHED-0005 (scheduler-aware blocking)` | [GoMutex.java](../../internal/backend/truffle/src/main/java/graalgo/runtime/sync/GoMutex.java):23 | DECORATIVE — annotation on implementation (src/main), not on a test | **done 2026-11-18:** now a plain reference to GG-SCHED-0006 |
 | `GG-0013` (history prose) | [GG-0013.yaml](../../requirements/GG-0013.yaml):14 | DECORATIVE — history prose in the registry quoting an annotation; counted by lint rule (c) | lint fix: skip `requirements/` history when collecting `verifies:` (tools/req follow-up); no edit to the locked record |
 | `GG-0017` (history prose) | [GG-0017.yaml](../../requirements/GG-0017.yaml):15 | DECORATIVE — history prose in the registry quoting an annotation; counted by lint rule (c) | lint fix: skip `requirements/` history when collecting `verifies:` (tools/req follow-up); no edit to the locked record |
 | `GG-0017` (history prose) | [GG-0017.yaml](../../requirements/GG-0017.yaml):16 | DECORATIVE — history prose in the registry quoting an annotation; counted by lint rule (c) | lint fix: skip `requirements/` history when collecting `verifies:` (tools/req follow-up); no edit to the locked record |
@@ -114,7 +124,7 @@ in code font in the same change as this audit.
 
 | Verdict | Count |
 |---|---|
-| WRONG (test side) | 3 (+1 stale text) |
+| WRONG (test side) | 3 (+1 stale text) at first audit; +5 found by the 2026-11-18 review (`GG-0066` ×4, `GG-0067` ×1) |
 | WRONG (outside tests) | 3 |
 | DECORATIVE (implementation) | 49 |
 | DECORATIVE (registry history) | 4 |

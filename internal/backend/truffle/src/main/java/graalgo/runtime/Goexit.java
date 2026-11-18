@@ -4,7 +4,7 @@ import com.oracle.truffle.api.nodes.ControlFlowException;
 
 /**
  * Go's {@code runtime.Goexit} as a Truffle control-flow exception (M5, WS F;
- * SPEC §3.5, GG-0067).
+ * SPEC §3.5, GG-0071).
  *
  * <p>Per D3 [DECIDED by SPEC], Goexit is a {@link ControlFlowException} (no
  * trace needed): it unwinds through Truffle frames, running deferred calls

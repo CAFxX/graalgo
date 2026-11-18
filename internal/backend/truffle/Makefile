@@ -169,9 +169,9 @@ check: main $(OUT_TEST)/.built
 	@# imports java.net.URISyntaxException for code-source URI parsing — not
 	@# network I/O. java.nio.channels is covered repo-wide below.
 	@if grep -rn --include='*.java' -E 'java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
-		echo "NETPOLLER GATE FAILED: java.net bypassing slot discipline (GG-SCHED-0005)"; exit 1; fi
+		echo "NETPOLLER GATE FAILED: java.net bypassing slot discipline (GG-SCHED-0006)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
-	@echo "== off-heap/NIO/FFM confinement gate (ADR-0002 D3/F3, GG-SCHED-0005; ADR-0009) =="
+	@echo "== off-heap/NIO/FFM confinement gate (ADR-0002 D3/F3, GG-SCHED-0006; ADR-0009) =="
 	@echo "-- java.nio.channels, java.lang.foreign, MemorySegment, Arena, allocateDirect,"
 	@echo "-- allocateMemory: forbidden in every backend module EXCEPT the designated"
 	@echo "-- syscall-boundary package graalgo.syscall (abi-spike P2, GG-0063/0064);"

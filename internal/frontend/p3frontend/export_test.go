@@ -142,7 +142,7 @@ func normalizeDoc(t *testing.T, doc string) map[string]any {
 	return v
 }
 
-// TestSyntheticBootstrapRetained verifies: GG-0066 — a single-file program
+// TestSyntheticBootstrapRetained (v1 frontend export) — a single-file program
 // importing the synthetic runtime+fmt packages produces a deep-equal
 // frontend/v1 document through the new ExportDir path and through the
 // frozen ExportFile directly. The bootstrap still works.
@@ -184,7 +184,7 @@ func main() {
 	}
 }
 
-// TestTwoPackageDifferential verifies: GG-0066 — a two-package program
+// TestTwoPackageDifferential (v1 frontend export) — a two-package program
 // (main + helper, the latter with a linux-tagged file and a windows-suffixed
 // file that must be excluded; main also carries a colliding T and a
 // shadowing Counter to pin the P0-1 and quiet-divergence fixes) runs

@@ -4,7 +4,7 @@ module's `check`).
 
 Go values live on the JVM heap behind GC barriers (ADR-0002 D3/F3), and
 goroutine I/O must go through the slot-releasing scheduler path
-(GG-SCHED-0005). Direct use of `java.nio.channels`, the FFM API
+(GG-SCHED-0006). Direct use of `java.nio.channels`, the FFM API
 (`java.lang.foreign`, `MemorySegment`, `Arena`) or raw off-heap memory
 (`allocateDirect`, `allocateMemory`) bypasses both.
 

@@ -26,7 +26,7 @@
 // except *ast.EmptyStmt which the exporter normalizes away (documented in
 // docs/frontend-v1.md).
 //
-// D1 falsifier watch (GG-0066): this file uses only long-stable go/* APIs
+// D1 falsifier watch (GG-0069): this file uses only long-stable go/* APIs
 // (parser.ParseFile, types.Config.Check, Info.{Types,Defs,Uses}). If a future
 // re-vendoring breaks compilation or changes behavior of these APIs, STOP and
 // report: that is a spike-3 toil re-measurement trigger, not a cue to adapt

@@ -3,9 +3,10 @@ title: GODEBUG registry with gc-compatible unknown keys
 statement: Every GODEBUG setting defined by the tracked release SHALL be classified per release (emulated / no-op / unsupported with justification) in a versioned registry, and the registry SHALL be reviewed per release. As under gc, a GODEBUG key the tracked release does not define SHALL be accepted and ignored silently; graalgo SHALL reject with an error only a non-default value of a known setting classified unsupported, and the values gc itself rejects fatally.
 rationale: gc silently ignores unknown GODEBUG keys; denying them (superseded GG-0055) made graalgo observably differ from gc for environments carrying knobs of other releases or typos (GG-0001/GG-0002). Unsupported settings still fail loudly when actually requested. ADR-0011 decision 1.
 parent: ""
-status: locked
-superseded_by: ""
+status: superseded
+superseded_by: GG-0068
 verification_plan: 'godebug-diff in upgrade Phase 2; registry review record; differential tests vs gc: an unknown key (incl. a near-miss of a real knob) runs the program unchanged with gc''s exit status and output; a non-default value of an unsupported knob is rejected with an error naming the knob.'
 history:
     - '2026-11-18: created (draft), supersedes GG-0055'
     - '2026-11-18: locked'
+    - '2026-11-18: superseded by GG-0068'
