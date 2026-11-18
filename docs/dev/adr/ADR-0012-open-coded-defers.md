@@ -62,7 +62,8 @@ chain" and SPEC §3.5 said open-coded defers are "a later phase, not v1".
    and `GG-0067` activated on it; `PanicCorpusTest` is a v1 test, so the
    re-issue removed the annotation. The both-paths obligation has no test
    yet — a follow-up that lands with TR-3.
-2. **A7 accepted conditionally on P-B `[OPEN]`.** The owner will switch from
+2. **A7 accepted conditionally on P-B `[OPEN]`** (resolved 2026-11-18: P-B failed, A7 rejected, see
+   [ADR-0013](ADR-0013-a7-rejected.md)). The owner will switch from
    `Safepoint.poll()` to Truffle-safepoint preemption only if prototype P-B
    (truffle-design §13.2: fairness and torture suites with the monitor +
    `ThreadLocalAction` implementation behind a switch) validates. Until then
