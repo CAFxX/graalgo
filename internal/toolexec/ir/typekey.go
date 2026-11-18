@@ -22,6 +22,11 @@ import (
 type TypeKeyer struct {
 	LocalName      func(*types.TypeName) string // "" if not local
 	TypeParamOwner func(*types.TypeParam) string
+	// LocalTargs returns, for a type declared inside a generic function or
+	// method, the type parameters of that function (receiver's first): such
+	// a type is a different type per instantiation, so it is keyed like a
+	// generic type instantiated with them. nil for every other type.
+	LocalTargs func(*types.TypeName) []types.Type
 }
 
 // Key returns the canonical key of t.
@@ -178,13 +183,20 @@ func (k *TypeKeyer) write(b *strings.Builder, t types.Type) {
 			}
 			b.WriteString(obj.Pkg().Path() + "." + name)
 		}
-		if targs := t.TypeArgs(); targs.Len() > 0 {
+		var targs []types.Type
+		for i := range t.TypeArgs().Len() {
+			targs = append(targs, t.TypeArgs().At(i))
+		}
+		if len(targs) == 0 && k.LocalTargs != nil && obj.Pkg() != nil {
+			targs = k.LocalTargs(t.Origin().Obj())
+		}
+		if len(targs) > 0 {
 			b.WriteByte('[')
-			for i := range targs.Len() {
+			for i, ta := range targs {
 				if i > 0 {
 					b.WriteByte(',')
 				}
-				k.write(b, targs.At(i))
+				k.write(b, ta)
 			}
 			b.WriteByte(']')
 		}

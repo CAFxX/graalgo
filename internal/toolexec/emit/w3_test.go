@@ -134,3 +134,29 @@ func F(p *int, x int, a any) int {
 		t.Errorf("switch x { case a }: tag not converted to the case's interface type")
 	}
 }
+
+// Unnamed struct types with promoted methods get a TYPEDEFS entry
+// A type declared in a generic function is a different type per
+// instantiation (gc: L[int]() != L[string]() even when T does not mention
+// the type parameter), so its key carries the enclosing type parameters.
+func TestLocalTypeInGenericKey(t *testing.T) {
+	f := emitSrc(t, `package p
+func L[X any]() any {
+	type T struct{ a int }
+	return T{1}
+}
+func M() any { type U int; return U(1) }
+type R[E any] struct{}
+func (R[E]) Meth() any { type V struct{ e E }; return V{} }
+`)
+	for _, want := range []string{"p.T·L·0[$p.L.0]", "p.U·M·0", "p.V·R.Meth·0[$p.R.Meth.0]"} {
+		if !hasKey(f, want) {
+			t.Errorf("no type key %q; have %v", want, keysContaining(f, "·"))
+		}
+	}
+	for _, td := range f.TypeDefs {
+		if typeKey(f, td.Type) == "p.T·L·0[$p.L.0]" && len(td.Tparams) != 1 {
+			t.Errorf("local type T in L: typedef tparams %v, want the function's", td.Tparams)
+		}
+	}
+}

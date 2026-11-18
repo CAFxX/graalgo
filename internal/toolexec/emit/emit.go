@@ -109,6 +109,7 @@ type emitter struct {
 	objIDs      map[types.Object]uint32
 	funcIDs     map[*types.Func]uint32
 	localTypes  map[*types.TypeName]string
+	localTargs  map[*types.TypeName][]types.Type // local types of generic functions
 	tparamOwner map[*types.TypeParam]string
 	typedefs    []*types.TypeName
 	linknames   map[string]string
@@ -131,10 +132,12 @@ func Emit(cfg Config) (*ir.File, *Stats, error) {
 		objIDs:      map[types.Object]uint32{},
 		funcIDs:     map[*types.Func]uint32{},
 		localTypes:  map[*types.TypeName]string{},
+		localTargs:  map[*types.TypeName][]types.Type{},
 		tparamOwner: map[*types.TypeParam]string{},
 		linknames:   map[string]string{},
 	}
-	e.keyer = ir.TypeKeyer{LocalName: e.localTypeName, TypeParamOwner: e.typeParamOwner}
+	e.keyer = ir.TypeKeyer{LocalName: e.localTypeName, TypeParamOwner: e.typeParamOwner,
+		LocalTargs: func(tn *types.TypeName) []types.Type { return e.localTargs[tn] }}
 	if e.sizes == nil {
 		return nil, nil, fmt.Errorf("emit: no gc sizes for GOARCH %q", cfg.GOARCH)
 	}
@@ -376,6 +379,9 @@ func (e *emitter) typeStructure(t types.Type) ir.Type {
 		}
 		if t.Origin() == t && t.TypeParams().Len() > 0 {
 			e.registerTypeParams(t.TypeParams(), pkgPath(obj.Pkg())+"."+obj.Name())
+		}
+		if lt := e.localTargs[obj]; len(lt) > 0 && t.TypeArgs().Len() == 0 {
+			return &ir.NamedType{Sym: e.objSym(obj), Targs: e.typeIDs_(lt)}
 		}
 		return &ir.NamedType{Sym: e.objSym(obj), Targs: e.typeListIDs(t.TypeArgs())}
 	case *types.TypeParam:
@@ -654,6 +660,11 @@ func (e *emitter) emitNamedTypedef(tn *types.TypeName) {
 		return
 	}
 	td := ir.TypeDef{Type: e.typeID(named), Underlying: e.typeID(named.Underlying()), Tparams: e.tparamIDs(named.TypeParams()), Size: -1, Align: -1}
+	if lt := e.localTargs[tn]; len(lt) > 0 {
+		// A local type of a generic function: generic in the function's
+		// type parameters (one type per instantiation, as in gc).
+		td.Tparams = e.typeIDs_(lt)
+	}
 	for j := range named.NumMethods() {
 		m := named.Method(j)
 		pkg := ""
@@ -671,7 +682,7 @@ func (e *emitter) emitNamedTypedef(tn *types.TypeName) {
 		td.Mset = e.methodSet(named)
 		td.PtrMset = e.methodSet(types.NewPointer(named))
 	}
-	if named.TypeParams().Len() == 0 {
+	if len(td.Tparams) == 0 {
 		e.setLayout(&td, named)
 	}
 	e.file.TypeDefs = append(e.file.TypeDefs, td)
@@ -796,8 +807,16 @@ func (e *emitter) nameLocalTypes() {
 				continue
 			}
 			owner := fd.Name.Name
+			var tparams []types.Type
 			if obj, ok := e.cfg.Info.Defs[fd.Name].(*types.Func); ok {
 				owner = symbolName(obj)
+				e.registerFunc(obj)
+				sig := obj.Signature()
+				for _, l := range []*types.TypeParamList{sig.RecvTypeParams(), sig.TypeParams()} {
+					for i := range l.Len() {
+						tparams = append(tparams, l.At(i))
+					}
+				}
 			}
 			n := 0
 			ast.Inspect(fd.Body, func(node ast.Node) bool {
@@ -807,6 +826,9 @@ func (e *emitter) nameLocalTypes() {
 				}
 				if tn, ok := e.cfg.Info.Defs[ts.Name].(*types.TypeName); ok {
 					e.localTypes[tn] = tn.Name() + "·" + owner + "·" + strconv.Itoa(n)
+					if len(tparams) > 0 {
+						e.localTargs[tn] = tparams
+					}
 					n++
 				}
 				return true
