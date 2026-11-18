@@ -185,27 +185,47 @@ public final class TypeparamDifferentialTest {
      * {@code test/differential/testdata/exclusions-edge.yaml}).
      */
     static Map<String, String[]> readExclusions(Path yaml) throws IOException {
+        // Mirrors harness.ParseReviewedExclusions: plain entries plus
+        // per-cause groups (- group: / reason: / detail: / files: ...),
+        // each group file getting the group's reason and detail.
         Map<String, String[]> out = new HashMap<>();
         String file = null, reason = null, detail = null;
+        List<String> groupFiles = null;
         for (String line : Files.readAllLines(yaml, StandardCharsets.UTF_8)) {
             String t = line.trim();
-            if (t.startsWith("- file:")) {
-                if (file != null) {
-                    out.put(file, new String[]{reason, detail == null ? "" : detail});
-                }
-                file = t.substring("- file:".length()).trim();
+            if (t.startsWith("- file:") || t.startsWith("- group:")) {
+                flushExclusion(out, file, groupFiles, reason, detail);
+                file = t.startsWith("- file:") ? t.substring("- file:".length()).trim() : null;
+                groupFiles = t.startsWith("- group:") ? new ArrayList<>() : null;
                 reason = null;
                 detail = null;
-            } else if (t.startsWith("reason:") && file != null) {
+            } else if (t.startsWith("reason:") && (file != null || groupFiles != null)) {
                 reason = t.substring("reason:".length()).trim();
-            } else if (t.startsWith("detail:") && file != null) {
+            } else if (t.startsWith("detail:") && (file != null || groupFiles != null)) {
                 detail = t.substring("detail:".length()).trim();
+            } else if (t.startsWith("files:") && groupFiles != null) {
+                for (String f : t.substring("files:".length()).trim().split("\\s+")) {
+                    if (!f.isEmpty()) {
+                        groupFiles.add(f);
+                    }
+                }
             }
         }
-        if (file != null) {
-            out.put(file, new String[]{reason, detail == null ? "" : detail});
-        }
+        flushExclusion(out, file, groupFiles, reason, detail);
         return out;
+    }
+
+    private static void flushExclusion(Map<String, String[]> out, String file, List<String> groupFiles,
+            String reason, String detail) {
+        String d = detail == null ? "" : detail;
+        if (file != null) {
+            out.put(file, new String[]{reason, d});
+        }
+        if (groupFiles != null) {
+            for (String f : groupFiles) {
+                out.put(f, new String[]{reason, d});
+            }
+        }
     }
 
     /** Reads the {@code version:} line of the exclusion list (GG-0033). */
@@ -451,7 +471,7 @@ public final class TypeparamDifferentialTest {
     // missing detail (defaults to "").
 
     public void testReadExclusionsEdgeCases() throws IOException {
-        Path fixture = repoRoot().resolve("tools").resolve("diffharness")
+        Path fixture = repoRoot().resolve("test").resolve("differential")
                 .resolve("testdata").resolve("exclusions-edge.yaml");
         Map<String, String[]> got = readExclusions(fixture);
         Map<String, String[]> want = Map.of(

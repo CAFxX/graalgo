@@ -104,7 +104,17 @@ public final class ChanBuilderTest {
             + "{\"kind\":\"basic\",\"detail\":{\"class\":\"bool\",\"name\":\"bool\"}}"
             + "]";
 
-    private static final String POS = "{\"line\":1,\"col\":1,\"len\":1}";
+    /**
+     * The panic's Go-visible message. Runtime panics are runtime.Error
+     * values since T0.A (GoErrorValue; message = Error()); the text is gc's
+     * (e.g. "makechan: size out of range" for a negative size).
+     */
+    private static String panicText(PanicException pe) {
+        Object v = pe.goValue();
+        return v instanceof graalgo.runtime.GoErrorValue ev ? ev.errorString() : String.valueOf(v);
+    }
+
+    private static final String POS = "{\"file\":0,\"line\":1,\"col\":1,\"off\":0,\"len\":1}";
 
     private NodeFactory factory;
     private NodeFactory.BuildCtx ctx;
@@ -284,7 +294,7 @@ public final class ChanBuilderTest {
                 n.executeObject(f);
                 assertTrue(false, "negative size must panic");
             } catch (PanicException pe) {
-                assertEqObj("makechan: negative size", pe.goValue().toString(), "panic message");
+                assertEqObj("makechan: size out of range", panicText(pe), "panic message");
             }
         });
     }
@@ -352,7 +362,7 @@ public final class ChanBuilderTest {
                 send(chId, basiclit("1", T_INT)).executeVoid(f);
                 assertTrue(false, "send on closed must panic");
             } catch (PanicException pe) {
-                assertEqObj("send on closed channel", pe.goValue().toString(), "panic message");
+                assertEqObj("send on closed channel", panicText(pe), "panic message");
             }
         });
     }
@@ -369,7 +379,7 @@ public final class ChanBuilderTest {
                 chanclose(chId).executeVoid(f);
                 assertTrue(false, "close of closed must panic");
             } catch (PanicException pe) {
-                assertEqObj("close of closed channel", pe.goValue().toString(), "panic message");
+                assertEqObj("close of closed channel", panicText(pe), "panic message");
             }
         });
     }
@@ -385,7 +395,7 @@ public final class ChanBuilderTest {
                 chanclose(chId).executeVoid(f);
                 assertTrue(false, "close of nil must panic");
             } catch (PanicException pe) {
-                assertEqObj("close of nil channel", pe.goValue().toString(), "panic message");
+                assertEqObj("close of nil channel", panicText(pe), "panic message");
             }
         });
     }
@@ -607,7 +617,7 @@ public final class ChanBuilderTest {
                     sel.executeVoid(f);
                     panicMsg.set("NO_PANIC");
                 } catch (PanicException pe) {
-                    panicMsg.set(pe.goValue().toString());
+                    panicMsg.set(panicText(pe));
                 }
             });
             assertEqObj("send on closed channel", panicMsg.get(), "panic message");

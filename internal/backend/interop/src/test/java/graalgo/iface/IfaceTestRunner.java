@@ -35,8 +35,6 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
-        // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
-        TESTS.add(graalgo.p3net.GoNetpollTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         // (fix-redmaster-r52: the FmtStateItabTest registration is removed
         // — the test class itself was deleted by the real-fmt2 removal
@@ -68,6 +66,12 @@ public final class IfaceTestRunner {
         // fix-redmaster-r40: AbiTypes abi.Name byte encoding
         // (flags + LEB128 varints), decoded gc-style.
         TESTS.add(graalgo.p3reflect.AbiNameEncodingTest.class);
+        // GcMaskTest / MapKeyHashTest existed but were in no runner (global
+        // review G1, 2026-11-18); check_lists.py now globs *Test.java.
+        TESTS.add(graalgo.p3reflect.GcMaskTest.class);
+        TESTS.add(graalgo.p3reflect.MapKeyHashTest.class);
+        // limitations.md stack-depth contract on the product launcher.
+        TESTS.add(graalgo.p3sync.launcher.StackDepthLimitTest.class);
     }
 
     private IfaceTestRunner() {}

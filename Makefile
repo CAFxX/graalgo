@@ -182,7 +182,7 @@ check:
 # Repo-wide static gates (no build needed). Each check_*.py has a
 # test_*.py that plants the violation it guards; every test_*.py runs here.
 check-repo:
-	@set -e; for t in .github/scripts/test_*.py; do echo "== $$t"; python3 $$t; done
+	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py; do echo "== $$t"; python3 $$t; done
 	python3 .github/scripts/check_tracked_files.py
 	python3 .github/scripts/check_doc_paths.py
 	python3 .github/scripts/check_gg_ids.py
@@ -343,12 +343,13 @@ test: build
 #   test-java-fast  per-push (in `make all`): classes measured fast
 #   test-java-slow  nightly/weekly: the corpus differentials and stress tests
 # Split measured 2026-11-18 (make test-java-timing, nice 19, -Xmx2g): fast
-# lists total ~26 s of test time (classes <= ~4 s each). Slow lists hold
-# classes > ~4 s AND classes with failures on that run (they never ran
-# per-push and had rotted): MainTest, GenericsCorpusTest, VarsCorpusTest,
-# BuiltinsCorpusTest, TypeparamDifferentialTest, SectionClampTest,
-# IfaceMethodTablesTest, ChanBuilderTest, GoOsErrnoTest, GoNetpollTest -
-# so test-java-slow is RED until those are fixed (owners: backend lanes).
+# lists total ~30 s of test time (classes <= ~4 s each); slow lists hold the
+# classes > ~4 s. Known failures live ONLY in
+# [test/java/quarantine.txt](test/java/quarantine.txt) (class | reason |
+# owner | expiry): test-java-slow fails on any failure outside it and on a
+# quarantined class that now passes (quarantine_verdict.py). The truffle
+# slow list runs on JT_RUNTIME_CP: its corpus differentials run whole Go
+# programs, which need interop's ServiceLoader registrations.
 # Re-measure with `make test-java-timing` (all classes, timings printed)
 # before moving a class between lists. A class missing from both lists is
 # caught by `java-test-lists-check` (every class registered in a module
@@ -373,12 +374,12 @@ define run_java_tests
 	  -cp "$(2)" ClassListRunner $(3)
 endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
-JAVA_FAST_TRUFFLE := graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest
-JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest graalgo.frontend.SectionClampTest
+JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest
+JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
 JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
 JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
-JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest
-JAVA_SLOW_INTEROP := graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3net.GoNetpollTest graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
+JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest graalgo.p3reflect.GcMaskTest graalgo.p3reflect.MapKeyHashTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3sync.launcher.StackDepthLimitTest
+JAVA_SLOW_INTEROP := graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
 
 java-test-classes: build
 	$(MAKE) -C internal/backend/truffle out/test-classes/.built
@@ -386,8 +387,10 @@ java-test-classes: build
 	mkdir -p $(JT_RUNNER) && $(dir $(JT_JAVA))javac -Werror -d $(JT_RUNNER) test/java/ClassListRunner.java
 
 # Every class a module runner registers must be in exactly one list.
+JAVA_QUARANTINE := test/java/quarantine.txt
+JAVA_SLOW_ALL = $(JAVA_SLOW_TRUFFLE) $(JAVA_SLOW_RUNTIME) $(JAVA_SLOW_INTEROP)
 java-test-lists-check:
-	python3 test/java/check_lists.py \
+	python3 test/java/check_lists.py --quarantine $(JAVA_QUARANTINE) --slow "$(JAVA_SLOW_ALL)" \
 	  internal/backend/truffle/src/test/java/graalgo/test/Runner.java "$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE)" \
 	  internal/backend/truffle/src/test/java/graalgo/sched/SchedTestRunner.java "$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME)" \
 	  internal/backend/interop/src/test/java/graalgo/iface/IfaceTestRunner.java "$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP)"
@@ -397,13 +400,21 @@ test-java-fast: java-test-classes java-test-lists-check
 	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
 	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
 
+# Each module's run is logged (exit status ignored: a JVM crash or INFRA
+# exit shows up as a class with no CLASS line); quarantine_verdict.py then
+# decides. Logs live under the gitignored out/ dirs.
+JT_SLOW_LOGS := $(JT_BK)/truffle/out/test-tmp/java-slow-truffle.log $(JT_BK)/truffle/out/test-tmp/java-slow-runtime.log $(JT_BK)/interop/out/test-tmp/java-slow-interop.log
 test-java-slow: java-test-classes java-test-lists-check
-	$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
-	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),)
-	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),)
+	rm -f $(JT_SLOW_LOGS)
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS)) > $(word 1,$(JT_SLOW_LOGS)) 2>&1
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),) > $(word 2,$(JT_SLOW_LOGS)) 2>&1
+	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),) > $(word 3,$(JT_SLOW_LOGS)) 2>&1
+	cat $(JT_SLOW_LOGS)
+	python3 test/java/quarantine_verdict.py $(JAVA_QUARANTINE) "$(JAVA_SLOW_ALL)" $(JT_SLOW_LOGS)
 
 test-java-timing: java-test-classes
-	-$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE) $(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	-$(call run_java_tests,truffle,$(JT_TRUFFLE_CP),$(JAVA_FAST_TRUFFLE),$(JT_TRUFFLE_PROPS))
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS))
 	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME) $(JAVA_SLOW_RUNTIME),)
 	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP) $(JAVA_SLOW_INTEROP),)
 

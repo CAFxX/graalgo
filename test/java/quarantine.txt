@@ -1,0 +1,16 @@
+# Quarantined slow Java test classes (make test-java-slow).
+#
+# Format: <class> | <reason> | <owner> | <expiry milestone>
+# `make test-java-slow` FAILS on any failing class NOT listed here, and on
+# any listed class that now passes every test (remove its line). Only slow
+# classes may be quarantined (check_lists.py enforces it); the per-push
+# fast lists carry no known failures. Triage 2026-11-18 (evidence:
+# 05b31238; 10 classes / 73 tests failing): GoOsErrnoTest, SectionClampTest,
+# VarsCorpusTest, IfaceMethodTablesTest and ChanBuilderTest were fixed
+# (stale fixtures, missing interop classpath, T0.A panic values),
+# GoNetpollTest was deleted (v1 NIO netpoller, superseded by GG-0063); the
+# rest test v1 surfaces that are deleted wholesale at M3.
+graalgo.launcher.MainTest | v1 graalgo-run --check no longer rejects out-of-scope decls / clear(map) (2 tests); stack-depth check moved to StackDepthLimitTest | toolexec M3 cutover (v1 deletion) | M3
+graalgo.frontend.GenericsCorpusTest | gn09: v1 NodeFactory has no "ifacemethod" expr kind on this test's factory path (1 test) | toolexec M3 cutover (v1 deletion) | M3
+graalgo.runtime.BuiltinsCorpusTest | v1 reflect/fmt bugs: bi20 struct print (unsafe byte-offset trap), bi21 nested maps (GoMap->GoStruct cast), bi22 float edge (reflect.maplen on Long) (3 tests) | toolexec M3 cutover (v1 deletion) | M3
+graalgo.frontend.TypeparamDifferentialTest | typeparam batch JVM yields no result for all 42 comparisons (infra; see global review G3) | toolexec M3 cutover (v1 deletion) | M3

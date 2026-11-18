@@ -225,7 +225,11 @@ Related: [Makefile](../Makefile) (root build entry point),
     1 divergence, 2 usage, 3 infrastructure error).
   - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
     runs named backend unit-test classes with per-test timing
-    (`make test-java-fast` / `test-java-slow`).
+    (`make test-java-fast` / `test-java-slow`);
+    [check_lists.py](../test/java/check_lists.py) keeps the Makefile lists,
+    the module runners and every `*Test.java` consistent;
+    [quarantine.txt](../test/java/quarantine.txt) lists known-failing slow
+    classes, judged by [quarantine_verdict.py](../test/java/quarantine_verdict.py).
   - [e2e/](../test/e2e/) — end-to-end: real published Go modules compiled
     as-published (e.g. `github.com/google/uuid`), output matching `go run`.
   - [snapshots/](../test/snapshots/) — committed behavior snapshots of
@@ -279,8 +283,9 @@ Related: [Makefile](../Makefile) (root build entry point),
     [toolexec-design.md](arch/toolexec-design.md) is its track-T1 design for
     the per-package `-toolexec` compile/link path (tool protocol, IR,
     stdlib fork boundary, measured intrinsic surface, milestones).
-  - [dev/](../docs/dev/) — contributor guide and architecture decision
-    records (ADRs; research-era ones moved here from
+  - [dev/](../docs/dev/) — environment ([ENV.md](dev/ENV.md)), the bug
+    register cited by exclusions and quarantines ([bugs.md](dev/bugs.md)),
+    and architecture decision records (ADRs; research-era ones moved here from
     [docs/dev/adr/](../docs/dev/adr/)).
   - [spec/](../docs/spec/) — language conformance notes (the research-era
     [spec/](spec/) content, curated).

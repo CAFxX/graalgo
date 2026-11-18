@@ -167,19 +167,27 @@ check: main $(OUT_TEST)/.built
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
 	@# Exclusion: ToolPaths (launcher, startup-only, never goroutine-reachable)
 	@# imports java.net.URISyntaxException for code-source URI parsing — not
-	@# network I/O.
-	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
-		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (slot discipline, GG-SCHED-0004)"; exit 1; fi
+	@# network I/O. java.nio.channels is covered repo-wide below.
+	@if grep -rn --include='*.java' -E 'java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
+		echo "NETPOLLER GATE FAILED: java.net bypassing slot discipline (GG-SCHED-0004)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
+	@echo "== off-heap/NIO/FFM confinement gate (ADR-0002 D3/F3, GG-SCHED-0004; ADR-0009) =="
+	@echo "-- java.nio.channels, java.lang.foreign, MemorySegment, Arena, allocateDirect,"
+	@echo "-- allocateMemory: forbidden in every backend module EXCEPT the designated"
+	@echo "-- syscall-boundary package graalgo.syscall (abi-spike P2, GG-0063/0064);"
+	@echo "-- the frozen v1 p3os/p3net files are grandfathered until M3. Gate + its test:"
+	@echo "-- .github/scripts/{check,test_check}_offheap.py"
+	python3 ../../../.github/scripts/test_check_offheap.py
+	python3 ../../../.github/scripts/check_offheap.py ../../..
 	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
 	@echo "-- each pattern guards a way Go references could bypass JVM GC barriers;"
-	@echo "-- allocateMemory/MemorySegment/Arena/allocateDirect: off-heap Go-object storage"
+	@echo "-- (off-heap storage/FFM: the confinement gate above)"
 	@echo "-- theUnsafe/reflective Unsafe: raw-address access outside barrier discipline"
 	@echo "-- sun.misc/jdk.internal imports + fully-qualified sun.misc.Unsafe:"
 	@echo "--   unvetted barrier-bypass surface (incl. Class.forName evasion)"
 	@# Exclusion: PanicCorpusTest mentions sun.misc.Unsafe in javadoc only
 	@# (it filters the JDK's Unsafe deprecation warning out of stderr).
-	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/ | grep -v 'src/test/java/graalgo/frontend/PanicCorpusTest.java'; then \
+	@if grep -rn --include='*.java' -E 'theUnsafe|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/ | grep -v 'src/test/java/graalgo/frontend/PanicCorpusTest.java'; then \
 		echo "OFF-HEAP/BARRIER GATE FAILED"; exit 1; fi
 	@echo "off-heap/barrier gate clean"
 	@echo "== pin-surface grep gate (P2-M7, GG-0057) =="
@@ -190,7 +198,10 @@ check: main $(OUT_TEST)/.built
 	@echo "-- budget or this gate fails."
 	@if grep -rn --include='*.java' -E '^[[:space:]]*(public|private|protected|static|final|synchronized|strictfp|[[:space:]])*native[[:space:]]' src/main/; then \
 		echo "PIN-SURFACE GATE FAILED: native method declaration"; exit 1; fi
-	@if grep -rn --include='*.java' 'java\.lang\.foreign' src/main/; then \
+	@# graalgo.syscall (the designated syscall boundary) is exempt: its FFM
+	@# downcalls run on the syscall executor's platform threads, never on a
+	@# goroutine vthread (abi-spike P2); PinAudit still audits it at run time.
+	@if grep -rn --include='*.java' 'java\.lang\.foreign' src/main/ | grep -v 'src/main/java/graalgo/syscall/'; then \
 		echo "PIN-SURFACE GATE FAILED: FFM usage"; exit 1; fi
 	@echo "pin-surface gate clean"
 	@echo "== pin-audit smoke (P2-M7, GG-0057) =="

@@ -74,24 +74,21 @@ public final class GoOsErrnoTest {
         return GoString.fromUtf8(s);
     }
 
+    // D5 (9c92153d): a Go []byte is backed by byte[] — the same layout the
+    // frontend emits and GoOs.goBuf/goBufBack require. These helpers built
+    // int[]-backed slices until 2026-11-18, so every I/O test died with
+    // "[I cannot be cast to [B" before reaching the code under test.
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static GoSlice bytesBuf(byte[] data) {
-        int[] arr = new int[data.length];
-        for (int i = 0; i < data.length; i++) {
-            arr[i] = data[i] & 0xFF;
-        }
-        return new GoSlice(arr, 0, arr.length, arr.length);
+        return new GoSlice(data.clone(), 0, data.length, data.length);
     }
 
     private static byte[] sliceBytes(GoSlice gs) {
-        int[] arr = (int[]) gs.array();
         byte[] out = new byte[gs.len()];
-        for (int i = 0; i < gs.len(); i++) {
-            out[i] = (byte) arr[gs.offset() + i];
-        }
+        System.arraycopy((byte[]) gs.array(), gs.offset(), out, 0, gs.len());
         return out;
     }
 
@@ -553,9 +550,6 @@ public final class GoOsErrnoTest {
     // init first (channels bound), then rebind, write, rebind, write.
     // It FAILS on the old code (both writes land on the real stdout and
     // both buffers stay empty) and passes on the dynamic delegates.
-    // NOTE: uses a byte[]-backed slice, not the shared bytesBuf helper:
-    // D5 stores []byte in byte[] backing arrays (goBuf casts to byte[]),
-    // while bytesBuf still builds int[]-backed slices.
     private static GoSlice byteSlice(byte[] data) {
         return new GoSlice(data.clone(), 0, data.length, data.length);
     }

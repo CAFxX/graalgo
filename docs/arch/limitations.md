@@ -18,7 +18,13 @@ a semantic divergence: no program produces a wrong result, it fails fast.
 - Re-test trigger: Phase 4 (JIT) owns the stack strategy (explicit stack
   / segmented stacks / deeper host stack). Re-measure the depth limit
   when the execution model changes.
-- Regression: `MainTest.testDeepRecursionReportsCleanStackOverflow`
-  (`src/test/java/graalgo/launcher/MainTest.java`) — generates a 100k-deep
-  recursion program in a temp dir, asserts exit 2 and a clean
-  `stack overflow` stderr line (no JVM trace).
+- Regression (product launcher, P3SyncMain):
+  [StackDepthLimitTest](../../internal/backend/interop/src/test/java/graalgo/p3sync/launcher/StackDepthLimitTest.java)
+  (`make test-java-fast`) — runs a 100k-deep recursion and asserts a
+  non-zero exit, a `stack overflow` stderr line, no stdout, and no JVM
+  stack trace. Measured 2026-11-18 on the product launcher: exit 1,
+  `graalgo-run: fatal stack overflow in goroutine: java.lang.StackOverflowError: ...`
+  (gc's own overflow is `fatal error: stack overflow`, exit 2 — a
+  remaining message/exit-code divergence). The v1 graalgo-run check
+  (`MainTest.testDeepRecursionReportsCleanStackOverflow`, exit 2) is
+  quarantined with the rest of MainTest until M3.
