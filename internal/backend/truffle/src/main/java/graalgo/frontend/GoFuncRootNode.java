@@ -174,7 +174,9 @@ public final class GoFuncRootNode extends RootNode {
             if (paramKinds[i] != graalgo.values.GoKind.INTERFACE
                     && arg instanceof graalgo.values.GoInterface gi) {
                 Object data = gi.data();
-                if (data == null) {
+                // A nil interface (no dynamic type), not a typed nil:
+                // a typed nil pointer's data is legitimately null.
+                if (gi.isNil()) {
                     CompilerDirectives.transferToInterpreterAndInvalidate();
                     throw new graalgo.frontend.FrontendException(
                             "linkname: nil interface value for concrete parameter "

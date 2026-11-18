@@ -1,0 +1,14 @@
+-- stdout --
+*T nil=true
+nil
+*T nil=false
+false
+false
+s Stringer
+i Stringer
+assert *T ok: true
+assert Stringer ok: true
+nil iface assert ok: false
+
+-- stderr (normalized) --
+-- exit 0 --
