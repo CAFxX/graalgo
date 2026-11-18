@@ -34,7 +34,7 @@ under-specified, and two where the SPEC may not be achievable in image modes.
    NIO" cannot coexist with verbatim `net`/`internal/poll`, which hand the
    runtime raw fds. A small epoll poller driven through the Panama syscall
    executor replaces it; waiting goroutines park through the slot-releasing
-   path (GG-SCHED-0004).
+   path (`GG-SCHED-0004`).
 4. **Process creation (new GG-0064).** A `posix_spawn`ed helper binary in the
    distribution implements `os/exec`/`syscall.ForkExec`; the JVM never forks.
 5. **Host access for `graalgo/java` (SPEC §2.4/§4.3, truffle-design A4).**

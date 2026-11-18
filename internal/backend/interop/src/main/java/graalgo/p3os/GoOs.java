@@ -1723,7 +1723,7 @@ public final class GoOs {
     }
 
     /**
-     * Scheduler-aware blocking (SPEC §3.5, GG-SCHED-0004): a read from
+     * Scheduler-aware blocking (SPEC §3.5, GG-SCHED-0005): a read from
      * stdio or a pipe — or a write to a pipe — can block indefinitely on
      * another goroutine or process, so it runs inside
      * {@code ioEnter}/{@code ioExit}: the goroutine's in-flight slot is

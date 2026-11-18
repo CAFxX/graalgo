@@ -4,7 +4,7 @@ import graalgo.sched.SchedulerCore;
 import graalgo.jfr.ParkReason;
 
 /**
- * Timer intrinsic surface (WS G, GG-0020; WS C, GG-SCHED-0004).
+ * Timer intrinsic surface (WS G, GG-0020; WS C, GG-SCHED-0005).
  *
  * <p>Signatures are the frozen ones (bodies are INTERNAL per freeze
  * §3.5); {@code FreezeGapTest} checks them.
@@ -14,7 +14,7 @@ import graalgo.jfr.ParkReason;
  * a carrier thread and does not count against the in-flight cap while
  * parked (P2-D4).
  *
- * <p>verifies: GG-0020 (timer slice), GG-SCHED-0004 (timer slice)
+ * <p>verifies: GG-0020 (timer slice), GG-SCHED-0005 (timer slice)
  */
 public final class Timers {
     private Timers() {}

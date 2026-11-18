@@ -20,7 +20,7 @@ import graalgo.values.GoStructDescriptor;
  * Phase-2 {@link GoTimer} (one-shot) plus its fire-value translator.
  *
  * <p>Scheduling, Stop/Reset truth, ticker re-arm, and drop semantics are
- * the Phase-2 timer heap's verbatim (GG-SCHED-0004, verified
+ * the Phase-2 timer heap's verbatim (GG-SCHED-0005, verified
  * differentially vs gc 1.27.1): this class only bridges the value domain.
  * The heap delivers the fire nanotime as a {@link Long} on the timer's
  * own {@link TimerChan}; Go code must observe {@code time.Time} structs

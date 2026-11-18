@@ -74,7 +74,7 @@ Phase definitions used (from task brief):
 | GG-SCHED-0001 | 2 | On quantum expiry at Safepoint.poll, vthread parks via LockSupport.park + enqueues resume token; default quantum 10ms. | Child of GG-0017. |
 | GG-SCHED-0002 | 2 | Single platform-thread drainer admits vthreads via LockSupport.unpark in lane-priority order; non-terminating. | Child of GG-0017. |
 | GG-SCHED-0003 | 2 | Admitted-but-not-parked vthreads never exceed min(GOMAXPROCS, carrier parallelism); drainer hard-asserts. | Child of GG-0017. |
-| GG-SCHED-0004 | 2 | All blocking via scheduler-aware primitives; blocking I/O via slot-releasing NIO wrapper (ioEnter/ioExit, unpaired ioEnter = fail-fast assert). | Child of GG-0017; the NIO wrapper slice reaches Phase 3 (net). |
+| `GG-SCHED-0004` | 2 | All blocking via scheduler-aware primitives; blocking I/O via slot-releasing NIO wrapper (ioEnter/ioExit, unpaired ioEnter = fail-fast assert). | Child of GG-0017; the NIO wrapper slice reaches Phase 3 (net). |
 | GG-WAKE-0001 | 2 | Per-vthread armed ticket + generation counter; acked flag set before unpark (order reversal loses wakeups). | Child of GG-0017. |
 | GG-WAKE-0002 | 2 | At quiescence admissions == parks; zero lost wakeups under randomized park/unpark + channel-wakeup stress. | Child of GG-0017. |
 | GG-WAKE-0003 | 2 | wakeFifo lane for woken/channel-ready goroutines ahead of runFifo; initFifo for new goroutines ahead of runFifo. | Child of GG-0017. |

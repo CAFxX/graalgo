@@ -10,7 +10,7 @@ import graalgo.runtime.GoTimer;
 import graalgo.runtime.Timers;
 
 /**
- * P2-M3 timer differential tests (WS C; GG-SCHED-0004).
+ * P2-M3 timer differential tests (WS C; GG-SCHED-0005).
  *
  * <p>Each test is a mechanical Java translation of the Go program in
  * {@code phases/phase2/corpus/timers/<name>.go} (translation convention
@@ -42,7 +42,7 @@ import graalgo.runtime.Timers;
  * same programs run through {@code graalgo-run} and must produce
  * identical output.
  *
- * <p>verifies: GG-SCHED-0004 (differential slice)
+ * <p>verifies: GG-SCHED-0005 (differential slice)
  */
 public final class TimerDifferentialTest {
 

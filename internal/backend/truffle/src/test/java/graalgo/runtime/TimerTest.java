@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import graalgo.sched.SchedulerCore;
 
 /**
- * P2-M3 timer unit tests (WS C; GG-SCHED-0004).
+ * P2-M3 timer unit tests (WS C; GG-SCHED-0005).
  *
  * <p>Covers: sleep parks (slot release at GOMAXPROCS=1), sleep(0)
  * fast path, After/Timer/Ticker delivery, Stop/Reset edge semantics
@@ -15,7 +15,7 @@ import graalgo.sched.SchedulerCore;
  * Differential output-order tests live in
  * {@code graalgo.sched.TimerDifferentialTest}.
  *
- * <p>verifies: GG-SCHED-0004 (timer slice)
+ * <p>verifies: GG-SCHED-0005 (timer slice)
  */
 public final class TimerTest {
 
@@ -80,7 +80,7 @@ public final class TimerTest {
     // sleeping peer must not starve a busy one. Mutation (sleep via
     // Thread.sleep, i.e. without parkCurrent) leaves inflight=1 and the
     // busy goroutine never runs → counter stays 0 → red.
-    // verifies: GG-SCHED-0004 (P2-D4 falsifier)
+    // verifies: GG-SCHED-0005 (P2-D4 falsifier)
     public void testSleepReleasesSlot() throws Exception {
         AtomicLong counter = new AtomicLong();
         AtomicBoolean stop = new AtomicBoolean();

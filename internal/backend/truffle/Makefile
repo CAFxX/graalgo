@@ -169,7 +169,7 @@ check: main $(OUT_TEST)/.built
 	@# imports java.net.URISyntaxException for code-source URI parsing — not
 	@# network I/O.
 	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
-		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (slot discipline, GG-SCHED-0004)"; exit 1; fi
+		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (slot discipline, GG-SCHED-0005)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
 	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
 	@echo "-- each pattern guards a way Go references could bypass JVM GC barriers;"

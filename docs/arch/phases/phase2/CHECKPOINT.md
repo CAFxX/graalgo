@@ -469,7 +469,7 @@ and the divergence list (none found).
    deadline+=period with skip-ahead (no spin); NewTicker(0) panics
    (gc message parity).
 
-4. **ioEnter/ioExit** (SchedulerCore, `GG-0018`/GG-SCHED-0004): new
+4. **ioEnter/ioExit** (SchedulerCore, `GG-0018`/`GG-SCHED-0004`): new
    ResumeToken kinds IO_ENTER/IO_EXIT. ioEnter: synchronous slot release
    (offer + ack + unpark, awaitAck) so the release is deterministic;
    inIo set on handle (calling-thread fail-fast for re-entrant/unpaired)

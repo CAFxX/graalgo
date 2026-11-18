@@ -7,14 +7,14 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * P2-M3 blocking-I/O slot tests (WS C; GG-0063, GG-SCHED-0004).
+ * P2-M3 blocking-I/O slot tests (WS C; GG-0063, GG-SCHED-0005).
  *
  * <p>Netpoller deletion: blocking I/O runs on the virtual thread
  * bracketed by {@code ioEnter} (releases the in-flight slot) /
  * {@code ioExit} (re-acquires via the WAKE lane). A goroutine blocked
  * in I/O must not count against GOMAXPROCS.
  *
- * <p>verifies: GG-0063, GG-SCHED-0004 (io slice)
+ * <p>verifies: GG-0063, GG-SCHED-0005 (io slice)
  */
 public final class IoSlotsTest {
 

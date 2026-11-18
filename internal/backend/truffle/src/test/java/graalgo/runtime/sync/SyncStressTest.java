@@ -44,7 +44,7 @@ public final class SyncStressTest {
 
     /**
      * Mutex mutual exclusion: 32 goroutines × 1000 increments under lock;
-     * final counter must be exact. verifies: GG-SCHED-0004.
+     * final counter must be exact. verifies: GG-SCHED-0005.
      */
     public void testMutexExclusion() throws Exception {
         SchedulerCore sched = newScheduler(4);

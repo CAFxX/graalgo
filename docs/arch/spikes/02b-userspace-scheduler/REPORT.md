@@ -292,7 +292,7 @@ gains `ioEnter`/`ioExit`:
 I/O-blocked + spinner + short I/O): PASS with the fix (spinner
 511M iters, short I/O re-acquired); red-green confirmed — the negative
 control (`-Dcapexhaustion.raw=true`, pre-P0-2 behavior) gives
-`spinner_iters=0`, RESULT=FAIL. This extends GG-SCHED-0004's rule to NIO;
+`spinner_iters=0`, RESULT=FAIL. This extends `GG-SCHED-0004`'s rule to NIO;
 the "scheduler-transparent" carve-out is deleted from the design.
 
 ### 3.6 Overhead "regression" triaged: VM contention, not a code regression (rework)

@@ -4,8 +4,9 @@
 **Status:** accepted 2026-11-18 (coordinator instruction relaying the program
 owner's decisions from the global spec-conformance review; owner
 confirmation of the lock is requested in the review report).
-**Scope:** [SPEC.md](../../arch/SPEC.md) §3.2, §3.3, §4.5, §7.15, Appendix B, Appendix C;
-requirements `GG-0055` → GG-0065 (locked), `GG-0012` → GG-0066 (locked, active).
+**Scope:** [SPEC.md](../../arch/SPEC.md) §3.2, §3.3, §3.5, §4.5, §7.15, Appendix B, Appendix C;
+requirements `GG-0055` → GG-0065 (locked), `GG-0012` → GG-0066 (locked, active),
+`GG-SCHED-0004` → GG-SCHED-0005 (locked).
 **Evidence:** the global spec-conformance review of 2026-11-18 (items A2, B2,
 B6, D1, D3); each finding was re-checked against the tree at `cbb2ebd0`
 before it was acted on.
@@ -58,9 +59,33 @@ fixes; the launcher's temporary deviations are recorded separately in
    `TestBuiltByTrackedToolchain` exercise it; the latter has no `verifies:`
    annotation yet (code follow-up).
 
+3. **Blocking I/O wording (`GG-SCHED-0004` → GG-SCHED-0005; review item
+   B6).** `GG-SCHED-0004` required "the slot-releasing NIO wrapper"; since
+   GG-0063 (ADR-0009 decision 3) there is no blocking NIO — verbatim
+   `syscall`/`internal/poll`/`net` reach the runtime as raw system calls
+   through the Panama executor, and SPEC §3.5 already said the wrapper
+   brackets blocking downcalls while readiness waits park in the epoll
+   poller. GG-SCHED-0005 (locked, parent GG-0017) states exactly that; the
+   mechanism (`ioEnter`/`ioExit`, `wakeFifo` re-acquire, the unpaired-
+   `ioEnter` assert) and its falsifier are unchanged. GG-0063's locked text
+   cites `GG-SCHED-0004`; the registry's `superseded_by` link resolves it.
+4. **Goroutine-local state (review item D3).** SPEC §3.5 said goroutine-local
+   state lives in "virtual-thread-scoped holders". The decided design
+   ([truffle-design.md](../../arch/truffle-design.md) T3, §2.5–§2.6) keeps it
+   in a per-goroutine `G` reached through the context's thread-local slot,
+   and goroutine threads may be recycled, so thread identity is not
+   goroutine identity. §3.5 now says so and points to the `[OPEN]` item on
+   goroutine threads in native-image modes (truffle-design A1). No
+   requirement text is affected (GG-0017 says "virtual thread plus a
+   scheduler token", which T3 keeps on HotSpot).
+
 ## Consequences
 
 - SPEC §4.5 and §7.15 state the gc-compatible rule; §3.2/§3.3 the GIR
-  pipeline; Appendix B lists `GG-0055` and `GG-0012` as superseded.
+  pipeline; §3.5 the downcall wording and the `G` object; Appendix B lists
+  `GG-0055`, `GG-0012` and `GG-SCHED-0004` as superseded.
+- Code comments and `verifies:` annotations that named the superseded IDs
+  were re-pointed by `req supersede` (text only), except the GODEBUG tests
+  of decision 1.
 - Historical records (phase plans and checkpoints, ADR-0002) quote the old
   ID in code font so they keep their meaning.

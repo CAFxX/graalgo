@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 76 records — `requirements/GG-0001`–`GG-0066`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0055 superseded by GG-0066/0061/0062/0063/0065
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md)) · **Requirements:** 77 records — `requirements/GG-0001`–`GG-0066`, `GG-SCHED-0001`–`0005`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0055 and `GG-SCHED-0004` superseded by GG-0066/0061/0062/0063/0065 and GG-SCHED-0005
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed ·
@@ -347,11 +347,18 @@ Evidence: [abi-spike.md](abi-spike.md) §1 (verbatim reflect on byte-exact
 descriptor images: 607/607 answers identical to gc). **Falsifier:** a std or
 corpus program that gc runs without checkptr errors but that traps here.
 
-### 3.5 Concurrency runtime (GG-0017, GG-0063, GG-0019; GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
+### 3.5 Concurrency runtime (GG-0017, GG-0063, GG-0019; GG-SCHED-0001–0003, GG-SCHED-0005, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
 
 **Goroutine = virtual thread + scheduler token** `[DECIDED]`. `go f(args)` ≡
 `Thread.ofVirtual().start(...)` (JEP 444 `[VERIFIED]`); goroutine-local state
-(defer chain, panic context) lives in virtual-thread-scoped holders. Loom never
+(defer chain, panic context) lives in a per-goroutine `G` object, which the
+runtime reaches through the context's thread-local slot (`M`), never through
+the identity of the carrying thread (amended 2026-11-18, ADR-0011; was
+"virtual-thread-scoped holders"; [truffle-design.md](truffle-design.md) T3,
+§2.5–§2.6: goroutine threads are created through the polyglot thread builder
+and may be recycled). Whether that thread is a *virtual* thread in the
+native-image modes is the `[OPEN]` item "Goroutines in native-image modes"
+below (truffle-design amendment A1). Loom never
 preempts, and its `ForkJoinPool` is demoted to an **untrusted thread pool** — no
 scheduling discipline is assumed from it. Spike 2 (1:1 vthreads *yielding* back
 to the FJP) was **KILLED**: the preemption torture gave 0 latency samples vs
@@ -446,7 +453,7 @@ scheduler-parked vthread `[DECIDED]`. The lost-wakeup invariant — admissions
 `[VERIFIED]` (archived `logs/stress.log`: `parks=48140 admissions=48140 wakeupCalls=40588 wakeupWon=40588`). Residual, stated: tested interleavings only, no
 formal verification — a model-checker re-test is a Phase-2 done-gate `[DECIDED]`.
 
-**Scheduler-aware blocking (the F5 limitation).** Java blocking that bypasses
+**Scheduler-aware blocking (the F5 limitation; GG-SCHED-0005).** Java blocking that bypasses
 the scheduler (e.g. `CountDownLatch.await()`) still counts against the in-flight
 cap → transient under-utilization; with cap=1 it deadlocked the O5 test barrier
 in the prototype `[VERIFIED]`. **All blocking in the runtime/stdlib adaptation
@@ -491,7 +498,7 @@ poller in the runtime (one daemon platform thread in `epoll_wait`), issuing
 `epoll_create1/ctl/wait` through the Panama syscall executor (§3.8), so
 `internal/poll`, `net` and `os` stay verbatim and their `runtime_poll*`
 linknames are the poller's intrinsics. A goroutine waiting for readiness parks
-through the scheduler's slot-releasing path (GG-SCHED-0004: no carrier, no
+through the scheduler's slot-releasing path (GG-SCHED-0005: no carrier, no
 in-flight slot while blocked) and is woken via `wakeFifo`; deadlines live on the
 runtime timer heap. Blocking syscalls outside the poller release the slot around
 the downcall (`ioEnter`/`ioExit`). Evidence: [abi-spike.md](abi-spike.md) §2.5.
@@ -540,8 +547,11 @@ against this design; kill trigger = systematic divergence the user-space
 scheduler cannot close, or a residual risk hardening into a mechanism blocker.
 This supersedes spike 2's yield-based falsifier.
 
-*Requirements track:* the scheduler SHALLs above are encoded as GG-SCHED-0001–0004,
-GG-WAKE-0001–0003, GG-FAIR-0001–0003 (all locked 2026-10-03); GG-0017 and GG-0048 are revised to
+*Requirements track:* the scheduler SHALLs above are encoded as GG-SCHED-0001–0003,
+GG-WAKE-0001–0003, GG-FAIR-0001–0003 (all locked 2026-10-03) and GG-SCHED-0005
+(locked 2026-11-18, superseding `GG-SCHED-0004`: the slot-releasing wrapper
+brackets blocking syscall downcalls, readiness waits park in the epoll
+poller); GG-0017 and GG-0048 are revised to
 remove FJP-scheduler assumptions (spike 2b §6.2). §3.5 states the decided architecture
 those IDs encode.
 
@@ -1335,7 +1345,8 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |
-| GG-SCHED-0004 | Scheduler-aware blocking only | §3.5 |
+| `GG-SCHED-0004` | Scheduler-aware blocking only (NIO wording) — superseded by GG-SCHED-0005 | — |
+| GG-SCHED-0005 | Scheduler-aware blocking; slot release around blocking downcalls | §3.5 |
 | GG-WAKE-0001 | Park/unpark pairing safety | §3.5 |
 | GG-WAKE-0002 | Lost-wakeup invariant | §3.5 |
 | GG-WAKE-0003 | Wake and init priority lanes | §3.5 |

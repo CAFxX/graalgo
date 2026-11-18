@@ -218,7 +218,7 @@ public final class Drainer {
             }
             case IO_ENTER -> {
                 // Slot-releasing blocking I/O (P2-M3, GG-0063,
-                // GG-SCHED-0004): the goroutine no longer counts against
+                // GG-SCHED-0005): the goroutine no longer counts against
                 // the in-flight cap while blocked in the syscall.
                 if (!inIo.add(token.handle.id)) {
                     throw new AssertionError(

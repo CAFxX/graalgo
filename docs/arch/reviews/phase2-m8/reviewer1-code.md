@@ -243,7 +243,7 @@ parks on a drainer ticket; re-admitted through the WAKE lane) and wake via
 `SchedulerCore.unpark`. No `synchronized`-wait, no raw `LockSupport.park`,
 no latches on goroutine paths. Critical sections are short and never park
 while held (P2-3 notes the two `unpark`-under-monitor style exceptions,
-both safe). This satisfies P2-D4 / GG-SCHED-0004.
+both safe). This satisfies P2-D4 / `GG-SCHED-0004`.
 
 **GoMutex lock/unlock transfer — correct.** `unlock()` holds `locked=true`
 across the handoff (`next = waiters.pollFirst()`; `locked=false` only when
