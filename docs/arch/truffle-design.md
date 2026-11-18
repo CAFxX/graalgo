@@ -6,7 +6,12 @@ inputs to T0.B, T1 and T3. [SPEC.md](SPEC.md) is authoritative; this document
 implements SPEC §2.4–2.7, §3.3, §3.4, §3.10, §3.11 and §4.3 and requirements
 GG-0003/0005/0006/0008/0014/0015/0024/0025/0049/0050. Where it disagrees with
 SPEC it says so and lists the disagreement in §14 as a proposed amendment;
-nothing here overrides SPEC by itself.
+nothing here overrides SPEC by itself. Three such disagreements sit inside
+decisions T4 and T7 and are marked where they occur: **A7** (safepoint
+preemption instead of `Safepoint.poll()`), **A8** (open-coded defers) and
+**A9** (closures over typed cells instead of a `MaterializedFrame`), each
+"PROPOSED SPEC AMENDMENT — pending user decision; until accepted,
+implementation follows SPEC" (§14.1 has the trade-offs).
 
 It was written against the code at `a0df481b` and against the pinned Truffle
 jars in [internal/backend/truffle/lib/](../../internal/backend/truffle/lib/)
@@ -35,10 +40,10 @@ Evidence labels used throughout:
 | T1 | One `GoLanguage extends TruffleLanguage<GoContext>`, id `go`, registered for the byte MIME type `application/x-graalgo-bundle`. `parse()` takes a **linked bundle** (toolexec design §4.2), never Go source text. | The frontend is `go/types` in a Go process (GG-0066); the JVM only ever sees typed IR. |
 | T2 | `contextPolicy = SHARED`. The AST, type descriptors, itabs, function units and the intrinsic table belong to the language instance; globals, package-init state, scheduler, timers, OS state and the unsafe handle table belong to `GoContext`. No node holds context state. | Required for multi-context engines, image-heap pre-initialization and engine caching; single-context runs lose nothing because `ContextReference.get(node)` folds to a constant on a bound engine. |
 | T3 | Goroutines stay virtual threads (SPEC §3.5) but are created with `Env.newTruffleThreadBuilder(r).virtual(true)`, and the goroutine ↔ thread binding goes through one `ContextThreadLocal`. A context option selects platform threads instead. | A thread that runs guest code must be entered in the context. `[PROTO]` it works on the pin; it is experimental upstream and ~10× more expensive to create than a bare virtual thread, so §2.6 adds thread recycling. |
-| T4 | Preemption moves from `ThreadLocal` + `System.nanoTime()` at every back-edge to **Truffle safepoints**: a monitor thread submits a `ThreadLocalAction` to a goroutine whose quantum expired; the action performs the quantum park. | Compiled loops carry no scheduler code at all; debugger suspend, cancellation and stack sampling use the same mechanism. `[PROTO]` delivered and parked on virtual threads. Fallback in §2.7. |
+| T4 | **PROPOSED SPEC AMENDMENT A7 — pending user decision; until accepted, implementation follows SPEC** (GG-SCHED-0001, GG-0017, SPEC §3.5 require `Safepoint.poll()` at loop back-edges and function entries; §14.1). Proposal: preemption moves from `ThreadLocal` + `System.nanoTime()` at every back-edge to **Truffle safepoints**: a monitor thread submits a `ThreadLocalAction` to a goroutine whose quantum expired; the action performs the quantum park. | Compiled loops carry no scheduler code at all; debugger suspend, cancellation and stack sampling use the same mechanism. `[PROTO]` delivered and parked on virtual threads. Fallback in §2.7. |
 | T5 | Every node class is written against the conventions of §11: statically typed expression families, one small DSL node per operation and carrier, `@Cached` inline caches only at the four genuinely dynamic sites of SPEC §3.3, `@TruffleBoundary` on every runtime entry that is not PE-safe. | This is what makes PE succeed by construction instead of by repair. `[PROTO]` the pattern compiles with the pinned DSL processor and JIT-compiles. |
 | T6 | The node factory, not the DSL, selects operations by type. Sized integers are carried as `int` (≤ 32 bit) or `long` (64 bit) in canonical extended form; narrowing wrap is a separate tiny node. | Go types are static; no type discovery is needed and no boxing or specialization explosion occurs. |
-| T7 | Closures capture **typed cells**, never a `MaterializedFrame`; defers are **open-coded per function** in frame slots; the per-call shadow stack is deleted. | Each of the three currently forces heap allocation or thread-local access on every call. |
+| T7 | **PROPOSED SPEC AMENDMENT A9 — pending user decision; until accepted, implementation follows SPEC** (SPEC §3.4: closures are `{RootCallTarget, MaterializedFrame\|null}`): closures capture **typed cells**, never a `MaterializedFrame`. **PROPOSED SPEC AMENDMENT A8 — pending user decision; until accepted, implementation follows SPEC** (GG-0019 and SPEC §3.5: defer is an explicit per-goroutine chain, open-coded defers "a later phase, not v1"): defers are **open-coded per function** in frame slots. Not affected by either: the per-call shadow stack is deleted. §14.1. | Each of the three currently forces heap allocation or thread-local access on every call. |
 | T8 | Go values export `InteropLibrary` directly from the value classes (`@ExportLibrary`); the hot path never dispatches through a library. Polyglot `Proxy*` classes are not used for Go values. | Zero cost when unused; gives `Value`, tools and other languages one contract. |
 | T9 | Stack traces (`panic` output, `runtime.Callers`) come from `TruffleStackTrace` / `iterateFrames`; the `rtstack` bridge and `GoStackFrame` chain are deleted. | Truffle already records call nodes lazily; the shadow stack allocates per call. |
 | T10 | `go test -cover` keeps the stock `cover` source rewriting (toolexec design D2). Truffle's coverage instrument is an extra, not the implementation. | Drop-in by construction; profile format identical. |
@@ -333,7 +338,10 @@ and the other thread-locals of §1.2:
 needed on slow paths only (blocking operations, panic, `recover`, `go`), which
 is what makes T4 and T7 matter: with open-coded defers (§4.5), safepoint
 preemption (§2.7) and Truffle stack traces (§6.5), **compiled Go code that
-does not block, panic or spawn never touches `G`**.
+does not block, panic or spawn never touches `G`**. (Open-coded defers and
+safepoint preemption are proposed amendments A8 and A7, pending the owner;
+until accepted, the defer chain and `Safepoint.poll()` of SPEC stay, and this
+property holds only for functions without `defer`, minus the poll.)
 
 Remaining thread-locals: `GoNetpoll.LAST_OPEN_ERRNO`,
 `ReflectLinknames.SYNTHESIZING`, `ChanOps.SELECT_RESULT` and `GoPool.locals`
@@ -416,7 +424,14 @@ suspend a thread, the sampler take a stack and the engine cancel a context.
 `ThreadLocalAction` runs a callback on a chosen thread at its next poll
 `[JAR]`.
 
-Decision T4:
+Decision T4 — **PROPOSED SPEC AMENDMENT A7 — pending user decision; until accepted, implementation follows SPEC**: GG-SCHED-0001 and GG-0017 (locked) and
+SPEC §3.5 make `Safepoint.poll()` at loop back-edges and function entries
+the preemption mechanism. Until the owner accepts A7, the new node package
+emits that poll (in its TR-1 form: countdown in the context thread-local
+slot, §13.4), and only the parts of this section that do not replace it —
+parks through `setBlocked…`, pin sections through `setAllowActions`, the
+missing-poll gate — are built; the monitor + `ThreadLocalAction` scheme runs
+only behind a switch for P-B. Trade-offs: §14.1.
 
 - `Safepoint.poll()` as a Go-level node disappears. Loops are
   `Truffle.getRuntime().createLoopNode(...)`; function entry needs nothing.
@@ -555,7 +570,9 @@ design §3.1). `exactDecimal()` and the `UNTYPED_*` kinds disappear from nodes.
   `ArgNode`s when a parameter is never assigned (factory decision; default:
   copy).
 - Go code never materializes a frame, never reads a caller's frame, and never
-  stores a frame in a heap object.
+  stores a frame in a heap object. (Depends on A9, pending: until accepted,
+  a closure's captured environment is the `MaterializedFrame` of SPEC §3.4,
+  the one permitted materialization.)
 
 ## 4. Node design
 
@@ -702,6 +719,15 @@ public final class GoDeferFuncRootNode extends RootNode { … }  // §4.5
 
 ### 4.4 Variables that escape: cells, closures, pointers
 
+**PROPOSED SPEC AMENDMENT A9 — pending user decision; until accepted, implementation follows SPEC** for the closure representation below: SPEC §3.4 states
+closures as `{RootCallTarget, MaterializedFrame|null}`; until A9 is accepted
+the new node package builds that shape (captured variables still get typed
+cells, which SPEC does not constrain). The **pointer table** further down
+predates GG-0061/GG-0062 (2026-11-18) and is superseded by them: structs and
+arrays are flat, and a pointer is (referent, gc byte offset) with leaf
+tables (SPEC §3.4, toolexec design §3.4); the table is kept for the
+reasoning about pointer shapes only. Trade-offs: §14.1.
+
 The frontend flags every local that is captured by a closure or has its
 address taken (toolexec design §3.1). Such a variable lives in a **typed
 cell** allocated at its declaration; its frame slot holds the cell.
@@ -795,8 +821,13 @@ inserted by the factory at the call site.
 
 **Dynamic calls** (func values): §4.6.
 
-**Open-coded defers.** A function containing `defer` is built as a
-`GoDeferFuncRootNode`:
+**Open-coded defers** — **PROPOSED SPEC AMENDMENT A8 — pending user decision; until accepted, implementation follows SPEC**: GG-0019 (locked) says
+"defer SHALL be an explicit per-goroutine chain" and SPEC §3.5 defers
+open-coding to "a later phase, not v1". Until A8 is accepted, TR-3 builds the
+explicit per-goroutine chain (the semantics below — LIFO order, recover
+eligibility, `Goexit`, range-over-func — are the same either way, and the
+tests are shared). Trade-offs: §14.1. Proposal: a function containing
+`defer` is built as a `GoDeferFuncRootNode`:
 
 - Each `defer` statement that is not inside a loop gets an index *i*, frame
   slots for its callee and evaluated arguments, and bit *i* in an `int`
@@ -1539,7 +1570,7 @@ changelog shows breaking changes in most 25.x releases.
 | Footprint (std has 2.48 M AST nodes; a hello-world executes ~300 functions — toolexec design §3.2, §5.5) | tens of bytes per node object; lazy decoding bounds it to executed functions | a byte array plus constants per function; an uncached tier executes without allocating specialization state |
 | Host stack per Go call (§9) | one host frame per nested node on the path to the call: tens of frames | one interpreter frame per Go function plus the call boundary |
 | `goto` | `GotoBlockNode` state machine (§4.8) | native branches (forward branches and structured loops; whether a backward `goto` needs restructuring is to be checked) |
-| `defer` | open-coded in the root (§4.5) | the same, expressed with the epilog/finally operations |
+| `defer` | open-coded in the root (§4.5; proposed amendment A8 — per-goroutine chain until accepted) | the same, expressed with the epilog/finally operations |
 | `select`, goroutine parking | runtime call | runtime call; single-method continuations do not help (§7.4) |
 | Instrumentation | wrappers (§6.3) | tag instrumentation built in |
 | Serialization | not needed (GIR is the format) | available, not needed |
@@ -1666,10 +1697,10 @@ Effort is in focused agent-days `[EST]`.
 | **TR-0** Gates and jars | Tool and TCK jars added to `lib/` with checksums. `make pe-check`: runs the benchmark set (branch `wt/recovery/jit`, `test/bench/`) and a corpus subset with `engine.CompilationFailureAction=ExitVM`, `engine.BackgroundCompilation=false`, performance warnings fatal; counts bailouts. DSL warnings are already errors (`-Werror`). | T0.B merged | `pe-check` red on a seeded bailout (a node calling `String.format` without a boundary), green otherwise; bailouts on the benchmark set = 0 | 1–2 |
 | **TR-1** Language shell on v1 | `GoLanguage`/`GoContext` (policy `EXCLUSIVE`, second context refused); root nodes get the language; launchers create an `Engine`/`Context` and `eval` a byte `Source` (bundle MIME type reserved; v1 wire JSON under a temporary MIME type); goroutine threads through `newTruffleThreadBuilder`; `os.Exit` through `closeExited`. Statics stay. | T0.A, T0.D | every existing suite green through the polyglot launcher; a JUnit test evaluates a program from Java and reads its exit status; `--cpusampler` lists Go function names; second context fails with the documented message; benchmark set within 5 % of pre-TR-1 except goroutine-spawn microbenchmarks, which are recorded | 3–5 |
 | **TR-2** Decision spikes | P-A … P-F of §13.2 | TR-1 for P-A/B/C | a dated results section appended to this document; decisions T3, T4, T11, T12 confirmed or replaced | 4–6 |
-| **TR-3** Core node package (inside toolexec W4) | §12 layout; base classes; locals, cells, globals; arithmetic/compare/convert for all carriers (§3.1); strings, slices, arrays, structs; control flow (§4.8); static calls; roots with open-coded defers; panics. Unit test and PE test per node class (§11, T-rules). | TR-2 (calling convention), toolexec W2 schema | toolexec M1a's corpus gate; `pe-check` bailouts = 0 on that corpus under `CompileImmediately`; arithmetic differential sweep vs gc over all widths and operators including overflow, shifts ≥ width, `MIN / -1`, unsigned compare (generated, ≥ 10⁵ cases); `fib`, `loop`, `slicesum`, `structs` benchmarks ≤ 2× gc steady state `[EST]` as the first target, tightened after measurement | +6–10 over W4's 15–25 |
+| **TR-3** Core node package (inside toolexec W4) | §12 layout; base classes; locals, cells, globals; arithmetic/compare/convert for all carriers (§3.1); strings, slices, arrays, structs; control flow (§4.8); static calls; roots with defers — the explicit per-goroutine chain of GG-0019 until proposed amendment A8 is accepted, open-coded after; closures per SPEC §3.4 until A9 is accepted; panics. Unit test and PE test per node class (§11, T-rules). | TR-2 (calling convention), toolexec W2 schema | toolexec M1a's corpus gate; `pe-check` bailouts = 0 on that corpus under `CompileImmediately`; arithmetic differential sweep vs gc over all widths and operators including overflow, shifts ≥ width, `MIN / -1`, unsigned compare (generated, ≥ 10⁵ cases); `fib`, `loop`, `slicesum`, `structs` benchmarks ≤ 2× gc steady state `[EST]` as the first target, tightened after measurement | +6–10 over W4's 15–25 |
 | **TR-4** Dynamic sites and splitting | `GoIface`/`GoEface`/`GoItab`, language-level itab cache, `IfaceCallNode`, func-value call node, type assertion/switch nodes, map nodes per key kind, `cloneUninitialized` through GIR re-decode, `@ReportPolymorphism` | TR-3 | `iface` and `maps` benchmarks: the monomorphic interface call is inlined (asserted from the compilation trace), no megamorphic site on the benchmark set; a `sort.Interface`-style test with three receiver types shows three split copies and a direct call in each; SPEC §2.6.1's falsifying benchmark can now be run (gc+PGO vs graalgo steady state) | 6–9 |
 | **TR-5** Context-ification | all statics of H18/H20 into `GoLanguage`/`GoContext`; `ContextThreadLocal<M>`, `G`; scheduler per context; policy `SHARED`; context cancel/close stops goroutines | TR-1; after M3 for v1-only statics, or switchable | two contexts on one engine run two programs concurrently with correct, separate output; closing a context with 10⁴ parked goroutines returns within 1 s and leaks no thread; a static-state audit script (no non-final or collection-typed static field under the node and runtime packages except an allow-list) is a `make check` gate | 4–7 |
-| **TR-6** Safepoints | per P-B: monitor thread + `ThreadLocalAction` preemption (or the flag fallback); every park through `setBlocked…`; pin sections through `setAllowActions`; delete `Safepoint.poll` | TR-5, P-B | scheduler suites (`SchedulerCoreTest`, `WakeupModelTest`, `TortureBattery`, fairness tests) green; `loop` benchmark improves or is unchanged; `engine.TraceMissingSafepointPollInterval` reports nothing above 10 ms on the corpus | 3–5 |
+| **TR-6** Safepoints | per P-B: monitor thread + `ThreadLocalAction` preemption (or the flag fallback); every park through `setBlocked…`; pin sections through `setAllowActions`; delete `Safepoint.poll` **only if proposed amendment A7 is accepted** (until then `Safepoint.poll` stays, GG-SCHED-0001) | TR-5, P-B | scheduler suites (`SchedulerCoreTest`, `WakeupModelTest`, `TortureBattery`, fairness tests) green; `loop` benchmark improves or is unchanged; `engine.TraceMissingSafepointPollInterval` reports nothing above 10 ms on the corpus | 3–5 |
 | **TR-7** Stack traces | §6.5: Truffle stack traces for panics, `iterateFrames` for `runtime.Callers`, PC table, goroutine dump action; delete the shadow stack and the chain-walking half of `rtstack` | TR-1 (panics), TR-3 (new roots) | panic-trace and `runtime.Caller(s)` corpus byte-identical to gc after existing normalization; `fib` benchmark allocation rate per call = 0 in compiled code (JFR allocation profile) | 4–6 |
 | **TR-8** Interop exports | §5.2–5.4: `@ExportLibrary` on all value kinds, `ToInteropNode`/`ToGoNode`, exceptions, module object, embedding tests | TR-4, TR-5 | Java-side conformance suite: one test per row of §5.2 and §5.3 through `org.graalvm.polyglot.Value`; the polyglot TCK passes for the language provider; hot-path check: benchmark set unchanged (±2 %) with exports present | 8–12 |
 | **TR-9** `graalgo/java` | §5.5–5.6: package source, intrinsics, `Throwable`, `Func`/`As` generics, host-access policy, build-time Java stub generator | TR-8, toolexec M1b (intrinsic registry), owner decision A4 | Go-side conformance suite: every function of §5.5 against `java.util` classes; a Java exception is observed as `error`, never as panic; stock-behaviour-unchanged check of GG-0003 (corpus identical with the package present) | 6–10 |
@@ -1764,7 +1795,8 @@ silence is not.
 - **F1.** Frame slots are read and written with the accessor of their static
   kind; no `catch (FrameSlotTypeException)`.
 - **F2.** `frame.materialize()` and caller-frame access are forbidden in Go
-  nodes.
+  nodes. (Pending A9: until accepted, the closure-creation node of SPEC
+  §3.4 is the single allowed `materialize()`.)
 - **F3.** Integer results are in canonical form for their Go type (§3.1); a
   node that can leave canonical form is followed by a wrap node, and its unit
   test covers the wrap.
@@ -1968,6 +2000,9 @@ its decision). Status column: owner decisions of 2026-11-18
 | A4 | §4.3 host access | Split default: embedded = the embedder's `HostAccess` (recommended `SCOPED`); standalone = host class lookup and public access restricted to an allow-list, only when the program imports `graalgo/java`. | TR-9 | **Decided**; SPEC §2.4/§4.3. GG-0003/GG-0005 text unchanged (they do not state a policy). |
 | A5 | §3.3, GG-0014 | Only if TR-13 says so: allow function bodies to be Bytecode DSL roots; "one AST" read as "one executable representation for all modes". | after M1d | Pending — deferred to the TR-13 bake-off. |
 | A6 | §3.3 | Clarification, no change of intent: the megamorphic interface-call fallback is an itab method-table index, not a hash lookup; splitting is part of the devirtualization design. | TR-4 | Pending. |
+| A7 | §3.5; GG-SCHED-0001, GG-0017 | Preemption by Truffle safepoints: a monitor thread submits a `ThreadLocalAction` that performs the quantum park; `Safepoint.poll()` at back-edges and function entries is deleted (T4, §2.7, TR-6). Supersede GG-SCHED-0001 and GG-0017 with "quantum expiry is delivered at Truffle safepoints". | TR-6 (after P-B) | **Pending user decision** (added 2026-11-18 by the spec reconciliation). Until accepted: SPEC — `Safepoint.poll()` stays. |
+| A8 | §3.5; GG-0019 | Open-coded defers per function with a per-frame fallback list for defers in loops (T7, §4.5, TR-3). Supersede GG-0019's "explicit per-goroutine chain" with "defer semantics of the Go spec; implementation open-coded with a chain fallback". | TR-3 | **Pending user decision.** Until accepted: SPEC — explicit per-goroutine chain. |
+| A9 | §3.4 (text only; GG-0061 does not mention closures) | Closures are `GoFunc{target, captures}` over typed cells; `frame.materialize()` banned (T7, §4.4, rule F2). | TR-3 | **Pending user decision.** Until accepted: SPEC — `{RootCallTarget, MaterializedFrame\|null}`. |
 
 Other decisions requested:
 
@@ -1978,3 +2013,18 @@ Other decisions requested:
 2. Approve adding the tool and TCK jars to the pinned set (TR-0).
 3. Whether foreign (host) threads calling into Go should hold a GOMAXPROCS
    token; this design says no (§2.6, item 4).
+
+### 14.1 Trade-offs of A7–A9 (for the owner's decision)
+
+The m1a-nodes lane follows SPEC for all three until the owner decides; the
+estimates of §10.2 assume acceptance, and the column "if rejected" says what
+following SPEC costs instead.
+
+| | A7 safepoint preemption | A8 open-coded defers | A9 closures over typed cells |
+|---|---|---|---|
+| Locked text it conflicts with | GG-SCHED-0001 ("on quantum expiry at a `Safepoint.poll()` … loop back-edges and function entries"), GG-0017 ("the Truffle AST SHALL insert `Safepoint.poll()`"), SPEC §3.5 | GG-0019 ("defer SHALL be an explicit per-goroutine chain"), SPEC §3.5 ("open-coded defers are a later phase, not v1") | SPEC §3.4 prose only (`{RootCallTarget, MaterializedFrame\|null}`); no requirement text |
+| What it buys | compiled loops and calls carry no scheduler code (Truffle already polls its own safepoint at `LoopNode` back-edges and call boundaries, so today every back-edge pays two polls); one mechanism for preemption, debugger suspend, cancellation and stack sampling; parks answer thread-local actions | functions without `defer` have no handler and no `G` access; `defer mu.Unlock()` inlines to the unlock; no `ArrayDeque` allocation per call (H15); matches gc since Go 1.14 | no frame materialization, so partial escape analysis can scalar-replace every local of a function that creates a closure (H9); captured integers unboxed; Go 1.22 per-iteration loop variables become "a fresh cell per iteration" |
+| Measured so far | `[PROTO]` an action parks a running platform or virtual thread (§13.1); TR-1 moved the countdown into the context slot and `loop` went 48.5 → 17.3 ms (§13.4) — the poll is already cheaper than when T4 was written | none on this codebase; gc's own measurements motivated open-coding | none on this codebase; H9 is a code-reading finding |
+| What breaks or gets harder | preemption latency becomes monitor-period-bound (up to ~2 quanta instead of ~1) — GG-FAIR-0001/0003 bounds must be re-measured (P-B); an action is **not** delivered to a host-compiled runtime loop without a memory kill (§2.7, `[PROTO]`), so runtime loops need explicit polls and the missing-poll gate; a monitor thread per context; relies on Truffle's experimental virtual-thread support; requires superseding two locked requirements and re-running the preemption-torture battery | more complex roots: loop defers need the fallback list, `recover` eligibility, `Goexit`, panics during defers and range-over-func defers each get a second code path; GG-0019's verification plan (adversarial defer storms) must cover both paths; debugger/stack-trace views of pending defers change | the pointer model must treat a cell as a one-leaf referent of GG-0061's (object, byte offset) pointers; the inspector's scopes must show captured variables from cells instead of a parent frame; closure creation allocates one cell per captured variable instead of one frame (cheaper only once PEA applies) |
+| If rejected (follow SPEC) | the poll stays at back-edges and function entries, in its TR-1 form; TR-6 shrinks to `setBlocked…` parks and pin sections (≈ −1 agent-day `[EST]`) | TR-3 builds the per-goroutine chain (≈ −1 to −2 agent-days `[EST]` now; the H15 allocation and `G` access on every deferring call stay) | TR-3 builds `MaterializedFrame` closures and rule F2 gets one exception; the H9 cost stays and is re-measured at M1a |
+| Decision needed by | before TR-6 (after P-B reports) | before TR-3's root nodes freeze (M1a) | before TR-3's closure nodes (M1a) |
