@@ -251,3 +251,33 @@ func TestHomeFromExecutable(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// cmd/go treats an empty variable as unset (cfg.Getenv falls through to
+// the go env file; an empty GOENV means the default file): GOTOOLCHAIN=,
+// CGO_ENABLED= and GOFLAGS= must not count as user settings.
+func TestEmptyMeansUnset(t *testing.T) {
+	home := fakeHome(t, release.GoVersion)
+	tool := filepath.Join(home, ToolRel)
+	p := compose(t, home, []string{"GOTOOLCHAIN=", "CGO_ENABLED=", "GOFLAGS="}, "build")
+	if v, _ := getenv(p, "GOTOOLCHAIN"); v != "local" {
+		t.Errorf("GOTOOLCHAIN= : GOTOOLCHAIN = %q, want local", v)
+	}
+	if v, _ := getenv(p, "CGO_ENABLED"); v != "0" {
+		t.Errorf("CGO_ENABLED= : CGO_ENABLED = %q, want 0", v)
+	}
+	// An empty variable does not hide the go env file's value.
+	cfg := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(cfg, "go"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg, "go", "env"), []byte("GOFLAGS=-mod=mod\nCGO_ENABLED=\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p = compose(t, home, []string{"XDG_CONFIG_HOME=" + cfg, "GOENV=", "GOFLAGS="}, "build")
+	if want := []string{"-toolexec=" + tool, "-tags=purego", "-mod=mod"}; !slices.Equal(goflags(t, p), want) {
+		t.Errorf("GOFLAGS = %q, want %q", goflags(t, p), want)
+	}
+	if v, _ := getenv(p, "CGO_ENABLED"); v != "0" {
+		t.Errorf("empty CGO_ENABLED in the env file: CGO_ENABLED = %q, want 0", v)
+	}
+}
