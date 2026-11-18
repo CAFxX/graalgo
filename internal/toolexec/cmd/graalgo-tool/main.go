@@ -24,13 +24,14 @@
 // The IR is GIR (internal/toolexec/ir), emitted by internal/toolexec/emit.
 // Skeleton limits, each failing loudly rather than silently: packages
 // compiled with -std get no IR (the stdlib fork of design §5 does not exist
-// yet), and //go:embed is not yet lowered.
+// yet).
 package main
 
 import (
 	"bufio"
 	"bytes"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"go/ast"
@@ -334,10 +335,18 @@ func compile(inv *argv.Invocation) {
 			fatalf("%s: compile: unexpected positional argument %q", pkgPath, f)
 		}
 	}
-	if fl.values["embedcfg"] != "" {
-		fatalf("%s: //go:embed (-embedcfg) is not supported by this skeleton", pkgPath)
+	var embed *emit.EmbedConfig
+	if cfg := fl.values["embedcfg"]; cfg != "" {
+		data, err := os.ReadFile(cfg)
+		if err != nil {
+			fatalf("%s: %v", pkgPath, err)
+		}
+		embed = &emit.EmbedConfig{}
+		if err := json.Unmarshal(data, embed); err != nil {
+			fatalf("%s: -embedcfg: %v", pkgPath, err)
+		}
 	}
-	gir, err := emitIR(pkgPath, fl.values["lang"], fl.values["importcfg"], fl.values["trimpath"], fl.bools["std"], fl.rest)
+	gir, err := emitIR(pkgPath, fl.values["lang"], fl.values["importcfg"], fl.values["trimpath"], fl.bools["std"], embed, fl.rest)
 	if err != nil {
 		fatalf("%s: %v", pkgPath, err)
 	}
@@ -387,7 +396,7 @@ func readImportcfg(path string) (map[string]string, error) {
 
 // emitIR type-checks the package with go/types, importing dependencies
 // from the gc export data named by importcfg, and returns its encoded GIR.
-func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, files []string) ([]byte, error) {
+func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, embed *emit.EmbedConfig, files []string) ([]byte, error) {
 	pkgFile, err := readImportcfg(importcfg)
 	if err != nil {
 		return nil, err
@@ -423,6 +432,7 @@ func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, files []string)
 		Fset: fset, Pkg: tpkg, Info: info, Files: astFiles, Lang: lang, Std: std,
 		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
 		FileName: func(name string) string { return absFile(name, trimpath) },
+		Embed:    embed,
 	})
 	if err != nil {
 		return nil, err

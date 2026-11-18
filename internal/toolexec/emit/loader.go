@@ -12,8 +12,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
 
 // Package is a loaded, type-checked package ready for Emit.
@@ -31,6 +33,9 @@ type listedPackage struct {
 	Export     string
 	Standard   bool
 	Error      *struct{ Err string }
+
+	EmbedPatterns []string
+	EmbedFiles    []string
 }
 
 // Load lists patterns with `go list -deps -export` (GOFLAGS -tags=purego,
@@ -40,7 +45,7 @@ type listedPackage struct {
 // step 4). Packages that fail to load are returned in errs, not fatal.
 func Load(patterns ...string) (pkgs []*Package, errs []error, err error) {
 	args := append([]string{"list", "-e", "-deps", "-export", "-tags=purego",
-		"-json=ImportPath,Name,Dir,GoFiles,ImportMap,Export,Standard,Error"}, patterns...)
+		"-json=ImportPath,Name,Dir,GoFiles,ImportMap,Export,Standard,Error,EmbedPatterns,EmbedFiles"}, patterns...)
 	cmd := exec.Command("go", args...)
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOFLAGS=")
 	var stderr bytes.Buffer
@@ -124,9 +129,13 @@ func check(lp *listedPackage, exports map[string]string) (*Package, error) {
 		return nil, err
 	}
 	root := runtime.GOROOT()
+	var embed *EmbedConfig
+	if len(lp.EmbedPatterns) > 0 {
+		embed = listEmbedConfig(lp)
+	}
 	return &Package{ImportPath: lp.ImportPath, Config: Config{
 		Fset: fset, Pkg: pkg, Info: info, Files: files, Lang: lang, Std: lp.Standard,
-		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Embed: embed,
 		FileName: func(name string) string {
 			// What `go build -trimpath` records for std: $GOROOT/src/x -> x.
 			if rel, err := filepath.Rel(filepath.Join(root, "src"), name); err == nil && lp.Standard {
@@ -135,4 +144,27 @@ func check(lp *listedPackage, exports map[string]string) (*Package, error) {
 			return name
 		},
 	}}, nil
+}
+
+// listEmbedConfig reconstructs the -embedcfg cmd/go would pass from go
+// list's EmbedPatterns and EmbedFiles: a file belongs to a pattern when
+// the pattern matches the file or one of its parent directories (cmd/go
+// has already applied the hidden-file and "all:" rules to EmbedFiles).
+func listEmbedConfig(lp *listedPackage) *EmbedConfig {
+	cfg := &EmbedConfig{Patterns: map[string][]string{}, Files: map[string]string{}}
+	for _, pat := range lp.EmbedPatterns {
+		glob := strings.TrimPrefix(pat, "all:")
+		for _, file := range lp.EmbedFiles {
+			for p := file; p != "." && p != "/"; p = path.Dir(p) {
+				if ok, _ := path.Match(glob, p); ok {
+					cfg.Patterns[pat] = append(cfg.Patterns[pat], file)
+					break
+				}
+			}
+		}
+	}
+	for _, file := range lp.EmbedFiles {
+		cfg.Files[file] = filepath.Join(lp.Dir, filepath.FromSlash(file))
+	}
+	return cfg
 }

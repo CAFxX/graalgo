@@ -39,6 +39,8 @@ type Config struct {
 	// FileName maps a source position's file name to the name recorded in
 	// the IR (the -trimpath rewrite); nil keeps names unchanged.
 	FileName func(string) string
+	// Embed is the -embedcfg (nil: the package has no //go:embed).
+	Embed *EmbedConfig
 }
 
 // Stats counts what the emitter saw: every AST node kind in function
@@ -113,6 +115,7 @@ type emitter struct {
 	tparamOwner map[*types.TypeParam]string
 	typedefs    []*types.TypeName
 	linknames   map[string]string
+	dataOff     map[string][2]uint64 // embedded file -> (offset, length) in DATA
 
 	errFirst string
 	errCount int
@@ -135,6 +138,7 @@ func Emit(cfg Config) (*ir.File, *Stats, error) {
 		localTargs:  map[*types.TypeName][]types.Type{},
 		tparamOwner: map[*types.TypeParam]string{},
 		linknames:   map[string]string{},
+		dataOff:     map[string][2]uint64{},
 	}
 	e.keyer = ir.TypeKeyer{LocalName: e.localTypeName, TypeParamOwner: e.typeParamOwner,
 		LocalTargs: func(tn *types.TypeName) []types.Type { return e.localTargs[tn] }}
@@ -567,15 +571,35 @@ func (e *emitter) run() {
 func (e *emitter) emitVarInit() {
 	e.file.Init.VarInit = -1
 	order := e.cfg.Info.InitOrder
-	if len(order) == 0 {
+	var embeds []embedVar
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				u, ok := p.(unsupported)
+				if !ok {
+					panic(p)
+				}
+				e.record(u)
+			}
+		}()
+		embeds = e.scanEmbeds()
+	}()
+	if len(order) == 0 && len(embeds) == 0 {
 		return
+	}
+	start := token.NoPos
+	if len(embeds) > 0 {
+		start = embeds[0].pos
+	} else {
+		start = order[0].Rhs.Pos()
 	}
 	idx := len(e.file.Funcs)
 	e.file.Funcs = append(e.file.Funcs, ir.Func{Name: "init·vars", Flags: 16, Sig: e.typeID(types.NewSignatureType(nil, nil, nil, nil, nil, false))})
 	e.file.Bodies = append(e.file.Bodies, nil)
-	fs := e.newFunc(nil, nil, order[0].Rhs.Pos())
+	fs := e.newFunc(nil, nil, start)
 	var initCounts []map[string]int
 	e.body(fs, func() {
+		fs.body.Body = append(fs.body.Body, fs.embedInits(embeds)...)
 		for _, in := range order {
 			initCounts = append(initCounts, e.countNodes(in.Rhs))
 			var lhs []ir.Expr
@@ -609,7 +633,7 @@ func (e *emitter) emitVarInit() {
 		}
 		e.file.Bodies[idx] = fs.body
 		e.file.Funcs[idx].Syms, e.file.Funcs[idx].Objs = fs.refs()
-		pos := e.cfg.Fset.Position(order[0].Rhs.Pos())
+		pos := e.cfg.Fset.Position(start)
 		e.file.Funcs[idx].File, e.file.Funcs[idx].Line = e.fileName(pos.Filename), uint64(pos.Line)
 	}
 	e.file.Init.VarInit = int32(idx)

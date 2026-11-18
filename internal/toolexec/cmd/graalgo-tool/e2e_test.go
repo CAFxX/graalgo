@@ -262,15 +262,48 @@ func TestCompileErrorIsStock(t *testing.T) {
 	}
 }
 
-// A construct the skeleton does not lower yet (//go:embed) must fail the
-// build with a message naming the package, never produce a binary.
-func TestUnsupportedConstructFailsLoudly(t *testing.T) {
+// //go:embed reaches the IR: the -embedcfg cmd/go passes is read and the
+// file contents land in DATA behind a Data initializer.
+func TestEmbedThroughToolexec(t *testing.T) {
 	e := setup(t)
 	src := "package lib\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar data string\n\nfunc Answer() int {\n\treturn len(data)\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "data.txt"), []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "data.txt"), []byte("embedded!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(t.TempDir(), "skel")
+	if out, err := e.build(exe); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	b, err := bundle.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range b.Packages {
+		if p.ImportPath != "example.com/skel/lib" {
+			continue
+		}
+		f, err := ir.DecodeValidate(p.IR)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(f.Data) != "embedded!" {
+			t.Errorf("DATA = %q", f.Data)
+		}
+		return
+	}
+	t.Fatal("no IR for lib")
+}
+
+// Input the IR cannot represent (nesting deeper than the decoders accept,
+// a legal program for gc) must fail the build with a message naming the
+// package, never produce a binary or a cached archive that fails later.
+func TestUnsupportedConstructFailsLoudly(t *testing.T) {
+	e := setup(t)
+	src := "package lib\n\nfunc Answer() int {\n\tx := 1\n\treturn " + strings.Repeat("x+", 1100) + "x\n}\n"
+	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(t.TempDir(), "skel")
@@ -278,7 +311,7 @@ func TestUnsupportedConstructFailsLoudly(t *testing.T) {
 	if err == nil {
 		t.Fatal("build succeeded")
 	}
-	if !strings.Contains(out, "graalgo-tool: example.com/skel/lib:") || !strings.Contains(out, "go:embed") {
+	if !strings.Contains(out, "graalgo-tool: example.com/skel/lib:") || !strings.Contains(out, "nesting deeper than") {
 		t.Errorf("unexpected diagnostics:\n%s", out)
 	}
 	if _, statErr := os.Stat(exe); statErr == nil {

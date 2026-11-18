@@ -1682,6 +1682,13 @@ final class GirCodec {
                     Gir.Expr f_x = readExpr(r);
                     return new Gir.Expr.TupleConvert(f_type, f_pos, f_x);
                 }
+                case 31: {
+                    int f_type = r.typeRef();
+                    int f_pos = r.posRef();
+                    long f_off = r.uvarint();
+                    long f_len = r.uvarint();
+                    return new Gir.Expr.Data(f_type, f_pos, f_off, f_len);
+                }
                 default:
                     throw r.fail("bad Expr kind " + k);
             }
@@ -1946,6 +1953,13 @@ final class GirCodec {
                 w.uvarint(v.type());
                 w.uvarint(v.pos());
                 writeExpr(w, v.x());
+            }
+            case Gir.Expr.Data v -> {
+                w.uvarint(31);
+                w.uvarint(v.type());
+                w.uvarint(v.pos());
+                w.uvarint(v.off());
+                w.uvarint(v.len());
             }
         }
     }

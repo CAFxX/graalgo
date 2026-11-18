@@ -102,10 +102,17 @@ func badVectors(t *testing.T) map[string]struct {
 		"obj":       {enc(func(f *File) { f.Funcs[0].Objs = []uint32{4} }), "obj index 4 out of range"},
 		"fnref":     {enc(func(f *File) { f.Objects[0].Fn = 5 }), "optional fn index 5 out of range"},
 		"enum":      {enc(func(f *File) { f.Types[0].Type = &BasicType{Kind: 99} }), "bad BasicKind 99"},
-		"depth":     {enc(func(f *File) { f.Bodies[0].Body = []Stmt{&ExprStmt{X: deep(MaxDepth)}} }), "nesting deeper than"},
+		"depth":     {deepVector(func() []byte { return enc(func(f *File) { f.Bodies[0].Body = []Stmt{&ExprStmt{X: deep(MaxDepth)}} }) }), "nesting deeper than"},
 		"bodyless":  {enc(func(f *File) { f.Funcs[0].Flags = 1 }), "bodyless flag disagrees"},
 		"string0":   {patch(good, []byte("\x00\x04m.go"), []byte("\x01m\x03.go")), "string 0 must be the empty string"},
 	}
+}
+
+// deepVector runs mk with the encoder's depth limit lifted.
+func deepVector(mk func() []byte) []byte {
+	defer func(d int) { encodeMaxDepth = d }(encodeMaxDepth)
+	encodeMaxDepth = 1 << 30
+	return mk()
 }
 
 func TestMalformedRejected(t *testing.T) {
@@ -207,4 +214,29 @@ func FuzzDecode(f *testing.F) {
 			t.Fatalf("encode∘decode is not idempotent")
 		}
 	})
+}
+
+// The encoder refuses nesting the decoders would reject (W2 encoded it and
+// only the decoders failed — at run time, after the archive was cached).
+func TestEncodeDepthLimit(t *testing.T) {
+	mk := func(n int) *File {
+		var x Expr = &ConstExpr{Type: 1, Value: ConstValue{Kind: ConstKindInt, Text: "1"}}
+		for range n {
+			x = &UnaryExpr{Type: 1, Op: UnOpNeg, X: x}
+		}
+		return &File{Pkg: Package{Path: "p"}, Types: []TypeEntry{{Key: "int", Type: &BasicType{Kind: BasicKindInt}}},
+			Funcs: []Func{{Name: "f"}}, Bodies: []*FuncBody{{Recv: -1, Body: []Stmt{&ExprStmt{X: x}}}}}
+	}
+	// The ExprStmt is one level: n unary nodes + the const + the stmt.
+	ok := mk(MaxDepth - 2)
+	data, err := Encode(ok)
+	if err != nil {
+		t.Fatalf("depth %d: %v", MaxDepth, err)
+	}
+	if _, err := DecodeValidate(data); err != nil {
+		t.Fatalf("decoders reject what the encoder accepts: %v", err)
+	}
+	if _, err := Encode(mk(MaxDepth - 1)); err == nil {
+		t.Fatal("encoder accepts nesting deeper than MaxDepth")
+	}
 }

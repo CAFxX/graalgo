@@ -10,7 +10,7 @@ public final class Gir {
     public static final int SCHEMA_VERSION = 1;
     /** Maximum node nesting (schema.txt maxdepth). */
     public static final int MAX_DEPTH = 1000;
-    public static final byte[] SCHEMA_HASH = {(byte) 0x82, (byte) 0x74, (byte) 0x29, (byte) 0xbf, (byte) 0x13, (byte) 0x8b, (byte) 0x4a, (byte) 0xc9};
+    public static final byte[] SCHEMA_HASH = {(byte) 0x69, (byte) 0x81, (byte) 0xfc, (byte) 0x4a, (byte) 0xd3, (byte) 0x09, (byte) 0x23, (byte) 0xfc};
 
     public static final class SymKind {
         private SymKind() {}
@@ -657,7 +657,7 @@ public final class Gir {
 
     }
 
-    public sealed interface Expr permits Expr.Const, Expr.Nil, Expr.Local, Expr.Global, Expr.Ext, Expr.Inst, Expr.Blank, Expr.Unary, Expr.Binary, Expr.Deref, Expr.Addr, Expr.Recv, Expr.Field, Expr.Index, Expr.Slice, Expr.TypeAssert, Expr.Convert, Expr.Call, Expr.MethodCall, Expr.IfaceCall, Expr.BuiltinCall, Expr.MethodVal, Expr.IfaceMethodVal, Expr.MethodExpr, Expr.IfaceMethodExpr, Expr.StructLit, Expr.ArrayLit, Expr.MapLit, Expr.FuncLit, Expr.TupleConvert {
+    public sealed interface Expr permits Expr.Const, Expr.Nil, Expr.Local, Expr.Global, Expr.Ext, Expr.Inst, Expr.Blank, Expr.Unary, Expr.Binary, Expr.Deref, Expr.Addr, Expr.Recv, Expr.Field, Expr.Index, Expr.Slice, Expr.TypeAssert, Expr.Convert, Expr.Call, Expr.MethodCall, Expr.IfaceCall, Expr.BuiltinCall, Expr.MethodVal, Expr.IfaceMethodVal, Expr.MethodExpr, Expr.IfaceMethodExpr, Expr.StructLit, Expr.ArrayLit, Expr.MapLit, Expr.FuncLit, Expr.TupleConvert, Expr.Data {
         /** The member's kind number on the wire. */
         int unionTag();
 
@@ -868,6 +868,13 @@ public final class Gir {
             @Override
             public int unionTag() {
                 return 30;
+            }
+        }
+
+        record Data(int type, int pos, long off, long len) implements Expr {
+            @Override
+            public int unionTag() {
+                return 31;
             }
         }
 
