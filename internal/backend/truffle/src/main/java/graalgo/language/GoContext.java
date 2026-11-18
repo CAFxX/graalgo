@@ -234,8 +234,10 @@ public final class GoContext {
      */
     @TruffleBoundary
     int runBundle(graalgo.go.loader.Program program) {
-        running = true;
+        claimRun(this);
         try {
+            // As runProgram: tear a previous run's leftover goroutines down first.
+            terminatePrevious();
             int gmp = env.getOptions().get(GoLanguage.Gomaxprocs);
             if (gmp <= 0) {
                 gmp = Runtime.getRuntime().availableProcessors();
@@ -258,7 +260,7 @@ public final class GoContext {
                 SchedulerCore.install(prev);
             }
         } finally {
-            running = false;
+            releaseRun(this);
         }
     }
 
