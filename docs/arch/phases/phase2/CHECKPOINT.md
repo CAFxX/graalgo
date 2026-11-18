@@ -782,7 +782,7 @@ entries.
   old); bare field without `=` → error (gc skips).
 
 **Design:** `graalgo.sched.launcher.GoDebug` (parse/apply/accessors) +
-[src/main/resources/graalgo/sched/godebug/registry.json](../../../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json) (versioned;
+[src/main/resources/graalgo/sched/godebug/registry.json](../../../../internal/backend/truffle/src/main/resources/graalgo/sched/godebug/registry.json) (versioned;
 Makefile copies resources) + `SchedMain` startup hook (exit 2 on deny,
 matching gc's fatal). Machine-checked version test (version constant +
 knob-name-set hash). `tools/godebug-diff/` probes per emulated knob.

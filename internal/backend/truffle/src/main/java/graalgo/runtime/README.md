@@ -24,10 +24,12 @@ not a parity claim.
 - `GoFloatFmt`, `GoQuote`, `GoIsPrint`: ported gc formatting logic.
 - `Atomics`: JVM-backed atomics. `Timers.nanotime()`: `System.nanoTime()`.
 
-**Honest stubs** (throw `UnsupportedOperationException`, Phase 2 owns):
-- `Intrinsics.itabFor`, `Intrinsics.traceback`.
-- `Timers.sleep/startTimer/stopTimer`, `Scheduler` (all), `Netpoll` (all),
-  `ChanOps` (all).
+**Scheduler-backed surfaces** (were throwing phase-1 stubs; the real
+implementations live here since the T0.D module merge, 2026-11-18):
+- `Timers`, `Scheduler`, `ChanOps`, `GcInterop`, `GoroutineState` and
+  [../safepoint/Safepoint.java](../safepoint/Safepoint.java) delegate to the
+  scheduler in [../sched/](../sched/). `Netpoll` documents its deletion
+  (GG-0018).
 
 **Worker-F** (panic/defer/goexit): `Panic`, `PanicException`, `DeferChain`,
 `GoroutineState`, etc. — the frozen `throwPanic`/`recover` interface that

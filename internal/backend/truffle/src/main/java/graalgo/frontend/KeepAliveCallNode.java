@@ -10,8 +10,7 @@ import graalgo.values.GoKind;
  * via the synthetic {@code runtime} import overlay).
  *
  * <p>Evaluates the argument, then delegates to {@link GcInterop#keepAlive}.
- * In Phase 1 the target is the stub (throws); Phase 2 shadows it with the
- * {@code Reference.reachabilityFence}-based implementation.
+ * The implementation is {@code Reference.reachabilityFence}-based.
  */
 public final class KeepAliveCallNode extends GoExprNode {
     @Children private final GoExprNode[] args;

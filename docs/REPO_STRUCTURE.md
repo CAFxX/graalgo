@@ -85,30 +85,26 @@ Related: [Makefile](../Makefile) (root build entry point),
     [internal/frontend/tools/validate_frontend_v1.py](../internal/frontend/tools/validate_frontend_v1.py)),
     consumed by `graalgo.frontend.NodeFactory` in the backend. There is no
     separate IR package — the format is the contract.
-  - [backend/](../internal/backend/) — IR → Truffle nodes. The Java backend
-    landed here in the Phase-4 restructure (lane 3); each module has its own
-    `Makefile` (plain `javac`, `-Werror`). The runtime module compiles the
-    joint round first (its sources plus the truffle module's — the two form
-    a compile cycle), then the truffle module compiles the 8 same-FQN
-    shadow classes against it, then interop builds against both; root
-    `make build` drives the three in that dependency order.
-    - [truffle/](../internal/backend/truffle/) — Truffle AST node
-      implementations (the compiled program):
+  - [backend/](../internal/backend/) — IR → Truffle nodes. Two Java
+    modules, each with its own `Makefile` (plain `javac`, `-Werror`); root
+    `make build` builds truffle, then interop against it.
+    - [truffle/](../internal/backend/truffle/) — the core backend module:
       [src/main/java/](../internal/backend/truffle/src/main/java/) holds
-      `graalgo.{nodes,values,frontend}` from `phases/phase1` plus 8
-      same-FQN shadow classes
-      ([graalgo/runtime/](../internal/backend/truffle/src/main/java/graalgo/runtime/)
-      × 7, [graalgo/safepoint/](../internal/backend/truffle/src/main/java/graalgo/safepoint/)).
-      The runtime module's phase-2 implementations shadow these at load
-      (runtime classes precede truffle classes on the launcher classpaths
-      — the same-FQN overlay mechanism). Five are frozen stubs (`Netpoll`,
-      `ChanOps`, `Scheduler`, `GcInterop` throw
-      `UnsupportedOperationException`; `Safepoint` is a no-op); three are
-      full forked implementations with documented deltas (`Panic`: the
-      panicnil knob; `GoroutineState`: `ThreadLocal` vthread-scoped holder
-      lookup; `Timers`: real `nanotime`, stubbed sleep/timer-heap). The
-      Truffle jars live in [lib/](../internal/backend/truffle/lib/); the
-      launchers [graalgo-run](../internal/backend/graalgo-run) and
+      the Truffle AST nodes and node factories (`graalgo.frontend`), the
+      value model (`graalgo.values`), and the Go runtime on the JVM
+      (`graalgo.runtime` intrinsics, channels, panics, maps, timers, GC
+      interop; `graalgo.sched` scheduler and its launcher; `graalgo.jfr`;
+      `graalgo.safepoint`; `graalgo.launcher` — graalgo-run's `Main`).
+      Nodes and runtime call each other, so they compile in one javac
+      round. Two test runners: `graalgo.test.Runner` (nodes, values,
+      corpus differentials) and `graalgo.sched.SchedTestRunner`
+      (scheduler/runtime). Until RECOVERY T0.D (2026-11-18) this was two
+      modules (`truffle/` + `runtime/`) plus 8 phase-1 stub classes whose
+      same-FQN replacements won by classpath order; the stubs are deleted
+      and [check_duplicate_fqn.py](../.github/scripts/check_duplicate_fqn.py)
+      forbids any FQN in two modules. The Truffle jars live in
+      [lib/](../internal/backend/truffle/lib/); the launchers
+      [graalgo-run](../internal/backend/graalgo-run) and
       [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
     - [fast-cycle/](../internal/backend/fast-cycle/) — fast debug cycle:
       [FastCycleDaemon.java](../internal/backend/fast-cycle/FastCycleDaemon.java)
@@ -116,13 +112,6 @@ Related: [Makefile](../Makefile) (root build entry point),
       wrapper script; wired into the root Makefile `fast-*` targets
       (`fast-build`, `fast-run`, `fast-test`, `fast-watch`). See
       [README.md](../internal/backend/fast-cycle/README.md).
-    - [runtime/](../internal/backend/runtime/) — the Go runtime on the JVM:
-      scheduler, netpoller, maps, channels, synchronization:
-      [src/main/java/](../internal/backend/runtime/src/main/java/) holds
-      phase-1 `graalgo.{runtime,launcher,safepoint}` (minus the stubs, which
-      compile in the truffle module) merged with phase-2
-      `graalgo.{sched,jfr,runtime,safepoint}` — the scheduler keeps its
-      `graalgo.sched` package (sources at `.../src/main/java/graalgo/sched/`).
     - [interop/](../internal/backend/interop/) — Go↔Java interop and
       isolates (also the natural home of Phase 5's privileged runtime
       surface):
@@ -266,9 +255,9 @@ new locations.
 |---|---|
 | `phases/phase1/frontend/` | [internal/frontend/](../internal/frontend/) |
 | `phases/phase1/src/main/java/{nodes,values,frontend}/` | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) |
-| `phases/phase1/src/main/java/{runtime,launcher,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) |
-| the 8 same-FQN shadow classes (`graalgo/runtime/` × 7, `graalgo/safepoint/Safepoint`) | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (compile with the phase-1 module; shadowed at load by the runtime module's phase-2 implementations — 5 frozen stubs + 3 forked overlays) |
-| `phases/phase2/src/main/java/{sched,jfr,runtime,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) (scheduler keeps package `graalgo.sched`) |
+| `phases/phase1/src/main/java/{runtime,launcher,safepoint}/` | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (via the `runtime/` module, merged into truffle by T0.D) |
+| the 8 same-FQN shadow classes (`graalgo/runtime/` × 7, `graalgo/safepoint/Safepoint`) | deleted by T0.D (2026-11-18); the phase-2 implementations are the only copies, in [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) |
+| `phases/phase2/src/main/java/{sched,jfr,runtime,safepoint}/` | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (scheduler keeps package `graalgo.sched`) |
 | `phases/phase3/src/main/java/{iface,p3*}/` | [internal/backend/interop/src/main/java/](../internal/backend/interop/src/main/java/) |
 | `phases/phase1/lib/` (Truffle jars) | [internal/backend/truffle/lib/](../internal/backend/truffle/lib/) |
 | `phases/phase1/graalgo-run`, `phases/phase3/graalgo-sync-run` | [internal/backend/](../internal/backend/) |

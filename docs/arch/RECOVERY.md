@@ -34,6 +34,10 @@ verified by running programs, not by reading docs).
   per-push gate that catches the `floorMod` mutant, remove `phases/` paths,
   widen layer-2 triggers, prune stale exclusions.
 - T0.D flatten the same-FQN stub overlay (truffle+runtime → one module).
+  Done 2026-11-18: [internal/backend/truffle/](../../internal/backend/truffle/)
+  is the one core module (nodes, values, runtime, scheduler); the 8 stubs,
+  the `isPhase2()` classpath-order guards and the overlay tests are
+  deleted; interop builds downstream.
 
 **T1 — architecture (SPEC §3.1–3.3)**: design, then build, the per-package
 `-toolexec` compile/link path: `compile` emits typed IR into the package

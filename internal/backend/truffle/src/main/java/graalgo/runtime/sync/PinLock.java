@@ -7,7 +7,7 @@ import java.util.concurrent.locks.ReentrantLock;
  *
  * <p>sync.Pool's pin sections (and sync/atomic's first-store sections)
  * serialize on this lock: procPin takes it, procUnpin releases it. The
- * lock lives in the runtime module (not interop) so the scheduler can
+ * lock lives in the core module (not interop) so the scheduler can
  * test it: a goroutine holding it must never park for a quantum yield
  * (see SchedulerCore.pollCurrentThread) — parking while holding it
  * deadlocks against the drainer re-admission path, and in gc pinning

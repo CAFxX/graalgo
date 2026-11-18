@@ -108,7 +108,7 @@ Toolchain + `graalgo-run` executes a hand-built "hello" AST; diffharness
 backend registered. GG-0027 → active.
 
 ### What landed
-- [src/main/java/graalgo/launcher/Main.java](../../../../internal/backend/runtime/src/main/java/graalgo/launcher/Main.java) — [PLAN.md](PLAN.md) §5 CLI contract:
+- [src/main/java/graalgo/launcher/Main.java](../../../../internal/backend/truffle/src/main/java/graalgo/launcher/Main.java) — [PLAN.md](PLAN.md) §5 CLI contract:
   `graalgo-run file.go` (frontend→AST→execute main; exit = program's),
   `graalgo-run --check file.go` (frontend only; harness build step),
   `graalgo-run --handbuilt-hello` (M1 scaffolding: executes the hand-built
@@ -120,7 +120,7 @@ backend registered. GG-0027 → active.
   check. DECISION (recorded): `--handbuilt-hello` + `Handbuilt` are removed
   when WS B's NodeFactory builds real programs from frontend/v1 JSON (M2);
   they are scaffolding, not a second execution mode.
-- [src/main/java/graalgo/runtime/Runtime.java](../../../../internal/backend/runtime/src/main/java/graalgo/runtime/Runtime.java) — the runtime print path
+- [src/main/java/graalgo/runtime/Runtime.java](../../../../internal/backend/truffle/src/main/java/graalgo/runtime/Runtime.java) — the runtime print path
   (`println(String)` → stdout + newline). Parity note recorded in code:
   Go's print/println write to stderr; the hello fixture's stdout routing is
   deliberate (harness compares stdout) and not a parity claim; the GG-0045

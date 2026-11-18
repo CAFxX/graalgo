@@ -5,14 +5,9 @@
 #   internal/backend/interop/src/main/java — graalgo.{iface,p3chan,p3crypto,
 #     p3link,p3math,p3net,p3os,p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}.
 #
-# The truffle and runtime modules are consumed as FROZEN dependencies: this
-# module compiles against their out/classes and does not modify their
-# sources.
-#
-# Classpath order is load-bearing: interop/out/classes comes FIRST, then
-# runtime/out/classes (so the runtime "owns" same-FQN replacements shadow
-# the truffle module's phase-1 stubs), then truffle/out/classes, then the
-# Truffle jars.
+# Downstream of the core backend module (../truffle: AST nodes, values and
+# the Go runtime): this module compiles against its out/classes. No class
+# exists in both modules (.github/scripts/check_duplicate_fqn.py).
 #
 # Pinned toolchain: Oracle GraalVM 25.0.4.1.1 LTS, plain javac,
 # -Xlint:deprecation -Werror (standing directive 2026-10-04).
@@ -22,9 +17,7 @@ JAVAC := $(GRAALVM_HOME)/bin/javac
 JAVA  := $(GRAALVM_HOME)/bin/java
 
 TRUFFLE := ../truffle
-RUNTIME := ../runtime
 TRUFFLE_CLASSES := $(TRUFFLE)/out/classes
-RUNTIME_CLASSES := $(RUNTIME)/out/classes
 LIB := $(wildcard $(TRUFFLE)/lib/*.jar)
 CP := $(subst $(eval) ,:,$(strip $(LIB)))
 
@@ -34,9 +27,7 @@ SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
 OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
-# Interop runtime classpath: interop FIRST, then runtime (overlay), then
-# truffle, then jars.
-RUN_CP := $(OUT_MAIN):$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)
+RUN_CP := $(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 # p3frontend Go sources and stdlib-fork tooling now live in their
@@ -56,17 +47,15 @@ JAVAC_FLAGS := -Xlint:deprecation -Werror
 
 all: main
 
-# The truffle and runtime modules must be built first (frozen dependencies).
+# The core module builds first.
 $(TRUFFLE_CLASSES)/.built:
 	$(MAKE) -C $(TRUFFLE) main
-$(RUNTIME_CLASSES)/.built:
-	$(MAKE) -C $(RUNTIME) main
 
-main: $(TRUFFLE_CLASSES)/.built $(RUNTIME_CLASSES)/.built $(OUT_MAIN)/.built
-$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES)
+main: $(TRUFFLE_CLASSES)/.built $(OUT_MAIN)/.built
+$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES) $(TRUFFLE_CLASSES)/.built
 	mkdir -p $(OUT_MAIN)
 	$(JAVAC) -version
-	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)" -processorpath "$(CP)" \
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(TRUFFLE_CLASSES):$(CP)" -processorpath "$(CP)" \
 		-d $(OUT_MAIN) $(SRC_MAIN)
 	@if [ -d src/main/resources ]; then \
 		cp -r src/main/resources/. $(OUT_MAIN)/; fi
@@ -80,7 +69,7 @@ test: main $(OUT_TEST)/.built
 	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
-	$(JAVAC) $(JAVAC_FLAGS) -cp "$(OUT_MAIN):$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUN_CP)" -d $(OUT_TEST) $(SRC_TEST)
 	touch $(OUT_TEST)/.built
 
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).

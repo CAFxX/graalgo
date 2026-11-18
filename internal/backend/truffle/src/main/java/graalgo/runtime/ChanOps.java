@@ -1,62 +1,151 @@
 package graalgo.runtime;
 
+import graalgo.sched.SchedulerCore;
+
 /**
- * Frozen channel/select intrinsic surface (WS G, GG-0020, STUB).
+ * Channel/select intrinsic surface (P2-M2, WS B; GG-0017 chan slice).
  *
- * <p>Channels are Phase 2 (no goroutines in Phase 1); these signatures
- * freeze the contract now. Every method throws
- * {@link UnsupportedOperationException} with a Phase-2 message until
- * implemented. The {@code len} builtin on channels is a factory scope
- * error naming Phase 2 (it type-checks but has no Phase-1 lowering).
+ * <p>Every FROZEN signature is the GG-0020 one (bodies are INTERNAL per
+ * freeze §3.5); {@code FreezeSignatureTest} checks them.
+ *
+ * <p>All blocking operations park scheduler-aware via
+ * {@link SchedulerCore#parkCurrent} — a blocked send/recv/select never
+ * pins a carrier thread (P2-D4).
+ *
+ * <p>Conventions for the future exporter (documented here because the
+ * frozen {@link SelectCase} record cannot carry them):
+ * <ul>
+ *   <li>{@code default:} is a {@code SelectCase} with {@code chan == null}.
+ *   <li>After {@link #selectGo} returns the chosen index, a chosen recv
+ *       case's value/ok are read via {@link #selectRecvValue} /
+ *       {@link #selectRecvOk} (per-thread stash, set by the select).
+ * </ul>
  */
 public final class ChanOps {
     private ChanOps() {}
 
-    /** Opaque channel handle (Phase 2 fills in the representation). */
+    /** Opaque channel handle (frozen type). */
     public interface Chan {}
 
-    /** STUB — {@code make(chan T, n)}. Phase 2. */
+    /**
+     * {@code make(chan T, n)} (frozen signature). The element zero value
+     * defaults to {@code null}; prefer
+     * {@link #makeChan(long, int, Object)} with the type-directed zero
+     * when the program can observe a closed-channel receive.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Chan makeChan(long elemSizeBytes, int capacity) {
-        throw new UnsupportedOperationException(
-                "Phase 2: channels need the scheduler (GG-0020)");
+        return makeChan(elemSizeBytes, capacity, null);
     }
 
-    /** STUB — {@code ch <- v} (send). Phase 2. */
+    /**
+     * {@code make(chan T, n)} with an explicit element zero value
+     * (additive; Phase 2). The exporter should pass the type-directed
+     * zero so {@code <-ch} on a closed, drained channel observes Go's
+     * zero value.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static Chan makeChan(long elemSizeBytes, int capacity, Object zeroValue) {
+        if (capacity < 0) {
+            Panic.throwPanic(GoStrings.of("makechan: negative capacity"));
+        }
+        return new GoChan(capacity, zeroValue);
+    }
+
+    /** {@code ch <- v} (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void send(Chan ch, Object value) {
-        throw new UnsupportedOperationException(
-                "Phase 2: channels need the scheduler (GG-0020)");
+        requireGoChan(ch).send(value);
     }
 
-    /** STUB — {@code v = <-ch} (receive). Phase 2. */
+    /**
+     * {@code v = <-ch} (frozen signature). Returns the element zero
+     * value once the channel is closed and drained (Go's
+     * {@code (zero, false)}; the ok bit is not observable through this
+     * signature — the two-value receive form is a P2-M3 exporter item).
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object recv(Chan ch) {
-        throw new UnsupportedOperationException(
-                "Phase 2: channels need the scheduler (GG-0020)");
+        return requireGoChan(ch).recv().value();
     }
 
-    /** STUB — {@code close(ch)}. Phase 2. */
+    /**
+     * Two-value receive {@code v, ok = <-ch} (additive; Phase 2). The
+     * future exporter lowers the comma-ok form to this.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static GoChan.RecvResult recvOk(Chan ch) {
+        return requireGoChan(ch).recv();
+    }
+
+    /** {@code close(ch)} (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void close(Chan ch) {
-        throw new UnsupportedOperationException(
-                "Phase 2: channels need the scheduler (GG-0020)");
+        requireGoChan(ch).close();
     }
 
-    /** STUB — {@code len(ch)}. Phase 2. */
+    /** {@code len(ch)}: buffered element count (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int len(Chan ch) {
-        throw new UnsupportedOperationException(
-                "Phase 2: channels need the scheduler (GG-0020)");
+        return requireGoChan(ch).buffered();
     }
 
-    /** STUB — {@code cap(ch)}. Phase 2. */
+    /** {@code cap(ch)}: buffer capacity (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int cap(Chan ch) {
-        throw new UnsupportedOperationException(
-                "Phase 2: channels need the scheduler (GG-0020)");
+        return requireGoChan(ch).capacity();
     }
 
-    /** STUB — {@code select} over cases. Phase 2. */
+    /**
+     * {@code select} over cases (frozen signature). Returns the chosen
+     * case index. A {@code SelectCase} with {@code chan == null}
+     * denotes {@code default:}.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int selectGo(SelectCase[] cases) {
-        throw new UnsupportedOperationException(
-                "Phase 2: select needs the scheduler (GG-0020)");
+        if (cases == null) {
+            throw new IllegalArgumentException("selectGo: null cases");
+        }
+        SelectOp op = new SelectOp(cases);
+        int idx = op.execute();
+        SELECT_RESULT.set(new SelectResult(op.resultValue(), op.resultOk()));
+        return idx;
     }
 
-    /** One select case (channel + direction); interpreted by Phase 2. */
+    /** Value received by the last {@link #selectGo} on this thread. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static Object selectRecvValue() {
+        SelectResult r = SELECT_RESULT.get();
+        if (r == null) {
+            throw new IllegalStateException("selectRecvValue with no preceding selectGo");
+        }
+        return r.value;
+    }
+
+    /** Ok bit received by the last {@link #selectGo} on this thread. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static boolean selectRecvOk() {
+        SelectResult r = SELECT_RESULT.get();
+        if (r == null) {
+            throw new IllegalStateException("selectRecvOk with no preceding selectGo");
+        }
+        return r.ok;
+    }
+
+    private record SelectResult(Object value, boolean ok) {}
+
+    private static final ThreadLocal<SelectResult> SELECT_RESULT = new ThreadLocal<>();
+
+    /** One select case (channel + direction); frozen record. */
     public record SelectCase(Chan chan, boolean send, Object sendValue) {}
+
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static GoChan requireGoChan(Chan ch) {
+        if (!(ch instanceof GoChan g)) {
+            throw new IllegalArgumentException(
+                    "channel operation on non-GoChan: "
+                            + (ch == null ? "null" : ch.getClass().getName()));
+        }
+        return g;
+    }
 }

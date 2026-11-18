@@ -183,7 +183,6 @@ public final class SchedMain {
         graalgo.launcher.ClassPreloader.preload();
 
         // Install the scheduler and run main as the first goroutine.
-        assertSchedulerOverlay();
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
@@ -209,30 +208,6 @@ public final class SchedMain {
         System.out.flush();
         System.err.flush();
         return exitCode;
-    }
-
-    /**
-     * Fail-fast that the Phase-2 overlay is active (P2-D8): the
-     * {@code graalgo.runtime.Scheduler} on the classpath must be the
-     * Phase-2 replacement, i.e. phase2/out/classes precedes
-     * phase1/out/classes. With the wrong order the Phase-1 stub would
-     * throw UOE on first use — and worse, the Phase-1 static
-     * {@code GoroutineState} holder would be silently shared across
-     * goroutines. Never silent.
-     */
-    private static void assertSchedulerOverlay() {
-        try {
-            if (!graalgo.runtime.Scheduler.isPhase2()) {
-                throw new IllegalStateException(
-                        "graalgo.runtime.Scheduler.isPhase2() returned false");
-            }
-        } catch (NoSuchMethodError e) {
-            throw new IllegalStateException(
-                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
-                    + "overlay; phase2/out/classes must precede phase1/out/classes "
-                    + "on the classpath",
-                    e);
-        }
     }
 
     private static int usageError(String msg) {

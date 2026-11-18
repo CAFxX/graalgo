@@ -10,8 +10,7 @@ import graalgo.values.GoKind;
  * ADR-0002 D4; via the synthetic {@code runtime} import overlay).
  *
  * <p>Evaluates both arguments, then delegates to {@link GcInterop#setFinalizer}.
- * In Phase 1 the target is the stub (throws); Phase 2 shadows it with the
- * {@code Cleaner}-based implementation.
+ * The implementation is {@code Cleaner}-based.
  */
 public final class SetFinalizerCallNode extends GoExprNode {
     @Children private final GoExprNode[] args;

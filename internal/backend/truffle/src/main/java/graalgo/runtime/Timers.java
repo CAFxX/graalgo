@@ -1,11 +1,20 @@
 package graalgo.runtime;
 
+import graalgo.sched.SchedulerCore;
+import graalgo.jfr.ParkReason;
+
 /**
- * Frozen timer intrinsic surface (WS G, GG-0020).
+ * Timer intrinsic surface (WS G, GG-0020; WS C, GG-SCHED-0004).
  *
- * <p>{@link #nanotime} is REAL (backed by {@link System#nanoTime}, which is
- * the documented source for {@code runtime.nanotime} on linux/amd64).
- * Everything else is STUB — timers need the Phase-2 scheduler/netpoller.
+ * <p>Signatures are the frozen ones (bodies are INTERNAL per freeze
+ * §3.5); {@code FreezeGapTest} checks them.
+ *
+ * <p>All blocking parks scheduler-aware via
+ * {@link SchedulerCore#parkCurrent} — a sleeping goroutine never pins
+ * a carrier thread and does not count against the in-flight cap while
+ * parked (P2-D4).
+ *
+ * <p>verifies: GG-0020 (timer slice), GG-SCHED-0004 (timer slice)
  */
 public final class Timers {
     private Timers() {}
@@ -14,33 +23,98 @@ public final class Timers {
      * Monotonic nanosecond clock (REAL): {@code runtime.nanotime}.
      * Never wall-clock; never goes backwards on this platform.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long nanotime() {
         return System.nanoTime();
     }
 
     /**
-     * STUB — sleep for {@code ns} nanoseconds. Needs Phase-2 scheduler
-     * park/unpark; throws until then.
+     * Sleep for {@code ns} nanoseconds (frozen signature, now real).
+     * Parks the goroutine on the scheduler timer heap; the in-flight
+     * slot is released while sleeping. {@code ns <= 0} returns
+     * immediately (gc {@code time.Sleep} parity).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void sleep(long ns) {
-        throw new UnsupportedOperationException(
-                "Phase 2: timer sleep needs the scheduler (GG-0020)");
+        if (ns <= 0) {
+            return;
+        }
+        SchedulerCore sched = SchedulerCore.current();
+        // Register BEFORE parking (P2-D7): the timer thread's unpark is
+        // safe even if it wins the race (drainer unparkPending absorbs
+        // unpark-before-parked).
+        sched.timerHeap().addSleep(
+                System.nanoTime() + ns, sched.currentGoroutine());
+        // P2-M6: a sleeping goroutine parks with reason TIMER. No
+        // ChannelBlock — sleep is not a channel operation.
+        sched.parkCurrent(null, ParkReason.TIMER);
     }
 
     /**
-     * STUB — arm a timer. Needs the Phase-2 timer heap; throws until then.
+     * Arm a timer for an absolute nanotime (frozen signature, now
+     * real). At {@code whenNanos}, {@code callback} runs on the timer
+     * thread (gc timer-proc parity): it must not block and must not
+     * call scheduler park operations. The timer id is discarded; use
+     * {@link #startTimerId} when cancellation is needed.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void startTimer(long whenNanos, Runnable callback) {
-        throw new UnsupportedOperationException(
-                "Phase 2: timers need the scheduler timer heap (GG-0020)");
+        startTimerId(whenNanos, callback);
     }
 
     /**
-     * STUB — disarm a timer. Needs the Phase-2 timer heap; throws until
-     * then.
+     * Additive (Phase 2): like {@link #startTimer} but returns the
+     * timer id for {@link #stopTimer}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static long startTimerId(long whenNanos, Runnable callback) {
+        if (callback == null) {
+            throw new IllegalArgumentException("startTimer: null callback");
+        }
+        return SchedulerCore.current().timerHeap().addCallback(whenNanos, callback);
+    }
+
+    /**
+     * Disarm a timer (frozen signature, now real). Returns silently
+     * when the id is unknown or the timer already fired (gc Stop
+     * parity for the racy window).
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void stopTimer(long timerId) {
-        throw new UnsupportedOperationException(
-                "Phase 2: timers need the scheduler timer heap (GG-0020)");
+        SchedulerCore.current().timerHeap().cancel(timerId);
+    }
+
+    /**
+     * Additive (Phase 2): {@code time.After(d)} — the channel of a
+     * one-shot timer firing after {@code ns} nanoseconds.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static ChanOps.Chan after(long ns) {
+        return GoTimer.after(ns);
+    }
+
+    /**
+     * Additive (Phase 2): {@code time.NewTimer(d)}.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static GoTimer newTimer(long ns) {
+        return GoTimer.newTimer(ns);
+    }
+
+    /**
+     * Additive (Phase 2): {@code time.NewTicker(d)}.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static GoTimer newTicker(long ns) {
+        return GoTimer.newTicker(ns);
+    }
+
+    /**
+     * Additive (Phase 2): {@code time.Tick(d)} (no Stop handle; the
+     * ticker is reclaimed at program end, gc parity).
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    public static ChanOps.Chan tick(long ns) {
+        return GoTimer.tick(ns);
     }
 }

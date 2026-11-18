@@ -23,19 +23,14 @@ PORT=47321
 PORT_FILE="$HOME/.fastcycle.port"
 
 TRUFFLE="$BACKEND/truffle"
-RUNTIME="$BACKEND/runtime"
 INTEROP="$BACKEND/interop"
 LIB_CP=$(ls "$TRUFFLE"/lib/*.jar | tr '\n' ':' | sed 's/:$//')
 
-RUNTIME_CLASSES="$RUNTIME/out/classes"
 TRUFFLE_CLASSES="$TRUFFLE/out/classes"
 INTEROP_CLASSES="$INTEROP/out/classes"
 
-# Full runtime classpath (matches graalgo-run overlay order)
-FULL_CP="$RUNTIME_CLASSES:$TRUFFLE_CLASSES:$INTEROP_CLASSES:$LIB_CP"
-
-# The 8 frozen stubs (compile in truffle module, not the joint round)
-STUBS="graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java graalgo/runtime/Timers.java graalgo/safepoint/Safepoint.java"
+# Full runtime classpath (the classes graalgo-run puts on its classpath)
+FULL_CP="$TRUFFLE_CLASSES:$INTEROP_CLASSES:$LIB_CP"
 
 daemon_pid() {
     pgrep -f "FastCycleDaemon" || true
@@ -75,32 +70,19 @@ send() {
     echo "$1" | timeout 120 nc 127.0.0.1 $PORT
 }
 
-# Map a .java source path to its module, output dir, and joint-round membership.
-# Echoes: "<module> <outdir> <joint|stub|normal>"
+# Map a .java source path to its module and output dir.
+# Echoes: "<module> <outdir> normal"
 classify() {
     local f="$1"
     case "$f" in
         "$TRUFFLE/src/main/java/"*)
-            local rel="${f#$TRUFFLE/src/main/java/}"
-            for s in $STUBS; do
-                if [ "$rel" = "$s" ]; then
-                    echo "truffle $TRUFFLE_CLASSES stub"
-                    return
-                fi
-            done
-            echo "truffle $RUNTIME_CLASSES joint"
-            ;;
-        "$RUNTIME/src/main/java/"*)
-            echo "runtime $RUNTIME_CLASSES normal"
+            echo "truffle $TRUFFLE_CLASSES normal"
             ;;
         "$INTEROP/src/main/java/"*)
             echo "interop $INTEROP_CLASSES normal"
             ;;
         "$TRUFFLE/src/test/java/"*)
             echo "truffle-test $TRUFFLE/out/test-classes normal"
-            ;;
-        "$RUNTIME/src/test/java/"*)
-            echo "runtime-test $RUNTIME/out/test-classes normal"
             ;;
         *)
             echo "unknown unknown unknown"
@@ -117,8 +99,8 @@ find_changed_main() {
     # Get candidate .java files from git (modified + untracked)
     local candidates
     candidates=$(cd "$backend_root/.." 2>/dev/null && {
-        git diff --name-only HEAD -- 'internal/backend/truffle/src/main/java/*.java' 'internal/backend/runtime/src/main/java/*.java' 'internal/backend/interop/src/main/java/*.java' 2>/dev/null
-        git ls-files --others --exclude-standard -- 'internal/backend/truffle/src/main/java/*.java' 'internal/backend/runtime/src/main/java/*.java' 'internal/backend/interop/src/main/java/*.java' 2>/dev/null
+        git diff --name-only HEAD -- 'internal/backend/truffle/src/main/java/*.java' 'internal/backend/interop/src/main/java/*.java' 2>/dev/null
+        git ls-files --others --exclude-standard -- 'internal/backend/truffle/src/main/java/*.java' 'internal/backend/interop/src/main/java/*.java' 2>/dev/null
     } | sort -u)
     if [ -n "$candidates" ]; then
         echo "$candidates" | while IFS= read -r rel; do
@@ -132,7 +114,6 @@ find_changed_main() {
             local srcdir=""
             case "$jf" in
                 "$TRUFFLE/src/main/java/"*) srcdir="$TRUFFLE/src/main/java" ;;
-                "$RUNTIME/src/main/java/"*) srcdir="$RUNTIME/src/main/java" ;;
                 "$INTEROP/src/main/java/"*) srcdir="$INTEROP/src/main/java" ;;
             esac
             [ -z "$srcdir" ] && continue
@@ -147,7 +128,7 @@ find_changed_main() {
     # (e.g., after a git checkout that reverted an edit). This is rare;
     # do a quick mtime scan only if git found nothing.
     if [ -z "$candidates" ]; then
-        for srcdir in "$TRUFFLE/src/main/java" "$RUNTIME/src/main/java" "$INTEROP/src/main/java"; do
+        for srcdir in "$TRUFFLE/src/main/java" "$INTEROP/src/main/java"; do
             [ -d "$srcdir" ] || continue
             while IFS= read -r -d '' jf; do
                 read -r _mod outdir _kind <<< "$(classify "$jf")"
@@ -195,7 +176,8 @@ do_build() {
     echo "Compiling $count changed file(s)..." >&2
 
     # Group by (outdir) — all use the same full cp for simplicity and
-    # correctness (the joint round needs everything visible anyway).
+    # correctness (the truffle module's node/runtime cycle needs everything
+    # visible anyway).
     # The daemon compiles in-process: ~0.5s for a few files.
     local files_arg
     files_arg=$(echo "$changed" | tr '\n' ' ')
@@ -249,7 +231,7 @@ do_test() {
     # holds the test class, compile changed files there.
     local testdir="" testout=""
     local relpath="${testclass//.//}.java"
-    for mod in "$TRUFFLE" "$RUNTIME"; do
+    for mod in "$TRUFFLE" "$INTEROP"; do
         if [ -f "$mod/src/test/java/$relpath" ]; then
             testdir="$mod/src/test/java"
             testout="$mod/out/test-classes"
@@ -274,7 +256,7 @@ do_test() {
         fi
         # Test classpath: test classes first, then main.
         # RUNTEST invokes methods directly (no System.exit).
-        # Pass the repo dir property (matches the Makefile's P1_DIR_PROP).
+        # Pass the repo dir property (matches the truffle Makefile's REPO_DIR_PROP).
         # $BACKEND is internal/backend, so the repo root is ../..
         local repodir="$(cd -- "$BACKEND/../.." && pwd)"
         local props="graalgo.repo.dir=$repodir"
@@ -298,7 +280,7 @@ do_watch() {
     declare -A mtimes
     while IFS= read -r -d '' jf; do
         mtimes["$jf"]=$(stat -c %Y "$jf" 2>/dev/null || echo 0)
-    done < <(find "$TRUFFLE/src" "$RUNTIME/src" "$INTEROP/src" -name '*.java' -print0 2>/dev/null)
+    done < <(find "$TRUFFLE/src" "$INTEROP/src" -name '*.java' -print0 2>/dev/null)
 
     while true; do
         sleep 0.5
@@ -310,7 +292,7 @@ do_watch() {
                 mtimes["$jf"]=$mt
                 changed=1
             fi
-        done < <(find "$TRUFFLE/src" "$RUNTIME/src" "$INTEROP/src" -name '*.java' -print0 2>/dev/null)
+        done < <(find "$TRUFFLE/src" "$INTEROP/src" -name '*.java' -print0 2>/dev/null)
         if [ "$changed" = 1 ]; then
             echo "--- change detected ---" >&2
             do_run "$gofile"

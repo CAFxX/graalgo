@@ -98,7 +98,7 @@ pinned JDK shows `[PROTO]`:
   The launcher builds a frame by hand and calls `program.root().execute(frame)`
   inside a scheduler-spawned virtual thread
   ([P3SyncMain.java](../../internal/backend/interop/src/main/java/graalgo/p3sync/launcher/P3SyncMain.java),
-  [Main.java](../../internal/backend/runtime/src/main/java/graalgo/launcher/Main.java)).
+  [Main.java](../../internal/backend/truffle/src/main/java/graalgo/launcher/Main.java)).
   No `org.graalvm.polyglot` class is referenced anywhere.
 - The 104 files under
   [frontend/](../../internal/backend/truffle/src/main/java/graalgo/frontend/)
@@ -1437,8 +1437,8 @@ normalization of addresses and goroutine ids.
 
 | Item | Where | Problem | Resolution |
 |---|---|---|---|
-| same-FQN shadow classes resolved by class-path order | the 8 stubs listed in [truffle/Makefile](../../internal/backend/truffle/Makefile), shadowed by `runtime/` | the image builder sees two definitions of one class; which wins is an accident of path order | RECOVERY T0.D (flatten) — prerequisite for any image |
-| `ClassPreloader` (`Class.forName` over every `graalgo.*` class) | [ClassPreloader.java](../../internal/backend/runtime/src/main/java/graalgo/launcher/ClassPreloader.java) | meaningless in an image, and drags every class into reachability | JIT-mode only; guarded by `ImageInfo.inImageCode()` |
+| same-FQN shadow classes resolved by class-path order | (at `a0df481b`) 8 stubs in `truffle/`, shadowed by `runtime/` | the image builder sees two definitions of one class; which wins is an accident of path order | **done** — RECOVERY T0.D (2026-11-18) merged both into one module and deleted the stubs; [check_duplicate_fqn.py](../../.github/scripts/check_duplicate_fqn.py) keeps it so |
+| `ClassPreloader` (`Class.forName` over every `graalgo.*` class) | [ClassPreloader.java](../../internal/backend/truffle/src/main/java/graalgo/launcher/ClassPreloader.java) | meaningless in an image, and drags every class into reachability | JIT-mode only; guarded by `ImageInfo.inImageCode()` |
 | reflection | `GoOs` (`Class.forName("com.sun.security.auth.module.UnixSystem")`, `sun.misc.Signal`) | needs metadata; `sun.misc.Signal` is supported by Native Image but must be referenced directly | direct references or generated metadata (GG-0052) |
 | `ServiceLoader` registrars | `WireKindRegistrar`, `OsSurfaceInitializer` | work in images when the service files are present, but exist only to break the compile cycle between the three modules | disappear with T0.D and the v1 factory |
 | process-global mutable statics (H18, H20) | scheduler, descriptor maps, `FuncIds`, `GoOs` | initialized at build time they are frozen into the image; initialized at run time they still prevent a second context | §2.4 |

@@ -1,28 +1,27 @@
 #!/bin/bash
 # P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path
-# (graalgo.sched.torture.TortureBattery in the runtime module's tests).
+# (graalgo.sched.torture.TortureBattery in the truffle module's tests).
 #
 # Runs every leg, keeps logs in a scratch dir under the gitignored
 # <repo>/.tmp/ (override with TORTURE_LOG_DIR), prints a summary.
 # Exit status: 0 every leg passes; 1 a leg failed (a bug to fix; systematic
 # divergence across legs is the kill trigger); 3 infrastructure error
-# (java missing, runtime test classes not built, TortureBattery class not
+# (java missing, test classes not built, TortureBattery class not
 # loadable) — never reported as a leg failure.
-# Needs: make -C internal/backend/runtime out/test-classes/.built
+# Needs: make -C internal/backend/truffle out/test-classes/.built (and make build)
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-RT="$ROOT/internal/backend/runtime"
+RT="$ROOT/internal/backend/truffle"
 cd "$RT" || exit 3
 
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 JAVA="$GRAALVM_HOME/bin/java"
 [ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; exit 3; }
 [ -f out/test-classes/graalgo/sched/torture/TortureBattery.class ] \
-  || { echo "INFRA: runtime test classes not built (make -C internal/backend/runtime out/test-classes/.built)" >&2; exit 3; }
-# Same classpath order as the runtime module's TEST_CP (runtime classes
-# shadow the truffle module's frozen stubs).
-CP="out/test-classes:out/classes:../truffle/out/classes:../interop/out/classes"
-for jar in ../truffle/lib/*.jar; do CP="$CP:$jar"; done
+  || { echo "INFRA: test classes not built (make -C internal/backend/truffle out/test-classes/.built)" >&2; exit 3; }
+# Same classpath as the truffle module's SCHED_TEST_CP.
+CP="out/test-classes:out/classes:../interop/out/classes"
+for jar in lib/*.jar; do CP="$CP:$jar"; done
 mkdir -p "$ROOT/.tmp"
 OUTDIR="${TORTURE_LOG_DIR:-$(mktemp -d "$ROOT/.tmp/torture.XXXXXX")}"
 mkdir -p "$OUTDIR"

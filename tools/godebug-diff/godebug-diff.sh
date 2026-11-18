@@ -7,7 +7,7 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in the runtime module's GoDebug sources)
+#                documented in the truffle module's GoDebug sources)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)
@@ -30,9 +30,8 @@ KEEP="${1:-}"
 # Infrastructure preconditions: exit 3 (no verdict), never a knob FAIL.
 [ -x "$GO" ] || { echo "INFRA: gc toolchain not found: $GO" >&2; exit 3; }
 [ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; exit 3; }
-# Same classpath order as the runtime module's RUN_CP: runtime classes
-# shadow the truffle module's frozen stubs.
-CP="$BK/runtime/out/classes:$BK/truffle/out/classes:$BK/interop/out/classes:$(echo "$BK"/truffle/lib/*.jar | tr ' ' ':')"
+# Same classpath as the truffle module's SCHED_RUN_CP.
+CP="$BK/truffle/out/classes:$BK/interop/out/classes:$(echo "$BK"/truffle/lib/*.jar | tr ' ' ':')"
 JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
 
 pass=0
@@ -77,7 +76,7 @@ check() { # $1=knob $2=ok(0/1) $3=detail
 
 echo "== building phase2 =="
 make -C "$ROOT" build >/dev/null 2>&1 || { echo "INFRA: make build failed" >&2; exit 3; }
-[ -f "$BK/runtime/out/classes/graalgo/sched/launcher/SchedMain.class" ] \
+[ -f "$BK/truffle/out/classes/graalgo/sched/launcher/SchedMain.class" ] \
     || { echo "INFRA: SchedMain not built" >&2; exit 3; }
 
 # --- schedtrace ---

@@ -204,7 +204,7 @@ extend these entries or add new ones without a fresh independent review.
   `runtime` package and lowers calls to the additive wire node; the backend
   [NumGoroutineNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/NumGoroutineNode.java)
   implements it on the scheduler's live-goroutine counter
-  ([SchedulerCore.numGoroutines()](../../internal/backend/runtime/src/main/java/graalgo/sched/SchedulerCore.java)),
+  ([SchedulerCore.numGoroutines()](../../internal/backend/truffle/src/main/java/graalgo/sched/SchedulerCore.java)),
   verified by `SchedulerCoreTest.testNumGoroutines` and
   `TestRuntimeNumGoroutineExport`. Not a bridge: no synthetic stdlib logic,
   no name-keyed special case — the same mechanism as the grandfathered
@@ -225,7 +225,7 @@ extend these entries or add new ones without a fresh independent review.
   `exportCloseDeferGo` precedent); the backend
   [GoschedNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/GoschedNode.java)
   implements it on the scheduler's voluntary-yield primitive
-  ([SchedulerCore.yieldCurrent()](../../internal/backend/runtime/src/main/java/graalgo/sched/SchedulerCore.java)),
+  ([SchedulerCore.yieldCurrent()](../../internal/backend/truffle/src/main/java/graalgo/sched/SchedulerCore.java)),
   registered via the public `registerStmtKind` hook in
   `P3KindRegistrations`/`P3SyncMain` (no Phase-1 factory change),
   verified by `SchedulerCoreTest.testGoschedYields`,
