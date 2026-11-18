@@ -10,9 +10,10 @@ nothing here overrides SPEC by itself.
 
 It was written against the code at `a0df481b` and against the pinned Truffle
 jars in [internal/backend/truffle/lib/](../../internal/backend/truffle/lib/)
-(25.0.4.1.1). The companion design for the build path is `toolexec-design.md`
-on branch `wt/recovery/toolexec-design` (referred to below as "the toolexec
-design"; it is not on this branch, so it is not linked).
+(25.0.4.1.1). The companion design for the build path is
+[toolexec-design.md](toolexec-design.md) (referred to below as "the toolexec
+design"). The owner decided on §14's items on 2026-11-18; §14 records the
+outcome of each.
 
 Evidence labels used throughout:
 
@@ -43,7 +44,7 @@ Evidence labels used throughout:
 | T10 | `go test -cover` keeps the stock `cover` source rewriting (toolexec design D2). Truffle's coverage instrument is an extra, not the implementation. | Drop-in by construction; profile format identical. |
 | T11 | Stay on the AST interpreter now; decide on the Bytecode DSL at a named gate after toolexec M1d with the bake-off of §8. Node conventions are chosen so operations port. | Bytecode DSL is experimental in 25.0 and would contradict the letter of SPEC §3.3; it is also the only structural answer to interpreter speed, footprint and recursion depth. |
 | T12 | Stack overflow is a fatal error (gc semantics), reported from a fresh thread; the depth limit is raised first by compiled code and a large carrier stack, measured before anything structural is built. | §9. |
-| T13 | The new node factory of toolexec M1a targets a **new node package** written to §11; the existing ~110 classes are the semantic reference and are deleted at cutover (M3). | Otherwise the new path inherits every pattern of §1.2 and needs a second rewrite. This amends toolexec design §4.3 ("the node classes are the existing ones"). |
+| T13 | The new node factory of toolexec M1a targets a **new node package** written to §11; the existing ~110 classes are the semantic reference and are deleted at cutover (M3). | Otherwise the new path inherits every pattern of §1.2 and needs a second rewrite. **Accepted 2026-11-18**; applied as toolexec design D12 (§4.3, W4, M1a +6–10 agent-days, M3). |
 
 ### 0.2 Findings that need the owner's attention
 
@@ -51,17 +52,20 @@ Evidence labels used throughout:
    emulated by platform threads in native images** `[DOC]` (Truffle changelog
    24.1, GR-40931; no later entry changes it up to 25.x). In the AOT and hybrid
    modes one goroutine would be one OS thread. This touches GG-0006/0049/0050
-   and SPEC §3.5; see §7.4.
+   and SPEC §3.5; see §7.4. *Status 2026-11-18:* measure first — SPEC
+   carries it as `[OPEN]` pending P-F (§13.2).
 2. **Mode (b) "pure AOT" runs the Go program in the Truffle interpreter.**
    Native Image compiles the interpreter ahead of time, not the guest program.
    GG-0050 ("performant without the runtime JIT") is therefore a statement
    about interpreter speed; see §7.3 and the measurement in §13.2 (P-D).
+   *Status 2026-11-18:* measure first — SPEC §3.9 carries it as `[OPEN]`
+   pending P-D.
 3. **Creating a goroutine through the polyglot thread API cost 20–32 µs against
    ~2 µs for a bare virtual thread** `[PROTO]` (one box, under load, `nice 19`).
    §2.6 has the mitigation; it needs its own measurement (P-A).
 4. SPEC §4.3's host-access default (`SCOPED`, never `ALL`) makes the
-   `graalgo/java` package unable to call unannotated JDK classes; §5.6 proposes
-   a split default.
+   `graalgo/java` package unable to call unannotated JDK classes; §5.6's split
+   default was **decided** 2026-11-18 (SPEC §2.4/§4.3).
 5. The devirtualization thesis of SPEC §2.6.1 needs **call-target splitting**
    for library code (§4.7); inlining alone shares one inline cache among all
    callers.
@@ -990,7 +994,8 @@ behind a branch profile.
    messages instead. SPEC §4.3's table names them in its "Java" column; what a
    Java embedder actually receives is `Value`, and `value.as(List.class)` /
    `as(Map.class)` / `as(Function.class)` give the `List`/`Map`/lambda views
-   the table promises (amendment A3, wording only).
+   the table promises (amendment A3, wording only; still pending — SPEC
+   §4.3 notes it).
 3. Every value that leaves Go passes through `ToInteropNode`; every value that
    enters passes through `ToGoNode(targetType)`. Both are inlinable DSL helper
    nodes, specialized on the (static) Go type at the boundary, with
@@ -1016,7 +1021,7 @@ behind a branch profile.
 | `map[K]V` | `hasHashEntries`, `getHashSize`, `isHashEntryReadable/Modifiable/Insertable/Removable`, `readHashValue`, `writeHashEntry`, `removeHashEntry`, `getHashEntriesIterator` | view; keys converted with `ToGoNode(K)`; iteration order randomized per iterator as in Go. Maps never export members, also for string keys. |
 | `func` | `GoFunc` exports `isExecutable`, `execute`, `hasExecutableName`, `getExecutableName`, `hasSourceLocation` | arguments converted per parameter type (signature from the target's root node), arity checked (`ArityException`); results per §5.3 |
 | channel | opaque object with invocable members `Send`, `Recv`, `TryRecv`, `Close`, `Len`, `Cap` | handle (SPEC: never a `BlockingQueue`) |
-| pointer to non-struct | opaque object with invocable members `Load`, `Store` | reference. Go pointers **do not** export `isPointer`/`asPointer`: those messages mean a native address, which a Go pointer does not have (GG-0015). Only cgo-pinned memory (SPEC §3.7) may. |
+| pointer to non-struct | opaque object with invocable members `Load`, `Store` | reference. Go pointers **do not** export `isPointer`/`asPointer`: those messages mean a native address, which a Go pointer does not have (GG-0061). Only cgo-pinned memory (SPEC §3.7) may. |
 | interface value | unwrapped: the boundary exports the dynamic value; if the dynamic type is a named non-struct type with methods, a `GoBoxed` object that forwards the underlying value's messages and adds the methods as invocable members | per dynamic value |
 | nil pointer, slice, map, chan, func, interface | `GoNil` (one per static type where the type is known, else the untyped singleton): `isNull = true` | |
 | `error` returned across the boundary | §5.3 | |
@@ -1194,10 +1199,11 @@ func (t *Throwable) Value() Value              // the exception object
 
 ### 5.6 Host access policy
 
-SPEC §4.3: "Host access defaults to `SCOPED`-like scoping, never `ALL`."
-`HostAccess.SCOPED` is explicit-annotation access plus scoped callback
-parameters: a Go program could then call only methods annotated
-`@HostAccess.Export`, which no JDK class is. Proposed reading (amendment A4):
+**Decided 2026-11-18** (amendment A4, now SPEC §2.4/§4.3). The former SPEC
+text ("defaults to `SCOPED`-like scoping, never `ALL`") would have allowed a Go
+program to call only methods annotated `@HostAccess.Export`, which no JDK class
+is, because `HostAccess.SCOPED` is explicit-annotation access plus scoped
+callback parameters. The decided policy:
 
 - **Embedded** (`Context` created by a Java application): the embedder's
   `HostAccess` is used as given; the documented recommendation and the
@@ -1210,8 +1216,9 @@ parameters: a Go program could then call only methods annotated
   (default `java.*`, `javax.*`; extended by a launcher flag). Programs that do
   not import the package get no host access at all.
 
-This needs the owner's decision because it relaxes "never `ALL`" for
-standalone programs in substance if not in name.
+This relaxes "never `ALL`" for standalone programs in substance if not in
+name; the owner accepted that because a standalone Go program is as trusted as
+any Go binary, and access is opt-in through the import.
 
 ## 6. Instrumentation and tooling (GG-0024, GG-0008)
 
@@ -1477,7 +1484,9 @@ compiled code. Three levers exist, in order of cost:
    available to a third-party language on the pin is a T3 question.
 
 P-D (§13.2) measures lever 1's starting point today, in an afternoon, by
-running the benchmark set with `engine.Compilation=false`. The number decides
+running the benchmark set with `engine.Compilation=false`. **Owner decision
+2026-11-18: measure first** — P-D gates amendment A2; SPEC §3.9 carries the
+question as `[OPEN]` until it reports. The number decides
 how much weight §8 carries. This is finding 2 of §0.2.
 
 Packaging follows the toolexec design §4.2: the first AOT deliverable is a
@@ -1506,8 +1515,9 @@ A user-space continuation mechanism inside the interpreter is not an option:
 Bytecode DSL continuations suspend a single method `[DOC]`, and a goroutine
 can block at any call depth.
 
-This must be verified on the pinned `native-image` before it is acted on
-(P-F), and it is the owner's call (§14).
+This must be verified on the pinned `native-image` before it is acted on.
+**Owner decision 2026-11-18: measure first.** P-F (§13.2) is a gating work
+item; until it reports, SPEC §3.5 carries the question as `[OPEN]`.
 
 ## 8. Bytecode DSL or AST
 
@@ -1874,14 +1884,19 @@ real tests; nothing depends on the prototype's files.
 
 ### 13.2 To run next (TR-2), cheapest first
 
+**P-D and P-F are gating work items** (owner decision 2026-11-18): SPEC
+amendments A1 and A2 are held `[OPEN]` in SPEC §3.5/§3.9 until they report,
+and TR-12 / track T3 do not start before both results are appended here. They
+need no TR-1 build and run first.
+
 | # | Question | Method | Cost | Decides |
 |---|---|---|---|---|
-| P-D | How slow is interpreter-only execution? | benchmark set with `engine.Compilation=false`, on the JIT lane's branch as it is | 0.5 day | weight of §8; honesty of GG-0050 |
+| P-D (**gate**) | How slow is interpreter-only execution? | benchmark set with `engine.Compilation=false`, on the JIT lane's branch as it is | 0.5 day | A2 (SPEC §3.9 `[OPEN]`); weight of §8; honesty of GG-0050 |
 | P-E | Depth and RSS versus stack size | recursion program at `-Xss` 32 MB/256 MB/1 GB, interpreted and compiled | 0.5 day | T12 |
 | P-A | Goroutine creation cost and what recycling recovers | TR-1 build, spawn microbenchmark and `chanpingpong`, with and without recycling | 1 day | T3 details |
 | P-B | Safepoint preemption equals the current poll | scheduler torture and fairness suites with the monitor + action implementation behind a switch; cancellation during a park | 1–2 days | T4 or its fallback; the calling convention |
 | P-C | Debugger on virtual-thread goroutines | inspector session: breakpoint in a goroutine, read and write a caller's local | 0.5 day | whether debugging forces platform threads |
-| P-F | Threads and runtime compilation in an image | minimal language image (the prototype of §13.1) with 10⁴ "virtual" threads; `native-image` is present in the pinned JDK | 1 day; one image build, heavy — schedule it alone | §7.4, finding 1 |
+| P-F (**gate**) | Threads and runtime compilation in an image | minimal language image (the prototype of §13.1) with 10⁴ "virtual" threads; `native-image` is present in the pinned JDK | 1 day; one image build, heavy — schedule it alone | A1 (SPEC §3.5 `[OPEN]`); §7.4, finding 1 |
 
 ### 13.3 Risky, not cheap
 
@@ -1896,22 +1911,24 @@ real tests; nothing depends on the prototype's files.
 ## 14. Items for the owner
 
 Proposed SPEC amendments (none is assumed by the work packages that precede
-its decision):
+its decision). Status column: owner decisions of 2026-11-18
+([ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)).
 
-| # | Section | Proposal | Needed by |
-|---|---|---|---|
-| A1 | §3.5 / §2.5 | State that in native-image modes goroutines are platform threads until Truffle supports Loom in images, with the resulting goroutine ceiling; add the re-test trigger (each GraalVM pin bump). Verify first (P-F). | TR-12 / T3 |
-| A2 | §3.9, GG-0050 | Define "performant without the runtime JIT" as a measured interpreter-speed target, or restrict it to the hybrid's eager compilation; the current wording cannot be met by construction in mode (b). Measure first (P-D). | T3 |
-| A3 | §4.3 table | Wording: the "Java" column's `ProxyArray`/`ProxyObject`/`ProxyExecutable` are replaced by "polyglot `Value` (`as(List)`, `as(Map)`, functional-interface coercion)"; semantics unchanged. | TR-8 |
-| A4 | §4.3 host access | Split default: embedded = the embedder's `HostAccess` (recommended `SCOPED`); standalone = host class lookup and public access restricted to an allow-list, only when the program imports `graalgo/java`. | TR-9 |
-| A5 | §3.3, GG-0014 | Only if TR-13 says so: allow function bodies to be Bytecode DSL roots; "one AST" read as "one executable representation for all modes". | after M1d |
-| A6 | §3.3 | Clarification, no change of intent: the megamorphic interface-call fallback is an itab method-table index, not a hash lookup; splitting is part of the devirtualization design. | TR-4 |
+| # | Section | Proposal | Needed by | Status |
+|---|---|---|---|---|
+| A1 | §3.5 / §2.5 | State that in native-image modes goroutines are platform threads until Truffle supports Loom in images, with the resulting goroutine ceiling; add the re-test trigger (each GraalVM pin bump). Verify first (P-F). | TR-12 / T3 | **Open — measure first.** Gated on P-F; SPEC §3.5 marks it `[OPEN]`. |
+| A2 | §3.9, GG-0050 | Define "performant without the runtime JIT" as a measured interpreter-speed target, or restrict it to the hybrid's eager compilation; the current wording cannot be met by construction in mode (b). Measure first (P-D). | T3 | **Open — measure first.** Gated on P-D; SPEC §3.9 marks it `[OPEN]`. |
+| A3 | §4.3 table | Wording: the "Java" column's `ProxyArray`/`ProxyObject`/`ProxyExecutable` are replaced by "polyglot `Value` (`as(List)`, `as(Map)`, functional-interface coercion)"; semantics unchanged. | TR-8 | Pending (independent of A4); SPEC §4.3 notes it. |
+| A4 | §4.3 host access | Split default: embedded = the embedder's `HostAccess` (recommended `SCOPED`); standalone = host class lookup and public access restricted to an allow-list, only when the program imports `graalgo/java`. | TR-9 | **Decided**; SPEC §2.4/§4.3. GG-0003/GG-0005 text unchanged (they do not state a policy). |
+| A5 | §3.3, GG-0014 | Only if TR-13 says so: allow function bodies to be Bytecode DSL roots; "one AST" read as "one executable representation for all modes". | after M1d | Pending — deferred to the TR-13 bake-off. |
+| A6 | §3.3 | Clarification, no change of intent: the megamorphic interface-call fallback is an itab method-table index, not a hash lookup; splitting is part of the devirtualization design. | TR-4 | Pending. |
 
 Other decisions requested:
 
 1. Amend the toolexec design §4.3 so that W4 builds the new node package of
    §12 instead of reusing the existing node classes (decision T13;
-   +6–10 agent-days on M1a, avoids a second rewrite).
+   +6–10 agent-days on M1a, avoids a second rewrite). **Decided 2026-11-18**;
+   applied (toolexec design D12).
 2. Approve adding the tool and TCK jars to the pinned set (TR-0).
 3. Whether foreign (host) threads calling into Go should hold a GOMAXPROCS
    token; this design says no (§2.6, item 4).
