@@ -21,10 +21,10 @@
 // the basename "compile", design §1) are expanded and rewritten for the stock
 // tool; "-chain X" runs every stock tool under the user's own -toolexec X.
 //
-// Skeleton limits, each failing loudly rather than silently: the IR is the
-// frontend/v2 document (so only the constructs its emitter supports
-// compile), and packages compiled with -std get no IR (the stdlib fork of
-// design §5 does not exist yet).
+// The IR is GIR (internal/toolexec/ir), emitted by internal/toolexec/emit.
+// Skeleton limits, each failing loudly rather than silently: packages
+// compiled with -std get no IR (the stdlib fork of design §5 does not exist
+// yet), and //go:embed is not yet lowered.
 package main
 
 import (
@@ -35,27 +35,28 @@ import (
 	"fmt"
 	"go/ast"
 	"go/importer"
+	"go/parser"
+	"go/token"
 	"go/types"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
-	"graalgo-frontend-v2/checker"
-	"graalgo-frontend-v2/emit"
-	"graalgo-frontend-v2/encode"
-	"graalgo-frontend-v2/parser"
 	"graalgo-toolexec/archive"
 	"graalgo-toolexec/argv"
 	"graalgo-toolexec/bundle"
+	"graalgo-toolexec/emit"
+	"graalgo-toolexec/ir"
 	"graalgo-toolexec/release"
 )
 
-// irVersion is part of the -V=full answer: bumping it invalidates every
-// cached archive that carries IR in an older format.
-const irVersion = "v2doc1"
+// irVersion is part of the -V=full answer: any change to the GIR schema
+// (its version or its content hash) invalidates every cached archive.
+var irVersion = fmt.Sprintf("gir%d.%x", ir.SchemaVersion, ir.SchemaHash[:4])
 
 // goTools are the toolchain tools cmd/go runs from GOROOT/pkg/tool. Other
 // tool names (the bare "gcc" of the C compiler probe) are host tools.
@@ -336,11 +337,11 @@ func compile(inv *argv.Invocation) {
 	if fl.values["embedcfg"] != "" {
 		fatalf("%s: //go:embed (-embedcfg) is not supported by this skeleton", pkgPath)
 	}
-	ir, err := emitIR(pkgPath, fl.values["lang"], fl.values["importcfg"], fl.rest)
+	gir, err := emitIR(pkgPath, fl.values["lang"], fl.values["importcfg"], fl.values["trimpath"], fl.bools["std"], fl.rest)
 	if err != nil {
 		fatalf("%s: %v", pkgPath, err)
 	}
-	if err := archive.Append(out, archive.IRMember, ir); err != nil {
+	if err := archive.Append(out, archive.IRMember, gir); err != nil {
 		fatalf("%s: %v", pkgPath, err)
 	}
 }
@@ -385,15 +386,20 @@ func readImportcfg(path string) (map[string]string, error) {
 }
 
 // emitIR type-checks the package with go/types, importing dependencies
-// from the gc export data named by importcfg, and returns its encoded IR.
-func emitIR(pkgPath, lang, importcfg string, files []string) ([]byte, error) {
+// from the gc export data named by importcfg, and returns its encoded GIR.
+func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, files []string) ([]byte, error) {
 	pkgFile, err := readImportcfg(importcfg)
 	if err != nil {
 		return nil, err
 	}
-	pres, err := parser.ParseFiles(files)
-	if err != nil {
-		return nil, err
+	fset := token.NewFileSet()
+	var astFiles []*ast.File
+	for _, name := range files {
+		f, err := parser.ParseFile(fset, name, nil, parser.ParseComments|parser.SkipObjectResolution)
+		if err != nil {
+			return nil, fmt.Errorf("internal: go/parser disagrees with gc: %v", err)
+		}
+		astFiles = append(astFiles, f)
 	}
 	lookup := func(path string) (io.ReadCloser, error) {
 		file, ok := pkgFile[path]
@@ -402,32 +408,44 @@ func emitIR(pkgPath, lang, importcfg string, files []string) ([]byte, error) {
 		}
 		return os.Open(file)
 	}
-	astFiles := make([]*ast.File, 0, len(pres.Files))
-	for _, name := range pres.Files {
-		astFiles = append(astFiles, pres.Pkg.Files[name])
-	}
-	info := &types.Info{
-		Types:      map[ast.Expr]types.TypeAndValue{},
-		Defs:       map[*ast.Ident]types.Object{},
-		Uses:       map[*ast.Ident]types.Object{},
-		Selections: map[*ast.SelectorExpr]*types.Selection{},
-		Scopes:     map[ast.Node]*types.Scope{},
-	}
+	info := emit.NewInfo()
 	conf := types.Config{
-		Importer:  importer.ForCompiler(pres.Fset, "gc", lookup),
+		Importer:  importer.ForCompiler(fset, "gc", lookup),
 		GoVersion: lang,
-		Sizes:     types.SizesFor("gc", "amd64"),
+		Sizes:     types.SizesFor("gc", runtime.GOARCH),
 	}
-	tpkg, err := conf.Check(pkgPath, pres.Fset, astFiles, info)
+	tpkg, err := conf.Check(pkgPath, fset, astFiles, info)
 	if err != nil {
 		// gc accepted these files; a go/types rejection is a wrapper bug.
 		return nil, fmt.Errorf("internal: go/types disagrees with gc: %v", err)
 	}
-	doc, err := emit.Emit(&checker.Result{Pkg: tpkg, Info: info, Fset: pres.Fset}, pres.Pkg, pres.Files)
+	f, _, err := emit.Emit(emit.Config{
+		Fset: fset, Pkg: tpkg, Info: info, Files: astFiles, Lang: lang, Std: std,
+		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+		FileName: func(name string) string { return absFile(name, trimpath) },
+	})
 	if err != nil {
 		return nil, err
 	}
-	return encode.Encode(doc)
+	return ir.Encode(f)
+}
+
+// absFile is the file name gc records for a source file (cmd/internal/
+// objabi.AbsFile): made absolute against the working directory, then the
+// -trimpath rewrites, else a $GOROOT prefix (design §6, -trimpath).
+func absFile(name, trimpath string) string {
+	if !filepath.IsAbs(name) {
+		if wd, err := os.Getwd(); err == nil {
+			name = filepath.Join(wd, name)
+		}
+	}
+	if out := argv.ApplyRewrites(name, trimpath); out != name {
+		return out
+	}
+	if root := os.Getenv("GOROOT"); root != "" && strings.HasPrefix(name, root+"/") {
+		return "$GOROOT" + name[len(root):]
+	}
+	return name
 }
 
 func link(args []string) {

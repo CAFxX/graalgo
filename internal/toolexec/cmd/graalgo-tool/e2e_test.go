@@ -11,6 +11,7 @@ import (
 
 	"graalgo-toolexec/archive"
 	"graalgo-toolexec/bundle"
+	"graalgo-toolexec/ir"
 )
 
 // env holds a built wrapper + stub and an isolated build cache.
@@ -116,8 +117,19 @@ func TestBuildThroughToolexec(t *testing.T) {
 	var paths []string
 	for _, p := range b.Packages {
 		paths = append(paths, p.ImportPath)
-		if !strings.HasPrefix(string(p.IR), "g2bi") {
-			t.Errorf("%s: IR does not start with the frontend/v2 magic", p.ImportPath)
+		f, err := ir.DecodeValidate(p.IR)
+		if err != nil {
+			t.Errorf("%s: IR is not valid GIR: %v", p.ImportPath, err)
+			continue
+		}
+		if f.Pkg.Path != p.ImportPath && !(f.Pkg.Path == "main" && p.ImportPath == "example.com/skel") {
+			t.Errorf("GIR of %s says package %s", p.ImportPath, f.Pkg.Path)
+		}
+		// Positions are gc's: absolute file names with -trimpath applied.
+		for _, name := range f.Pkg.Files {
+			if !strings.HasSuffix(name, ".go") || strings.Contains(name, "go-build") {
+				t.Errorf("%s: recorded file name %q", p.ImportPath, name)
+			}
 		}
 	}
 	if got := strings.Join(paths, ","); got != "example.com/skel,example.com/skel/lib" {
@@ -250,12 +262,15 @@ func TestCompileErrorIsStock(t *testing.T) {
 	}
 }
 
-// A construct the skeleton's emitter does not support must fail the build
-// with a message naming the package, never produce a binary.
+// A construct the skeleton does not lower yet (//go:embed) must fail the
+// build with a message naming the package, never produce a binary.
 func TestUnsupportedConstructFailsLoudly(t *testing.T) {
 	e := setup(t)
-	src := "package lib\n\nfunc Answer() int {\n\tch := make(chan int, 1)\n\tselect {\n\tcase ch <- 42:\n\t}\n\treturn <-ch\n}\n"
+	src := "package lib\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar data string\n\nfunc Answer() int {\n\treturn len(data)\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "data.txt"), []byte("hi"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(t.TempDir(), "skel")
@@ -263,7 +278,7 @@ func TestUnsupportedConstructFailsLoudly(t *testing.T) {
 	if err == nil {
 		t.Fatal("build succeeded")
 	}
-	if !strings.Contains(out, "graalgo-tool: example.com/skel/lib:") || !strings.Contains(out, "unsupported") {
+	if !strings.Contains(out, "graalgo-tool: example.com/skel/lib:") || !strings.Contains(out, "go:embed") {
 		t.Errorf("unexpected diagnostics:\n%s", out)
 	}
 	if _, statErr := os.Stat(exe); statErr == nil {

@@ -187,3 +187,37 @@ func expand(in []string, depth int) ([]string, error) {
 	}
 	return out, nil
 }
+
+// ApplyRewrites applies a compile -trimpath value ("prefix=>replacement"
+// rules separated by ';'; a rule without "=>" strips its prefix) to a file
+// name, with cmd/internal/objabi.ApplyRewrites semantics: the first rule
+// whose prefix is a path prefix of name wins.
+func ApplyRewrites(name, rewrites string) string {
+	start := 0
+	for i := 0; i <= len(rewrites); i++ {
+		if i == len(rewrites) || rewrites[i] == ';' {
+			if out, ok := applyRewrite(name, rewrites[start:i]); ok {
+				return out
+			}
+			start = i + 1
+		}
+	}
+	return name
+}
+
+func applyRewrite(name, rule string) (string, bool) {
+	prefix, repl := rule, ""
+	if j := strings.LastIndex(rule, "=>"); j >= 0 {
+		prefix, repl = rule[:j], rule[j+len("=>"):]
+	}
+	if prefix == "" || !strings.HasPrefix(name, prefix) || (len(name) > len(prefix) && name[len(prefix)] != '/') {
+		return name, false
+	}
+	if len(name) == len(prefix) {
+		return repl, true
+	}
+	if repl == "" {
+		return name[len(prefix)+1:], true
+	}
+	return repl + name[len(prefix):], true
+}

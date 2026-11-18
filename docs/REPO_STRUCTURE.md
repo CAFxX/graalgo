@@ -42,6 +42,14 @@ Related: [Makefile](../Makefile) (root build entry point),
     [launcher/](../internal/toolexec/launcher/) composes the launcher's
     environment and argv; [release/](../internal/toolexec/release/) names
     the tracked Go release;
+    [ir/](../internal/toolexec/ir/) is the GIR container: the schema
+    ([schema.txt](../internal/toolexec/ir/schema.txt)), its generator
+    ([schema/](../internal/toolexec/ir/schema/), [gen/](../internal/toolexec/ir/gen/)),
+    the generated Go codec, canonical type keys, golden and malformed
+    vectors ([testdata/](../internal/toolexec/ir/testdata/));
+    [emit/](../internal/toolexec/emit/) lowers go/types-checked packages to
+    GIR; [cmd/girstat/](../internal/toolexec/cmd/girstat/) measures emitter
+    coverage and GIR size/speed over std;
     [archive/](../internal/toolexec/archive/) reads/extends gc package
     archives; [bundle/](../internal/toolexec/bundle/) is the program-bundle
     format. Tested by `make test-toolexec`.
@@ -118,6 +126,11 @@ Related: [Makefile](../Makefile) (root build entry point),
       Truffle jars live in [lib/](../internal/backend/truffle/lib/); the
       launchers [graalgo-run](../internal/backend/graalgo-run) and
       [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
+    - [gir/](../internal/backend/gir/) — the Java GIR decoder/encoder
+      (JDK-only, own [Makefile](../internal/backend/gir/Makefile));
+      `Gir.java`/`GirCodec.java` are generated from
+      [schema.txt](../internal/toolexec/ir/schema.txt). Tested by
+      `make test-gir`. The loader/node factory consuming it is W4.
     - [fast-cycle/](../internal/backend/fast-cycle/) — fast debug cycle:
       [FastCycleDaemon.java](../internal/backend/fast-cycle/FastCycleDaemon.java)
       plus the [`fast-cycle`](../internal/backend/fast-cycle/fast-cycle)

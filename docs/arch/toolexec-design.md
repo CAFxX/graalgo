@@ -330,6 +330,46 @@ per-function index is what makes startup cheap: a hello-world executes about
 `irVersion` participates in the `-V=full` answer (§2.1), so an IR format
 change invalidates cached archives automatically.
 
+**As built (W2).** [ir/schema.txt](../../internal/toolexec/ir/schema.txt)
+is the single checked-in table; [ir/schema/](../../internal/toolexec/ir/schema/)
+parses it and generates the Go codec
+([ir/gir_gen.go](../../internal/toolexec/ir/gir_gen.go)) and the Java
+decoder/encoder ([internal/backend/gir/](../../internal/backend/gir/),
+JDK-only) — `go generate ./ir`, run by `make generate`; a test fails when a
+checked-in output is stale. Refinements of the sketch above:
+
+- Header: `"GIR1" | schema version | 8-byte schema hash | goVersion | GOOS |
+  GOARCH | section directory`; every section is present in id order.
+  Varints must be minimal, bools 0/1, string 0 is `""`, bodies are
+  contiguous in FUNCINDEX order — so decode followed by encode is the
+  identity, which the Java tests check on every golden vector, every std
+  package and every accepted fuzz mutant. Every reference is range-checked
+  at decode time (table sizes are read first, so references may point
+  forward); list counts are bounded by the remaining input; nesting is
+  bounded by the schema's `maxdepth` (1000; std needs 36). The decoders
+  throw only their format error for any input.
+- `irVersion` in `-V=full` is `gir<version>.<schema hash>`, so any schema
+  edit invalidates cached archives even without a version bump.
+- Function literals are encoded inline in the enclosing body (a `FuncLit`
+  node with its own scope); captured variables are the first locals of the
+  literal's scope, bound to the listed enclosing locals.
+- Positions are a per-body table (file once per body, line deltas), indexed
+  1-based from every node: the packed position index of truffle-design §6.2.
+- Constructs the sketch did not name: `TupleConvert` (element-wise implicit
+  conversion of a multi-value expression), struct-literal field *paths*
+  (go1.27 allows promoted fields as keys), and non-constant
+  `unsafe.Sizeof/Alignof/Offsetof` (operands of type-parameter type) as
+  builtins. Method calls carry an already adjusted receiver (`&`/`*`
+  through the embedding path); calls of a method of a type-parameter value
+  are `IfaceCall`s on that value, resolved per instantiation (D6).
+
+Measured (P3, `girstat` over the 374 non-empty std packages, purego, no
+cgo, this box): the emitter lowers every function body without an
+unsupported construct; GIR totals 20.4 MB (bodies 72 %, strings 21 %,
+types/typedefs/index 6 %), 10.7 bytes per AST node; encode 140 MB/s, Go
+decode+validate 120 MB/s, Java decode+validate 94 MB/s on a cold JVM;
+average body 713 bytes. No compression is needed for bundle layout.
+
 ### 3.3 Symbols and linkage
 
 A symbol is `(import path, name)` with gc's naming: `pkg.F`, `pkg.T.M`,
@@ -911,12 +951,22 @@ stock `go build -toolexec` over a two-package module:
   and discard it" — it prints nothing. A runner on top of it would be
   throw-away work in files the T0 lanes are editing; the real loader and
   factory are W4.
-- The IR in the archive is the frontend/v2 document (`g2bi`), not the GIR
-  container of §3.2 (W2/W3).
 - Packages compiled with `-std` get no IR: the fork of §5 does not exist
   (W5). The skeleton's `-std` check is the only place where it departs from
   "compile whatever cmd/go hands over", and it disappears with W5.
 - No symbol resolution, init order or `-X` at link.
+
+**Since the skeleton (W2):** the IR member is GIR (§3.2), emitted by
+[emit/](../../internal/toolexec/emit/) — the W3 starting point, which
+already lowers all of std without an unsupported construct (`TestStd`);
+`//go:embed` still fails loudly. Known approximations W3 must close:
+method sets of unnamed struct types with promoted methods are not emitted;
+keys of local types in generic functions do not include the
+instantiation; constraint-interface keys flatten embedded type sets;
+range assignments (`=`, not `:=`) to interface-typed variables get no
+conversion node; `Const` nodes keep go/types' recorded type, which can be
+untyped (shift operands, `print` arguments); the call-position convention
+for `runtime.Caller` is not yet pinned against gc (TR-7).
 
 **Since the skeleton (W1):** the launcher of §1; response-file expansion and
 in-place rewriting (§2.2 step 1); `-chain`; tracked-release checks;

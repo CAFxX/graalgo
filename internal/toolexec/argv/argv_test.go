@@ -205,3 +205,18 @@ func TestParseInvocationPlain(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyRewrites(t *testing.T) {
+	for _, tc := range []struct{ name, rules, want string }{
+		{"/work/b001/x.go", "/work/b001=>", "x.go"},
+		{"/src/mod/p/x.go", "/work/b001=>;/src/mod=>example.com/mod@v1", "example.com/mod@v1/p/x.go"},
+		{"/src/modx/p.go", "/src/mod=>m", "/src/modx/p.go"}, // not a path prefix
+		{"/a/b.go", "/a", "b.go"},
+		{"/a", "/a=>r", "r"},
+		{"/a/b.go", "", "/a/b.go"},
+	} {
+		if got := ApplyRewrites(tc.name, tc.rules); got != tc.want {
+			t.Errorf("ApplyRewrites(%q, %q) = %q, want %q", tc.name, tc.rules, got, tc.want)
+		}
+	}
+}
