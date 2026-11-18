@@ -41,7 +41,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   lint` rule (f)); `req seal` is one-shot.
 - `make test-java-slow` — the slow Java classes (nightly/weekly). Known
   failures are listed in [test/java/quarantine.txt](test/java/quarantine.txt)
-  (class, reason, owner, expiry milestone); the target fails on any failure
+  (class, reason, owner — a RECOVERY.md track/work-package id or
+  `lane:<name>` —, expiry — a future date or a RECOVERY.md milestone —;
+  validated by `make java-test-lists-check`); the target fails on any failure
   outside the quarantine **and** on a quarantined class that now passes.
 - `make test` — the full differential suite (30+ minutes): never per-push,
   never on a shared host without asking; nightly CI runs it.

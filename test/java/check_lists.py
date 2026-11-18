@@ -9,15 +9,28 @@ runners and the test sources:
     registered by some runner (a test class in no runner never runs —
     global review G1 found two);
   - every class in the quarantine file must be in a slow list (the fast
-    lists are per-push and may not carry known failures).
+    lists are per-push and may not carry known failures);
+  - every quarantine line names an accountable OWNER — a track or work
+    package id that docs/arch/RECOVERY.md defines (T0.C, T1, W4, TR-3,
+    WP-MUT, ...) or a lane as `lane:<name>` — never a milestone or an
+    event ("the M3 cutover" is nobody); and an EXPIRY that is either an
+    ISO date (YYYY-MM-DD) not yet past, or a milestone name (M0–M5, M1a,
+    M1r, ...) that RECOVERY.md mentions.
 
 Usage: check_lists.py [--quarantine FILE --slow "<slow classes>"] <Runner.java> "<listed classes>" [...]
 Exit: 0 consistent, 1 mismatch, 2 usage.
 """
 
+import datetime
 import re
 import sys
 from pathlib import Path
+
+RECOVERY = Path(__file__).resolve().parents[2] / "docs/arch/RECOVERY.md"
+OWNER_ID = re.compile(r"^(T[0-4](\.[A-D])?|W\d+[a-z]?|TR-\d+|WP-[A-Z0-9]+)$")
+LANE = re.compile(r"^lane:[a-z0-9][a-z0-9-]*$")
+DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+MILESTONE = re.compile(r"^M\d[a-z]?$")
 
 
 def registered(runner: Path):
@@ -56,6 +69,35 @@ def read_quarantine(path: Path):
             raise ValueError(f"{path}:{n}: want 'class | reason | owner | expiry', got: {line}")
         entries.append(fields)
     return entries
+
+
+def quarantine_problems(entries, recovery_text, today=None):
+    """Owner and expiry rules for quarantine lines (see module doc)."""
+    today = today or datetime.date.today()
+    tokens = set(re.findall(r"[A-Za-z0-9]+(?:[.\-][A-Za-z0-9]+)*", recovery_text))
+    bad = []
+    for cls, _reason, owner, expiry in entries:
+        if LANE.match(owner):
+            pass
+        elif not OWNER_ID.match(owner):
+            bad.append(f"quarantine: {cls}: owner {owner!r} is not a track/work-package id "
+                       f"(T1, W4, TR-3, WP-MUT, ...) or lane:<name>")
+        elif owner not in tokens:
+            bad.append(f"quarantine: {cls}: owner {owner} is not defined in RECOVERY.md")
+        if DATE.match(expiry):
+            try:
+                d = datetime.date.fromisoformat(expiry)
+            except ValueError:
+                bad.append(f"quarantine: {cls}: expiry {expiry!r} is not a valid date")
+                continue
+            if d < today:
+                bad.append(f"quarantine: {cls}: expired on {expiry} (fix it, delete it, or re-date it with a reason)")
+        elif MILESTONE.match(expiry):
+            if expiry not in tokens:
+                bad.append(f"quarantine: {cls}: expiry milestone {expiry} is not in RECOVERY.md")
+        else:
+            bad.append(f"quarantine: {cls}: expiry {expiry!r} is neither YYYY-MM-DD nor a milestone (M3, M1a, ...)")
+    return bad
 
 
 def check(pairs, quarantine=None, slow=frozenset()):
@@ -98,6 +140,8 @@ def main(argv):
         return 2
     pairs = [(Path(args[i]), args[i + 1].split()) for i in range(0, len(args), 2)]
     bad = check(pairs, quarantine, slow)
+    if quarantine:
+        bad += quarantine_problems(quarantine, RECOVERY.read_text())
     if bad:
         print("JAVA TEST LISTS INCONSISTENT:")
         for b in bad:

@@ -68,6 +68,23 @@ class Lists(unittest.TestCase):
             cl.read_quarantine(d / "q.txt")
 
 
+    def test_quarantine_owner_and_expiry(self):
+        rec = "Tracks: T1 builds the path; WP-MUT; milestones M3 and M1a."
+        today = __import__("datetime").date(2026, 11, 18)
+        ok = [["graalgo.A", "r", "T1", "M3"], ["graalgo.B", "r", "lane:m1a-closeout", "2026-12-01"],
+              ["graalgo.C", "r", "WP-MUT", "M1a"]]
+        self.assertEqual(cl.quarantine_problems(ok, rec, today), [])
+        for entry, want in [
+                (["graalgo.D", "r", "toolexec M3 cutover (v1 deletion)", "M3"], "not a track/work-package id"),
+                (["graalgo.E", "r", "W9", "M3"], "not defined in RECOVERY.md"),
+                (["graalgo.F", "r", "T1", "2026-11-01"], "expired on 2026-11-01"),
+                (["graalgo.G", "r", "T1", "M9"], "M9 is not in RECOVERY.md"),
+                (["graalgo.H", "r", "T1", "someday"], "neither YYYY-MM-DD nor a milestone"),
+                (["graalgo.I", "r", "T1", "2026-13-45"], "not a valid date")]:
+            bad = cl.quarantine_problems([entry], rec, today)
+            self.assertTrue(any(want in b for b in bad), (entry, bad))
+
+
 LOG = """PASS ATest.testOne (1 ms)
 CLASS graalgo.test.ATest 3 ms
 FAIL BTest.testTwo (2 ms): java.lang.AssertionError: x
