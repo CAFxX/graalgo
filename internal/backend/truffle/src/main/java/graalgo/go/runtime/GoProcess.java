@@ -5,6 +5,7 @@ import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.go.types.GoType;
 import graalgo.go.types.Method;
+import graalgo.go.types.TypeTable;
 import graalgo.go.values.Flat;
 import graalgo.go.values.Iface;
 import graalgo.go.values.Str;
@@ -27,11 +28,13 @@ public final class GoProcess {
     public final Flat[] globals;
     private final SchedulerCore sched;
     private final OutputStream err;
+    private final TypeTable types;
 
-    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err) {
+    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
         this.globals = globals;
         this.sched = sched;
         this.err = err;
+        this.types = types;
     }
 
     @TruffleBoundary
@@ -91,7 +94,7 @@ public final class GoProcess {
     }
 
     /** gc printpanics: oldest first, later panics indented, recovery annotations. */
-    private static String renderChain(GoPanic top) {
+    private String renderChain(GoPanic top) {
         List<GoPanic> chain = new ArrayList<>();
         for (GoPanic p = top; p != null; p = p.link) {
             chain.add(p);
@@ -126,19 +129,23 @@ public final class GoProcess {
         return sb.toString();
     }
 
-    /** gc printpanicval: Error()/String() for error and Stringer values, else by kind. */
-    private static String renderValue(Object value) {
+    /**
+     * gc printpanicval: {@code Error()} for a value that implements {@code error},
+     * {@code String()} for a {@code Stringer} — satisfaction by name and signature, as gc's
+     * type switch decides it — else by kind; any other value prints as its type and the
+     * address of its data word, which the test normalizer masks.
+     */
+    private String renderValue(Object value) {
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e) {
             return indent(e.errorString());
         }
-        for (String name : new String[] {"Error", "String"}) {
-            Method m = v.type.findMethod(name);
-            if (m != null) {
+        for (GoType iface : new GoType[] {types.error, types.stringer}) {
+            graalgo.go.types.Itab itab = v.type.itab(iface);
+            if (itab != null) {
+                Method m = itab.methods[0];
                 Object s = m.target().call(new Object[] {null, Receivers.adapt(m, v.data, null)});
-                if (s instanceof Str str) {
-                    return indent(str.toString());
-                }
+                return indent(s.toString());
             }
         }
         GoType t = v.type;
@@ -151,7 +158,20 @@ public final class GoProcess {
             s = new String(Values.format(new GoType[] {u}, new Object[] {v.data}, false), StandardCharsets.UTF_8);
             return t.isNamed() ? t.str() + "(" + s + ")" : s;
         }
-        return "(" + t.str() + ") 0xADDR";
+        return "(" + t.str() + ") " + address(v.data);
+    }
+
+    /**
+     * An address-like rendering of a data word, shaped like a gc heap pointer
+     * ({@code 0xc000…}): the object's identity hash scaled to 16-byte granules; {@code 0x0}
+     * for nil. Not a real address — the JVM has none to give — but distinct per object.
+     */
+    private static String address(Object data) {
+        Object o = data instanceof graalgo.go.values.Ptr p ? p.obj : data;
+        if (o == null) {
+            return "0x0";
+        }
+        return "0x" + Long.toHexString(0xc000000000L | ((long) System.identityHashCode(o) << 4));
     }
 
     /**

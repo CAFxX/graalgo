@@ -246,7 +246,7 @@ public final class GoContext {
                     goroutineThreads());
             scheduler = sched;
             graalgo.go.runtime.GoProcess p =
-                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err());
+                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types);
             process = p;
             SchedulerCore prev = SchedulerCore.install(sched);
             sched.start();

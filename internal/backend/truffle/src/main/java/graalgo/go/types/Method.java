@@ -30,9 +30,16 @@ public final class Method {
     public final int mode;
     private final Supplier<RootCallTarget> targetSupplier;
     private volatile RootCallTarget target;
+    private final Supplier<GoType> sigSupplier;
+    private volatile GoType sig;
 
+    /**
+     * {@code sig}: the receiver-less signature, resolved on first use; null where no
+     * interface satisfaction is ever decided on the entry (a generic method's own instance).
+     */
     public Method(String key, int[] path, boolean ptrRecv, GoType owner, boolean ofPointer,
-            Supplier<RootCallTarget> target) {
+            Supplier<RootCallTarget> target, Supplier<GoType> sig) {
+        this.sigSupplier = sig;
         this.key = key;
         this.path = path;
         this.ptrRecv = ptrRecv;
@@ -44,6 +51,24 @@ public final class Method {
         } else {
             this.mode = GENERAL;
         }
+    }
+
+    /**
+     * Whether this entry satisfies an interface method of signature {@code want}: gc's itab
+     * rule (runtime/iface.go) matches name and type, so a same-named method of another
+     * signature does not implement it. Type identity is reference equality (D7).
+     */
+    @TruffleBoundary
+    public boolean hasSig(GoType want) {
+        if (sigSupplier == null) {
+            return true;
+        }
+        GoType s = sig;
+        if (s == null) {
+            s = sigSupplier.get();
+            sig = s;
+        }
+        return s == want;
     }
 
     /** The method's call target (built on first use). */

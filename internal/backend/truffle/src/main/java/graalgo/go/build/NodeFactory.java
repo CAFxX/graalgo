@@ -1593,7 +1593,7 @@ public final class NodeFactory {
             // set: bind the receiver's and the method's type arguments together.
             boolean pointer = recvT.kind == GoType.POINTER;
             m = new Method(mname, new int[0], symName.startsWith("(*"), pointer ? recvT.elem : recvT, pointer,
-                    methodInstance(me.method(), me.recvType(), me.targs()));
+                    methodInstance(me.method(), me.recvType(), me.targs()), null);
         }
         RootCallTarget t = thunk("me", new Calls.Call(m::target,
                 withRecv(new Calls.Adapt(m, new N.Arg(1)), argNodes(2, ft.params.length - 1)), true));
