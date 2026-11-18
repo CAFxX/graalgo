@@ -39,7 +39,7 @@ the measurement programs are described in §11.
    define).
 4. If the user's argv or `GOFLAGS` already carries `-toolexec=X` (spike 5 F5:
    last one wins, no chaining), rewrite it to
-   `-toolexec="$GRAALGO_HOME/libexec/compile -chain X"` so the user's wrapper
+   `-toolexec="$GRAALGO_HOME/libexec/compile -chain X'"` so the user's wrapper
    runs around the graalgo tool. The same merge applies to `-tags` (a user
    `-tags=a,b` becomes `-tags=a,b,purego`). These two flags are the only argv
    the launcher parses.
@@ -48,6 +48,32 @@ the measurement programs are described in §11.
 `$GRAALGO_HOME/libexec/compile` is `graalgo-tool` installed under a tool
 basename, because `cmd/go` decides whether to use response files from the
 basename of `argv[0]` of the command it execs (spike 5 F6a).
+
+As built (W1, [cmd/graalgo-launcher/](../../internal/toolexec/cmd/graalgo-launcher/),
+[launcher/](../../internal/toolexec/launcher/)):
+
+- "Unless the user set it" means set in the environment **or** in the user's
+  go env file (`$GOENV`, written by `go env -w`); `GOROOT/go.env` holds
+  distribution defaults (`GOTOOLCHAIN=auto`), which the launcher overrides.
+  Because the launcher always sets `GOFLAGS` in the environment, which hides
+  the env file's `GOFLAGS`, the file's value is read and composed.
+- `X'` is the user's `-toolexec` value percent-encoded (spaces and quotes
+  escaped). `quoted.Split` has no escapes, so a quoted `X` could not be
+  nested inside a `-toolexec` value inside a quoted `GOFLAGS` field.
+- Chain semantics: graalgo-tool runs **every stock tool** it executes
+  (shadow compile, pass-through tools, `-V=full` probes) as `X <tool>
+  <args>`, so the user's wrapper sees the argv it sees under stock `go`.
+  graalgo's own link step executes no stock tool and is not wrapped.
+- argv scanning covers the subcommands that define build flags, skips the
+  values of value-taking flags, and stops at `--`, at `go test`'s `-args`,
+  and for `go run` at the first non-flag argument (program arguments).
+- Identity: `graalgo version` prints the stock line with
+  ` graalgo-<version>` appended; `go env` is stock and shows the injected
+  `GOROOT`, `GOFLAGS`, `GOTOOLCHAIN` and `CGO_ENABLED`. `GRAALGO_PUREGO=0`
+  drops the `purego` tag (R10).
+- The launcher refuses a `GOROOT` whose `VERSION` is not the tracked release,
+  and asserts (R8) that the composed `GOFLAGS` ends with graalgo-tool as
+  its effective `-toolexec`.
 
 `go tool <name>` does not go through `-toolexec` (spike 5 §4); it runs the
 stock tools from `$GOROOT/pkg/tool`, which is correct for `go tool vet`,
@@ -58,6 +84,9 @@ user produce gc objects; that is documented as a non-goal.
 `GOROOT/src` has no fork. `graalgo-tool` detects this (the `-goversion` flag
 on `compile`, or the `go` binary's `GOROOT` differing from
 `$GRAALGO_HOME/goroot`) and fails with one line naming the tracked version.
+As built, three checks fire: a toolchain tool outside `$GRAALGO_HOME/goroot`
+(installed layout), a `-V=full` line of another release, and `compile
+-goversion` of another release.
 Faithful selection (SPEC §6.8) belongs to track T4.
 
 ## 2. Tool protocol (measured)
@@ -887,5 +916,11 @@ stock `go build -toolexec` over a two-package module:
 - Packages compiled with `-std` get no IR: the fork of §5 does not exist
   (W5). The skeleton's `-std` check is the only place where it departs from
   "compile whatever cmd/go hands over", and it disappears with W5.
-- No launcher (§1), no response-file expansion, no `-chain`, no symbol
-  resolution, init order or `-X` at link.
+- No symbol resolution, init order or `-X` at link.
+
+**Since the skeleton (W1):** the launcher of §1; response-file expansion and
+in-place rewriting (§2.2 step 1); `-chain`; tracked-release checks;
+`-race` refused at link unless `GRAALGO_RACE=ignore`, `-msan`/`-asan`,
+`-coveragecfg` and `-d=libfuzzer` refused at compile (§2.5, §2.6); tests
+for `vet`/`asm`/`cgo`/`cover`/`preprofile` pass-through and for `-V=full`
+cache invalidation when graalgo-tool changes.
