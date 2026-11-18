@@ -960,6 +960,38 @@ two largest packages and split further by node family (expressions,
 statements, declarations/types, closures+defer, concurrency) once the schema
 is fixed.
 
+### 9.1 M3 delete inventory (W11)
+
+Everything below exists only for the v1 pipeline and is deleted at the M3
+cutover (D11/D12), in the same change that makes the new path the only
+one. The list is the W11 checklist; a path that M3 does not delete is not
+listed. Kept: the runtime library both paths execute (`graalgo.runtime`,
+`graalgo.sched` minus the v1 launcher, `graalgo.jfr`, `graalgo.safepoint`,
+`graalgo.language`/`graalgo.launcher` minus the v1 entry points — after the
+layering split of [RECOVERY.md](RECOVERY.md) "Layering debt"), the new node
+package [graalgo/go/](../../internal/backend/truffle/src/main/java/graalgo/go/),
+[internal/toolexec/](../../internal/toolexec/) and
+[internal/backend/gir/](../../internal/backend/gir/).
+
+| Area | Deleted at M3 |
+|---|---|
+| Frontends | [internal/frontend/](../../internal/frontend/) whole: `gofrontend` (v1 JSON exporter, `export.go`, `main.go`, `mr_disk.go`, …), all 140 `synth_*.go` and their `gen_synth_*` generators and `run_gen_synth.py`, the import overlay (`overlay.json`), the vendored `go/*` copy [internal/frontend/go/](../../internal/frontend/go/) (the new path uses the toolchain's own `go/*`, GG-0069), [p3frontend/](../../internal/frontend/p3frontend/), [v2/](../../internal/frontend/v2/), `javatest/`, `testdata/` |
+| v1 Java, truffle module | `graalgo.frontend` (JSON `NodeFactory`, `Json`, ~110 node classes, `FrontendException`, `WireKindRegistrar`, `TypeTable`), `graalgo.frontend.v2` (`NodeFactoryV2`, `BinaryDecoder`), `graalgo.values` (nested-`GoStruct` value classes), `graalgo.launcher.Main` and `ClassPreloader`'s v1 use, `graalgo.sched.launcher` (`SchedMain`, `GoDebug`, `GcTrace`), the v1 halves of `GoLanguage`/`GoProgramBuilder`/`GoProgramRootNode`/`GoContext`, `graalgo.runtime.Intrinsics` and the v1 adapters of the runtime helpers |
+| Interop module | [internal/backend/interop/](../../internal/backend/interop/) whole — every package is a v1 stand-in ([bridge-inventory.md](bridge-inventory.md) B-8): `p3reflect`, `p3unsafe`, `p3net`, `p3sync`, `p3os`, `p3link`, `p3time`, `p3chan`, `p3x509`, `p3tls`, `p3builtin`, `p3math`, `p3crypto`, `p3abi`, `p3log`, `iface`, `rtstack`, `rtmemstats`, and the `P3SyncMain` launcher |
+| Launchers | [graalgo-run](../../internal/backend/graalgo-run) (v1 `Main`), [graalgo-sync-run](../../internal/backend/graalgo-sync-run) (`P3SyncMain`); [graalgo-bundle-run](../../internal/backend/graalgo-bundle-run) stays |
+| Go driver | [internal/driver/](../../internal/driver/) (the custom 5-command driver; `cmd/graalgo` becomes the §1 launcher) and [internal/vet/](../../internal/vet/) (vet passes through the wrapper, GG-0053) |
+| Tools | [tools/gate1/](../../tools/gate1/) (Phase-3 Gate-1 trial harness) |
+| Makefile | targets `gen-synth`, `test-v2`, `test-p3frontend`, `gate1`, `gate1-pilot`, the `check_mr_table_subset.py` step of `check` (and the script), the v1 halves of `test-ci`/`test-java-*`/`test-regression`; `generate` loses the gofrontend/overlay/`synth_*` steps |
+| Lists and budgets | [large_files_allowlist.txt](../../.github/scripts/large_files_allowlist.txt) entry `internal/frontend/testdata/timeintr_value.json`; every [ratchet_budget.json](../../.github/scripts/ratchet_budget.json) entry under a deleted path (the budget file is regenerated with `--update`); [layering_allowlist.txt](../../.github/scripts/layering_allowlist.txt) emptied; [quarantine.txt](../../test/java/quarantine.txt) lines owned by T1 (`MainTest`, `GenericsCorpusTest`, `BuiltinsCorpusTest`); `check_no_bridges.py`'s adjudication lists and the [bridge-inventory.md](bridge-inventory.md) entries |
+| v1 Java tests | truffle `src/test` classes of the deleted packages (`graalgo.frontend.*` corpus tests, `TypeparamDifferentialTest` — its adapter moves to the new path —, `MainTest`, `SchedTestRunner` v1 entries) and the whole interop `src/test` tree with `IfaceTestRunner`; the Makefile's `JAVA_*` lists shrink accordingly |
+| Exclusion lists | entries citing v1-only bugs (`BUG-0001`, `BUG-0014`, …) are re-triaged on the new path, not carried over |
+
+**girinterp** ([internal/toolexec/girinterp/](../../internal/toolexec/girinterp/))
+is **not** v1 and is not deleted at M3: it is the emitter's JVM-free
+reference interpreter and mutation oracle (§13) and stays as a test-only
+tool of the toolexec module for as long as it is cheaper than running the
+JVM for emitter tests; it never ships.
+
 ## 10. Risk register
 
 | # | Risk | Likelihood | Impact | Mitigation / trigger |
@@ -1042,8 +1074,10 @@ stock `go build -toolexec` over a two-package module:
 
 **Not done, deliberately:**
 
-- **The linked program does not execute on the JVM yet.** The stub's
-  runner hand-off is tested with a stand-in. Reading the existing Java v2
+- **At the skeleton (M0), the linked program did not execute on the JVM.**
+  (Superseded below: since W4's first slice linked programs execute — see
+  "Since the skeleton".) The stub's runner hand-off was tested with a
+  stand-in. Reading the existing Java v2
   code showed that this is not a small step:
   [NodeFactoryV2.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
   returns bare statement trees with no call targets, cannot call another
