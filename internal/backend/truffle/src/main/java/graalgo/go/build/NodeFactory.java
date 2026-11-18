@@ -117,6 +117,11 @@ public final class NodeFactory {
     private final List<int[]> deferSites = new ArrayList<>();
     private static final int MAX_OPEN_DEFERS = 8;
     private boolean inThunk;
+    /**
+     * The body is a generated forwarding literal (GIR {@code FuncLit.wrapper}, gc's WRAPPER):
+     * its calls pass {@code recover()} eligibility on ({@link Calls#passRecover}).
+     */
+    private boolean wrapper;
     private int litCount;
 
     private NodeFactory(FunctionUnit.Instance inst, Gir.FuncBody body, String name) {
@@ -178,7 +183,7 @@ public final class NodeFactory {
     public static RootCallTarget ifaceForwarder(GoLanguage lang, GoType iface, String key) {
         int index = methodIndex(iface, key);
         int params = iface.u().imethods[index].sig.params.length;
-        Expr call = new Calls.IfaceCall(new N.Arg(1), iface, index, argNodes(2, params));
+        Expr call = new Calls.IfaceCall(new N.Arg(1), iface, index, argNodes(2, params), true);
         return new Calls.ThunkRoot(lang, FrameDescriptor.newBuilder().build(), iface.str() + "." + key, call)
                 .getCallTarget();
     }
@@ -870,7 +875,7 @@ public final class NodeFactory {
             case Gir.Expr.MethodCall mc:
                 return typed(ty(mc.type()), new Calls.Call(methodInstance(mc.method(), mc.recvType(), mc.targs()),
                         withRecv(value(mc.recv()), args(mc.args(), methodSig(mc.method(), mc.recvType(), mc.targs()),
-                                mc.spread()))));
+                                mc.spread())), wrapper));
             case Gir.Expr.IfaceCall ic:
                 return ifaceCall(ic);
             case Gir.Expr.BuiltinCall bc:
@@ -1434,7 +1439,7 @@ public final class NodeFactory {
         FunctionUnit.Instance callee = staticCallee(c.fn());
         Expr[] a = args(c.args(), sig, c.spread());
         if (callee != null) {
-            return typed(result, new Calls.Call(callee, a));
+            return typed(result, new Calls.Call(callee, a, wrapper));
         }
         return typed(result, new Calls.CallClosure(expr(c.fn()), a));
     }
@@ -1468,13 +1473,13 @@ public final class NodeFactory {
         if (rt.isInterface()) {
             int index = methodIndex(rt, key);
             Expr[] a = args(ic.args(), rt.u().imethods[index].sig, ic.spread());
-            return typed(result, new Calls.IfaceCall(expr(ic.recv()), rt, index, a));
+            return typed(result, new Calls.IfaceCall(expr(ic.recv()), rt, index, a, wrapper));
         }
         // A type parameter instantiated with a concrete type: the method is known now (D6).
         Method m = methodOf(rt, key);
         GoType sig = dynamicSig(rt, key, ic.args().length);
         Expr[] a = sig == null ? plainArgs(ic.args()) : args(ic.args(), sig, ic.spread());
-        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, expr(ic.recv())), a)));
+        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, expr(ic.recv())), a), wrapper));
     }
 
     /** No signature is recorded for a method reached through a type parameter. */
@@ -1515,7 +1520,7 @@ public final class NodeFactory {
         if (recvT.carrier() == GoType.C_FLAT) {
             recv = new Mem.Copy(recv);
         }
-        RootCallTarget t = thunk("fm", new Calls.Call(mi, withRecv(recv, argNodes(1, ft.params.length))));
+        RootCallTarget t = thunk("fm", new Calls.Call(mi, withRecv(recv, argNodes(1, ft.params.length)), true));
         return new Calls.Bind1(t, envDescriptor(1), value(mv.recv()), false);
     }
 
@@ -1525,12 +1530,13 @@ public final class NodeFactory {
         String key = methodKey(pkg.str(mv.name()), pkg.str(mv.pkg()));
         Expr[] a = argNodes(1, ft.params.length);
         if (rt.isInterface()) {
-            RootCallTarget t = thunk("fm", new Calls.IfaceCall(new Calls.EnvRead(0), rt, methodIndex(rt, key), a));
+            RootCallTarget t = thunk("fm",
+                    new Calls.IfaceCall(new Calls.EnvRead(0), rt, methodIndex(rt, key), a, true));
             return new Calls.Bind1(t, envDescriptor(1), expr(mv.recv()), true);
         }
         Method m = methodOf(rt, key);
         RootCallTarget t = thunk("fm",
-                new Calls.Call(m::target, withRecv(new Calls.Adapt(m, new Calls.EnvRead(0)), a)));
+                new Calls.Call(m::target, withRecv(new Calls.Adapt(m, new Calls.EnvRead(0)), a), true));
         return new Calls.Bind1(t, envDescriptor(1), value(mv.recv()), false);
     }
 
@@ -1552,7 +1558,7 @@ public final class NodeFactory {
                     methodInstance(me.method(), me.recvType(), me.targs()));
         }
         RootCallTarget t = thunk("me", new Calls.Call(m::target,
-                withRecv(new Calls.Adapt(m, new N.Arg(1)), argNodes(2, ft.params.length - 1))));
+                withRecv(new Calls.Adapt(m, new N.Arg(1)), argNodes(2, ft.params.length - 1)), true));
         return new N.ConstRef(new graalgo.go.values.Closure(t, null));
     }
 
@@ -1561,7 +1567,8 @@ public final class NodeFactory {
         GoType ft = ty(me.type()).u();
         String key = methodKey(pkg.str(me.name()), pkg.str(me.pkg()));
         RootCallTarget t = thunk("me",
-                new Calls.IfaceCall(new N.Arg(1), it, methodIndex(it, key), argNodes(2, ft.params.length - 1)));
+                new Calls.IfaceCall(new N.Arg(1), it, methodIndex(it, key), argNodes(2, ft.params.length - 1),
+                        true));
         return new N.ConstRef(new graalgo.go.values.Closure(t, null));
     }
 
@@ -1583,7 +1590,9 @@ public final class NodeFactory {
             @Override
             public synchronized RootCallTarget get() {
                 if (built == null) {
-                    built = new NodeFactory(inst, fl.body(), litName).buildRoot(caps.length);
+                    NodeFactory f = new NodeFactory(inst, fl.body(), litName);
+                    f.wrapper = fl.wrapper();
+                    built = f.buildRoot(caps.length);
                 }
                 return built;
             }

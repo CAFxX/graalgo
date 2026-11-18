@@ -61,6 +61,34 @@ func corpusPrograms(t *testing.T) []program {
 	return out
 }
 
+// m1aPrograms lists test/m1a/programs, the M1a gate's own programs
+// (test/m1a/run.sh runs them on the node package): the reference
+// interpreter must agree with gc on them too — except programs with go
+// statements, which it does not run (it has no scheduler).
+func m1aPrograms(t *testing.T) []program {
+	files, err := filepath.Glob("../../../test/m1a/programs/*.go")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no test/m1a/programs (%v)", err)
+	}
+	var out []program
+	for _, f := range files {
+		af, err := parser.ParseFile(token.NewFileSet(), f, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		goStmt := false
+		ast.Inspect(af, func(n ast.Node) bool {
+			_, ok := n.(*ast.GoStmt)
+			goStmt = goStmt || ok
+			return !goStmt
+		})
+		if !goStmt {
+			out = append(out, program{name: "m1a/" + filepath.Base(f), file: f})
+		}
+	}
+	return out
+}
+
 // ownPrograms lists testdata/progs: *.go files and module directories.
 func ownPrograms(t *testing.T) []program {
 	ents, err := os.ReadDir("testdata/progs")
@@ -391,7 +419,7 @@ func TestDifferential(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds every program with gc")
 	}
-	progs := append(corpusPrograms(t), ownPrograms(t)...)
+	progs := append(append(corpusPrograms(t), ownPrograms(t)...), m1aPrograms(t)...)
 	var mu sync.Mutex
 	pass, total := 0, 0
 	var failed []string

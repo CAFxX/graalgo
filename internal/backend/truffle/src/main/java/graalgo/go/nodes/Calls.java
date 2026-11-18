@@ -271,7 +271,12 @@ public final class Calls {
         }
     }
 
-    /** A generated wrapper (method value, method expression, deferred builtin): one expression. */
+    /**
+     * A generated wrapper (method value, method expression, embedded-interface forwarder,
+     * deferred builtin): one expression. The forwarding wrappers are gc's {@code WRAPPER}
+     * frames: invisible to {@code recover()} eligibility, which their call node passes on to
+     * the method they forward to ({@link #passRecover}).
+     */
     public static final class ThunkRoot extends RootNode {
         private final String name;
         @Child private Expr body;
@@ -305,10 +310,17 @@ public final class Calls {
         private final Supplier<RootCallTarget> target;
         @Children private final Expr[] args;
         @Child private DirectCallNode call;
+        private final boolean forward;
 
         public Call(Supplier<RootCallTarget> target, Expr[] args) {
+            this(target, args, false);
+        }
+
+        /** {@code forward}: the body of a forwarding wrapper (see {@link ThunkRoot}). */
+        public Call(Supplier<RootCallTarget> target, Expr[] args, boolean forward) {
             this.target = target;
             this.args = args;
+            this.forward = forward;
         }
 
         @Override
@@ -321,6 +333,9 @@ public final class Calls {
             if (call == null) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 call = insert(DirectCallNode.create(target.get()));
+            }
+            if (forward) {
+                passRecover(this, frame, a);
             }
             return call.call(a);
         }
@@ -422,11 +437,18 @@ public final class Calls {
         @Children private final Expr[] args;
         @Child private IfaceDispatch dispatch;
         private final BranchProfile nil = BranchProfile.create();
+        private final boolean forward;
 
         public IfaceCall(Expr recv, GoType iface, int index, Expr[] args) {
+            this(recv, iface, index, args, false);
+        }
+
+        /** {@code forward}: the body of a forwarding wrapper (see {@link ThunkRoot}). */
+        public IfaceCall(Expr recv, GoType iface, int index, Expr[] args, boolean forward) {
             this.recv = recv;
             this.args = args;
             this.dispatch = CallsFactory.IfaceDispatchNodeGen.create(iface, index);
+            this.forward = forward;
         }
 
         @Override
@@ -440,6 +462,9 @@ public final class Calls {
             if (r == null) {
                 nil.enter();
                 throw Panics.nilDeref(this);
+            }
+            if (forward) {
+                passRecover(this, frame, a);
             }
             return dispatch.execute(r, a);
         }
@@ -458,6 +483,19 @@ public final class Calls {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             return Receivers.adapt(method, recv.executeGeneric(frame), this);
+        }
+    }
+
+    /**
+     * A forwarding wrapper's call: when the wrapper's own frame is the one {@code recover()} is
+     * effective in (it was called directly by the deferred-call runner), the forwarded call's
+     * argument array {@code a} inherits that eligibility, as gc skips {@code WRAPPER} frames.
+     * The runner restores the goroutine state when the deferred call returns.
+     */
+    static void passRecover(Node n, VirtualFrame frame, Object[] a) {
+        G g = G.current(n);
+        if (g.recoverArgs == frame.getArguments()) {
+            g.recoverArgs = a;
         }
     }
 

@@ -388,7 +388,7 @@ func (in *Interp) eval(fr *frame, x ir.Expr) Value {
 		} else {
 			name += ".func" + strconv.Itoa(*fr.litCounter)
 		}
-		return &Closure{pkg: fr.pkg, body: &x.Body, name: name, env: fr.env, caps: caps, sig: fr.pkg.typ(x.Type, fr.env), nlits: fr.litCounter}
+		return &Closure{pkg: fr.pkg, body: &x.Body, name: name, env: fr.env, caps: caps, sig: fr.pkg.typ(x.Type, fr.env), nlits: fr.litCounter, wrapper: x.Wrapper}
 	case *ir.BlankExpr:
 		panic(interpError("blank used as a value"))
 	}
