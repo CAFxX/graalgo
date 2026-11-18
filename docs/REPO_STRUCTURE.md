@@ -220,7 +220,12 @@ Related: [Makefile](../Makefile) (root build entry point),
     [reflectprobe/](../test/spikes/abi/reflectprobe/) measures how much of
     the reflect API agrees with gc under the current backend;
     [descview/](../test/spikes/abi/descview/) synthesizes gc-layout type
-    descriptors in Java and has gc's own reflect judge them.
+    descriptors in Java and has gc's own reflect judge them;
+    [sysscan/](../test/spikes/abi/sysscan/) inventories the raw system
+    calls std issues and types their arguments;
+    [sysexec/](../test/spikes/abi/sysexec/) executes Go-shaped raw syscalls
+    through a role table and one Panama downcall (compiled together with
+    descview's Java sources).
 - [docs/](../docs/)
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
   - [arch/](../docs/arch/) — architecture documentation, consolidated from

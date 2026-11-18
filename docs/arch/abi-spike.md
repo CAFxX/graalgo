@@ -10,7 +10,7 @@ go1.27.1 linux/amd64 on this box; anything else is labelled an estimate.
 | | Verdict | Mechanism | Effort (agent-days, estimate) |
 |---|---|---|---|
 | **P1** | **Go** for verbatim `internal/abi` + `internal/reflectlite` + `reflect`. The fallback (150–200 patched functions) is not needed. | Byte-exact gc-layout descriptor images + a layout-addressed pointer model (§1.3) | 14–20 for W9 (was "37–200 intrinsics", unsized) |
-| **P2** | see §2 | see §2 | see §2 |
+| **P2** | **Go** for the role table: it covers every pointer shape std passes, nested pointers included. One conflict with SPEC §3.5 needs a decision (§2.5). | Per-number role table naming Go types + one Panama downcall to libc `syscall(2)`, copy in/out through a call-scoped arena (§2.3) | 10–15 for W8 incl. poller and process spawn; 5–7 of it for M1c |
 
 ## 1. P1 — verbatim reflect on handle-table / descriptor views
 
@@ -297,4 +297,297 @@ make build graalgo && test/spikes/abi/reflectprobe/run.sh /some/scratch/dir   # 
 
 ## 2. P2 — the syscall boundary
 
-(Added by the second commit of this lane.)
+### 2.1 What std asks the kernel for (static inventory)
+
+Tool: [sysscan](../../test/spikes/abi/sysscan/main.go) type-checks the
+dependency closure of `os`, `net` and `os/exec` (`CGO_ENABLED=0`,
+linux/amd64), finds every call of the eight raw entry points
+(`syscall.Syscall/Syscall6/RawSyscall/RawSyscall6/rawSyscallNoError/
+rawVforkSyscall/AllThreadsSyscall/AllThreadsSyscall6`) outside the runtime
+family, and classifies each argument **from the typed call site itself**.
+
+| | Distinct syscalls |
+|---|---|
+| issued anywhere by `syscall` + `internal/syscall/unix` (all wrappers) | **148** (213 call sites); the design's "~110" was an estimate |
+| reachable from `os`'s functions (M1c) | 70, of which 17 only inside the fork/exec child path |
+| reachable from `net`'s functions | 47 |
+| `os` ∪ `net` | 85 |
+| with at least one pointer argument | 89 of 148 |
+
+Argument shapes over all 148 (per syscall, position and alternative):
+443 plain values, 57 pointers to one fixed-size Go type, 45 C strings,
+29 buffers with a length argument, 6 untyped pointers whose length is a
+sibling argument (sockaddr, sockopt value), 2 caller-supplied words
+(`fcntl` arg, `pidfd_send_signal` info).
+
+Findings that shape the table:
+
+- **Nested pointers exist in exactly two argument struct types in all of
+  std: `syscall.Iovec` (`Base`) and `syscall.Msghdr` (`Name`, `Iov`,
+  `Control`)** — plus `execve`'s `**byte` vectors, which are in the
+  fork/exec child path. Every other pointee (33 types, 1 to 390 bytes:
+  `Stat_t`, `EpollEvent`, `Timespec`, `RawSockaddrAny`, `Rusage`,
+  `Utsname`, …) is flat. R2's worry is four rules, not a class of problems.
+- **`epoll_*`, `select`, `mmap`/`munmap` are not issued by `os`/`net`
+  code.** In gc, epoll lives in `runtime/netpoll_epoll.go`; `os` and `net`
+  reach it only through `internal/poll`'s `runtime_poll*` linknames. `mmap`
+  is only behind the `syscall.Mmap` API. (`time.now` is likewise the
+  runtime's vDSO call, not `clock_gettime` from Go.)
+- **Three numbers need a second key**: `ioctl` (request), `fcntl` (command)
+  and `ptrace` (request) change the meaning of their last argument.
+- **Five calls return a length through a pointer** (`recvfrom`,
+  `getsockname`, `getpeername`, `accept4`, `getsockopt`): std passes a
+  fixed 112-byte `RawSockaddrAny` for four of them, so a fixed-size struct
+  role is exact; `getsockopt` needs a "length is behind argument N" role.
+- The fork/exec child (`forkAndExecInChild1`, 17 syscalls incl. `clone`,
+  `clone3`, `execve`, `setsid`, `capset`, `unshare`) cannot run in a JVM:
+  the process is multi-threaded and the child would share the heap. This is
+  the "fork/exec glue" patch the design already names.
+
+### 2.2 Per-family executor choice
+
+| Family | Choice | Why |
+|---|---|---|
+| Everything `syscall` issues by number (files, metadata, pipes, sockets, `getdents64`, `sendmsg`, …) | **Panama downcall to libc `syscall(2)`** | Verbatim `syscall`/`internal/poll`/`os` hold raw descriptor numbers and decode kernel structs (`Stat_t`, `linux_dirent64`, `Msghdr`) and exact `errno`s. JDK NIO exposes none of these: no channel can be made from an fd number, `Files` has no fd-based stat, errors are exceptions. One downcall handle of one shape (`(long×7)long`, `captureCallState("errno")`) serves every number — a single entry in native-image's foreign-call configuration |
+| `setuid`/`setgid`/`setgroups`/… via `AllThreadsSyscall` | Panama downcall to the **libc wrapper** of the same name | process-wide credential changes must reach every thread; glibc's wrappers do that, raw `syscall(2)` on one carrier does not |
+| Readiness waiting (`runtime_poll*`, 12 functions) | **decision needed, §2.5** | SPEC §3.5 says blocking NIO; verbatim `internal/poll` hands the runtime raw fds |
+| Process creation (`forkExec`) | patched: `posix_spawn` of a small helper that applies `SysProcAttr` and `exec`s (the JDK's own `jspawnhelper` pattern) | fork in a JVM is not possible; `ProcessBuilder` cannot express fds-by-number, `Setsid`, `Ctty`, credentials, pidfd |
+| `time.now`, `nanotime`, env, args, exit, signals | JDK APIs inside the runtime facade | Go never sees an fd or a struct there |
+| `mmap` via `syscall.Mmap` | Panama; the returned address is registered as foreign memory (SPEC §3.4's raw-address FFM mode) at its true address | the only place an integer from the kernel becomes a Go pointer |
+
+GG-0022 (cgo→Panama) shares the arena/handle machinery; GG-0004 is served
+by regenerating the inventory each release and diffing it against the
+table (new or re-typed syscalls show up as a table-vs-source mismatch).
+
+### 2.3 The role table
+
+One entry per syscall number: name, "may block", and up to six roles
+([SyscallTable.java](../../test/spikes/abi/sysexec/java/abispike/SyscallTable.java)):
+
+| Role | Meaning | Examples |
+|---|---|---|
+| `Val` | integer | fd, flags, length, offset |
+| `CStr` | NUL-terminated bytes, in | paths |
+| `Bytes(lenArg, dir, filled)` | `arg[lenArg]` bytes; OUT buffers copy back `result` or all | `read`, `write`, `getdents64`, `getcwd` |
+| `Struct(type, dir, nestedDir, nullable)` | one value of a named Go type | `fstat`→`syscall.Stat_t`, `pipe2`→`[2]int32`, `sendmsg`→`syscall.Msghdr` |
+| `Array(elemType, countArg, dir, nestedDir, filled)` | `arg[countArg]` consecutive values | `epoll_wait`→`syscall.EpollEvent`, `writev`→`syscall.Iovec` |
+| nested rule (per type, not per syscall) | pointer field + the field holding its length or count + element type | `Iovec.Base/Len`; `Msghdr.Iov/Iovlen → Iovec`, `Name/Namelen`, `Control/Controllen` |
+
+Two properties keep the table small and checkable:
+
+- **A role names a Go type; it never states a size or an offset.** Sizes,
+  field offsets and which leaves are pointers come from the same type table
+  as P1 (the fixture for the prototype is
+  [fixture.go](../../test/spikes/abi/sysexec/fixture/fixture.go): go/types'
+  view of package `syscall`). The marshaller walks the leaf table: scalar
+  leaves are copied by width, pointer leaves must have a nested rule or the
+  call traps.
+- **Direction is an optimization, not a correctness input**, except for
+  partially filled OUT buffers (`read`), where the table says "copy back
+  `result` units". Nested OUT buffers are copied in first so that an
+  unfilled tail reads back unchanged.
+
+The skeleton of all 148 entries can be generated from sysscan's output
+(number, shape and pointee type per position); direction, `filled`,
+"may block" and the three second-key calls are the hand-written part.
+
+Pointers arrive as integers (`uintptr(unsafe.Pointer(p))`), so the executor
+needs integer → pointer.
+[HandleTable.java](../../test/spikes/abi/sysexec/java/abispike/HandleTable.java)
+gives every object whose address is taken a range in a private address
+space above any real user address: the integer is `base + offset`, stable
+per object, and `uintptr(p) + n` converts back to `(object, offset + n)` by
+a floor lookup. This also settles P1's six `unsafe.Pointer(uintptr(p)+n)`
+sites and 27 `uintptr(p)` uses without frontend pattern matching, and an
+integer that is not inside a live object traps instead of reaching the
+kernel.
+
+### 2.4 Prototype
+
+[test/spikes/abi/sysexec/](../../test/spikes/abi/sysexec/): 17 syscalls
+(`read`, `write`, `close`, `fstat`, `readv`, `writev`, `getpid`, `sendmsg`,
+`recvmsg`, `socketpair`, `getdents64`, `clock_gettime`, `epoll_wait`,
+`epoll_ctl`, `openat`, `epoll_create1`, `pipe2`), called in Go's shape —
+`syscall6(trap, a1..a6)` with handle integers — from
+[SysMain.java](../../test/spikes/abi/sysexec/java/abispike/SysMain.java),
+executed by
+[Syscalls.java](../../test/spikes/abi/sysexec/java/abispike/Syscalls.java)
+(270 lines). Go-side values are P1's flat values (`long[]` + `Object[]`);
+no Go object is pinned and no native address outlives a call.
+
+**48 / 48 checks pass** ([run.sh](../../test/spikes/abi/sysexec/run.sh)),
+expected values taken from the JDK's file APIs or from data the test wrote:
+
+- `write(1)`; `openat`/`read`/`close` of a file, with the unfilled buffer
+  tail intact and a pointer into the middle of a buffer;
+- `fstat` into a flat `syscall.Stat_t`: `Size`, `Mode`, `Ino`, `Nlink`,
+  `Mtim.Sec` equal `java.nio.file` attributes;
+- `getdents64`: directory listing parsed from the Go-side buffer;
+- `pipe2` into a `[2]int32`; `epoll_create1`/`epoll_ctl`/`epoll_wait` over
+  a `[4]syscall.EpollEvent` (12-byte packed elements), only reported
+  elements copied back;
+- **nested, one level**: `writev`/`readv` over `[2]syscall.Iovec` whose
+  `Base` fields are Go pointers, scatter into two Go buffers;
+- **nested, two levels**: `sendmsg`/`recvmsg` over a socketpair,
+  `Msghdr → []Iovec → bytes`, with `Msghdr.Flags` written back and the Go
+  pointer fields left untouched;
+- `clock_gettime` into a `Timespec`; `getpid`;
+- `errno` paths (`EBADF`, `ENOENT`: `r1 = -1`, nothing copied back);
+- loud failures: number not in the table, an integer that is not a
+  pointer, a length or offset beyond the Go object, nil where a struct is
+  required.
+
+Failability was checked by mutating the table (not committed): `read`
+copying back the whole buffer → 1 check fails; `readv` with nested
+direction IN → 1 fails; `Msghdr.Iov` declared as bytes → trap; and
+**`fstat` declared with `Timespec` instead of `Stat_t` → the kernel writes
+144 bytes into a 16-byte allocation and the JVM dies with SIGSEGV** — see
+risk 1 below.
+
+Cost, indicative (best of 5 × 10⁶ calls, plain JVM): `getpid` 132 ns vs
+gc's 89 ns; `write` of 64 bytes to `/dev/null` 242 vs 194 ns; `fstat`
+524 vs 310 ns. The executor adds roughly 45–215 ns per call (arena, role
+dispatch, leaf-by-leaf copy of a 144-byte struct); system calls are not a
+hot path at this ratio.
+
+### 2.5 The conflict that needs a decision: raw fds versus "the netpoller is deleted"
+
+SPEC §3.5/§7.4 (GG-0018) decides that blocking `java.nio` operations
+replace the netpoller, and toolexec-design §5.6 says `internal/poll`'s
+`runtime_poll*` bind to "the existing blocking-NIO netpoll contract". The
+existing implementation
+([GoNetpoll.java](../../internal/backend/interop/src/main/java/graalgo/p3net/GoNetpoll.java))
+is a JDK `Selector` over `SelectableChannel`s, which works only because
+v1's synthetic `net`/`os` create the sockets as NIO channels.
+
+With verbatim `syscall` + `internal/poll` + `net` (D8), sockets are created
+by `socket(2)` through the raw entry and `runtime_pollOpen(fd uintptr)`
+receives a **descriptor number**. The JDK has no supported way to wait on,
+or build a channel from, a descriptor number. The two decisions cannot both
+hold. Options:
+
+1. **A minimal poller over raw fds in the runtime** (recommended): one
+   daemon platform thread in `epoll_wait` through the same executor
+   (prototyped calls: `epoll_create1/ctl/wait`), unparking goroutines
+   through the scheduler's wake lane, deadlines on the existing timer heap.
+   About 300 lines of Java replacing `GoNetpoll`'s selector half; keeps
+   `internal/poll`, `net`, `os` verbatim. It is a netpoller in the sense of
+   GG-0018's text, though not the gc event loop: no carrier ever blocks in
+   it and blocked goroutines consume no carriers.
+2. **Keep NIO, fork the lower half of `os`/`net`/`internal/poll`** so that
+   `poll.FD` wraps a channel: by sysscan's call graph that is the 47
+   syscalls `net` reaches plus `internal/poll`'s fd code — the files
+   affected are `internal/poll` (2.4 k lines on linux) and `net`'s fd/socket
+   files (4.5 k lines), against GG-0009, and every `x/sys/unix` user of raw
+   fds still needs option 1.
+
+Blocking syscalls outside the poller (regular-file I/O, `wait4`, `flock`)
+run on the calling goroutine's carrier with the scheduler slot released
+around the downcall (the table's "may block" bit is `entersyscall`).
+
+### 2.6 Risks and cost
+
+1. **A wrong table entry is memory-unsafe** (demonstrated): the kernel
+   writes by its own notion of the struct. Mitigations, all cheap: (a) a
+   gate that compares each entry's Go type with the pointee type sysscan
+   derives from std's call sites; (b) roles never state sizes; (c) debug
+   mode with guard pages after each arena allocation; (d) unknown numbers
+   fail.
+2. `ioctl`/`fcntl`/`ptrace` second key: `fcntl` and the `ioctl`s std uses
+   (6 sites) are enumerable; arbitrary user `ioctl`s need a default "third
+   argument is a value" plus an opt-in registration API, or they trap.
+3. Third-party code calling `syscall.Syscall` with numbers outside the
+   table (io_uring, bpf, perf): fails loudly by design; the table grows on
+   demand. Passing a Go pointer inside a `uintptr` field of a struct the
+   table does not know cannot be made to work.
+4. Thread-directed syscalls (`gettid`, `unshare`, `setns`, `prctl`,
+   `sched_setaffinity`) act on whichever carrier runs the goroutine;
+   correct only under `runtime.LockOSThread`, which must pin the goroutine
+   to a dedicated carrier.
+5. Copying: two copies per buffer byte for I/O. `Linker.Option.critical(true)`
+   (heap segments passed directly) removes them for non-blocking calls and
+   is an optimization to measure, not a dependency.
+6. Carrier pinning during a blocking downcall is by design (SPEC §3.7,
+   "cgo calls consume an M"); the scheduler must compensate as gc does for
+   blocked Ms.
+
+Effort (estimate, agent-days): table for all 148 numbers from the generated
+skeleton + table-vs-source gate 2–3; executor in the backend incl. slot
+release, `EINTR`, errno, `AllThreads*` 2–3; raw-fd poller (§2.5 option 1)
+2–3; process spawn helper + `forkExec` patch 3–4; foreign memory for
+`mmap`, signals glue 1–2. **Total 10–15**; M1c needs the first two items
+and none of `net`: **5–7**.
+
+### 2.7 How to rerun
+
+```
+(cd test/spikes/abi/sysscan && go run . [-sites] [root ...])      # §2.1, ~20 s
+test/spikes/abi/sysexec/run.sh /some/scratch/dir [bench]            # §2.4, ~30 s; run from a scratch cwd
+```
+
+## 3. Proposed amendments to toolexec-design.md
+
+1. **§0 D8, §5.1, §5.6 (reflect row), §10 R1, §12 P1:** P1 is answered:
+   `internal/abi` and `internal/reflectlite` verbatim, `reflect` verbatim
+   except a 4-function call-path patch. Remove the "150–200 patched
+   functions" fallback and "37–200" intrinsics; state the mechanism of
+   §1.3. R1 likelihood → low; residual risks are §1.5's list.
+2. **§5.1 "Patched" list, §5.5:** drop `internal/abi`,
+   `internal/reflectlite` and `sync` (pool). `sync.Pool.indexLocal` is
+   in-array pointer arithmetic that the pointer model handles; P5
+   (`HashTrieMap`, `sync.Map`) is expected verbatim for the same reason
+   (39 handle-only functions, no view, no patch).
+3. **§3.2 `TYPEDEFS`, §3.4:** the type table must carry, for every type
+   (not only named ones): gc type string and link string, kind, size,
+   alignments, pointer bitmap, comparable / regular-memory / direct-iface
+   flags, struct package path, field tags/embedded/exported, and complete
+   sorted method sets with the receiver-less signature type of each method
+   ([typetab](../../test/spikes/abi/descview/typetab/main.go) is the
+   reference). The layout of `internal/abi`'s own structs is taken from the
+   same table; the backend hard-codes no descriptor offset.
+4. **§3.4 last bullet, §5.6 `unsafe` row:** specify the pointer model:
+   `unsafe.Pointer` and view pointers are `(object, gc byte offset)`; every
+   addressable object kind implements scalar/pointer load/store by offset
+   through per-type leaf tables; `uintptr` conversions use the
+   range-allocating handle table of §2.3. This presupposes SPEC §3.4's flat
+   struct representation — v1's nested `GoStruct` is the measured cause of
+   20 of the 50 probe failures and must not be carried into W4.
+5. **§5.6 `syscall` row, §12 P2, §10 R2:** replace "which arguments are
+   pointers and how many bytes are read and written" by the role model of
+   §2.3 (roles name Go types; nested rules per type; second key for
+   `ioctl`/`fcntl`/`ptrace`; libc wrappers for `AllThreadsSyscall`
+   numbers). R2 likelihood → low. Add the measured counts (148 / 70 / 47).
+6. **§5.6 `internal/poll` row, new risk:** "bind to the existing
+   blocking-NIO netpoll contract" does not hold for raw fds; record the
+   decision of §2.5.
+7. **§5.6 `syscall` row:** name the fork/exec patch concretely
+   (`posix_spawn` + helper binary under `$GRAALGO_HOME/libexec`).
+8. **§10, new risk R15:** syscall table errors are memory-unsafe
+   (§2.6 risk 1) with the table-vs-source gate as mitigation.
+9. **§8 M1c/M1d, §9 W8/W9:** W9 14–20 agent-days, W8 10–15 (M1c share
+   5–7). W8 and W9 share the pointer model and handle table; schedule that
+   item once, before both. Promote `descview` (imgcheck) and the syscall
+   table-vs-source check to gates when W9/W8 start.
+10. **§11:** add experiments E11 (unsafescan), E12 (reflectprobe on v1:
+    76/126), E13 (descview: 607/607, 427/427), E14 (sysscan), E15 (sysexec:
+    48/48).
+
+## 4. Decisions needed from the owner
+
+1. **Netpoller (SPEC §3.5 / §7.4, GG-0018):** accept a minimal epoll-based
+   poller over raw fds in the runtime (§2.5 option 1, recommended), or fork
+   the lower half of `net`/`os`/`internal/poll` onto NIO channels. SPEC
+   wording changes either way.
+2. **SPEC §3.4 wording:** make "(object identity + field offset)" precise as
+   *gc byte offset*, and state that `uintptr` values are range-allocated
+   handles on which in-object arithmetic is defined (today: "arithmetic
+   escaping the object traps" — unchanged, but in-object arithmetic becomes
+   specified rather than implementation-defined).
+3. **Process creation:** ship a spawn helper binary in the distribution
+   (affects packaging, GG-0050), or restrict `os/exec` to what
+   `posix_spawn` alone can express.
+4. Minor, defaults proposed: `sync/atomic.Value` verbatim via a two-word
+   interface header view (patch its four methods only if that view is
+   awkward); run-time type constructors verbatim with an inverse descriptor
+   reader (patch seven constructor tails only if `MapOf` group layouts make
+   it expensive).
