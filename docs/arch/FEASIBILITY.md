@@ -1,6 +1,6 @@
 # graalgo — Feasibility Study
 
-**Date:** 2026-10-03 · **Status:** study, no implementation · **Tracks:** `research/T1`–`T8`
+**Date:** 2026-10-03 · **Status:** study, no implementation · **Tracks:** `docs/arch/research/T1-*.md`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed
 
@@ -158,7 +158,7 @@ gate: seven cheap spikes (five risk spikes + Sulong evaluation + testing-harness
    carrier pool (no custom carrier pool). The netpoller is
    *deleted* in favor of blocking NIO on virtual threads (io_uring has no JDK JEP as of Oct 2026).
    `panic` = `AbstractTruffleException` carrying the value with lazy traces; `Goexit` =
-   `ControlFlowException`; defer = explicit per-goroutine chain. (`research/T5`, `T7`)
+   `ControlFlowException`; defer = explicit per-goroutine chain. (`docs/arch/research/T5-*.md`, `T7`)
 6. **Stdlib: maximal reuse.** 229 of 398 package dirs (58%) pass a strict pure-Go check (no
    `unsafe`, no `runtime` import, no linkname, no `.s`) and compile unchanged given the frontend
    + intrinsic surface `[VERIFIED]` by source measurement. The load-bearing 42% builds against a
@@ -178,13 +178,13 @@ gate: seven cheap spikes (five risk spikes + Sulong evaluation + testing-harness
    is the link/ABI boundary and a JVM-aware `runtime/cgo` (Panama bridge for thread-state,
    callbacks, tracebacks): medium-hard, the program's riskiest integration item. Arena lifetimes
    beat cgo pointer rules; the new toolchain-author risk is concentrated in the C ABI
-   struct-layout engine. (`research/T3`, `T7`)
+   struct-layout engine. (`docs/arch/research/T3-*.md`, `T7`)
 8. **Isolates ↔ momo.** GraalVM isolates fit Carlo's momo project (per-module crash containment +
    transparent restart, value-only boundaries) *better than the runtime fork does*: isolate-per-
    generation gives containment by construction, crash-only restart = new isolate, `MaxHeapSize` +
    `isResourceExhausted` maps to memory quotas. Honest gaps: no CPU quota mechanism exists for
    isolates; `SpawnIsolate` maturity must be re-verified on the pinned GraalVM distribution; and
-   isolates are native-image-only, so pure-JIT mode needs a weaker story. (`research/T7`)
+   isolates are native-image-only, so pure-JIT mode needs a weaker story. (`docs/arch/research/T7-*.md`)
 
 ---
 
@@ -212,7 +212,7 @@ closed-world correctness cliffs (a missing metadata entry = failure, not slowdow
 bloat, W^X/platform vetoes, CE/Oracle split. **Meta-gate:** if the hybrid never beats *both*
 single modes on any workload class, cut the mode. Six falsifying experiments (image-size delta,
 warmup, safepoint overhead, pinning audit, deopt torture, stack-depth parity) are specified in
-`research/T5` §8.3 and `research/T6` §9.5 — the recommendation must survive contact with
+`docs/arch/research/T5-*.md` §8.3 and `docs/arch/research/T6-*.md` §9.5 — the recommendation must survive contact with
 measurement.
 
 ---

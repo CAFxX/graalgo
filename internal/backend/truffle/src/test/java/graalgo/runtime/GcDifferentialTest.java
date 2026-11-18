@@ -181,17 +181,20 @@ public final class GcDifferentialTest {
     }
 
     /**
-     * gc06: a finalizer that dereferences its nil argument must be LOUD.
-     * (DIV-M4-1: not silent.) stdout must be "survived"; stderr must contain
-     * the "graalgo: finalizer panicked:" diagnostic. No .expected file —
-     * gc would fatal-crash here, so this is graalgo-specific behavior.
+     * gc06: a finalizer that dereferences its nil argument (DIV-M4-1) must
+     * be LOUD: finalizers run on a goroutine, so the panic is fatal like
+     * any goroutine's (gc semantics for a panicking finalizer) — exit 2
+     * with the nil-dereference report, and the program does not go on to
+     * print "survived". No .expected file — in gc the argument is the
+     * object and nothing panics, so this is graalgo-specific behavior.
      */
     public void testGc06FinalizerPanicIsLoud() throws Exception {
         ProcessResult r = runGoFull("gc06_finalizer_panic");
-        assertEquals("survived\n", r.stdout, "gc06 stdout");
-        if (!r.stderr.contains("graalgo: finalizer panicked:")) {
-            throw new AssertionError(
-                    "gc06: expected loud finalizer-panic diagnostic on stderr, got:\n" + r.stderr);
+        if (r.exitCode != 2
+                || !r.stderr.contains("panic: runtime error: invalid memory address or nil pointer dereference")
+                || r.stdout.contains("survived")) {
+            throw new AssertionError("gc06: expected a fatal finalizer panic (exit 2), got exit "
+                    + r.exitCode + ", stdout:\n" + r.stdout + "stderr:\n" + r.stderr);
         }
     }
 

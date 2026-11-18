@@ -180,16 +180,21 @@ public final class IfaceMethodTablesTest {
      * the descriptor, method, and objID.
      * verifies: GG-0014
      */
-    public void testMissingObjIdFailsFast() {
-        try {
-            IfaceMethodTables.resolve(parseDoc(DOC), Map.of(7, goFunc(), 8, goFunc()));
-        } catch (FrontendException fe) {
-            String msg = fe.getMessage();
-            assertTrue(msg.contains("\"N\""), "names the method: " + msg);
-            assertTrue(msg.contains("9"), "names the objID: " + msg);
-            return;
+    /**
+     * d92e11fd (fix-disk-mr-stub) made an unknown objID a skipped entry
+     * with a P3Log warning instead of a FrontendException: disk-MR stub
+     * funcdecls are dropped by the frontend, so their method-table entries
+     * are vestigial. The method with the missing body (N, objID 9) must be
+     * absent; the resolvable ones must still install.
+     */
+    public void testMissingObjIdSkipsEntry() {
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(DOC), Map.of(7, goFunc(), 8, goFunc()));
+        for (Map<String, IfaceMethodTarget> methods : out.values()) {
+            assertTrue(!methods.containsKey("N"), "N (missing objID 9) skipped: " + out);
         }
-        throw new AssertionError("expected FrontendException for missing objID 9");
+        assertTrue(out.get("main.T") != null && out.get("main.T").get("M") != null,
+                "resolvable M still installed: " + out);
     }
 
     /**

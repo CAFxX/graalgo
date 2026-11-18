@@ -1,0 +1,8 @@
+-- stdout --
+start
+
+-- stderr (normalized) --
+panic: slept
+
+goroutine N [running]:
+-- exit 2 --

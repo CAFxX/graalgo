@@ -38,9 +38,13 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  *       finalizer is invoked with a {@code nil} argument — a Cleaner action
  *       is denied the referent and the original object cannot be recovered
  *       on a pure JVM. Finalizers that dereference their argument diverge
- *       from gc (loudly, not silently). The finalizer runs on the Cleaner's
- *       JVM thread, not a goroutine: touching scheduler state from a
- *       finalizer body fail-fasts.
+ *       from gc (loudly, not silently). The Cleaner thread only hands the
+ *       finalizer to the program's scheduler: it runs on a fresh system
+ *       goroutine (gc: the finalizer goroutine), so it may block, freezes
+ *       at exit like any goroutine, and a panic in it is fatal (exit 2),
+ *       as in gc. Finalizers whose object may still be collected count as
+ *       possible wakers for deadlock detection (see
+ *       {@code SchedulerCore#finalizerRegistered}).
  *   <li>{@code runtime.KeepAlive} — {@link java.lang.ref.Reference#reachabilityFence}.
  *   <li>{@code runtime.GC()} — {@code System.gc()} + poll of GC MXBean
  *       collection counts until they advance, bounded 30 s timeout. If the
@@ -102,14 +106,53 @@ public final class GcInterop {
     private static final class FinalizerAction implements Runnable {
         final GoFunc fn;
         final int objHash; // for debug
-        volatile boolean cancelled;
-        FinalizerAction(GoFunc fn, int objHash) {
+        /** The program's scheduler at registration, or null (no scheduler: unit tests). */
+        final graalgo.sched.SchedulerCore sched;
+        /** The Go context at registration, or null. */
+        final graalgo.language.GoContext context;
+        /** Cancelled or already run; guarded by FINALIZER_LOCK. */
+        boolean cancelled;
+        FinalizerAction(GoFunc fn, int objHash, graalgo.sched.SchedulerCore sched,
+                graalgo.language.GoContext context) {
             this.fn = fn;
             this.objHash = objHash;
+            this.sched = sched;
+            this.context = context;
         }
+
+        /** Marks the action consumed; false if it was cancelled or ran already. */
+        boolean consume() {
+            synchronized (FINALIZER_LOCK) {
+                if (cancelled) {
+                    return false;
+                }
+                cancelled = true;
+                return true;
+            }
+        }
+
         @Override
         public void run() {
-            if (cancelled) {
+            if (!consume()) {
+                return;
+            }
+            if (sched != null) {
+                // gc: finalizers run on the finalizer goroutine. Spawned as
+                // a system goroutine of the program's scheduler (none once
+                // the program is exiting: gc runs no finalizers at exit).
+                try {
+                    if (!sched.isExiting()) {
+                        Runnable spawn = () -> sched.spawnSystem(
+                                () -> GoCalls.invoke(fn, new Object[] { null }));
+                        if (context != null) {
+                            context.runEntered(spawn);
+                        } else {
+                            spawn.run();
+                        }
+                    }
+                } finally {
+                    sched.finalizerDispatched();
+                }
                 return;
             }
             try {
@@ -166,7 +209,12 @@ public final class GcInterop {
                     throw new IllegalStateException(
                             "runtime.SetFinalizer: finalizer already set");
                 }
-                old.cancelled = true; // cancel; the Cleaner action will no-op
+                if (!old.cancelled) {
+                    old.cancelled = true; // cancel; the Cleaner action will no-op
+                    if (old.sched != null) {
+                        old.sched.finalizerCancelled();
+                    }
+                }
                 PINNED.remove(obj);
             }
             if (fn == null) {
@@ -174,7 +222,12 @@ public final class GcInterop {
             }
             // The action must not capture obj (else the phantom never clears).
             // fn is the Go closure; the nil argument is DIV-M4-1.
-            FinalizerAction action = new FinalizerAction(fn, System.identityHashCode(obj));
+            graalgo.sched.SchedulerCore sched = graalgo.sched.SchedulerCore.installedOrNull();
+            FinalizerAction action = new FinalizerAction(fn, System.identityHashCode(obj), sched,
+                    sched != null ? graalgo.language.GoContext.activeOrNull() : null);
+            if (sched != null) {
+                sched.finalizerRegistered();
+            }
             CLEANER.register(obj, action);
             BY_OBJ.put(obj, action);
             PINNED.add(obj);
@@ -233,6 +286,24 @@ public final class GcInterop {
      */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void gc() {
+        // gc's runtime.GC() blocks the calling goroutine, not its P: the
+        // collection wait releases the scheduler slot (like a blocking
+        // syscall), so other goroutines — the finalizers it queues
+        // among them — run meanwhile.
+        graalgo.sched.SchedulerCore sc = graalgo.sched.SchedulerCore.installedOrNull();
+        if (sc == null || !sc.onGoroutine()) {
+            collect();
+            return;
+        }
+        sc.ioEnter();
+        try {
+            collect();
+        } finally {
+            sc.ioExit();
+        }
+    }
+
+    private static void collect() {
         FORCED_GC_COUNT.incrementAndGet();
         // Release pinned GoPointers: the explicit GC is the program's signal
         // that setup is complete. After this, lifetimes are natural (tied to

@@ -46,6 +46,11 @@ public final class PanicRendering {
      */
     private static volatile java.util.function.BiFunction<Object, Object, String> methodText;
 
+    /** The installed {@link #methodText} resolver, or null (tests restore it). */
+    public static java.util.function.BiFunction<Object, Object, String> methodTextResolver() {
+        return methodText;
+    }
+
     /** Installs the {@link #methodText} resolver (launcher-wide). */
     public static void setMethodTextResolver(java.util.function.BiFunction<Object, Object, String> r) {
         methodText = r;

@@ -16,7 +16,7 @@
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)
 #   GRAALVM_HOME GraalVM root for the graalgo backend
-#   PHASE3_DIR   dir holding the product launcher graalgo-sync-run
+#   GRAALGO_BACKEND_DIR   dir holding the product launcher graalgo-sync-run
 #                (default: <repo>/internal/backend; needs `make build`)
 #
 # Exit status: 0 no divergence, 1 divergence, 2 usage, 3 infrastructure
@@ -40,9 +40,9 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 export GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-export PHASE3_DIR="${PHASE3_DIR:-$REPO_ROOT/internal/backend}"
-if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ] || [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
-  echo "INFRA: product launcher/backend not built under $PHASE3_DIR (run make generate build)" >&2
+export GRAALGO_BACKEND_DIR="${GRAALGO_BACKEND_DIR:-$REPO_ROOT/internal/backend}"
+if [ ! -x "$GRAALGO_BACKEND_DIR/graalgo-sync-run" ] || [ ! -d "$GRAALGO_BACKEND_DIR/interop/out/classes" ]; then
+  echo "INFRA: product launcher/backend not built under $GRAALGO_BACKEND_DIR (run make generate build)" >&2
   exit 3
 fi
 
@@ -76,7 +76,7 @@ echo "== [3/4] differential: gc vs graalgo =="
 cd "$DH_ROOT"
 go build -o "$OUTDIR/diffharness" ./cmd/diffharness
 set +e
-PHASE3_DIR="$PHASE3_DIR" \
+GRAALGO_BACKEND_DIR="$GRAALGO_BACKEND_DIR" \
 "$OUTDIR/diffharness" run \
   -config "$DH_ROOT/backends-p3.json" \
   -corpus "$REPLAY_DIR" \

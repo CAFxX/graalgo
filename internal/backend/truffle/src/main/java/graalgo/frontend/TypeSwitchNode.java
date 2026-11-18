@@ -116,10 +116,14 @@ public final class TypeSwitchNode extends GoStmtNode {
     }
 
     private boolean clauseMatches(TypeCaseClause c, GoTypeDescriptor dyn, Object data) {
+        // Nil-ness is the dynamic type, never the data word: a typed nil
+        // (var p *T; var i any = p) has a descriptor and null data, and
+        // matches `case *T`, not `case nil` (gc: only a nil interface
+        // value, with no dynamic type, selects `case nil`).
         boolean hit = false;
-        if (c.nilCase && data == null) {
+        if (c.nilCase && dyn == null) {
             hit = true;
-        } else if (data != null) {
+        } else if (dyn != null) {
             for (int i = 0; i < c.types.size(); i++) {
                 GoTypeDescriptor t = c.types.get(i);
                 if (t == dyn) {

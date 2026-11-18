@@ -27,22 +27,22 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 
-# graalgo backend (interop product launcher): PHASE3_DIR points at the
+# graalgo backend (interop product launcher): GRAALGO_BACKEND_DIR points at the
 # internal/backend tree holding the graalgo-sync-run launcher wrapper
 # (P3SyncMain). Defaults to this repo's internal/backend so a plain ./run.sh
 # works from a clean checkout; override to point at another tree. The
 # product launcher (not the truffle graalgo-run) is the smoke backend so the
 # full corpus — including the channel/goroutine programs — runs without
 # exclusions.
-if [ -z "${PHASE3_DIR:-}" ]; then
-  export PHASE3_DIR="$PWD/../../internal/backend"
+if [ -z "${GRAALGO_BACKEND_DIR:-}" ]; then
+  export GRAALGO_BACKEND_DIR="$PWD/../../internal/backend"
 fi
 # The P3SyncMain backend needs truffle+interop classes built.
-if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ]; then
-  echo "run.sh: $PHASE3_DIR/graalgo-sync-run missing/not executable" >&2
+if [ ! -x "$GRAALGO_BACKEND_DIR/graalgo-sync-run" ]; then
+  echo "run.sh: $GRAALGO_BACKEND_DIR/graalgo-sync-run missing/not executable" >&2
   exit 2
 fi
-if [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
+if [ ! -d "$GRAALGO_BACKEND_DIR/interop/out/classes" ]; then
   echo "run.sh: interop classes not built; run 'make build' at the repo root first" >&2
   exit 2
 fi

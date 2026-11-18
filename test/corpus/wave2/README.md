@@ -6,7 +6,7 @@ syscall, reflect, unsafe, crypto/* — see
 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 Pipelining note: wave 2 is built in parallel with the P3-M7 remediation
-on a separate tree (`~/workspace/graalgo-m8-pipe`, branch `m8-pipeline`).
+on a separate tree (a historical worktree, branch `m8-pipeline`).
 The runner resolves its own repository root from its path — it works from
 any checkout. Corpus programs and synthetic-source drafts are new files;
 shared-file integration (importer registration, desugars) lands at rebase
@@ -116,8 +116,8 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-2 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/<pkg>
-export GOCACHE=$HOME/workspace/.gocache-m8-<pkg>
+export TMPDIR=$GR/.tmp/m8-tmp/<pkg>
+export GOCACHE=$HOME/.cache/graalgo/gocache-m8-<pkg>
 ```
 
 `run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors

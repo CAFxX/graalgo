@@ -35,8 +35,13 @@ public final class GoContext {
     /** The scheduler of the last run, torn down when the context closes. */
     private volatile SchedulerCore scheduler;
 
-    /** True while {@link #run} executes a program. */
-    private volatile boolean running;
+    /**
+     * The context whose {@link #run} executes a program right now, or
+     * null. Claimed and released under the class lock ({@link #claimRun}),
+     * so two contexts (or two threads evaluating one context) can never
+     * run programs concurrently on the process-global runtime state.
+     */
+    private static GoContext runningContext;
 
     final GoLanguage language;
     final Env env;
@@ -67,13 +72,37 @@ public final class GoContext {
      * launchers never close theirs, see P3SyncMain).
      */
     static synchronized void activate(GoContext context) {
-        GoContext prev = active;
-        if (prev != null && prev != context && prev.running) {
-            throw new IllegalStateException("graalgo runs one Go program per process at a "
-                    + "time until its runtime state is per-context (truffle-design TR-5); "
-                    + "another Go context is running a program");
+        if (runningContext != null && runningContext != context) {
+            throw oneProgramAtATime();
         }
         active = context;
+    }
+
+    private static IllegalStateException oneProgramAtATime() {
+        return new IllegalStateException("graalgo runs one Go program per process at a "
+                + "time until its runtime state is per-context (truffle-design TR-5); "
+                + "another Go program is running");
+    }
+
+    /**
+     * Atomically claims the single program slot for {@code context} and
+     * makes it the live one; fails if any program (another context's, or
+     * a concurrent eval of this one) is running. {@link #activate} alone
+     * is not enough: it runs once, at context initialization, so two
+     * contexts initialized before either evaluates would both pass it.
+     */
+    private static synchronized void claimRun(GoContext context) {
+        if (runningContext != null) {
+            throw oneProgramAtATime();
+        }
+        runningContext = context;
+        active = context;
+    }
+
+    private static synchronized void releaseRun(GoContext context) {
+        if (runningContext == context) {
+            runningContext = null;
+        }
     }
 
     static synchronized void deactivate(GoContext context) {
@@ -100,10 +129,16 @@ public final class GoContext {
      * that cannot be stopped (in a blocking system call) is reported.
      */
     void finalizeContext() {
+        terminatePrevious();
+    }
+
+    /** Tears down the last run's scheduler, if any (see {@link #finalizeContext}). */
+    private void terminatePrevious() {
         SchedulerCore sched = scheduler;
         if (sched == null) {
             return;
         }
+        scheduler = null;
         List<Thread> stuck;
         try {
             stuck = sched.terminate(10_000);
@@ -112,8 +147,9 @@ public final class GoContext {
             return;
         }
         if (!stuck.isEmpty()) {
-            throw new IllegalStateException("cannot close the Go context: goroutine thread(s) "
-                    + stuck + " did not stop (blocked outside the scheduler)");
+            throw new IllegalStateException("cannot tear down the previous Go program: "
+                    + "goroutine thread(s) " + stuck
+                    + " did not stop (blocked outside the scheduler)");
         }
     }
 
@@ -174,15 +210,19 @@ public final class GoContext {
      */
     @TruffleBoundary
     int run(NodeFactory.Program program) {
-        running = true;
+        claimRun(this);
         try {
             return runProgram(program);
         } finally {
-            running = false;
+            releaseRun(this);
         }
     }
 
     private int runProgram(NodeFactory.Program program) {
+        // A previous program of this context exited (gc: its process is
+        // gone): tear its leftover goroutines down before the next run,
+        // or they stay parked forever and the context cannot close.
+        terminatePrevious();
         initializeOsSurface(env.getApplicationArguments());
         int gmp = env.getOptions().get(GoLanguage.Gomaxprocs);
         if (gmp <= 0) {

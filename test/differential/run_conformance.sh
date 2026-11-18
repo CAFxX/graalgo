@@ -52,12 +52,12 @@ if [ ! -d "$GOROOT_TEST" ]; then
   exit 2
 fi
 
-PHASE3_DIR="$REPO_ROOT/internal/backend"
-if [ ! -x "$PHASE3_DIR/graalgo-sync-run" ]; then
-  echo "conformance: $PHASE3_DIR/graalgo-sync-run missing/not executable" >&2
+GRAALGO_BACKEND_DIR="$REPO_ROOT/internal/backend"
+if [ ! -x "$GRAALGO_BACKEND_DIR/graalgo-sync-run" ]; then
+  echo "conformance: $GRAALGO_BACKEND_DIR/graalgo-sync-run missing/not executable" >&2
   exit 3
 fi
-if [ ! -d "$PHASE3_DIR/interop/out/classes" ]; then
+if [ ! -d "$GRAALGO_BACKEND_DIR/interop/out/classes" ]; then
   echo "conformance: backend classes not built; run 'make build' at the repo root first" >&2
   exit 3
 fi
@@ -84,7 +84,7 @@ if [ -n "${DH_TIMEOUT:-}" ]; then
   TIMEOUT_ARGS=(-timeout "$DH_TIMEOUT")
 fi
 set +e
-PHASE3_DIR="$PHASE3_DIR" \
+GRAALGO_BACKEND_DIR="$GRAALGO_BACKEND_DIR" \
 "$OUTDIR/diffharness" srctest run \
   -dir "$GOROOT_TEST" \
   -exclusions "$HERE/srctest-exclusions.yaml" \

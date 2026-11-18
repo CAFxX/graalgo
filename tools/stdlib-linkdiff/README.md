@@ -14,7 +14,7 @@ No external dependencies. `go vet` clean.
 ## Provided set — exactly where each list comes from
 
 The provided symbol set is extracted mechanically from the graalgo tree
-(`--graalgo`, default `$GRAALGO_ROOT` else `~/workspace/graalgo`) every
+(`--graalgo`, default `$GRAALGO_ROOT` else `~/dev/graalgo`) every
 run — never hand-maintained — so per-release drift shows up as a snapshot
 diff rather than silent staleness.
 
@@ -89,7 +89,7 @@ package.
 `--goroot` default -- canonical stdlib-tree resolution (shared with
 `stdlib-excl`; the two implementations are documented as twins):
 1. the vendored tree for the pinned version,
-   `~/workspace/graalgo-stdlib/<ver>/` (flat layout -- the target dir
+   `~/dev/graalgo-stdlib/<ver>/` (flat layout -- the target dir
    IS the src root, no `src/` subdir), used only when the committed
    `vendor-manifest.json` records the same `goVersion` as
    `tools/stdlib-fork/pinned-version.txt` (a manifest/pin skew

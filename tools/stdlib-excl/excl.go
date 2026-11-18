@@ -17,7 +17,15 @@ type Exclusion struct {
 type ReasonCode struct {
 	Code        string
 	Description string
+	// Class is the SPEC §5.6 (GG-0033) reason code this stdlib code
+	// refines: one vocabulary across every exclusion list, with the
+	// stdlib codes as sub-codes.
+	Class string
 }
+
+// SpecReasonCodes is the closed SPEC §5.6 vocabulary (the same list as
+// test/differential's harness.ReasonCodes).
+var SpecReasonCodes = []string{"backend-specific", "unspecified-behavior", "deferred-parity"}
 
 // ExclusionFile is the parsed exclusion list.
 type ExclusionFile struct {
@@ -88,6 +96,8 @@ func ParseExclusionFile(path string) (*ExclusionFile, error) {
 			inCode = true
 		case strings.HasPrefix(t, "description:") && inCode:
 			curCode.Description = strings.TrimSpace(strings.TrimPrefix(t, "description:"))
+		case strings.HasPrefix(t, "class:") && inCode:
+			curCode.Class = strings.TrimSpace(strings.TrimPrefix(t, "class:"))
 		case strings.HasPrefix(t, "- file:"):
 			flushExcl()
 			curExcl.File = strings.TrimSpace(strings.TrimPrefix(t, "- file:"))

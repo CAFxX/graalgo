@@ -283,3 +283,7 @@ both hunks. Verification: the file now hashes to
 byte-identical to the pristine hash recorded before the patch was applied,
 and `grep -c GRAALGO` returns 0. The driver (`src/cmd/go` non-test source)
 was never modified at any point.
+
+## Removed artifacts
+
+The compiled `src/toolexec-log/toolexec-log` binary and the two 4.7 MB `logs/{stock,wrapped}/vet_flags.log` captures were removed from the repo 2026-11-18 (size/binary gate); rebuild the binary with `go build` in [src/toolexec-log/](src/toolexec-log/) and regenerate the logs with [run_matrix.sh](run_matrix.sh).

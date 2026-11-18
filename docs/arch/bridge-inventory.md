@@ -12,34 +12,23 @@ This file is the gate's grandfather list. The mechanical gate
 has an entry here**. When a bridge is retired, delete its entry in the same
 change (docs are part of the change — see [AGENTS.md](../../AGENTS.md) §7).
 
-Every entry states: what the bridge is, why it exists, the root-cause fix
-that retires it, and its phased-removal order. "Needs design" marks entries
-whose retirement mechanism is still open — the entry itself is the
-deliverable until the design lands.
+Every entry states: what the bridge is, why it exists, and the root-cause
+fix that retires it.
 
-## Phased removal order
+## Removal: deleted wholesale at M3
 
-- **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
-  (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
-- **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
-  its root cause lands (real trap path for `internal/poll`+`syscall`; the
-  `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
-  shrinks the B-3 predicate chains, the `mrdesugar` pair tables, and
-  `syntheticSources`.
-- **Phase 3 — machinery deletion.** When the last synthetic package retires,
-  delete the machinery wholesale: `syntheticSources` + the import overlay,
-  `overlayImporter`/`resolvePkgTree` package switches, the linkname
-  allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
-  intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
-  `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
-- **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
-  parser→checker→emitter pipeline) replaces the name-keyed export machinery
-  entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
-  byte-addressed value model (or documented trap contract) resolves
-  `unsafe.Add`. Retires B-6, B-7.
+The phased package-by-package removal plan of 2026-10-15 is **superseded**
+by the recovery ([RECOVERY.md](RECOVERY.md), toolexec-design D11/D12): the
+v1 pipeline — `gofrontend`, the JSON wire format, every `synth_*.go`, the
+import overlay, the name-keyed export machinery, the JSON `NodeFactory`,
+v1's node classes and the Java std reimplementation packages below — is
+**deleted wholesale at the M3 cutover**, not retired piecemeal. The real
+stdlib then compiles from source through the `-toolexec` path.
+
+Until M3 this inventory is **frozen**: no entry may be added (no new
+bridges, no new `synth_*.go`), and an entry is removed only when its code is
+deleted. M3's exit criterion is an empty inventory and an empty grandfather
+list in [check_no_bridges.py](../../.github/scripts/check_no_bridges.py).
 
 ## Active bridges
 
@@ -184,6 +173,35 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+### B-8. Java reimplementations of std packages (`internal/backend/interop`)
+
+Hand-written Java that stands in for real Go std code (registered as
+intrinsics/wire kinds behind the synthetic packages of B-4). Line counts
+measured 2026-11-18 (`wc -l` over each package's `.java` files). All are
+deleted at M3; the column names the root-cause mechanism that makes the
+real Go source run instead.
+
+| Package | LOC | Stands in for | Root-cause retirement |
+|---|---:|---|---|
+| `graalgo.p3reflect` | 8449 | `reflect`, `internal/abi` | verbatim `reflect` over gc-layout descriptor views ([abi-spike.md](abi-spike.md) P1, toolexec M2) |
+| `graalgo.p3unsafe` | 2914 | `unsafe` pointer views | flat value model with `(object, byte offset)` pointers (SPEC §3.4, GG-0061/0062) |
+| `graalgo.p3net` (incl. `GoNetpoll`) | 2120 | `net`, `net/http`, v1 netpoller | real `net` over the syscall executor + runtime epoll poller (GG-0063, toolexec W8/M4) |
+| `graalgo.p3sync` | 2024 | `sync`, `sync/atomic` | real `sync` over the runtime facade's semaphore/atomic intrinsics (toolexec runtime facade) |
+| `graalgo.p3os` | 1806 | `os`, `syscall` | real `os`/`syscall` over the Panama syscall table ([abi-spike.md](abi-spike.md) P2, ADR-0009) |
+| `graalgo.iface` | 1791 | itabs, interface dispatch | type interning + lazy itabs in the new node package (toolexec W4, D12) |
+| `graalgo.p3link` | 1647 | `//go:linkname` targets | linkname resolution in the toolexec linker over real packages (toolexec §4) |
+| `graalgo.p3time` | 1290 | `time` | real `time` over runtime-facade timers |
+| `graalgo.p3chan` | 1099 | channel helpers | channel ops as node-package intrinsics over the runtime library (W4) |
+| `graalgo.p3x509` | 936 | `crypto/x509` (see B-5) | real `crypto/x509` from source |
+| `graalgo.rtstack` | 818 | `runtime.Callers` & co. (see B-7) | real `runtime.Callers` over Truffle frames in the runtime facade |
+| `graalgo.p3tls` | 794 | `crypto/tls` | real `crypto/tls` from source once `net` is real |
+| `graalgo.rtmemstats` | 612 | `runtime.ReadMemStats` & co. | runtime facade over JVM telemetry |
+| `graalgo.p3builtin` | 568 | builtin helpers | node-package builtins (W4) |
+| `graalgo.p3math` | 355 | `math`, `math/bits` | real `math` from source (pure-Go fallbacks; hot intrinsics as PE nodes) |
+| `graalgo.p3crypto` | 258 | `crypto/*` primitives | real `crypto` from source (`purego` fallbacks) |
+| `graalgo.p3abi` | 91 | ABI constants | descriptor views (abi-spike P1) |
+| `graalgo.p3log` | 37 | launch-time warning logger (not a std reimplementation) | deleted with the v1 launcher at M3 |
+
 ## Adjudicated non-bridges
 
 Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
@@ -257,14 +275,11 @@ code, per [AGENTS.md](../../AGENTS.md) §7).
   `internal/frontend/`, corpus at `test/corpus/phase1`); the variables they
   guarded were already repointed. Retired by deleting the stale comments
   (comment-only change; the exports they described are harmless
-  redundancies). Remaining stale labels: the `# BRIDGE (frontend lane)`
-  comments in the launcher scripts
+  redundancies). The `# BRIDGE (frontend lane)` comments in the launcher scripts
   [internal/backend/graalgo-run](../../internal/backend/graalgo-run) and
   [internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run)
-  (the guarded `[ -x …/frontend/gofrontend ]` fallback resolves to the
-  correct path by accident of layout; delete the comment or the dead
-  block), and the dangling `internal/backend/runtime/corpus` symlink
-  (owned by the test-infra lane — delete symlink + comment).
+  were rewritten 2026-11-18 (the frontend move they awaited had landed).
+  (The `runtime/` module and its corpus symlink are gone since T0.D.)
 - **2026-10-15 — banned `fmt.Fprint`→`w.Write` desugar.** Removed before
   this inventory was created (the real-`fmt` lane's template: kill the
   desugaring, make the real package work). Recorded here so the pattern is

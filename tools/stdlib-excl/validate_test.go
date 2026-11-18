@@ -41,8 +41,10 @@ func writeTemp(t *testing.T, dir, name, content string) string {
 const testVocab = `reason_codes:
 - code: PLATFORM
   description: out of OS/arch scope
+  class: backend-specific
 - code: CGO
   description: requires import "C"
+  class: backend-specific
 `
 
 func testList(t *testing.T, dir, name, version, entries string) string {
@@ -344,11 +346,11 @@ func fakeRepoRoot(t *testing.T, pin, manifestVer string) string {
 	return root
 }
 
-// fakeVendoredTree builds $HOME/workspace/graalgo-stdlib/<ver>/ with the
+// fakeVendoredTree builds $HOME/dev/graalgo-stdlib/<ver>/ with the
 // stdlib marker dirs the resolver sanity-checks.
 func fakeVendoredTree(t *testing.T, home, ver string) string {
 	t.Helper()
-	tree := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+	tree := filepath.Join(home, "dev", "graalgo-stdlib", ver)
 	for _, m := range []string{"runtime", "fmt", "sync", "net", "os"} {
 		if err := os.MkdirAll(filepath.Join(tree, m), 0755); err != nil {
 			t.Fatal(err)
@@ -451,7 +453,7 @@ func TestGoBinaryDiscovery(t *testing.T) {
 // (P1-2) a same-named dir that is not a stdlib src root is refused.
 func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 	home := t.TempDir()
-	tree := filepath.Join(home, "workspace", "graalgo-stdlib", "go1.27.1")
+	tree := filepath.Join(home, "dev", "graalgo-stdlib", "go1.27.1")
 	if err := os.MkdirAll(tree, 0755); err != nil {
 		t.Fatal(err)
 	}
@@ -462,4 +464,18 @@ func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
 		t.Fatal("non-tree dir: expected refusal, got a tree")
 	}
 	mustContain(t, err.Error(), "not a stdlib src root", "refusal diagnosis")
+}
+
+// Every stdlib code must refine a SPEC §5.6 code (one vocabulary).
+func TestValidateRejectsCodeWithoutSpecClass(t *testing.T) {
+	dir := t.TempDir()
+	src := fixtureSrc(t, "runtime/cgo")
+	list := writeTemp(t, dir, "list.yaml", "version: 1\nreason_codes:\n- code: CGO\n  description: y\n"+
+		"exclusions:\n- file: runtime/cgo\n  reason: CGO\n  detail: SPEC\n")
+	base := testList(t, dir, "base.yaml", "0", "")
+	_, stderr, err := runValidateOK(t, list, src, base, 1000, 25)
+	if err == nil {
+		t.Fatal("a code without a SPEC §5.6 class must be rejected")
+	}
+	mustContain(t, stderr, "SPEC §5.6", "missing-class rejection")
 }

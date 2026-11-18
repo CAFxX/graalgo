@@ -161,7 +161,7 @@ default scheduler past Phase 0 without one of (2)/(3) decided.
 - Go oracle programs: [go/o1_torture.go](go/o1_torture.go), `o2_chan.go`, `o3_select.go`,
   `o4_timer.go`, `o5_scale.go`, `overhead.go` (+ `go/bin/` binaries)
 - Checksums: [logs/SOURCES.sha256](logs/SOURCES.sha256); manifest: [logs/RUN_MANIFEST.txt](logs/RUN_MANIFEST.txt);
-  JFR: [logs/jfr/](logs/jfr/) (see §5 caveat); debug scratch: [scratch/](scratch/) (not part of
+  JFR: `logs/jfr/*.jfr` (see §5 caveat; binary recordings removed from the repo 2026-11-18 — re-record with the harness commands above); debug scratch: [scratch/](scratch/) (not part of
   the evidence chain)
 
 ## 8. Notes / loose ends
@@ -174,3 +174,7 @@ default scheduler past Phase 0 without one of (2)/(3) decided.
   documented in the trajectory, all O1 numbers above are post-fix.
 - [scratch/](scratch/) contains debugging probes (DumpTorture, SelMini, DirectUb…);
   kept for reproducibility of the investigation, not as deliverables.
+
+## Removed artifacts
+
+The binary JFR recordings under `logs/jfr/` were removed from the repo 2026-11-18 (no tracked binaries); the textual summaries in this report and [logs/RUN_MANIFEST.txt](logs/RUN_MANIFEST.txt) remain the evidence. Re-record with the harness to reproduce.

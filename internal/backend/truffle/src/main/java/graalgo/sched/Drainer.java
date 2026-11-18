@@ -137,9 +137,7 @@ public final class Drainer {
             }
             try {
                 synchronized (lock) {
-                    route(token);
-                    admit();
-                    checkInvariants();
+                    step(token);
                     detectDeadlock();
                 }
             } catch (Throwable t) {
@@ -249,11 +247,26 @@ public final class Drainer {
         }
     }
 
-    private void admit() {
+    /**
+     * One drainer iteration: route, admit, check. The cap is read ONCE
+     * and both admission and the invariant check use that value: a
+     * concurrent {@code runtime.GOMAXPROCS} change lands between
+     * iterations, never between admitting and judging the admissions
+     * (re-reading it there let a raise-then-lower race fail the check on
+     * a correct admission sequence — a halt(1) of a correct program).
+     */
+    private void step(ResumeToken token) {
+        int cap = sched.cap();
+        route(token);
+        admit(cap);
+        checkInvariants(cap);
+    }
+
+    private void admit(int cap) {
         if (sched.isExiting()) {
             return; // process exit: the world is stopped, nothing runs again
         }
-        while (inflight < sched.cap()) {
+        while (inflight < cap) {
             ResumeToken token = pollLane();
             if (token == null) {
                 break;
@@ -292,7 +305,11 @@ public final class Drainer {
      * {@link AssertionError}, never silent corruption.
      */
     void checkInvariants() {
-        int cap = sched.cap();
+        checkInvariants(sched.cap());
+    }
+
+    /** {@link #checkInvariants()} against the cap the iteration admitted under. */
+    private void checkInvariants(int cap) {
         if (capCeiling < cap) {
             capCeiling = cap; // cap raised (or first check)
         } else if (capCeiling > cap) {
@@ -423,9 +440,7 @@ public final class Drainer {
      */
     void processOneForTest(ResumeToken token) {
         synchronized (lock) {
-            route(token);
-            admit();
-            checkInvariants();
+            step(token);
         }
     }
 }

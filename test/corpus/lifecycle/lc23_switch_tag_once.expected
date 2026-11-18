@@ -1,0 +1,12 @@
+-- stdout --
+seven
+calls: 1
+seven
+calls: 1
+default
+calls: 1
+string
+calls: 1
+
+-- stderr (normalized) --
+-- exit 0 --

@@ -16,8 +16,8 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   `hash/maphash/`.
 - `run_wave3.sh` — the shared runner (a `../wave1/run_wave.sh`
   derivative with wave-3 tmp paths: `TMPDIR=$P3/hidden_files/m9-tmp/wave3`,
-  `GOCACHE=$HOME/workspace/.gocache-m9-wave3`). Usage:
-  `GR=~/workspace/graalgo-m9 ./run_wave3.sh [pkg|all]`.
+  `GOCACHE=$HOME/.cache/graalgo/gocache-m9-wave3`). Usage:
+  `GR=~/dev/graalgo-wt/<lane> ./run_wave3.sh [pkg|all]`.
 - Per-package `run_differential.sh`: thin wrapper
   `exec "$(dirname "$0")/../run_wave3.sh" <pkg>`.
 - Per-package `README.md`: scope boundary + retest trigger.
@@ -75,6 +75,6 @@ When the shared m9 tree's frontend is mid-flight (other workers' uncommitted
 edits), point `GRAALGO_GOFRONTEND` at a known-good build:
 
 ```bash
-GRAALGO_GOFRONTEND=~/workspace/tmp/tier1d-fe/gofrontend \
+GRAALGO_GOFRONTEND=$GR/internal/frontend/gofrontend \
   ./run_wave3.sh unique
 ```

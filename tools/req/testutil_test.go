@@ -1,7 +1,7 @@
 // Shared fixtures for the req CLI test suite.
 //
 // Hermeticity contract: every test builds its registry and scanned tree
-// inside t.TempDir(). No test may touch the real ~/workspace/momo/requirements
+// inside t.TempDir(). No test may touch the real repository requirements/
 // tree or rely on the process working directory, except the findRoot tests
 // which chdir into a temp dir and restore afterwards (no t.Parallel anywhere
 // in this package: several tests swap os.Stdin/os.Stdout/os.Stderr and cwd).

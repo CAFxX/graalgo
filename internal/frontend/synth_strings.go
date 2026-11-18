@@ -10,7 +10,7 @@
 // type/object tables) via exportSyntheticPackages.
 //
 // Exact gc 1.27.1 public API signatures (verified against
-// ~/workspace/graalgo-stdlib/go1.27.1/strings/*.go). Implementations are
+// ~/dev/graalgo-stdlib/go1.27.1/strings/*.go). Implementations are
 // clean-room ports of gc's algorithms to pure Go: the import overlay does
 // not provide reflect, unicode, or unicode/utf8, so:
 // (P3-M8: io IS provided — the source imports it for io.EOF, the

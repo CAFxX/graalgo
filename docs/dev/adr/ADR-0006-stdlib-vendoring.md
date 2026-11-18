@@ -26,8 +26,8 @@ source, not project source.
 
 ### D1. The vendored tree lives OUTSIDE the git repo
 
-Pinned location: `~/workspace/graalgo-stdlib/<goVersion>/`
-(current: `~/workspace/graalgo-stdlib/go1.27.1/`).
+Pinned location: `~/dev/graalgo-stdlib/<goVersion>/`
+(current: `~/dev/graalgo-stdlib/go1.27.1/`).
 
 Rationale: committing 157M of upstream source would permanently bloat
 the repo — every clone, bisect, and checkout pays for it, and it dwarfs

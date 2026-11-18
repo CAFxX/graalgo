@@ -121,12 +121,17 @@ public final class IfaceDispatchNode extends GoExprNode {
     }
 
     private Object dispatch(VirtualFrame frame) {
-        GoInterface gi = requireReceiver(recv.executeObject(frame));
+        // gc order: the receiver operand, then the arguments, are
+        // evaluated before the call; a nil interface receiver panics only
+        // at the call itself (after the arguments' side effects).
+        Object r = recv.executeObject(frame);
+        Object[] argVals = evalArgs(frame);
+        GoInterface gi = requireReceiver(r);
         if (InterfaceDispatchProbes.isEnabled()) {
             // Polymorphism dump mode: every dispatch must reach probe().
-            return dispatchSlow(frame, gi);
+            return dispatchSlow(frame, gi, argVals);
         }
-        return callCache.execute(frame, gi, this);
+        return callCache.execute(frame, gi, argVals, this);
     }
 
     /**
@@ -156,8 +161,7 @@ public final class IfaceDispatchNode extends GoExprNode {
      * interface value itself for an interface-typed receiver parameter,
      * then the arguments), through the PIC entry's direct call node.
      */
-    Object callFast(VirtualFrame frame, DirectCallNode call, FastTarget fast, GoInterface gi) {
-        Object[] argVals = evalArgs(frame);
+    Object callFast(DirectCallNode call, FastTarget fast, GoInterface gi, Object[] argVals) {
         Object[] callArgs = new Object[argVals.length + 1];
         callArgs[0] = fast.passInterface() ? gi : gi.data();
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
@@ -185,7 +189,7 @@ public final class IfaceDispatchNode extends GoExprNode {
     }
 
     /** The general dispatch (probes, promoted/embedded targets, megamorphic sites). */
-    Object dispatchSlow(VirtualFrame frame, GoInterface gi) {
+    Object dispatchSlow(VirtualFrame frame, GoInterface gi, Object[] argVals) {
         Object data = gi.data(); // null for typed-nil: passed through as params[0]
         String descName = ((GoTypeDescriptor) gi.descriptor()).name();
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
@@ -231,7 +235,6 @@ public final class IfaceDispatchNode extends GoExprNode {
             }
             target = inner;
         }
-        Object[] argVals = evalArgs(frame);
         Object[] callArgs = new Object[argVals.length + 1];
         // P3-M3: promoted methods receive the embedded value — walk the
         // exporter's "index" path from the dynamic value. A value-receiver

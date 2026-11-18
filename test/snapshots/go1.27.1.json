@@ -2,9 +2,9 @@
   "format": "graalgo-behavior-snapshot/v2",
   "toolchain": "go1.27.1",
   "reference": "gc-a",
-  "recordedAt": "2026-11-18T04:53:37Z",
+  "recordedAt": "2026-11-18T11:28:19Z",
   "corpus": "test/differential/corpus",
-  "normalizer": "harness.Normalize/v2(trace-addresses-only)+NORMALIZE-opt-in+noiseSets",
+  "normalizer": "harness.Normalize/sha256:971d58982b1f0444+NORMALIZE-opt-in",
   "programs": [
     {
       "name": "01_hello",

@@ -6,6 +6,14 @@
 `GoStructDescriptor elemDesc` parameter; nothing else in the freeze
 changes.
 
+> **Scope: v1 only, ends at M3.** This freeze governs the v1 pipeline
+> (`gofrontend` → `frontend/v1` JSON → `NodeFactory` → v1 node classes and
+> `Intrinsics`). It does not constrain the recovery's `-toolexec`/GIR path
+> ([toolexec-design.md](../arch/toolexec-design.md)), whose contract is the
+> GIR schema ([schema.txt](../../internal/toolexec/ir/schema.txt)). At the M3
+> cutover (toolexec-design D11/D12) every surface below is deleted and this
+> document becomes historical.
+
 This document is the M9 interface freeze for **both** Phase-1 components.
 It supersedes the piecemeal freezes ([docs/freeze-stub.md](freeze-stub.md) for the GG-0020
 intrinsic surface, [docs/frontend-v1.md](../arch/frontend-v1.md) for the wire format) by collecting

@@ -93,10 +93,23 @@ public final class SchedulerCore {
      * Installs the launcher-wide scheduler. Returns the previous one.
      */
     public static SchedulerCore install(SchedulerCore next) {
-        SchedulerCore prev = installed;
-        installed = next;
-        return prev;
+        synchronized (SchedulerCore.class) {
+            SchedulerCore prev = installed;
+            installed = next;
+            // The fast-path exit flag mirrors the INSTALLED scheduler.
+            exitPending = next != null && next.exiting;
+            return prev;
+        }
     }
+
+    /**
+     * The scheduler whose goroutine runs on the calling thread (null off
+     * goroutine threads). Safepoints poll their OWN scheduler, not the
+     * installed one: a goroutine left behind by an earlier program (whose
+     * scheduler is no longer installed) must still freeze and unwind when
+     * that scheduler exits or is torn down.
+     */
+    private static final ThreadLocal<SchedulerCore> GOROUTINE_SCHEDULER = new ThreadLocal<>();
 
     /**
      * The installed scheduler; fail-fast when none (a loud error beats
@@ -123,11 +136,17 @@ public final class SchedulerCore {
      * runs), otherwise the quantum check for the current vthread.
      */
     public static void pollCurrentThreadStatic() {
+        // Common case first: a goroutine of the installed scheduler (one
+        // ThreadLocal lookup, as before). Only a thread that is not one
+        // pays the second lookup for its own scheduler.
         SchedulerCore sc = installed;
-        if (sc == null) {
+        if (sc != null && sc.pollIfGoroutine()) {
             return;
         }
-        sc.pollCurrentThread();
+        SchedulerCore own = GOROUTINE_SCHEDULER.get();
+        if (own != null && own != sc) {
+            own.pollCurrentThread();
+        }
     }
 
     /**
@@ -227,9 +246,6 @@ public final class SchedulerCore {
 
     /** Starts the drainer. Must precede the first spawn. */
     public void start() {
-        // A new program run in this process (an embedder's next context):
-        // the previous run's exit no longer applies.
-        exitPending = false;
         drainer.start();
         timerHeap.start();
     }
@@ -434,9 +450,14 @@ public final class SchedulerCore {
      * unaffected even with the replacement Safepoint on the classpath.
      */
     public void pollCurrentThread() {
+        pollIfGoroutine();
+    }
+
+    /** {@link #pollCurrentThread}; false when the caller is not one of this scheduler's goroutines. */
+    private boolean pollIfGoroutine() {
         GoroutineHandle h = currentHandle.get();
         if (h == null) {
-            return;
+            return false;
         }
         // fix-redmaster-r43: never yield inside a pin section. In gc,
         // pinning disables preemption, so a pinned goroutine is not
@@ -447,14 +468,15 @@ public final class SchedulerCore {
         // yield simply moves to the first poll after unpin — the
         // deadline stays expired, so no quantum is lost.
         if (PinLock.isHeldByCurrentThread()) {
-            return;
+            return true;
         }
         if (exiting) {
             if (h == fatalOwner) {
-                // The fatal reporter runs Error()/String() with the world
-                // stopped: it must never quantum-park (no admission
-                // happens any more), so it runs to completion.
-                return;
+                // The fatal reporter prints with the world stopped (Go
+                // Error()/String() already ran, world running, before it
+                // claimed the report): it must never quantum-park (no
+                // admission happens any more), so it runs to completion.
+                return true;
             }
             // Process exit in progress (main returned, os.Exit, fatal
             // panic/deadlock): freeze this goroutine at its safepoint so
@@ -467,6 +489,7 @@ public final class SchedulerCore {
         if (System.nanoTime() >= h.quantumDeadlineNanos) {
             quantumPark(h);
         }
+        return true;
     }
 
     private void awaitAck(GoroutineHandle h, long t) {
@@ -556,6 +579,7 @@ public final class SchedulerCore {
         long t = armPark(h);
         Thread vthread = goroutineThreads.apply(() -> {
             currentHandle.set(h);
+            GOROUTINE_SCHEDULER.set(this);
             h.thread = Thread.currentThread();
             GoroutineState state = new GoroutineState();
             h.state = state;
@@ -573,12 +597,16 @@ public final class SchedulerCore {
                 if (h.isMain) {
                     // gc: main returning exits the process with status 0,
                     // abandoning every other goroutine (runtime.main).
-                    requestExit(0);
+                    mainReturned();
                 }
             } catch (GoroutineTerminated gt) {
                 // Torn down by terminate(): the program is over.
             } catch (graalgo.runtime.PanicException pe) {
-                recordPanic(pe);
+                try {
+                    recordPanic(pe);
+                } catch (GoroutineTerminated gt) {
+                    // Torn down while rendering the report.
+                }
             } catch (graalgo.runtime.Goexit g) {
                 // Goexit: this goroutine just dies. For main, the program
                 // keeps running until the other goroutines finish or
@@ -607,6 +635,7 @@ public final class SchedulerCore {
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
                 GoroutineState.restore(prev);
                 currentHandle.remove();
+                GOROUTINE_SCHEDULER.remove();
                 if (!h.system) {
                     liveUser.decrementAndGet();
                 }
@@ -640,22 +669,65 @@ public final class SchedulerCore {
 
     /**
      * An uncaught Go panic is fatal to the whole process, in any
-     * goroutine (gc {@code fatalpanic}): print the panic chain and this
-     * goroutine's traceback, then exit 2 immediately — other goroutines
-     * are frozen, never awaited.
+     * goroutine (gc {@code gopanic} → {@code preprintpanics} →
+     * {@code fatalpanic}): render the panic chain, then print it and this
+     * goroutine's traceback and exit 2 — other goroutines are frozen,
+     * never awaited.
+     *
+     * <p>Rendering runs Go {@code Error()}/{@code String()} methods with
+     * the world still running, exactly like gc's {@code preprintpanics}:
+     * they may sleep, lock, use channels and other goroutines. Only once
+     * the text exists does the fatal report claim the process
+     * ({@link #beginFatal}) and stop the world. A method that panics
+     * yields gc's {@code fatal error: panic while printing panic value};
+     * every path ends in {@link #requestExit} (no hang).
      */
     private void recordPanic(graalgo.runtime.PanicException pe) {
         panicCount.incrementAndGet();
-        if (!beginFatal()) {
-            return; // another fatal error owns the report; process is exiting
+        synchronized (lifecycleLock) {
+            if (exiting) {
+                return; // exit/another fatal already owns the process
+            }
+            panicsRendering++;
         }
-        // gc preprintpanics: Error()/String() run on the panicking
-        // goroutine, before the world is considered dead.
-        String header = graalgo.runtime.PanicRendering.renderPanicChain(pe);
-        StringBuilder sb = new StringBuilder(header);
-        Object v = pe.goValue();
-        if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
-            sb.append("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n");
+        String header = null;
+        String throwText = null;
+        Throwable crash = null;
+        try {
+            header = graalgo.runtime.PanicRendering.renderPanicChain(pe);
+        } catch (graalgo.runtime.PanicException inner) {
+            throwText = "panic while printing panic value: " + panicWhilePrintingValue(inner);
+        } catch (graalgo.runtime.Goexit g) {
+            // gc's preprintpanics recovers nothing from a Goexit and its
+            // runtime then crashes ("fatal error: unknown pc"); graalgo
+            // reports the cause instead (still a fatal error, exit 2).
+            throwText = "panic while printing panic value: runtime.Goexit called";
+        } catch (GoroutineTerminated gt) {
+            throw gt;
+        } catch (RuntimeException | StackOverflowError e) {
+            crash = e;
+        } finally {
+            synchronized (lifecycleLock) {
+                panicsRendering--;
+            }
+        }
+        if (crash != null) {
+            recordCrash("internal error", crash);
+            return;
+        }
+        if (!beginFatal()) {
+            return; // exit/another fatal won while rendering: nothing prints
+        }
+        StringBuilder sb = new StringBuilder();
+        if (throwText != null) {
+            // gc throw(): "fatal error: <text>", then the traceback.
+            sb.append("fatal error: ").append(throwText).append('\n');
+        } else {
+            sb.append(header);
+            Object v = pe.goValue();
+            if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
+                sb.append("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n");
+            }
         }
         sb.append('\n');
         com.oracle.truffle.api.source.SourceSection throwSec = null;
@@ -672,6 +744,33 @@ public final class SchedulerCore {
         System.err.print(sb);
         System.err.flush();
         requestExit(2);
+    }
+
+    /**
+     * gc preprintpanics' recover: a {@code string} value prints as is,
+     * anything else as {@code type <dynamic type>}.
+     */
+    private static String panicWhilePrintingValue(graalgo.runtime.PanicException inner) {
+        Object v = inner.goValue();
+        Object d = inner.descriptor();
+        graalgo.values.GoKind kind = d instanceof graalgo.values.GoTypeDescriptor td ? td.kind() : null;
+        boolean plainString = inner.goTypeName() == null
+                && (kind == graalgo.values.GoKind.STRING || kind == graalgo.values.GoKind.UNTYPED_STRING
+                    || (kind == null && v instanceof graalgo.values.GoString));
+        if (plainString && v instanceof graalgo.values.GoString gs) {
+            return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        String type = null;
+        if (v instanceof graalgo.runtime.GoErrorValue e) {
+            type = e.typeName();
+        }
+        if (type == null) {
+            type = inner.goTypeName();
+        }
+        if (type == null && d instanceof graalgo.values.GoTypeDescriptor td) {
+            type = td.name();
+        }
+        return "type " + (type != null ? type : "?");
     }
 
     private void recordCrash(String what, Throwable t) {
@@ -702,26 +801,51 @@ public final class SchedulerCore {
     /** Set once the process is exiting: admissions stop, safepoints freeze. */
     private volatile boolean exiting;
     /**
-     * Process-wide mirror of {@link #exiting} for the strided
-     * {@code Safepoint.poll()} fast path: the poll countdown skips the
-     * full quantum check for up to {@code STRIDE - 1} polls, but a
-     * pending exit must still freeze a running goroutine at its very next
-     * safepoint (no extra output after exit/fatal begins), so the fast
-     * path reads this flag on every poll. Set together with
-     * {@link #exiting}; cleared when the next scheduler starts (a later
-     * program run in the same process, e.g. an embedder's next context).
+     * Mirror of the INSTALLED scheduler's {@link #exiting} for the strided
+     * {@code Safepoint.poll()} fast path (one static volatile read per
+     * poll): the poll countdown skips the full quantum check for up to
+     * {@code STRIDE - 1} polls, but a pending exit must still freeze a
+     * running goroutine at its very next safepoint (no extra output after
+     * exit/fatal begins). Written only under the class lock, by
+     * {@link #install} and by the installed scheduler's exit — so tearing
+     * down or exiting some other scheduler (an embedder's finished
+     * context) never sends the running program's polls down the slow
+     * path, and a newly installed scheduler starts clear. A goroutine of a
+     * non-installed scheduler still freezes, at its next full poll.
      */
     private static volatile boolean exitPending;
 
-    /** True once any installed scheduler began process exit. */
+    /** True once the installed scheduler began process exit. */
     public static boolean exitPending() {
         return exitPending;
+    }
+
+    /** Sets {@link #exiting}, mirroring it to the fast-path flag if installed. */
+    private void markExiting() {
+        exiting = true;
+        synchronized (SchedulerCore.class) {
+            if (installed == this) {
+                exitPending = true;
+            }
+        }
     }
     /** First fatal reporter wins the right to print (gc: one fatal trace). */
     private final java.util.concurrent.atomic.AtomicBoolean fatal =
             new java.util.concurrent.atomic.AtomicBoolean();
     /** The goroutine printing the fatal report (exempt from the freeze). */
     private volatile GoroutineHandle fatalOwner;
+    /**
+     * Guards the exit decision: {@link #exiting}, the fatal claim and
+     * {@link #panicsRendering} change together under it, so a goroutine
+     * panic and main returning (or os.Exit) agree on one outcome. A leaf
+     * lock (taken with the drainer lock held, never the reverse).
+     */
+    private final Object lifecycleLock = new Object();
+    /**
+     * Uncaught panics whose report is being rendered (gc
+     * {@code runningPanicDefers} for the preprintpanics phase).
+     */
+    private int panicsRendering;
     /** Live non-system goroutines (gc checkdead's user goroutine count). */
     private final AtomicInteger liveUser = new AtomicInteger();
     /** A main goroutine was spawned: deadlock detection is armed. */
@@ -734,6 +858,83 @@ public final class SchedulerCore {
 
     /** Main goroutine called runtime.Goexit. */
     private volatile boolean mainGoexited;
+
+    // ---- finalizers as possible wakers (gc checkdead vs. the finalizer queue) ----
+
+    /**
+     * Finalizers registered with this program and neither cancelled nor
+     * dispatched: their object may be (or become) collected, and the JDK
+     * Cleaner thread — outside the scheduler — then spawns the finalizer
+     * goroutine, which may wake a parked goroutine. gc queues finalizers
+     * synchronously during the GC that finds them; here the Cleaner runs
+     * shortly after, so a deadlock check must give it that moment.
+     */
+    private final AtomicInteger pendingFinalizers = new AtomicInteger();
+    /** Finalizers dispatched so far (monotonic); guarded by its monitor for waits. */
+    private final java.util.concurrent.atomic.AtomicLong finalizerEpoch =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Epoch for which a settle wait already ran (drainer thread only). */
+    private long settledFinalizerEpoch = -1;
+    /** Bound on one settle wait for the Cleaner (deadlock report delay). */
+    private static final long FINALIZER_SETTLE_MILLIS = 1000;
+
+    /** A finalizer was registered (runtime.SetFinalizer). */
+    public void finalizerRegistered() {
+        pendingFinalizers.incrementAndGet();
+    }
+
+    /** A pending finalizer was removed (SetFinalizer(x, nil)). */
+    public void finalizerCancelled() {
+        pendingFinalizers.decrementAndGet();
+    }
+
+    /** The Cleaner dispatched a finalizer (its goroutine is spawned, if any). */
+    public void finalizerDispatched() {
+        pendingFinalizers.decrementAndGet();
+        synchronized (finalizerEpoch) {
+            finalizerEpoch.incrementAndGet();
+            finalizerEpoch.notifyAll();
+        }
+        pokeScheduler();
+    }
+
+    /**
+     * Drainer side of the finalizer waker (lock held): when finalizers are
+     * pending and no settle wait ran for the current dispatch epoch, start
+     * one — a bounded wait for the Cleaner to dispatch, then a drainer
+     * poke — and suppress this report. A dispatch spawns a goroutine (no
+     * longer all parked); if none comes, the re-check reports the
+     * deadlock. A genuine deadlock with live finalizable objects is thus
+     * reported, at most {@link #FINALIZER_SETTLE_MILLIS} late.
+     */
+    private boolean deferForFinalizers() {
+        if (pendingFinalizers.get() <= 0) {
+            return false;
+        }
+        long epoch = finalizerEpoch.get();
+        if (settledFinalizerEpoch == epoch) {
+            return false;
+        }
+        settledFinalizerEpoch = epoch;
+        Thread.ofPlatform().daemon(true).name("graalgo-finalizer-settle").start(() -> {
+            long deadline = System.nanoTime() + FINALIZER_SETTLE_MILLIS * 1_000_000L;
+            synchronized (finalizerEpoch) {
+                while (finalizerEpoch.get() == epoch && !exiting) {
+                    long left = (deadline - System.nanoTime()) / 1_000_000L;
+                    if (left <= 0) {
+                        break;
+                    }
+                    try {
+                        finalizerEpoch.wait(left);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+            }
+            pokeScheduler();
+        });
+        return true;
+    }
 
     /**
      * Asks the drainer to re-evaluate scheduler-global conditions (the
@@ -749,17 +950,48 @@ public final class SchedulerCore {
         return mainGoexited;
     }
 
-    /** Claims the single fatal-report slot; false if another fatal won. */
+    /**
+     * Claims the single fatal-report slot and stops the world; false if
+     * another fatal won or process exit already began (gc: the first of
+     * exit/fatalpanic owns the process).
+     */
     private boolean beginFatal() {
-        if (!fatal.compareAndSet(false, true)) {
-            return false;
+        synchronized (lifecycleLock) {
+            if (exiting || !fatal.compareAndSet(false, true)) {
+                return false;
+            }
+            // The reporting goroutine keeps running to print; everyone
+            // else freezes at its next safepoint.
+            fatalOwner = currentHandle.get();
+            markExiting();
+            return true;
         }
-        // The reporting goroutine keeps running (it may call Go
-        // Error()/String() methods while rendering); everyone else freezes.
-        fatalOwner = currentHandle.get();
-        exiting = true;
-        exitPending = true;
-        return true;
+    }
+
+    /**
+     * Main returned (gc {@code runtime.main}): if another goroutine is
+     * rendering a panic report, yield to it a bounded number of times
+     * (gc: up to 1000 {@code Gosched} while {@code runningPanicDefers});
+     * if a fatal report then owns the process, park forever (gc
+     * {@code waitReasonPanicWait}) so the exit status is the report's 2,
+     * never 0 with panic output; otherwise exit 0.
+     */
+    private void mainReturned() {
+        for (int i = 0; i < 1000; i++) {
+            synchronized (lifecycleLock) {
+                if (panicsRendering == 0 || exiting) {
+                    break;
+                }
+            }
+            yieldCurrent();
+        }
+        synchronized (lifecycleLock) {
+            if (!fatal.get()) {
+                requestExit(0);
+                return;
+            }
+        }
+        freezeForExit();
     }
 
     /**
@@ -769,9 +1001,10 @@ public final class SchedulerCore {
      * immediately and running goroutines freeze at their next safepoint.
      */
     public void requestExit(int code) {
-        exiting = true;
-        exitPending = true;
-        exitCode.complete(code);
+        synchronized (lifecycleLock) {
+            markExiting();
+            exitCode.complete(code);
+        }
     }
 
     /** True when the calling thread is a scheduler goroutine. */
@@ -809,8 +1042,7 @@ public final class SchedulerCore {
      */
     public java.util.List<Thread> terminate(long timeoutMillis) throws InterruptedException {
         terminated = true;
-        exiting = true;
-        exitPending = true;
+        markExiting();
         drainer.stop();
         timerHeap.stop();
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
@@ -869,7 +1101,7 @@ public final class SchedulerCore {
             if (!mainGoexited) {
                 return false; // main not started yet / already exiting
             }
-            if (!beginFatal()) {
+            if (deferForFinalizers() || !beginFatal()) {
                 return false;
             }
             System.out.flush();
@@ -884,7 +1116,7 @@ public final class SchedulerCore {
             // (still starting/exiting): not a deadlock.
             return false;
         }
-        if (!beginFatal()) {
+        if (deferForFinalizers() || !beginFatal()) {
             return false;
         }
         user.sort(java.util.Comparator.comparingLong(h -> h.id));

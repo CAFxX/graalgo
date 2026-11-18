@@ -60,7 +60,7 @@
         "{SRC}"
       ],
       "vars": {
-        "GRAALGO_RUN": "${PHASE1_DIR}/../../internal/backend/graalgo-run"
+        "GRAALGO_RUN": "${GRAALGO_BACKEND_DIR}/graalgo-run"
       }
     }
   ],

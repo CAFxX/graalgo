@@ -156,3 +156,7 @@ a re-test trigger, per the verdict-scope rule.
 3. The `llvm-native` Maven artifact rename deserves one search in a later track to confirm whether
    Oracle is replacing Sulong's managed execution with a native LLVM path — relevant only as an
    early-warning input, not to this verdict.
+
+## Removed artifacts
+
+The 4 MB `exp/hello.ll` and `exp/goroutine.ll` LLVM IR dumps were removed from the repo 2026-11-18 (size gate); regenerate them with the `tinygo build -o <name>.ll <name>.go` commands quoted above.

@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"diffharness/internal/harness"
+	"diffharness/internal/typeparam"
 )
 
 func mkEntry(name string) SnapshotEntry {
@@ -69,7 +70,10 @@ func TestScrubEnvPaths(t *testing.T) {
 }
 
 func TestClassify(t *testing.T) {
-	exp := map[string]harness.ReviewedExclusion{"x": {File: "x", Reason: "deferred-parity", Detail: "d"}}
+	exp := map[string]harness.ReviewedExclusion{
+		"x": {File: "x", Reason: "deferred-parity", Detail: "d", Signature: harness.DiffSignature("stdout differs")},
+		"u": {File: "u", Reason: "deferred-parity", Detail: "unpinned"},
+	}
 	for _, c := range []struct {
 		name, diff string
 		infra      bool
@@ -78,6 +82,10 @@ func TestClassify(t *testing.T) {
 		{"y", "", false, "MATCH"},
 		{"y", "stdout differs", false, "DRIFT"},
 		{"x", "stdout differs", false, "EXPECTED"},
+		// G2: a listed program diverging in a NEW way (a crash instead of
+		// the pinned wrong output) is drift, not expected.
+		{"x", "exitCode: want=0 got=1 (stderr: fatal internal error)", false, "DRIFT"},
+		{"u", "stdout differs", false, "UNPINNED"},
 		{"x", "", false, "STALE"},
 		{"y", "buildOk", true, "INFRA"},
 	} {
@@ -92,7 +100,7 @@ func TestReport_FailsOnDriftStaleInfra(t *testing.T) {
 	if err := report([]verdict{{"a", "MATCH", ""}, {"b", "EXPECTED", "x"}}, 2, snap, "g"); err != nil {
 		t.Fatalf("clean report failed: %v", err)
 	}
-	for _, k := range []string{"DRIFT", "STALE", "REF-DRIFT"} {
+	for _, k := range []string{"DRIFT", "STALE", "UNPINNED", "REF-DRIFT"} {
 		if err := report([]verdict{{"a", k, ""}}, 1, snap, "g"); err == nil {
 			t.Errorf("%s did not fail", k)
 		}
@@ -166,5 +174,60 @@ func TestSnapshotRoundTripsInvalidUTF8(t *testing.T) {
 	}
 	if got.Programs[0].Stdout != raw || got.Programs[0].Stderr != "ok" {
 		t.Fatalf("output did not round-trip: %q / %q", got.Programs[0].Stdout, got.Programs[0].Stderr)
+	}
+}
+
+func TestRetryBudget(t *testing.T) {
+	if err := checkRetryBudget(nil, 0); err != nil {
+		t.Fatalf("no retries: %v", err)
+	}
+	if err := checkRetryBudget([]string{"a"}, 0); err == nil {
+		t.Fatal("a retried-away failure over budget 0 must fail (G6)")
+	}
+	if err := checkRetryBudget([]string{"a"}, 1); err != nil {
+		t.Fatalf("within budget: %v", err)
+	}
+}
+
+func TestSelectCheckedZeroCases(t *testing.T) {
+	snap := &SnapshotFile{}
+	if _, err := selectChecked(snap, nil, nil, ""); err == nil {
+		t.Fatal("empty corpus must fail (G8)")
+	}
+	if _, err := selectChecked(snap, nil, nil, ","); err == nil {
+		t.Fatal("-programs \",\" must fail (G8)")
+	}
+}
+
+// G2 for srctest/typeparam: a listed file whose divergence no longer
+// matches its pinned signature is DIVERGE, not EXPECTED.
+func TestSrctestVerdictSignature(t *testing.T) {
+	reasons := []string{"stdout differs at line 1"}
+	pinned := harness.DiffSignature(strings.Join(reasons, "\n"))
+	for _, c := range []struct {
+		c    typeparam.Comparison
+		want string
+	}{
+		{typeparam.Comparison{Same: false, Expected: "deferred-parity", ExpectedSig: pinned, Reasons: reasons}, "EXPECTED"},
+		{typeparam.Comparison{Same: false, Expected: "deferred-parity", ExpectedSig: pinned, Reasons: []string{"exit code 2 != 0"}}, "DIVERGE"},
+		{typeparam.Comparison{Same: false, Expected: "deferred-parity", Reasons: reasons}, "EXPECTED"},
+		{typeparam.Comparison{Same: true, Expected: "deferred-parity"}, "STALE"},
+		{typeparam.Comparison{Infra: true}, "INFRA"},
+	} {
+		if got := srctestVerdict(c.c); got != c.want {
+			t.Errorf("%+v: got %s want %s", c.c, got, c.want)
+		}
+	}
+}
+
+func TestMutantStatus(t *testing.T) {
+	if s, ok := mutantStatus(false, true); ok || s != "STILLBORN" {
+		t.Errorf("a mutant that fails to build must not count as detected (G5): %s %v", s, ok)
+	}
+	if _, ok := mutantStatus(true, false); ok {
+		t.Error("missed mutant passed")
+	}
+	if s, ok := mutantStatus(true, true); !ok || s != "DETECTED" {
+		t.Errorf("detected: %s %v", s, ok)
 	}
 }

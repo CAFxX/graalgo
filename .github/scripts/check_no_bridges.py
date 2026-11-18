@@ -30,7 +30,7 @@ Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
   3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
+  4. HEAD~1...HEAD         (direct master push: fast-forward merge + push, no PR —
                            checkout lands exactly on origin/master, so 1-3 are
                            all empty; inspect what the push itself introduced)
 
@@ -322,7 +322,7 @@ def check_no_bridges(diff):
 def main():
     diff, source = get_diff()
     if not diff.strip():
-        # Never pass vacuously: on the standard integration path (wt.py
+        # Never pass vacuously: on the standard integration path (fast-forward
         # integrate + push, no PR) every diff source above is empty only when
         # the checkout has no history to diff against. Skipping here is
         # exactly the false-green hole this check exists to close.

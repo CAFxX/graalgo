@@ -61,7 +61,7 @@ Flags:
                   the vendored tree for the pinned version when present,
                   else live GOROOT/src with a loud warning)
   --graalgo DIR   graalgo repo root the provided set is extracted from
-                  (default: $GRAALGO_ROOT, else ~/workspace/graalgo)
+                  (default: $GRAALGO_ROOT, else ~/dev/graalgo)
   --goos, --goarch
                   target platform for build-constraint filtering
                   (default: linux, amd64)
@@ -106,7 +106,7 @@ func defaultGoroot(stderr io.Writer) (string, error) {
 		if data, err := os.ReadFile(pinPath); err == nil {
 			if ver := strings.TrimSpace(string(data)); ver != "" {
 				if home, herr := os.UserHomeDir(); herr == nil {
-					cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+					cand := filepath.Join(home, "dev", "graalgo-stdlib", ver)
 					if fi, serr := os.Stat(cand); serr == nil && fi.IsDir() {
 						if err := linkdiffCrossCheckPin(graalgo, ver); err != nil {
 							return "", err
@@ -159,7 +159,7 @@ func defaultGraalgo() string {
 		return g
 	}
 	if h, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(h, "workspace", "graalgo")
+		return filepath.Join(h, "dev", "graalgo")
 	}
 	return ""
 }

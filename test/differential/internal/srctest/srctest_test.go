@@ -246,3 +246,32 @@ func TestClassifyNoFalseConcurrency(t *testing.T) {
 		t.Fatalf("want run, got %q", class)
 	}
 }
+
+// G4: only a compile rejection makes a file a negative test; a probe that
+// cannot run, or fails without a diagnostic for the file, is infra.
+func TestGcBuildsDistinguishesInfra(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "neg.go")
+	if err := os.WriteFile(src, []byte("package main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	script := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	if ok, err := gcBuilds(script("ok", "exit 0\n"), src); !ok || err != nil {
+		t.Errorf("builds: got %v %v", ok, err)
+	}
+	if ok, err := gcBuilds(script("rej", "echo './neg.go:1:1: missing function body' >&2; exit 1\n"), src); ok || err != nil {
+		t.Errorf("rejection: got %v %v, want false nil", ok, err)
+	}
+	if _, err := gcBuilds(script("broken", "echo 'go: cannot find GOROOT directory' >&2; exit 2\n"), src); err == nil {
+		t.Error("toolchain failure without a diagnostic for the file must be infra")
+	}
+	if _, err := gcBuilds(filepath.Join(dir, "missing-go"), src); err == nil {
+		t.Error("an unstartable toolchain must be infra")
+	}
+}

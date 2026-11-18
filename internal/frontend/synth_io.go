@@ -10,7 +10,7 @@
 // wire document (shared type/object tables) via exportSyntheticPackages.
 //
 // Exact gc 1.27.1 public API signatures (io.go, multi.go, pipe.go —
-// vendored at ~/workspace/graalgo-stdlib/go1.27.1/io/). io/fs and
+// vendored at ~/dev/graalgo-stdlib/go1.27.1/io/). io/fs and
 // io/ioutil are separate packages and explicitly OUT of scope.
 //
 // WHAT IS REAL vs FAIL-FAST — verified against the exporter, not

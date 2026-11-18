@@ -1,0 +1,5 @@
+-- stdout --
+main returns
+
+-- stderr (normalized) --
+-- exit 0 --

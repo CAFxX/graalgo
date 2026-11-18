@@ -1,0 +1,7 @@
+# Tracked files allowed past the size/binary gate (check_tracked_files.py).
+# Format: <glob>  # <reason>. Every entry needs a reason; an entry that no
+# longer matches an offending file fails the gate (stale).
+internal/backend/truffle/lib/*.jar  # pinned Truffle/GraalVM jars, checksummed in lib/SHA256SUMS.txt (lib/LIB.md); no network fetch in the build
+internal/frontend/testdata/timeintr_value.json  # v1 frontend golden wire document (deleted with the v1 frontend at M3)
+test/corpus/wave3/compress/bzip2/00_decompress.go  # corpus program embedding a bzip2 test vector as a Go literal
+tools/stdlib-fork/vendor-manifest.json  # per-file hash manifest of the vendored go1.27.1 stdlib tree (tools/stdlib-vendor verify)

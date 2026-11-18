@@ -28,7 +28,7 @@ Verified against the tree at `cbb2ebd0`: `launcher.Compose` sets
 environment or the `go env -w` file), prepends `-toolexec=…/libexec/compile`
 and `-tags=purego` to `GOFLAGS`, and the launcher's `version` path prints the
 stock line with ` graalgo-<version>` appended
-(`TestVersionAppended` in `cmd/graalgo-launcher`).
+(`TestVersionAppended` in `internal/toolexec/cmd/graalgo-launcher`).
 
 ## Deviations
 

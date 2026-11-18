@@ -332,3 +332,7 @@ Note: the stub/ tree is generated deterministically by `stub_build.py` from
 the checksummed harness sources + GOROOT go1.27.1; it is not checksummed
 separately because it is a build artifact. Rebuild with
 `python3 stub_build.py`.
+
+## Removed artifacts
+
+`panama/libchecksum.so` (a compiled shared object) was removed from the repo 2026-11-18 (no tracked binaries); rebuild it from the C source in [panama/](panama/) before running `PanamaDemo.java`.

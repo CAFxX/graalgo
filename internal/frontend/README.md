@@ -1,5 +1,11 @@
 # gofrontend — Go frontend service (WS B)
 
+> **v1, frozen, deleted at M3.** This is the v1 frontend. No new
+> `synth_*.go` may be added; the whole directory (gofrontend, JSON wire
+> format, synthetic stdlib, generators, `p3frontend/`, `v2/`) is deleted at
+> the M3 cutover ([toolexec-design.md](../../docs/arch/toolexec-design.md)
+> D11). New compiler work goes to [internal/toolexec/](../toolexec/).
+
 Type-checks a single-file Go program with the vendored `go/*` packages and
 emits the `frontend/v1` typed-AST JSON document to stdout.
 
@@ -31,7 +37,7 @@ python3 tools/validate_frontend_v1.py --selftest                 # validator sel
 ```
 
 Regenerating goldens after an *intentional* wire change (must ship with a
-[`docs/frontend-v1.md`](../../docs/arch/frontend-v1.md) update in
+[`docs/arch/frontend-v1.md`](../../docs/arch/frontend-v1.md) update in
 the same change):
 
 ```sh
@@ -51,14 +57,15 @@ owns the extension (e.g. `if` → WS E, imports → WS G).
 ## Java side
 
 `NodeFactory` + node classes live in
-[`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/)
-(worker-1 owns `make`/`out/` — verify to `/tmp` scratch, do not run `make`):
+[`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/).
+`NodeFactoryTest` is not in any gate (v1, frozen); to run it by hand after
+`make build`:
 
 ```sh
-CP=$(ls ../../phases/phase1/lib/*.jar | tr '\n' ':')
-javac -Xlint:deprecation -Werror -cp "$CP" -d /tmp/wsB-classes ../backend/truffle/src/main/java/graalgo/frontend/*.java
-javac -Xlint:deprecation -Werror -cp "$CP:/tmp/wsB-classes" -d /tmp/wsB-classes javatest/NodeFactoryTest.java
-java --enable-native-access=ALL-UNNAMED -cp "/tmp/wsB-classes:$CP" NodeFactoryTest javatest/
+CP=$(ls ../backend/truffle/lib/*.jar | tr '\n' ':')
+OUT=$(mktemp -d)
+javac -Xlint:deprecation -Werror -cp "../backend/truffle/out/classes:$CP" -d "$OUT" javatest/NodeFactoryTest.java
+java --enable-native-access=ALL-UNNAMED -cp "$OUT:../backend/truffle/out/classes:$CP" NodeFactoryTest javatest/
 ```
 
 `NodeFactoryTest` builds both golden programs from JSON, executes them on the
@@ -69,7 +76,7 @@ registration) and `Json` unit checks.
 
 ## GG status
 
-`GG-0012`/GG-0013/GG-0044 stay **locked**: WS B sources are landed and tested,
-but activation happens at M2 when `NodeFactory` builds straight-line programs
-end-to-end through the `graalgo-run` launcher (per PLAN.md). See
-[`../../phases/phase1/CHECKPOINT.md`](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).
+The requirement status of GG-0066 (which superseded `GG-0012`), GG-0013 and
+GG-0044 lives in [requirements/](../../requirements/) (`tools/req trace GG-0066`); this
+README does not duplicate it. History:
+[CHECKPOINT.md](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).

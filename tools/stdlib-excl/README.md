@@ -37,7 +37,7 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 `--src` default -- canonical stdlib-tree resolution (shared with
 `stdlib-linkdiff`; the two implementations are documented as twins):
 1. the vendored tree for the pinned version,
-   `~/workspace/graalgo-stdlib/<ver>/` (flat layout -- the target dir
+   `~/dev/graalgo-stdlib/<ver>/` (flat layout -- the target dir
    IS the src root, no `src/` subdir), used only when the committed
    `vendor-manifest.json` records the same `goVersion` as
    `tools/stdlib-fork/pinned-version.txt` (a manifest/pin skew

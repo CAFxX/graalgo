@@ -44,11 +44,13 @@ mkdir -p "$OUTDIR"
 # Tmp discipline: never write to /tmp (512M tmpfs on the VM).
 export TMPDIR="${TMPDIR:-$OUTDIR/tmp}"
 mkdir -p "$TMPDIR"
-export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-stdlib-gate}"
+export GOCACHE="${GOCACHE:-$HOME/.cache/graalgo/gocache-stdlib-gate}"
 mkdir -p "$GOCACHE"
 
 echo "== [0/3] build =="
-make -C "$GR" build > "$OUTDIR/build.log" 2>&1 || {
+# `generate` too: every wave runner needs internal/frontend/gofrontend
+# (test/lib/infra.sh fails INFRA without it).
+make -C "$GR" generate build > "$OUTDIR/build.log" 2>&1 || {
   echo "GATE RED: build failed (see $OUTDIR/build.log)"
   exit 1
 }
@@ -77,7 +79,7 @@ outdir, overall = sys.argv[1], sys.argv[2]
 report = {
     "layer": 3,
     "name": "stdlib + scripts (wave corpora differential)",
-    "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+    "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
     "go_version": "1.27.1",
     "waves": {},
     "failures": [],
@@ -89,14 +91,21 @@ for wave in ("wave1", "wave2", "wave3"):
     except OSError:
         report["waves"][wave] = {"status": "no-log"}
         continue
-    m = re.search(r"== differential: (\d+) passed, (\d+) scope-limited, (\d+) failed ==", log)
+    # The runners print "... N failed, M infra-error ==" since the test-lib
+    # exit contract (test/lib/infra.sh); the old pattern without the infra
+    # count never matched, so every wave read as passed=-1.
+    m = re.search(r"== differential: (\d+) passed, (\d+) scope-limited, (\d+) failed(?:, (\d+) infra-error)? ==", log)
     fails = [l for l in log.splitlines() if l.startswith("FAIL ")]
+    infra = int(m.group(4) or 0) if m else -1
     report["waves"][wave] = {
-        "status": "RED" if fails else "GREEN",
+        "status": "RED" if fails or infra != 0 or not m else "GREEN",
         "passed": int(m.group(1)) if m else -1,
         "scope_limited": int(m.group(2)) if m else -1,
         "failed": int(m.group(3)) if m else len(fails),
+        "infra": infra,
     }
+    if not m:
+        report["failures"].append({"wave": wave, "line": "no differential summary line (runner died before reporting)", "triage": "INFRA"})
     for f in fails:
         # Four-way triage placeholder: the gate runner records the raw
         # failure; classification (graalgo-bug / upstream-change /

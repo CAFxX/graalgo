@@ -17,7 +17,7 @@ escape analysis incl. cross-goroutine.
 
 ---
 
-## 1. API sweep log (pages cached under `.t4-wave2-cache/`)
+## 1. API sweep log (pages were cached under `.t4-wave2-cache/`; that cache was removed from the repo 2026-11-18 — re-fetch the URLs below to reproduce)
 
 | # | Query | Date | Cached as | Result |
 |---|-------|------|-----------|--------|

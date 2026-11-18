@@ -213,10 +213,13 @@ public final class ReflectValues {
         return switch (elemKind) {
             // Narrow backing stores (D5): sign-extend on load, zero-extend
             // for unsigned kinds. Mirrors Boxing.arrayGet.
-            case INT8 -> Integer.valueOf(((byte[]) array)[i]);
-            case UINT8 -> Integer.valueOf(((byte[]) array)[i] & 0xFF);
-            case INT16 -> Integer.valueOf(((short[]) array)[i]);
-            case UINT16 -> Integer.valueOf(((short[]) array)[i] & 0xFFFF);
+            // A pointer to a boxed narrow scalar (an Integer) is carried by
+            // UnsafeTable.makeCarrier as a one-element int[], not byte[]/
+            // short[]: the box does not know its Go kind. Narrow on load.
+            case INT8 -> Integer.valueOf(array instanceof int[] ia ? (byte) ia[i] : ((byte[]) array)[i]);
+            case UINT8 -> Integer.valueOf((array instanceof int[] ia ? ia[i] : ((byte[]) array)[i]) & 0xFF);
+            case INT16 -> Integer.valueOf(array instanceof int[] ia ? (short) ia[i] : ((short[]) array)[i]);
+            case UINT16 -> Integer.valueOf((array instanceof int[] ia ? ia[i] : ((short[]) array)[i]) & 0xFFFF);
             case INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
             case INT64, UINT64 -> Long.valueOf(((long[]) array)[i]);
             case FLOAT32 -> Float.valueOf(((float[]) array)[i]);
@@ -231,8 +234,37 @@ public final class ReflectValues {
         switch (elemKind) {
             // Narrowing conversion preserves the low bits; reads re-extend
             // per signedness. Mirrors Boxing.arraySet.
-            case INT8, UINT8 -> ((byte[]) array)[i] = ((Integer) boxed).byteValue();
-            case INT16, UINT16 -> ((short[]) array)[i] = ((Integer) boxed).shortValue();
+            // int[] carrier of a boxed narrow scalar (see arrayGet): store
+            // the value as the Integer box convention holds it (signed
+            // kinds sign-extended, unsigned zero-extended).
+            case INT8 -> {
+                if (array instanceof int[] ia) {
+                    ia[i] = ((Integer) boxed).byteValue();
+                } else {
+                    ((byte[]) array)[i] = ((Integer) boxed).byteValue();
+                }
+            }
+            case UINT8 -> {
+                if (array instanceof int[] ia) {
+                    ia[i] = ((Integer) boxed) & 0xFF;
+                } else {
+                    ((byte[]) array)[i] = ((Integer) boxed).byteValue();
+                }
+            }
+            case INT16 -> {
+                if (array instanceof int[] ia) {
+                    ia[i] = ((Integer) boxed).shortValue();
+                } else {
+                    ((short[]) array)[i] = ((Integer) boxed).shortValue();
+                }
+            }
+            case UINT16 -> {
+                if (array instanceof int[] ia) {
+                    ia[i] = ((Integer) boxed) & 0xFFFF;
+                } else {
+                    ((short[]) array)[i] = ((Integer) boxed).shortValue();
+                }
+            }
             case INT32, UINT32 -> ((int[]) array)[i] = ((Integer) boxed).intValue();
             case INT64, UINT64 -> ((long[]) array)[i] = ((Long) boxed).longValue();
             case FLOAT32 -> ((float[]) array)[i] = ((Float) boxed).floatValue();
