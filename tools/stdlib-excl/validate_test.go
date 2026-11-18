@@ -123,7 +123,7 @@ func TestValidateAcceptsSpecReasonCode(t *testing.T) {
 	dir := t.TempDir()
 	src := fixtureSrc(t, "runtime/cgo")
 	list := testList(t, dir, "list.yaml", "2",
-		"- file: runtime/cgo\n  reason: deferred-parity\n  detail: BUG-0028\n")
+		"- file: runtime/cgo\n  reason: deferred-parity\n  detail: BUG-0034\n")
 	base := testList(t, dir, "base.yaml", "1", "")
 	if _, stderr, err := runValidateOK(t, list, src, base, 1000, 25); err != nil {
 		t.Fatalf("SPEC §5.6 code must be accepted: %v\n%s", err, stderr)

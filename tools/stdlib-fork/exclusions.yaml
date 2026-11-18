@@ -27,7 +27,7 @@
 #                         first, darwin deferred, Windows out of v1 scope
 #                         (SPEC §3.8, GG-0023).
 #   CGO                 — package requires `import "C"`; cgo runs through
-#                         Panama (GG-0022), not implemented yet (BUG-0028;
+#                         Panama (GG-0022), not implemented yet (BUG-0034;
 #                         GG-0058 bans it only in momo module code).
 #   ASM_UNSUPPORTED       — package's .s/.S/.sx files sit in the P3-M6 asm
 #                         inventory's "unsupported" (fail-fast) category:
@@ -54,7 +54,7 @@
 # v4 (2026-11-18, ci-green2 lane): entries use the SPEC §5.6 codes directly
 # (the validator accepts them; the refined codes stay as vocabulary).
 # runtime/cgo and plugin are graalgo gaps, not backend-specific behavior:
-# deferred-parity with BUG-0028 / BUG-0029 (diffharness registers gate).
+# deferred-parity with BUG-0034 / BUG-0035 (diffharness registers gate).
 # CGO's class corrected to deferred-parity.
 version: 4
 reason_codes:
@@ -62,7 +62,7 @@ reason_codes:
   description: outside OS/arch scope (linux/amd64 first; darwin deferred; Windows out of v1 per SPEC §3.8 GG-0023)
   class: backend-specific
 - code: CGO
-  description: requires import "C"; cgo runs through Panama per GG-0022 and is not implemented yet (BUG-0028); GG-0058 bans it only in momo module code
+  description: requires import "C"; cgo runs through Panama per GG-0022 and is not implemented yet (BUG-0034); GG-0058 bans it only in momo module code
   class: deferred-parity
 - code: ASM_UNSUPPORTED
   description: package's .s/.S/.sx files are in the asm inventory's unsupported (fail-fast) category -- no replacement strategy decided yet (SPEC §2.8; ADR-0007)
@@ -82,7 +82,7 @@ reason_codes:
 exclusions:
 - file: runtime/cgo
   reason: deferred-parity
-  detail: BUG-0028 (no cgo; GG-0022 requires cgo through Panama, WP-CGO1/2): runtime/cgo can neither build nor test on graalgo today. (Was CGO/backend-specific — cgo is a graalgo gap, not behavior gc leaves to the implementation.)
+  detail: BUG-0034 (no cgo; GG-0022 requires cgo through Panama, WP-CGO1/2): runtime/cgo can neither build nor test on graalgo today. (Was CGO/backend-specific — cgo is a graalgo gap, not behavior gc leaves to the implementation.)
 - file: plugin
   reason: deferred-parity
-  detail: BUG-0029 (plugin not implemented; GG-0051 requires plugin.Open in mode (a), a documented error in (b)/(c); WP-PLG). (Was UNSUPPORTED_FEATURE/backend-specific.)
+  detail: BUG-0035 (plugin not implemented; GG-0051 requires plugin.Open in mode (a), a documented error in (b)/(c); WP-PLG). (Was UNSUPPORTED_FEATURE/backend-specific.)

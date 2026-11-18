@@ -20,7 +20,7 @@
 #   layer 3 (stdlib+scripts):   per-release gate — wave corpora differential
 #                               (`stdlib-gate.yml`: manual dispatch only —
 #                               its weekly schedule is DISABLED until the
-#                               wave corpora are triaged, BUG-0027 in
+#                               wave corpora are triaged, BUG-0033 in
 #                               docs/dev/bugs.md; it was red 5/5)
 #   layer 4 (fuzz soak):        overnight per release — generative
 #                               differential fuzzing (`fuzz-soak.yml`:

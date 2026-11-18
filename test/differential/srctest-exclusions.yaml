@@ -32,7 +32,7 @@
 #       implementation (unspecified-behavior), and pins the divergence
 #       signature except where the text is not reproducible (timings,
 #       timestamps). Local run: JOBS=1, -Xmx2g.
-#   5 (2026-11-18, ci-green2 lane): gc2.go (CI-only timeout, BUG-0026)
+#   5 (2026-11-18, ci-green2 lane): gc2.go (CI-only timeout, BUG-0032)
 #       added. args.go, blank.go, bigmap.go, const3.go and defer.go,
 #       reported DIVERGE/STALE by earlier CI runs, re-run locally with
 #       `srctest run -files` (JOBS=1, -Xmx2g): blank.go EXPECTED as pinned,
@@ -110,7 +110,7 @@ exclusions:
   signature: 2b3f360a53c9cbf6
 - file: gc2.go
   reason: deferred-parity
-  detail: BUG-0026 (runtime.GC() is a ~27 ms JVM full GC over the v1 pipeline's ~410 MB live heap; 800 calls exceed the 90 s timeout at JOBS=4 on the CI runner — a JOBS=1 local run takes ~25 s, matches gc and reports this entry STALE); observed: timeout: ref=false alt=true
+  detail: BUG-0032 (runtime.GC() is a ~27 ms JVM full GC over the v1 pipeline's ~410 MB live heap; 800 calls exceed the 90 s timeout at JOBS=4 on the CI runner — a JOBS=1 local run takes ~25 s, matches gc and reports this entry STALE); observed: timeout: ref=false alt=true
   signature: 4ba13b35783be537
 - file: gcgort.go
   reason: deferred-parity

@@ -28,12 +28,12 @@
 # the 66 stale files are pruned (individual entries and group members).
 # Every deferred-parity entry now cites a docs/dev/bugs.md id and every
 # individual one pins its signature (diffharness registers gate); the cgo
-# entry is deferred-parity (BUG-0028: cgo is a graalgo gap, GG-0022).
+# entry is deferred-parity (BUG-0034: cgo is a graalgo gap, GG-0022).
 version: 6
 exclusions:
 - file: issue54765.go
   reason: deferred-parity
-  detail: BUG-0028 (no cgo: CGO_ENABLED=0 per ADR-0010 DV4; cgo via Panama is WP-CGO1/2, GG-0022): the //go:build cgo file is classified exclude and never runs
+  detail: BUG-0034 (no cgo: CGO_ENABLED=0 per ADR-0010 DV4; cgo via Panama is WP-CGO1/2, GG-0022): the //go:build cgo file is classified exclude and never runs
   signature: unpinned (never run: //go:build cgo)
 - file: append.go
   reason: deferred-parity
@@ -60,19 +60,19 @@ exclusions:
   detail: "tests gc -m inliner diagnostics (\"can inline\" output for //go:noinline stenciling); gc compiler-diagnostic text is not a portability observable"
 - file: typeswitch2.go
   reason: deferred-parity
-  detail: BUG-0030 (v1 type switch matches type-parameter cases by descriptor identity); observed: stdout differs at line 8: ref="T 10" alt="int 10"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stdout differs at line 8: ref="T 10" alt="int 10"
   signature: 3aedc266ff5610d0
 - file: typeswitch6.go
   reason: deferred-parity
-  detail: BUG-0030 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 2: ref="T" alt="int"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 2: ref="T" alt="int"
   signature: 03bd1c94fdc12ec5
 - file: typeswitch7.go
   reason: deferred-parity
-  detail: BUG-0030 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 2: ref="barT" alt="myint"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 2: ref="barT" alt="myint"
   signature: f98aa174dd621a41
 - file: typeswitch1.go
   reason: deferred-parity
-  detail: BUG-0030 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 8: ref="T" alt="int"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 8: ref="T" alt="int"
   signature: 19843ecf43a57553
 groups:
 - group: v1-multi-file
