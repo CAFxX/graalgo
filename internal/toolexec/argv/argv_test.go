@@ -215,8 +215,29 @@ func TestApplyRewrites(t *testing.T) {
 		{"/a", "/a=>r", "r"},
 		{"/a/b.go", "", "/a/b.go"},
 	} {
-		if got := ApplyRewrites(tc.name, tc.rules); got != tc.want {
+		if got, _ := ApplyRewrites(tc.name, tc.rules); got != tc.want {
 			t.Errorf("ApplyRewrites(%q, %q) = %q, want %q", tc.name, tc.rules, got, tc.want)
+		}
+	}
+}
+
+// AbsFile is cmd/internal/objabi.AbsFile: the file name gc records for
+// positions (runtime.Caller, tracebacks). Coordinator review (g): the W1
+// version differed on identity rewrites, case/backslash folding in path
+// prefixes, a path equal to GOROOT and the empty result.
+func TestAbsFile(t *testing.T) {
+	for _, tc := range []struct{ dir, file, rules, goroot, want string }{
+		{"/w", "x.go", "", "/g", "/w/x.go"},
+		{"/w", "/g/src/fmt/print.go", "", "/g", "$GOROOT/src/fmt/print.go"},
+		{"", "/g", "", "/g", "$GOROOT"},                             // equal to GOROOT
+		{"", "/g/src/x.go", "/g/src=>/g/src", "/g", "/g/src/x.go"}, // identity rewrite: rewritten, no $GOROOT
+		{"", "/A/b.go", "/a=>r", "", "r/b.go"},                     // prefix match folds case
+		{"", `/a\b.go`, "/a=>r", "", `r\b.go`},                     // and backslash
+		{"", "/a", "/a=>", "", "??"},                                // empty result
+		{"/w", "x.go", "/w=>", "/g", "x.go"},
+	} {
+		if got := AbsFile(tc.dir, tc.file, tc.rules, tc.goroot); got != tc.want {
+			t.Errorf("AbsFile(%q, %q, %q, %q) = %q, want %q", tc.dir, tc.file, tc.rules, tc.goroot, got, tc.want)
 		}
 	}
 }

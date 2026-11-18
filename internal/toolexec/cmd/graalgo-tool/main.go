@@ -42,10 +42,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
+	"syscall"
+	"time"
 
 	"graalgo-toolexec/archive"
 	"graalgo-toolexec/argv"
@@ -138,6 +142,15 @@ func run(argv []string) int {
 	case err == nil:
 		return 0
 	case errors.As(err, &ee):
+		if ws, ok := ee.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			// Die of the same signal, as the stock tool did, so that cmd/go
+			// (and the user) see the signal rather than an exit status.
+			sig := ws.Signal()
+			signal.Reset(sig)
+			syscall.Kill(syscall.Getpid(), sig)
+			time.Sleep(time.Second) // delivery is asynchronous
+			return 128 + int(sig)   // the signal is ignored or not terminating
+		}
 		return ee.ExitCode()
 	default:
 		fatalf("%v", err)
@@ -213,6 +226,13 @@ func toolHash(name string) string {
 		}
 	}
 	h := sha256.New()
+	if name == "link" {
+		// Link-time settings read from the environment change the output
+		// without changing any input cmd/go hashes.
+		for _, k := range []string{"GRAALGO_RUNNER", "GRAALGO_RACE"} {
+			fmt.Fprintf(h, "%s=%q\n", k, os.Getenv(k))
+		}
+	}
 	for _, f := range files {
 		data, err := os.ReadFile(f)
 		if err != nil {
@@ -242,9 +262,10 @@ func stubPath() string {
 
 // flags is the subset of a tool's command line the wrapper interprets.
 type flags struct {
-	values map[string]string // -name value / -name=value
-	bools  map[string]bool   // -name
-	rest   []string          // trailing non-flag arguments
+	values map[string]string   // -name value / -name=value (last occurrence)
+	multi  map[string][]string // every occurrence of each value flag
+	bools  map[string]bool     // -name
+	rest   []string            // trailing non-flag arguments
 }
 
 // parseFlags extracts the named value flags and boolean flags from args.
@@ -253,7 +274,7 @@ type flags struct {
 // do not start with "-", which is how cmd/go lays out compile and link
 // command lines.
 func parseFlags(args []string, valueFlags, boolFlags []string) flags {
-	fl := flags{values: map[string]string{}, bools: map[string]bool{}}
+	fl := flags{values: map[string]string{}, multi: map[string][]string{}, bools: map[string]bool{}}
 	isValue := map[string]bool{}
 	for _, v := range valueFlags {
 		isValue[v] = true
@@ -275,8 +296,10 @@ func parseFlags(args []string, valueFlags, boolFlags []string) flags {
 		switch {
 		case isValue[name] && hasVal:
 			fl.values[name] = val
+			fl.multi[name] = append(fl.multi[name], val)
 		case isValue[name] && i+1 < len(args):
 			fl.values[name] = args[i+1]
+			fl.multi[name] = append(fl.multi[name], args[i+1])
 			if i+1 >= end {
 				end = i + 2
 			}
@@ -312,8 +335,10 @@ func compile(inv *argv.Invocation) {
 	if fl.values["coveragecfg"] != "" {
 		fatalf("%s: coverage (-cover) not yet supported by the graalgo backend", pkgPath)
 	}
-	if strings.Contains(","+fl.values["d"]+",", ",libfuzzer") {
-		fatalf("%s: fuzzing instrumentation (-d=libfuzzer) not supported by the graalgo backend", pkgPath)
+	for _, d := range fl.multi["d"] { // -d may be given more than once
+		if strings.Contains(","+d+",", ",libfuzzer") {
+			fatalf("%s: fuzzing instrumentation (-d=libfuzzer) not supported by the graalgo backend", pkgPath)
+		}
 	}
 	if fl.bools["msan"] || fl.bools["asan"] {
 		fatalf("%s: -msan/-asan not supported by the graalgo backend", pkgPath)
@@ -394,6 +419,28 @@ func readImportcfg(path string) (map[string]string, error) {
 	return pkgFile, nil
 }
 
+// readModinfo returns the "modinfo" payload of an importcfg.link (the
+// main module's build info, which cmd/go hands to the linker this way).
+func readModinfo(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(strings.TrimSpace(line), "modinfo "); ok {
+			v, err := strconv.Unquote(rest)
+			if err != nil {
+				return "", fmt.Errorf("importcfg modinfo: %v", err)
+			}
+			return v, nil
+		}
+	}
+	return "", nil
+}
+
 // emitIR type-checks the package with go/types, importing dependencies
 // from the gc export data named by importcfg, and returns its encoded GIR.
 func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, embed *emit.EmbedConfig, files []string) ([]byte, error) {
@@ -417,11 +464,16 @@ func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, embed *emit.Emb
 		}
 		return os.Open(file)
 	}
+	goos, goarch := targetPlatform()
+	sizes := types.SizesFor("gc", goarch)
+	if sizes == nil {
+		return nil, fmt.Errorf("no gc layout for GOARCH=%s", goarch)
+	}
 	info := emit.NewInfo()
 	conf := types.Config{
 		Importer:  importer.ForCompiler(fset, "gc", lookup),
 		GoVersion: lang,
-		Sizes:     types.SizesFor("gc", runtime.GOARCH),
+		Sizes:     sizes,
 	}
 	tpkg, err := conf.Check(pkgPath, fset, astFiles, info)
 	if err != nil {
@@ -430,7 +482,7 @@ func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, embed *emit.Emb
 	}
 	f, _, err := emit.Emit(emit.Config{
 		Fset: fset, Pkg: tpkg, Info: info, Files: astFiles, Lang: lang, Std: std,
-		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH,
+		GOOS: goos, GOARCH: goarch,
 		FileName: func(name string) string { return absFile(name, trimpath) },
 		Embed:    embed,
 	})
@@ -440,22 +492,29 @@ func emitIR(pkgPath, lang, importcfg, trimpath string, std bool, embed *emit.Emb
 	return ir.Encode(f)
 }
 
-// absFile is the file name gc records for a source file (cmd/internal/
-// objabi.AbsFile): made absolute against the working directory, then the
-// -trimpath rewrites, else a $GOROOT prefix (design §6, -trimpath).
+// targetPlatform is the GOOS/GOARCH the stock compiler targets in this
+// invocation: cmd/go puts them in the tool's environment when they differ
+// from the process environment (work.makeCfgChangedEnv, which also covers
+// `go env -w`); otherwise the compiler uses its built-in default, the
+// host of the toolchain that also built graalgo-tool.
+func targetPlatform() (goos, goarch string) {
+	goos, goarch = os.Getenv("GOOS"), os.Getenv("GOARCH")
+	if goos == "" {
+		goos = runtime.GOOS
+	}
+	if goarch == "" {
+		goarch = runtime.GOARCH
+	}
+	return goos, goarch
+}
+
+// absFile is the file name gc records for a source file
+// (cmd/internal/objabi.AbsFile, ported verbatim in argv.AbsFile): made
+// absolute against the working directory, then the -trimpath rewrites,
+// else a $GOROOT prefix (design §6, -trimpath).
 func absFile(name, trimpath string) string {
-	if !filepath.IsAbs(name) {
-		if wd, err := os.Getwd(); err == nil {
-			name = filepath.Join(wd, name)
-		}
-	}
-	if out := argv.ApplyRewrites(name, trimpath); out != name {
-		return out
-	}
-	if root := os.Getenv("GOROOT"); root != "" && strings.HasPrefix(name, root+"/") {
-		return "$GOROOT" + name[len(root):]
-	}
-	return name
+	wd, _ := os.Getwd()
+	return argv.AbsFile(wd, name, trimpath, os.Getenv("GOROOT"))
 }
 
 func link(args []string) {
@@ -485,7 +544,14 @@ func link(args []string) {
 		paths = append(paths, p)
 	}
 	sort.Strings(paths)
-	b := &bundle.Bundle{Runner: os.Getenv("GRAALGO_RUNNER")}
+	modinfo, err := readModinfo(fl.values["importcfg"])
+	if err != nil {
+		fatalf("link: %v", err)
+	}
+	// -X settings (the user's -ldflags and cmd/go's own, e.g.
+	// runtime.godebugDefault) and the module build info travel in the
+	// bundle; the backend applies them (design §3.6).
+	b := &bundle.Bundle{Runner: os.Getenv("GRAALGO_RUNNER"), X: fl.multi["X"], ModInfo: modinfo}
 	seenMain := false
 	for _, p := range paths {
 		ir, err := archive.Read(pkgFile[p], archive.IRMember)
