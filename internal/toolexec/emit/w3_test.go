@@ -364,3 +364,17 @@ func F() (string, func(func(int) string) string) {
 		t.Errorf("method value: %+v (%s)", mv, typeKey(f, mv[0].Type))
 	}
 }
+
+// T.M[U] — a method expression of an explicitly instantiated generic
+// method (found by the differential harness).
+func TestExplicitGenericMethodExpr(t *testing.T) {
+	f := emitSrc(t, `package p
+type S[T any] struct{ v T }
+func (s S[T]) Map[U any](f func(T) U) U { return f(s.v) }
+var F = S[int].Map[string]
+`)
+	me := nodesOf[*ir.MethodExprExpr](funcBody(t, f, "init·vars"))
+	if len(me) != 1 || len(me[0].Targs) != 1 || typeKey(f, me[0].Type) != "func(p.S[int], func(int) string) string" {
+		t.Errorf("method expression: %+v", me)
+	}
+}

@@ -263,8 +263,9 @@ func (fs *fnState) instance(fun ast.Expr) ir.Expr {
 	return nil
 }
 
-// genericMethodSel returns x.M for an explicit instantiation x.M[T...] of
-// a generic method (its type arguments are recorded on M).
+// genericMethodSel returns x.M (or T.M) for an explicit instantiation
+// x.M[U...] / T.M[U...] of a generic method (its type arguments are
+// recorded on M).
 func (fs *fnState) genericMethodSel(x ast.Expr) *ast.SelectorExpr {
 	var base ast.Expr
 	switch y := x.(type) {
@@ -279,7 +280,7 @@ func (fs *fnState) genericMethodSel(x ast.Expr) *ast.SelectorExpr {
 	if !ok {
 		return nil
 	}
-	if sel, ok := fs.e.cfg.Info.Selections[se]; ok && sel.Kind() == types.MethodVal {
+	if sel, ok := fs.e.cfg.Info.Selections[se]; ok && sel.Kind() != types.FieldVal {
 		return se
 	}
 	return nil
@@ -289,7 +290,10 @@ func (fs *fnState) genericMethodSel(x ast.Expr) *ast.SelectorExpr {
 // instantiated signature (go/types records the generic one on s.M).
 func (fs *fnState) instMethodVal(se *ast.SelectorExpr, t types.Type) ir.Expr {
 	v := fs.selector(se)
-	if mv, ok := v.(*ir.MethodValExpr); ok {
+	switch mv := v.(type) {
+	case *ir.MethodValExpr:
+		mv.Type = fs.e.typeID(t)
+	case *ir.MethodExprExpr:
 		mv.Type = fs.e.typeID(t)
 	}
 	return v
