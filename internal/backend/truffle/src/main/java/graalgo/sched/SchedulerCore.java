@@ -136,11 +136,17 @@ public final class SchedulerCore {
      * runs), otherwise the quantum check for the current vthread.
      */
     public static void pollCurrentThreadStatic() {
-        SchedulerCore sc = GOROUTINE_SCHEDULER.get();
-        if (sc == null) {
+        // Common case first: a goroutine of the installed scheduler (one
+        // ThreadLocal lookup, as before). Only a thread that is not one
+        // pays the second lookup for its own scheduler.
+        SchedulerCore sc = installed;
+        if (sc != null && sc.pollIfGoroutine()) {
             return;
         }
-        sc.pollCurrentThread();
+        SchedulerCore own = GOROUTINE_SCHEDULER.get();
+        if (own != null && own != sc) {
+            own.pollCurrentThread();
+        }
     }
 
     /**
@@ -444,9 +450,14 @@ public final class SchedulerCore {
      * unaffected even with the replacement Safepoint on the classpath.
      */
     public void pollCurrentThread() {
+        pollIfGoroutine();
+    }
+
+    /** {@link #pollCurrentThread}; false when the caller is not one of this scheduler's goroutines. */
+    private boolean pollIfGoroutine() {
         GoroutineHandle h = currentHandle.get();
         if (h == null) {
-            return;
+            return false;
         }
         // fix-redmaster-r43: never yield inside a pin section. In gc,
         // pinning disables preemption, so a pinned goroutine is not
@@ -457,7 +468,7 @@ public final class SchedulerCore {
         // yield simply moves to the first poll after unpin — the
         // deadline stays expired, so no quantum is lost.
         if (PinLock.isHeldByCurrentThread()) {
-            return;
+            return true;
         }
         if (exiting) {
             if (h == fatalOwner) {
@@ -465,7 +476,7 @@ public final class SchedulerCore {
                 // Error()/String() already ran, world running, before it
                 // claimed the report): it must never quantum-park (no
                 // admission happens any more), so it runs to completion.
-                return;
+                return true;
             }
             // Process exit in progress (main returned, os.Exit, fatal
             // panic/deadlock): freeze this goroutine at its safepoint so
@@ -478,6 +489,7 @@ public final class SchedulerCore {
         if (System.nanoTime() >= h.quantumDeadlineNanos) {
             quantumPark(h);
         }
+        return true;
     }
 
     private void awaitAck(GoroutineHandle h, long t) {
