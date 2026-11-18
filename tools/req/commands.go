@@ -292,6 +292,17 @@ func cmdLint(args []string) error {
 	}
 	problems = append(problems, textSumProblems(reg, sums)...)
 
+	// Rule (f): sums and statuses only move forward relative to the git
+	// base (see baseline.go).
+	fProblems, fNote, err := baselineCheck(c.reqDir, reg, sums)
+	if err != nil {
+		return err
+	}
+	problems = append(problems, fProblems...)
+	if fNote != "" {
+		fmt.Println("lint:", fNote)
+	}
+
 	// Registry self-consistency: parent and superseded_by resolve; superseded
 	// requirements name a live successor.
 	for _, id := range sortedIDs(reg) {

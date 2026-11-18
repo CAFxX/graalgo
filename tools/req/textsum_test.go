@@ -157,12 +157,14 @@ func TestCmdLock_RecordsSum(t *testing.T) {
 
 // ---------- req seal ----------
 
-func TestCmdSeal_BaselinesMissingOnly(t *testing.T) {
+func TestCmdSeal_WritesFirstBaseline(t *testing.T) {
 	root, reqDir := stdLayout(t, map[string]string{
-		"requirements/GG-0001.yaml":   reqFile("GG-0001", "locked", "", ""),
-		"requirements/GG-0002.yaml":   reqFile("GG-0002", "draft", "", ""),
-		"requirements/" + textSumFile: textSumHeader,
+		"requirements/GG-0001.yaml": reqFile("GG-0001", "locked", "", ""),
+		"requirements/GG-0002.yaml": reqFile("GG-0002", "draft", "", ""),
 	})
+	if err := os.Remove(filepath.Join(reqDir, textSumFile)); err != nil {
+		t.Fatal(err)
+	}
 	if err := cmdSeal(ctxFlags(root, reqDir, root)); err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +183,21 @@ func TestCmdSeal_BaselinesMissingOnly(t *testing.T) {
 	}
 }
 
+func TestCmdSeal_IsOneShot(t *testing.T) {
+	// A manifest exists (even one lacking GG-0002's sum): seal refuses and
+	// writes nothing — a requirement that skipped `req lock` stays a lint
+	// failure instead of being baselined after the fact.
+	root, reqDir := stdLayout(t, map[string]string{
+		"requirements/GG-0001.yaml":   reqFile("GG-0001", "locked", "", ""),
+		"requirements/GG-0002.yaml":   reqFile("GG-0002", "locked", "", ""),
+		"requirements/" + textSumFile: textSumHeader,
+	})
+	snap := snapshotTree(t, root)
+	err := cmdSeal(ctxFlags(root, reqDir, root))
+	requireErrContains(t, err, "seal is one-shot")
+	assertTreeIdentical(t, root, snap)
+}
+
 func TestCmdSeal_RefusesToLaunderEdit(t *testing.T) {
 	root, reqDir := stdLayout(t, map[string]string{
 		"requirements/GG-0001.yaml": reqFile("GG-0001", "locked", "", ""),
@@ -188,8 +205,10 @@ func TestCmdSeal_RefusesToLaunderEdit(t *testing.T) {
 	rewordStatement(t, reqDir, "GG-0001")
 	snap := snapshotTree(t, root)
 	err := cmdSeal(ctxFlags(root, reqDir, root))
-	requireErrContains(t, err, "refusing to reseal")
+	requireErrContains(t, err, "seal is one-shot")
 	assertTreeIdentical(t, root, snap)
+	out, lerr := runLint(t, root, reqDir)
+	requireLintProblem(t, out, lerr, "rule (e)")
 }
 
 func TestScan_ManifestIsNotAReference(t *testing.T) {

@@ -28,12 +28,17 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   duplicate-FQN; dead-path; MR-table subset; repo gates (tracked-file
   size/binary gate, doc-path existence, GG-id existence, Makefile
   `.PHONY`/header consistency, generated-files list, placeholder/TODO and
-  runtime-`unimplemented` ratchets, the new-path/v1 layering gate, the
-  no-bridges gate over every commit since `$NO_BRIDGES_BASE` (CI: the
-  push's `before` sha) or the merge-base with `origin/master` — each with
-  its own planted-violation test); every `.github/scripts/test_*.py`; `tools/req lint`; and the
-  gofrontend `build.sh check` (gofmt/vet/tests, vendoring diff, wire-format
-  validator).
+  stub ratchets (`unimplemented`, new-path `Unsupported`/`unsupportedf`),
+  the new-path/v1 layering gate, the no-bridges gate — each with its own
+  planted-violation test); every `.github/scripts/test_*.py`; `tools/req
+  lint` (rules (a)–(f)); and the gofrontend `build.sh check`
+  (gofmt/vet/tests, vendoring diff, wire-format validator).
+- **Forward-only gates** compare against a base: `$GATE_BASE` (CI: the
+  push's `before` sha or the PR base), else the merge-base with
+  `origin/master`. The no-bridges gate inspects every commit since the
+  base; ratchet budgets may not rise above the base's; `LOCKED-TEXT.sum`
+  lines are only added and requirement statuses never move back (`req
+  lint` rule (f)); `req seal` is one-shot.
 - `make test-java-slow` — the slow Java classes (nightly/weekly). Known
   failures are listed in [test/java/quarantine.txt](test/java/quarantine.txt)
   (class, reason, owner, expiry milestone); the target fails on any failure

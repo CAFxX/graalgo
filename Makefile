@@ -34,7 +34,7 @@
 #               GG ids, this Makefile's .PHONY/header, generated-files
 #               list, placeholder + runtime-unimplemented ratchets, the
 #               new-path/v1 layering gate, the no-bridges gate (vs
-#               NO_BRIDGES_BASE or the merge-base), every
+#               GATE_BASE or the merge-base), every
 #               .github/scripts/test_*.py, markdown links, `tools/req
 #               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
 #               tests, vendoring diff, frontend/v1 wire-format validator)

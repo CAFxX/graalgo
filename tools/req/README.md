@@ -39,7 +39,21 @@ statement, rationale, parent, verification plan) in
 rule (e) fails when a non-draft requirement has no recorded sum, when its text
 no longer matches the sum (an in-place edit of locked text: reword through
 `req supersede` instead), or when the manifest lists a draft or an unknown id.
-Status, `superseded_by` and history are not hashed. `req seal` records sums
-for non-draft requirements that have none — the one-time baseline of locks
-made before the sum existed — and refuses to overwrite a recorded sum, so it
-cannot launder an edit. Drafts stay editable in place.
+Status, `superseded_by` and history are not hashed. `req seal` wrote the
+one-time baseline of locks made before the sum existed; it is one-shot and
+refuses to run once the manifest exists, so it can neither launder an edit
+nor baseline a requirement that skipped `req lock`. Drafts stay editable in
+place.
+
+## Forward-only registry (lint rule (f))
+
+Rule (e) trusts the manifest; rule (f) checks the manifest and the statuses
+against the registry at a git base — `$GATE_BASE` when it names a commit
+(CI: the push's `before` sha or the PR base), else the merge-base of `HEAD`
+with `origin/master` (else `master`). Every base sum line must still be
+present and unchanged (lines are only added), no base requirement may be
+deleted, and no status may move back in the lifecycle (draft < locked <
+active < superseded/retired; e.g. locked → draft, which would also exempt
+the text from rule (e)). Outside a git work tree, or with no base, rule (f)
+is skipped (the hermetic unit fixtures); [baseline_test.go](baseline_test.go)
+builds real git repos for it.

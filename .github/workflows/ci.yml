@@ -44,15 +44,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
-      # The no-bridges gate diffs NO_BRIDGES_BASE...HEAD: every commit the
-      # push (its `before` sha) or the PR (its base sha) brings, so a
-      # fast-forward of N commits is checked whole — not just HEAD~1.
-      # Used by the step below and by `make check` inside `make all`.
-      NO_BRIDGES_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+      # The base of every "only moves forward" gate: the push's `before`
+      # sha or the PR's base sha. The no-bridges gate diffs GATE_BASE...HEAD
+      # (a fast-forward of N commits is checked whole, not just HEAD~1);
+      # the ratchet gate refuses budgets above the base's; `req lint` rule
+      # (f) refuses changed/removed LOCKED-TEXT.sum lines and status
+      # regressions. Used by the step below and by `make check` (make all).
+      GATE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # Full history: the no-bridges gate needs NO_BRIDGES_BASE (and,
+          # Full history: the no-bridges gate needs GATE_BASE (and,
           # for its fallbacks, HEAD~1) — a shallow checkout has neither and
           # the gate would fail loudly instead of inspecting.
           fetch-depth: 0

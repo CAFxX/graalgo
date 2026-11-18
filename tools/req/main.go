@@ -63,14 +63,14 @@ Usage: req <command> [flags]
 
 Commands:
   add        mint a new draft requirement ID
-  lint       check ID annotations, traceability and locked text, rules (a)-(e)
+  lint       check ID annotations, traceability and locked text, rules (a)-(f)
   trace      show requirement -> code sites -> tests
   tree       render the requirement hierarchy
   supersede  retire/supersede a requirement (atomic workflow)
   retire     retire a requirement with no successor (atomic workflow)
   lock       lock draft requirement(s) at SPEC acceptance (atomic workflow)
   activate   activate locked requirement(s) as implementation starts (atomic)
-  seal       record locked-text sums for non-draft requirements lacking one
+  seal       one-shot: write the first LOCKED-TEXT.sum baseline (refuses once it exists)
 
 Common flags: --root DIR  --req-dir DIR  --scan-dir DIR
 `)

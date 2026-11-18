@@ -13,9 +13,11 @@ package main
 // rationale, parent and verification plan. Status, superseded_by and
 // history are lifecycle bookkeeping and change legitimately after lock.
 //
-// `req seal` records sums for non-draft requirements that have none (the
-// one-time baseline of requirements locked before the sum existed). It
-// never overwrites a recorded sum, so it cannot launder an in-place edit.
+// `req seal` writes the one-time baseline of requirements locked before the
+// sum existed. It is one-shot: once LOCKED-TEXT.sum exists it refuses to
+// run (later locks record their sums through `req lock`), so it can neither
+// launder an in-place edit nor quietly baseline a requirement that skipped
+// `req lock`.
 
 import (
 	"bufio"
@@ -132,43 +134,34 @@ func textSumProblems(reg map[string]*Requirement, sums map[string]string) []stri
 
 // ---------- req seal ----------
 
-// cmdSeal records locked-text sums for every non-draft requirement that has
-// none. Existing sums are never rewritten: a mismatch is reported and the
-// command fails without writing, so seal cannot hide an in-place edit.
+// cmdSeal writes the first locked-text manifest: a sum for every non-draft
+// requirement. One-shot: it refuses once the manifest exists.
 func cmdSeal(args []string) error {
 	f := parseFlags(args)
 	c, err := f.ctx()
 	if err != nil {
 		return err
 	}
+	path := filepath.Join(c.reqDir, textSumFile)
+	if _, err := os.Stat(path); err == nil {
+		return fmt.Errorf("%s already exists: seal is one-shot (the baseline is written); new locks record their sums via `req lock`, and locked text changes only via `req supersede`", path)
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	reg, err := loadRegistry(c.reqDir)
 	if err != nil {
 		return err
 	}
-	sums, err := loadTextSums(c.reqDir)
-	if err != nil {
-		return err
-	}
+	sums := map[string]string{}
 	var added []string
 	for _, id := range sortedIDs(reg) {
-		rec := reg[id]
-		if rec.Status == "draft" {
+		if reg[id].Status == "draft" {
 			continue
 		}
-		if want, ok := sums[id]; ok {
-			if got := textSum(rec); got != want {
-				return fmt.Errorf("%s: text changed since it was sealed (recorded %s, now %s); refusing to reseal", id, want, got)
-			}
-			continue
-		}
-		sums[id] = textSum(rec)
+		sums[id] = textSum(reg[id])
 		added = append(added, id)
 	}
-	if len(added) == 0 {
-		fmt.Println("seal: nothing to do (every non-draft requirement already has a sum)")
-		return nil
-	}
-	if err := os.WriteFile(filepath.Join(c.reqDir, textSumFile), renderTextSums(sums), 0644); err != nil {
+	if err := os.WriteFile(path, renderTextSums(sums), 0644); err != nil {
 		return err
 	}
 	fmt.Printf("sealed %d requirement(s): %s\n", len(added), strings.Join(added, " "))

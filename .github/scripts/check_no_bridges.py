@@ -27,7 +27,7 @@ taken from the p3fmt-stub branch diff, 16547f17, which the old script
 failed with 3 false positives).
 
 Diff sources, in order:
-  1. --base SHA / $NO_BRIDGES_BASE  (CI: the push's `before` sha, or the
+  1. --base SHA / $GATE_BASE  (CI: the push's `before` sha, or the
                            PR's base sha): `git diff SHA...HEAD`, i.e.
                            EVERY commit the push or PR brings — a
                            fast-forward of N commits is checked whole, not
@@ -356,7 +356,7 @@ def check_no_bridges(diff):
 
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
-    base = os.environ.get("NO_BRIDGES_BASE", "")
+    base = os.environ.get("GATE_BASE", "")
     if len(argv) == 2 and argv[0] == "--base":
         base = argv[1]
     elif argv:

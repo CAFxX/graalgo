@@ -1,4 +1,8 @@
 {
+ "_definitions": {
+  "placeholder": "\\.(go|py|sh)$ ^\\.github/scripts/(check|test_check)_ratchets\\.py$ \\b(TODO|FIXME|XXX)\\b",
+  "unimplemented": "^internal/.*\\.(go|java)$ (_test\\.go$|/src/test/) \"[^\"\\n]*(?i:unimplemented|not implemented)[^\"\\n]*\"|\\bnew Unsupported\\(|\\.unsupportedf\\("
+ },
  "placeholder": {
   ".github/scripts/check_no_bridges.py": 2,
   "internal/frontend/gen_synth_archive_mime.py": 1,
@@ -29,12 +33,16 @@
   "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java": 5,
   "internal/backend/truffle/src/main/java/graalgo/frontend/TypeAssertNode.java": 1,
   "internal/backend/truffle/src/main/java/graalgo/frontend/UnimplementedRootNode.java": 3,
+  "internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java": 6,
   "internal/frontend/diskimport.go": 1,
   "internal/frontend/export.go": 4,
   "internal/frontend/mr_disk.go": 1,
   "internal/frontend/synth_bytealg.go": 1,
   "internal/frontend/synth_mathrandv2.go": 1,
   "internal/frontend/synth_reflect.go": 5,
-  "internal/frontend/synth_syscall.go": 1
+  "internal/frontend/synth_syscall.go": 1,
+  "internal/toolexec/emit/body.go": 5,
+  "internal/toolexec/emit/embed.go": 7,
+  "internal/toolexec/emit/expr.go": 13
  }
 }

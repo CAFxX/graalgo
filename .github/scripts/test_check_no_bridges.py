@@ -384,8 +384,8 @@ class TestDiffSource(unittest.TestCase):
 
     def test_env_base_is_used(self):
         self.fast_forward_of_three()
-        os.environ["NO_BRIDGES_BASE"] = self.base
-        self.addCleanup(os.environ.pop, "NO_BRIDGES_BASE", None)
+        os.environ["GATE_BASE"] = self.base
+        self.addCleanup(os.environ.pop, "GATE_BASE", None)
         rc, out = self.main()
         self.assertEqual(rc, 1, out)
         self.assertIn("explicit base", out)
