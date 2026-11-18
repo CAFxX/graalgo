@@ -62,7 +62,7 @@ func __qpfromHex(b byte) __qpfromHexPair {
 }
 
 func fromHex(b byte) (byte, error) {
-	panic("mime/quotedprintable.fromHex: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/quotedprintable.fromHex: unreachable (Appendix-M desugar did not fire)")
 }
 
 
@@ -89,7 +89,7 @@ __mrtmp3 := __qpfromHex(v[1]); if lb, err = __mrtmp3.f0, __mrtmp3.f1; err != nil
 }
 
 func readHexByte(v []byte) (b byte, err error) {
-	panic("mime/quotedprintable.readHexByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/quotedprintable.readHexByte: unreachable (Appendix-M desugar did not fire)")
 }
 
 
@@ -190,7 +190,7 @@ __mrtmp1 := __qpreadHexByte(r.line[1:]); b, err = __mrtmp1.b, __mrtmp1.err
 }
 
 func (r *Reader) Read(p []byte) (n int, err error) {
-	panic("mime/quotedprintable.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/quotedprintable.Read: unreachable (Appendix-M desugar did not fire)")
 }
 
 
@@ -267,7 +267,7 @@ func __qpWriterWrite(w *Writer, p []byte) __qpWriterWritePair {
 }
 
 func (w *Writer) Write(p []byte) (n int, err error) {
-	panic("mime/quotedprintable.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("mime/quotedprintable.Write: unreachable (Appendix-M desugar did not fire)")
 }
 
 

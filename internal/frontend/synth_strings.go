@@ -2206,7 +2206,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 
 	// Write appends p to b's buffer. Multi-result: not in M7 scope (WS D).
 	func (b *Builder) Write(p []byte) (int, error) {
-		panic("strings.Builder.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Builder.Write: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// WriteByte appends the byte c to b's buffer. The returned error is always
@@ -2220,13 +2220,13 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// WriteRune appends the UTF-8 encoding of r. Multi-result: not in M7 scope
 	// (WS D).
 	func (b *Builder) WriteRune(r rune) (int, error) {
-		panic("strings.Builder.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Builder.WriteRune: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// WriteString appends s to b's buffer. Multi-result: not in M7 scope
 	// (WS D).
 	func (b *Builder) WriteString(s string) (int, error) {
-		panic("strings.Builder.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Builder.WriteString: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// P3-M10: WS D discharge of the three fail-fasts above via the m7
@@ -2309,7 +2309,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// (Appendix M — P3-M8 discharge of the M7 fail-fast; only io.EOF was
 	// missing, and io landed).
 	func (r *Reader) Read(b []byte) (n int, err error) {
-		panic("strings.Reader.Read: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.Read: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// stringsReaderReadPair is the Appendix M carrier for Reader.Read.
@@ -2340,7 +2340,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// lives in __stringsReaderReadAt; 2-target call sites desugar to it
 	// (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) ReadAt(b []byte, off int64) (n int, err error) {
-		panic("strings.Reader.ReadAt: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.ReadAt: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// stringsReaderReadAtPair is the Appendix M carrier for Reader.ReadAt.
@@ -2375,7 +2375,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// implementation lives in __stringsReaderReadByte; 2-target call
 	// sites desugar to it (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) ReadByte() (byte, error) {
-		panic("strings.Reader.ReadByte: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.ReadByte: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// stringsReaderReadBytePair is the Appendix M carrier for Reader.ReadByte.
@@ -2410,7 +2410,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// implementation lives in __stringsReaderReadRune; 3-target call
 	// sites desugar to it (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) ReadRune() (ch rune, size int, err error) {
-		panic("strings.Reader.ReadRune: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.ReadRune: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// stringsReaderReadRuneTriple is the Appendix M carrier for Reader.ReadRune.
@@ -2450,7 +2450,7 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// lives in __stringsReaderSeek; 2-target call sites desugar to it
 	// (Appendix M — P3-M8 discharge, see Read).
 	func (r *Reader) Seek(offset int64, whence int) (int64, error) {
-		panic("strings.Reader.Seek: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+		panic("strings.Reader.Seek: unreachable (Appendix-M desugar did not fire)")
 	}
 
 	// stringsReaderSeekPair is the Appendix M carrier for Reader.Seek.

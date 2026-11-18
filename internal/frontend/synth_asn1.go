@@ -804,7 +804,7 @@ func asn1ReadTLV(b []byte, class, tag int, compound bool) asn1TLV {
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func Marshal(val any) ([]byte, error) {
-	panic("encoding/asn1: Marshal: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/asn1: Marshal: unreachable (Appendix-M desugar did not fire)")
 }
 
 // Unmarshal keeps the exact gc 1.27.1 signature for type-checking.

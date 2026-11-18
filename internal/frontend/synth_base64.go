@@ -566,21 +566,21 @@ func __base64AppendDecode(enc *Encoding, dst, src []byte) base64DecodeStringPair
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
 func (enc *Encoding) Decode(dst, src []byte) (n int, err error) {
-	panic("encoding/base64: Decode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: Decode: unreachable (Appendix-M desugar did not fire)")
 }
 
 // DecodeString keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func (enc *Encoding) DecodeString(s string) ([]byte, error) {
-	panic("encoding/base64: DecodeString: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: DecodeString: unreachable (Appendix-M desugar did not fire)")
 }
 
 // AppendDecode keeps the exact gc 1.27.1 signature for type-checking;
 // the exporter desugars 2-target call sites (Appendix M,
 // mrdesugar_m7.go), every other position fails fast. Body never runs.
 func (enc *Encoding) AppendDecode(dst, src []byte) ([]byte, error) {
-	panic("encoding/base64: AppendDecode: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/base64: AppendDecode: unreachable (Appendix-M desugar did not fire)")
 }
 
 // DecodedLen returns the maximum length in bytes of the decoded data

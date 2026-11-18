@@ -969,6 +969,19 @@ def qp_adapt(src, pkg_prefix):
     """Adapt quotedprintable source."""
     return src
 
+# REVIEW-2026-11-17-20 P1-3: wired multi-result stubs emit the redirect
+# message ("unreachable (Appendix-M desugar did not fire)") instead of
+# the stale WS-D scope message - their calls are desugared via the
+# Appendix-M table, so reaching the stub body means the desugar did not
+# fire. Deliberate exclusions (mirror .github/scripts/
+# check_mr_table_subset.py): these two unexported methods have no table
+# row by design (internal calls already rewritten to the __-helper), so
+# they keep the scope message and are NOT redirect-form.
+REDIRECT_EXCLUDED = frozenset({
+    ("archive/zip", "findBodyOffset"),
+    ("mime/multipart", "readForm"),
+})
+
 def process_package(pkg_path, cfg):
     """Process a package and return (go_const_code, table_entries)."""
     pkg_prefix = cfg['pkg_prefix']
@@ -1110,7 +1123,10 @@ def process_package(pkg_path, cfg):
                     else:
                         orig_sig += f" {fn['results']}"
                 orig_sig += " {\n"
-                orig_sig += f'\tpanic("{pkg_path}.{fn["name"]}: not in M7 scope (multi-result calls need WS D; re-test when it lands)")\n'
+                if (pkg_path, fn["name"]) in REDIRECT_EXCLUDED:
+                    orig_sig += f'\tpanic("{pkg_path}.{fn["name"]}: not in M7 scope (multi-result calls need WS D; re-test when it lands)")\n'
+                else:
+                    orig_sig += f'\tpanic("{pkg_path}.{fn["name"]}: unreachable (Appendix-M desugar did not fire)")\n'
                 orig_sig += "}\n\n"
                 new_src_parts.append(orig_sig)
                 

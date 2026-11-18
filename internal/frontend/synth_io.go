@@ -257,7 +257,7 @@ type StringWriter interface {
 // Multi-result: the real implementation lives in __writeString;
 // 2-target call sites desugar to it (Appendix M).
 func WriteString(w Writer, s string) (n int, err error) {
-	panic("io.WriteString: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.WriteString: unreachable (Appendix-M desugar did not fire)")
 }
 
 // ioReadPair is the P3-M8 (WS D) interface-dispatch carrier for
@@ -319,7 +319,7 @@ func __writeString(w Writer, s string) ioWritePair {
 // Multi-result: the real implementation lives in __readAtLeast;
 // 2-target call sites desugar to it (Appendix M).
 func ReadAtLeast(r Reader, buf []byte, min int) (n int, err error) {
-	panic("io.ReadAtLeast: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.ReadAtLeast: unreachable (Appendix-M desugar did not fire)")
 }
 
 // readAtLeastPair is the Appendix M carrier for ReadAtLeast.
@@ -354,7 +354,7 @@ func __readAtLeast(r Reader, buf []byte, min int) readAtLeastPair {
 // Multi-result: the real implementation lives in __readFull;
 // 2-target call sites desugar to it (Appendix M).
 func ReadFull(r Reader, buf []byte) (n int, err error) {
-	panic("io.ReadFull: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.ReadFull: unreachable (Appendix-M desugar did not fire)")
 }
 
 // readFullPair is the Appendix M carrier for ReadFull.
@@ -375,7 +375,7 @@ func __readFull(r Reader, buf []byte) readFullPair {
 // Multi-result: the real implementation lives in __copyN;
 // 2-target call sites desugar to it (Appendix M).
 func CopyN(dst Writer, src Reader, n int64) (written int64, err error) {
-	panic("io.CopyN: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.CopyN: unreachable (Appendix-M desugar did not fire)")
 }
 
 // copyNPair is the Appendix M carrier for CopyN.
@@ -406,7 +406,7 @@ func __copyN(dst Writer, src Reader, n int64) copyNPair {
 // Multi-result: the real implementation lives in __copy;
 // 2-target call sites desugar to it (Appendix M).
 func Copy(dst Writer, src Reader) (written int64, err error) {
-	panic("io.Copy: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.Copy: unreachable (Appendix-M desugar did not fire)")
 }
 
 // copyPair is the Appendix M carrier for Copy.
@@ -428,7 +428,7 @@ func __copy(dst Writer, src Reader) copyPair {
 // Multi-result: the real implementation lives in __copyBuffer;
 // 2-target call sites desugar to it (Appendix M).
 func CopyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
-	panic("io.CopyBuffer: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.CopyBuffer: unreachable (Appendix-M desugar did not fire)")
 }
 
 // copyBufferPair is the Appendix M carrier for CopyBuffer/copyBuffer.
@@ -515,7 +515,7 @@ type LimitedReader struct {
 // Multi-result: the real implementation lives in __limitedReaderRead;
 // 2-target call sites desugar to it (Appendix M).
 func (l *LimitedReader) Read(p []byte) (n int, err error) {
-	panic("io.LimitedReader.Read: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.LimitedReader.Read: unreachable (Appendix-M desugar did not fire)")
 }
 
 // limitedReaderReadPair is the Appendix M carrier for LimitedReader.Read.
@@ -578,7 +578,7 @@ var errOffset = errors.New("Seek: invalid offset")
 // Seek implements Seeker. Multi-result: the real implementation lives in
 // __sectionReaderSeek; 2-target call sites desugar to it (Appendix M).
 func (s *SectionReader) Seek(offset int64, whence int) (int64, error) {
-	panic("io.SectionReader.Seek: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.SectionReader.Seek: unreachable (Appendix-M desugar did not fire)")
 }
 
 // sectionReaderSeekPair is the Appendix M carrier for SectionReader.Seek.
@@ -626,7 +626,7 @@ func (s *SectionReader) Size() int64 { return s.limit - s.base }
 // Multi-result triple: the real implementation lives in
 // __sectionReaderOuter; 3-target call sites desugar to it (Appendix M).
 func (s *SectionReader) Outer() (r ReaderAt, off int64, n int64) {
-	panic("io.SectionReader.Outer: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.SectionReader.Outer: unreachable (Appendix-M desugar did not fire)")
 }
 
 // sectionReaderOuterTriple is the Appendix M carrier for SectionReader.Outer.
@@ -674,7 +674,7 @@ func (o *OffsetWriter) WriteAt(p []byte, off int64) (n int, err error) {
 // Seek implements Seeker. Multi-result: the real implementation lives in
 // __offsetWriterSeek; 2-target call sites desugar to it (Appendix M).
 func (o *OffsetWriter) Seek(offset int64, whence int) (int64, error) {
-	panic("io.OffsetWriter.Seek: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.OffsetWriter.Seek: unreachable (Appendix-M desugar did not fire)")
 }
 
 // offsetWriterSeekPair is the Appendix M carrier for OffsetWriter.Seek.
@@ -740,7 +740,7 @@ var _ ReaderFrom = discard{}
 // so the entry is reachable only through interface dispatch (e.g.
 // io.Discard as a Writer) — see DESIGN.md §3.4.
 func (discard) Write(p []byte) (int, error) {
-	panic("io.discard.Write: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.discard.Write: unreachable (Appendix-M desugar did not fire)")
 }
 
 // __discardWrite is the real discard.Write (gc 1.27.1): report all
@@ -754,7 +754,7 @@ func __discardWrite(d discard, p []byte) ioWritePair {
 // Multi-result: the real implementation lives in __discardWriteString;
 // 2-target call sites desugar to it (Appendix M).
 func (discard) WriteString(s string) (int, error) {
-	panic("io.discard.WriteString: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.discard.WriteString: unreachable (Appendix-M desugar did not fire)")
 }
 
 // __discardWriteString is the real discard.WriteString (gc 1.27.1).
@@ -810,7 +810,7 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 // Multi-result: the real implementation lives in __readAll;
 // 2-target call sites desugar to it (Appendix M).
 func ReadAll(r Reader) ([]byte, error) {
-	panic("io.ReadAll: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.ReadAll: unreachable (Appendix-M desugar did not fire)")
 }
 
 // readAllPair is the Appendix M carrier for ReadAll.
@@ -920,7 +920,7 @@ var _ StringWriter = (*multiWriter)(nil)
 // M8 scope: fail-fast — needs w.(StringWriter)/w.Write (2-result
 // interface calls, WS D). Re-test when WS D lands.
 func (t *multiWriter) WriteString(s string) (n int, err error) {
-	panic("io.multiWriter.WriteString: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.multiWriter.WriteString: unreachable (Appendix-M desugar did not fire)")
 }
 
 // MultiWriter creates a writer that duplicates its writes to all the
@@ -1109,7 +1109,7 @@ type PipeReader struct{ *pipe } // deviation D3: gc embeds pipe by value
 // Multi-result: the real implementation lives in __pipeReaderRead;
 // 2-target call sites desugar to it (Appendix M).
 func (r *PipeReader) Read(data []byte) (n int, err error) {
-	panic("io.PipeReader.Read: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.PipeReader.Read: unreachable (Appendix-M desugar did not fire)")
 }
 
 // pipeReaderReadPair is the Appendix M carrier for PipeReader.Read.
@@ -1151,7 +1151,7 @@ type PipeWriter struct{ r PipeReader }
 // Multi-result: the real implementation lives in __pipeWriterWrite;
 // 2-target call sites desugar to it (Appendix M).
 func (w *PipeWriter) Write(data []byte) (n int, err error) {
-	panic("io.PipeWriter.Write: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.PipeWriter.Write: unreachable (Appendix-M desugar did not fire)")
 }
 
 // pipeWriterWritePair is the Appendix M carrier for PipeWriter.Write.
@@ -1201,7 +1201,7 @@ func (w *PipeWriter) CloseWithError(err error) error {
 // Multi-result: the real implementation lives in __pipe; 2-target call
 // sites desugar to it (Appendix M).
 func Pipe() (*PipeReader, *PipeWriter) {
-	panic("io.Pipe: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("io.Pipe: unreachable (Appendix-M desugar did not fire)")
 }
 
 // pipePair is the Appendix M carrier for Pipe.

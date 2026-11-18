@@ -10067,7 +10067,7 @@ func (b *Buffer) Write(p []byte) (n int, err error) {
 // M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
 // calls need WS D; re-test when it lands).
 func (b *Buffer) WriteString(s string) (n int, err error) {
-	panic("bytes.Buffer.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.WriteString: unreachable (Appendix-M desugar did not fire)")
 }
 
 // P3-M10: WS D discharge of the fail-fast above via the m7 desugar

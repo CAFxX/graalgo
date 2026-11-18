@@ -126,7 +126,7 @@ def main():
         "// (Appendix M: 2-target call sites desugar to __pathSplit; every other\n"
         "// position fails fast. Body never runs.)\n"
         "func Split(path string) (dir, file string) {\n"
-        "\tpanic(\"path: Split: not in M9 scope (multi-result calls need the M9 desugar; re-test when WS D lands)\")\n"
+        "\tpanic(\"path: Split: unreachable (Appendix-M desugar did not fire)\")\n"
         "}\n"
     )
     src = re.sub(r"^func Split\(.*?^}\n", "", src, count=1, flags=re.M | re.S)
