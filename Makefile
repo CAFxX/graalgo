@@ -108,9 +108,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
+all: generate build snapshot-check check test-v2 test-toolexec test-p3frontend test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -216,6 +216,19 @@ test-v2:
 	mkdir -p $(V2_TMP) && \
 	cd internal/frontend/v2 && TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) vet ./... && \
 	TMPDIR="$(V2_TMP)" GOTMPDIR="$(V2_TMP)" $(GO) test ./...
+
+# -toolexec wrapper module tests: [internal/toolexec](internal/toolexec)
+# (own go.mod) — the graalgo-tool walking skeleton of
+# docs/arch/toolexec-design.md. The end-to-end tests drive the stock
+# `go build -toolexec` over a two-package module and assert the archive IR
+# member, the patched build ID, warm-cache behaviour (zero tool runs) and
+# gc/graalgo cache separation. $(GO)'s directory is put first on PATH
+# because the tests invoke `go` themselves.
+TOOLEXEC_TMP := $(CURDIR)/internal/toolexec/.tmp
+test-toolexec:
+	mkdir -p $(TOOLEXEC_TMP) && \
+	cd internal/toolexec && PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) vet ./... && \
+	PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) test ./...
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
