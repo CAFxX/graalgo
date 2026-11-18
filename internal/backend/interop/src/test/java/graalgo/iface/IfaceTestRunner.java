@@ -72,6 +72,7 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.MapKeyHashTest.class);
         // limitations.md stack-depth contract on the product launcher.
         TESTS.add(graalgo.p3sync.launcher.StackDepthLimitTest.class);
+        TESTS.add(graalgo.p3sync.launcher.CallPathWarmupTest.class);
     }
 
     private IfaceTestRunner() {}
