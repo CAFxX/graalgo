@@ -102,6 +102,34 @@ public final class FrontendRobustnessTest {
         }
     }
 
+    /**
+     * A raw control character inside a JSON string (RFC 8259 forbids it;
+     * gofrontend always escapes them) is a parse error, not content: a
+     * byte zeroed in transit (observed under host load) must surface as
+     * "JSON parse error" — the harness's infrastructure signature — and
+     * never parse into a silently different document.
+     */
+    public void testRawControlCharInStringIsParseError() throws Exception {
+        String[] docs = {
+            "{\"k\": \"a\u0000b\"}", // NUL inside a value
+            "{\"k\u0000\": 1}", // NUL inside a key
+            "{\"k\": \"a\nb\"}", // raw newline
+        };
+        for (String doc : docs) {
+            try {
+                Json.parse(doc);
+            } catch (FrontendException e) {
+                if (!e.getMessage().startsWith("JSON parse error")) {
+                    throw new AssertionError("want JSON parse error, got: " + e.getMessage());
+                }
+                continue;
+            }
+            throw new AssertionError("raw control character accepted: " + doc.replace('\u0000', '@'));
+        }
+        // Escaped forms stay valid.
+        Json.parse("{\"k\": \"a\\u0000b\\n\"}");
+    }
+
     private static void expectFrontendException(String name, String doc) {
         Source source = Source.newBuilder("go", "package main", "t.go").build();
         try {

@@ -295,6 +295,16 @@ public final class Json {
                         }
                         default -> throw error("bad escape \\" + e);
                     }
+                } else if (c < 0x20) {
+                    // RFC 8259 §7: control characters must be escaped, and
+                    // gofrontend's encoding/json always escapes them, so a
+                    // raw one means the export was corrupted in transit
+                    // (observed: a single byte zeroed in a ~119 MB export
+                    // under host load, which could otherwise still parse
+                    // into a structurally wrong document). Reject it as a
+                    // parse error so the corruption is named, not misread.
+                    i--;
+                    throw error(String.format("unescaped control character U+%04X in string", (int) c));
                 } else {
                     sb.append(c);
                 }
