@@ -26,8 +26,9 @@ import graalgo.go.values.Slice;
  * location by the factory, so {@code p.a.b[i].c} is one pointer location, one index location
  * and one load.
  *
- * <p>W13 hooks in here: a view pointer converted from {@code unsafe.Pointer} becomes one more
- * {@link Ptr} shape whose offsets come from the type's leaf table.
+ * <p>Toolexec work package W13 (the pointer model, milestone M1r, GG-0062) hooks in here: a view
+ * pointer converted from {@code unsafe.Pointer} becomes one more {@link Ptr} shape whose offsets
+ * come from the type's leaf table.
  */
 public final class Mem {
     private Mem() {}
