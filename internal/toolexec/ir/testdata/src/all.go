@@ -3,6 +3,7 @@
 package all
 
 import (
+	_ "embed"
 	"unsafe"
 
 	"example.com/dep"
@@ -12,6 +13,9 @@ import (
 func runtimeNano() int64
 
 const big = 1 << 70 >> 68
+
+//go:embed embedded.txt
+var embedded string
 
 var (
 	b                  = a + 1 // initialized after a (Info.InitOrder)

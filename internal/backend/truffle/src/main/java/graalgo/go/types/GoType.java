@@ -129,6 +129,19 @@ public final class GoType {
         }
     }
 
+    /**
+     * Attaches the method sets of an unnamed struct type with promoted methods (the frontend
+     * emits them with the type's TYPEDEFS entry); the first attachment wins.
+     */
+    public void attachMethods(Supplier<Map<String, Method>> valueMethods, Supplier<Map<String, Method>> ptrMethods) {
+        synchronized (lock) {
+            if (valueMethodsSupplier == null && ptrMethodsSupplier == null) {
+                this.valueMethodsSupplier = valueMethods;
+                this.ptrMethodsSupplier = ptrMethods;
+            }
+        }
+    }
+
     /** The underlying (structural) type; {@code this} for a type that is not defined. */
     public GoType u() {
         if (kind != NAMED) {
@@ -399,9 +412,9 @@ public final class GoType {
     /** The method {@code key} of this type's method set as a dynamic type, or null. */
     @TruffleBoundary
     public Method findMethod(String methodKey) {
-        if (kind == NAMED) {
+        if (kind == NAMED || kind == STRUCT) {
             return valueMethods().get(methodKey);
-        } else if (kind == POINTER && elem.kind == NAMED) {
+        } else if (kind == POINTER && (elem.kind == NAMED || elem.kind == STRUCT)) {
             return elem.ptrMethods().get(methodKey);
         }
         return null;

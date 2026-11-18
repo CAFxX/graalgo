@@ -98,7 +98,7 @@ public final class GoProcess {
         for (int i = n - 1; i >= 0; i--) {
             if (i < n - 1) {
                 if (repanicked[i + 1]) {
-                    break;
+                    continue; // gc: the re-raise of a repanicked value is not printed
                 }
                 sb.append('\t');
             }

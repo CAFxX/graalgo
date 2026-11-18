@@ -22,7 +22,7 @@ import java.util.Map;
  * globals, initializes every package and calls {@code main.main}.
  *
  * <p>Bundle wire format ({@code internal/toolexec/bundle}): {@code "GGBN" | version | runner |
- * main package | count | (import path | GIR)*}, unsigned varints and length-prefixed bytes.
+ * main package | count | x* | modinfo | count | (import path | GIR)*}, unsigned varints and length-prefixed bytes.
  */
 public final class Program {
     public final GoLanguage language;
@@ -50,11 +50,17 @@ public final class Program {
         }
         pos[0] = 4;
         long version = uvarint(bundle, pos);
-        if (version != 1) {
-            throw new IllegalArgumentException("bundle version " + version + ", this runtime reads 1");
+        if (version != 2) {
+            throw new IllegalArgumentException("bundle version " + version + ", this runtime reads 2");
         }
         bytes(bundle, pos);
         String mainPath = new String(bytes(bundle, pos), StandardCharsets.UTF_8);
+        // link -X settings and the main module's build info: carried by the bundle, applied
+        // by a later work package (toolexec-design §3.6).
+        for (long nx = uvarint(bundle, pos); nx > 0; nx--) {
+            bytes(bundle, pos);
+        }
+        bytes(bundle, pos);
         long count = uvarint(bundle, pos);
         List<PackageUnit> units = new ArrayList<>();
         for (long i = 0; i < count; i++) {

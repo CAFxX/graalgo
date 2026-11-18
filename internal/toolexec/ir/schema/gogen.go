@@ -179,7 +179,7 @@ func (s *Schema) GenerateGo() ([]byte, error) {
 		p("}\n\n")
 	}
 	for _, u := range s.Unions {
-		p("func (w *Writer) write%s(x %s) {\n\tswitch v := x.(type) {\n", u.Name, u.Name)
+		p("func (w *Writer) write%s(x %s) {\n\tw.enter()\n\tdefer w.leave()\n\tswitch v := x.(type) {\n", u.Name, u.Name)
 		for _, m := range u.Members {
 			p("\tcase *%s:\n\t\tw.uvarint(%d)\n", goMemberName(u, m), m.Kind)
 			for _, f := range m.Fields {

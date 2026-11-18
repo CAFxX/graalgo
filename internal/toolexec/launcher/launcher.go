@@ -165,9 +165,11 @@ func (e *env) list() []string { return e.kv }
 func userSettings(e *env, goroot string) map[string]string {
 	keys := []string{"GOFLAGS", "GOTOOLCHAIN", "CGO_ENABLED"}
 	out := map[string]string{}
+	// cmd/go's cfg.Getenv: an empty variable is unset (it falls through to
+	// the go env file), and an empty GOENV selects the default file.
 	var files []string
-	if f, ok := e.lookup("GOENV"); ok {
-		if f != "off" && f != "" {
+	if f := e.get("GOENV"); f != "" {
+		if f != "off" {
 			files = append(files, f)
 		}
 	} else if dir, err := userConfigDir(e); err == nil {
@@ -180,14 +182,14 @@ func userSettings(e *env, goroot string) map[string]string {
 		}
 	}
 	for _, k := range keys {
-		if v, ok := e.lookup(k); ok {
+		if v := e.get(k); v != "" {
 			out[k] = v
-		} else if v, ok := fileVals[k]; ok {
+		} else if v := fileVals[k]; v != "" {
 			out[k] = v
 		}
 	}
 	if _, ok := out["GOFLAGS"]; !ok {
-		if v, ok := readGoEnvFile(filepath.Join(goroot, "go.env"))["GOFLAGS"]; ok {
+		if v := readGoEnvFile(filepath.Join(goroot, "go.env"))["GOFLAGS"]; v != "" {
 			out["GOFLAGS"] = v
 		}
 	}

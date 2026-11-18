@@ -9,8 +9,10 @@ import (
 
 func TestRoundTripThroughExecutable(t *testing.T) {
 	want := &Bundle{
-		Runner: "/opt/graalgo/libexec/run",
-		Main:   "main",
+		Runner:  "/opt/graalgo/libexec/run",
+		Main:    "main",
+		X:       []string{"main.version=v1", "runtime.godebugDefault=panicnil=1"},
+		ModInfo: "path\tmain\n",
 		Packages: []Package{
 			{ImportPath: "example.com/m/lib", IR: []byte{1, 2, 3}},
 			{ImportPath: "main", IR: []byte{}},

@@ -12,7 +12,7 @@ const SchemaVersion = 1
 const MaxDepth = 1000
 
 // SchemaHash identifies schema.txt; it is part of every GIR header.
-var SchemaHash = [8]byte{0x82, 0x74, 0x29, 0xbf, 0x13, 0x8b, 0x4a, 0xc9}
+var SchemaHash = [8]byte{0x69, 0x81, 0xfc, 0x4a, 0xd3, 0x09, 0x23, 0xfc}
 
 type SymKind uint8
 
@@ -1043,6 +1043,7 @@ var ExprKindNames = map[int]string{
 	28: "MapLit",
 	29: "FuncLit",
 	30: "TupleConvert",
+	31: "Data",
 }
 
 type ConstExpr struct {
@@ -1350,6 +1351,16 @@ type TupleConvertExpr struct {
 
 func (*TupleConvertExpr) UnionTag() int { return 30 }
 func (*TupleConvertExpr) isExpr()       {}
+
+type DataExpr struct {
+	Type TypeID
+	Pos  PosID
+	Off  uint64
+	Len  uint64
+}
+
+func (*DataExpr) UnionTag() int { return 31 }
+func (*DataExpr) isExpr()       {}
 
 // File is one decoded GIR file. Bodies[i] is the decoded body of
 // Funcs[i] (nil while not decoded, and for bodyless functions).
@@ -1992,6 +2003,8 @@ func (r *Reader) readMapEntry(v *MapEntry) {
 }
 
 func (w *Writer) writeType(x Type) {
+	w.enter()
+	defer w.leave()
 	switch v := x.(type) {
 	case *BasicType:
 		w.uvarint(1)
@@ -2195,6 +2208,8 @@ func (r *Reader) readTypeKind(k uint64) Type {
 }
 
 func (w *Writer) writeStmt(x Stmt) {
+	w.enter()
+	defer w.leave()
 	switch v := x.(type) {
 	case *ExprStmt:
 		w.uvarint(1)
@@ -2553,6 +2568,8 @@ func (r *Reader) readStmtKind(k uint64) Stmt {
 }
 
 func (w *Writer) writeExpr(x Expr) {
+	w.enter()
+	defer w.leave()
 	switch v := x.(type) {
 	case *ConstExpr:
 		w.uvarint(1)
@@ -2779,6 +2796,12 @@ func (w *Writer) writeExpr(x Expr) {
 		w.uvarint(uint64(v.Type))
 		w.uvarint(uint64(v.Pos))
 		w.writeExpr(v.X)
+	case *DataExpr:
+		w.uvarint(31)
+		w.uvarint(uint64(v.Type))
+		w.uvarint(uint64(v.Pos))
+		w.uvarint(v.Off)
+		w.uvarint(v.Len)
 	default:
 		panic(fmt.Sprintf("ir: cannot encode %T as Expr", x))
 	}
@@ -3071,6 +3094,13 @@ func (r *Reader) readExprKind(k uint64) Expr {
 		v.Type = r.typeRef()
 		v.Pos = r.posRef()
 		v.X = r.readExpr()
+		return v
+	case 31:
+		v := &DataExpr{}
+		v.Type = r.typeRef()
+		v.Pos = r.posRef()
+		v.Off = r.uvarint()
+		v.Len = r.uvarint()
 		return v
 	}
 	r.failf("bad Expr kind %d", k)

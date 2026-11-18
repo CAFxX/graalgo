@@ -87,6 +87,36 @@ func (fs *fnState) pos(n ast.Node) ir.PosID {
 	return fs.posAt(n.Pos(), max(length, 0))
 }
 
+// opPos is the position of an operation at its operator token: '(' of a
+// call, '[' of an index or slice, the operator of a binary expression,
+// '.' of a type assertion — the token gc attributes the operation to
+// (runtime.Caller, traceback and run-time panic lines). Its length runs to
+// the end of the node.
+func (fs *fnState) opPos(n ast.Node, op token.Pos) ir.PosID {
+	if !op.IsValid() {
+		return fs.pos(n)
+	}
+	fset := fs.e.cfg.Fset
+	length := fset.PositionFor(n.End(), false).Offset - fset.PositionFor(op, false).Offset
+	return fs.posAt(op, max(length, 0))
+}
+
+// endReturn appends an explicit Return positioned at the closing brace to
+// a body without results that can fall off its end: gc attributes the
+// implicit return (and the deferred calls it runs) to that brace.
+func (fs *fnState) endReturn(sig *types.Signature, rbrace token.Pos) {
+	if sig != nil && sig.Results().Len() > 0 {
+		return
+	}
+	b := fs.body.Body
+	if len(b) > 0 {
+		if _, ok := b[len(b)-1].(*ir.ReturnStmt); ok {
+			return
+		}
+	}
+	fs.body.Body = append(b, &ir.ReturnStmt{Pos: fs.posAt(rbrace, 1)})
+}
+
 // posKey identifies a position before delta encoding.
 type posKey struct {
 	file           string
@@ -303,7 +333,11 @@ func (fs *fnState) stmt(s ast.Stmt) ir.Stmt {
 					st.Values = append(st.Values, fs.convExpr(v, vars[i].Type()))
 				}
 			default:
-				st.Values = []ir.Expr{fs.commaOkExpr(vs.Values[0])}
+				var targets []types.Type
+				for _, v := range vars {
+					targets = append(targets, v.Type())
+				}
+				st.Values = []ir.Expr{fs.multiExpr(vs.Values[0], targets)}
 			}
 			out = append(out, st)
 		}
@@ -351,26 +385,7 @@ func (fs *fnState) stmt(s ast.Stmt) ir.Stmt {
 	case *ast.IfStmt:
 		return &ir.IfStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init), Cond: fs.expr(s.Cond), Then: fs.stmtList(s.Body.List), Else: fs.optStmt(s.Else)}
 	case *ast.SwitchStmt:
-		st := &ir.SwitchStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init)}
-		var tagType types.Type
-		if s.Tag != nil {
-			st.Tag = fs.expr(s.Tag)
-			tagType = info.Types[s.Tag].Type
-		}
-		for _, c := range s.Body.List {
-			cc := c.(*ast.CaseClause)
-			cl := ir.CaseClause{Pos: fs.pos(cc), IsDefault: cc.List == nil}
-			for _, x := range cc.List {
-				if tagType != nil {
-					cl.Exprs = append(cl.Exprs, fs.compareOperand(x, tagType))
-				} else {
-					cl.Exprs = append(cl.Exprs, fs.expr(x))
-				}
-			}
-			cl.Body = fs.stmtList(cc.Body)
-			st.Clauses = append(st.Clauses, cl)
-		}
-		return st
+		return fs.switchStmt(s)
 	case *ast.TypeSwitchStmt:
 		st := &ir.TypeSwitchStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init)}
 		var ta *ast.TypeAssertExpr
@@ -422,27 +437,7 @@ func (fs *fnState) stmt(s ast.Stmt) ir.Stmt {
 		st.Body = fs.stmtList(s.Body.List)
 		return st
 	case *ast.RangeStmt:
-		st := &ir.RangeStmt{Pos: fs.pos(s), X: fs.expr(s.X), Define: s.Tok == token.DEFINE}
-		if st.Define {
-			for _, x := range []ast.Expr{s.Key, s.Value} {
-				id, ok := x.(*ast.Ident)
-				if !ok {
-					continue
-				}
-				if v, ok := info.Defs[id].(*types.Var); ok && v != nil {
-					st.Fresh = append(st.Fresh, fs.declare(v, 0))
-				}
-			}
-			st.PerIter = fs.perIteration(s.Pos())
-		}
-		if s.Key != nil {
-			st.Key = fs.lhs(s.Key)
-		}
-		if s.Value != nil {
-			st.Value = fs.lhs(s.Value)
-		}
-		st.Body = fs.stmtList(s.Body.List)
-		return st
+		return fs.rangeStmt(s)
 	}
 	fs.e.unsupportedf(s.Pos(), "statement %T", s)
 	return nil
@@ -517,6 +512,9 @@ func (fs *fnState) assign(s *ast.AssignStmt) ir.Stmt {
 		st.Rhs = fs.assignRhs(s.Lhs, s.Rhs)
 	} else {
 		st.Rhs = []ir.Expr{fs.expr(s.Rhs[0])}
+		if op == ir.AssignOpShl || op == ir.AssignOpShr {
+			st.Rhs[0] = fs.shiftCount(s.Rhs[0], st.Rhs[0])
+		}
 	}
 	return st
 }
@@ -654,8 +652,174 @@ func (fs *fnState) convExpr(x ast.Expr, to types.Type) ir.Expr {
 
 // compareOperand emits a switch case value compared against tag type t.
 func (fs *fnState) compareOperand(x ast.Expr, t types.Type) ir.Expr {
+	if fs.e.cfg.Info.Types[x].IsNil() {
+		return &ir.NilExpr{Type: fs.e.typeID(t), Pos: fs.pos(x)}
+	}
 	if types.IsInterface(t) && !types.IsInterface(fs.e.cfg.Info.Types[x].Type) {
 		return fs.convExpr(x, t)
 	}
 	return fs.expr(x)
+}
+
+// switchStmt emits an expression switch. A case of interface type against
+// a tag of non-interface type compares the tag converted to the case's
+// type; the IR switch compares case values with the tag as is, so such a
+// switch is lowered to a tagless one over a fresh local holding the tag.
+func (fs *fnState) switchStmt(s *ast.SwitchStmt) ir.Stmt {
+	info := fs.e.cfg.Info
+	st := &ir.SwitchStmt{Pos: fs.pos(s), Init: fs.optStmt(s.Init)}
+	var tagType types.Type
+	if s.Tag != nil {
+		tagType = concrete(info.Types[s.Tag].Type)
+	}
+	lower := false
+	if tagType != nil && !types.IsInterface(tagType) {
+		for _, c := range s.Body.List {
+			for _, x := range c.(*ast.CaseClause).List {
+				lower = lower || types.IsInterface(info.Types[x].Type)
+			}
+		}
+	}
+	var tmp ir.Expr
+	if lower {
+		v := types.NewVar(token.NoPos, fs.e.cfg.Pkg, "·tag", tagType)
+		id := fs.declare(v, 0)
+		tmp = &ir.LocalExpr{Type: fs.e.typeID(tagType), Pos: fs.pos(s.Tag), Local: id}
+		def := &ir.DefineStmt{Pos: fs.pos(s.Tag), Lhs: []ir.Expr{tmp}, Rhs: []ir.Expr{fs.expr(s.Tag)}, Fresh: []uint32{id}}
+		if st.Init != nil {
+			st.Init = &ir.BlockStmt{Pos: fs.pos(s), Stmts: []ir.Stmt{st.Init, def}}
+		} else {
+			st.Init = def
+		}
+	} else if s.Tag != nil {
+		st.Tag = fs.expr(s.Tag)
+	}
+	boolT := fs.e.typeID(types.Typ[types.Bool])
+	for _, c := range s.Body.List {
+		cc := c.(*ast.CaseClause)
+		cl := ir.CaseClause{Pos: fs.pos(cc), IsDefault: cc.List == nil}
+		for _, x := range cc.List {
+			switch {
+			case lower:
+				xt := info.Types[x].Type
+				var l ir.Expr = tmp
+				r := fs.expr(x)
+				if types.IsInterface(xt) {
+					l = &ir.ConvertExpr{Type: fs.e.typeID(xt), Pos: fs.pos(x), X: tmp, Implicit: true}
+				}
+				cl.Exprs = append(cl.Exprs, &ir.BinaryExpr{Type: boolT, Pos: fs.pos(x), Op: ir.BinOpEql, X: l, Y: r})
+			case tagType != nil:
+				cl.Exprs = append(cl.Exprs, fs.compareOperand(x, tagType))
+			default:
+				cl.Exprs = append(cl.Exprs, fs.expr(x))
+			}
+		}
+		cl.Body = fs.stmtList(cc.Body)
+		st.Clauses = append(st.Clauses, cl)
+	}
+	return st
+}
+
+// rangeTypes returns the iteration value types of ranging over a value of
+// type t (nil where the form has no such value).
+func rangeTypes(t types.Type) (key, val types.Type) {
+	switch u := coreType(t).(type) {
+	case *types.Basic:
+		if u.Info()&types.IsString != 0 {
+			return types.Typ[types.Int], types.Universe.Lookup("rune").Type()
+		}
+		return t, nil // range over an integer
+	case *types.Array:
+		return types.Typ[types.Int], u.Elem()
+	case *types.Pointer:
+		return types.Typ[types.Int], coreType(u.Elem()).(*types.Array).Elem()
+	case *types.Slice:
+		return types.Typ[types.Int], u.Elem()
+	case *types.Map:
+		return u.Key(), u.Elem()
+	case *types.Chan:
+		return u.Elem(), nil
+	case *types.Signature:
+		yield := coreType(u.Params().At(0).Type()).(*types.Signature).Params()
+		if yield.Len() > 0 {
+			key = yield.At(0).Type()
+		}
+		if yield.Len() > 1 {
+			val = yield.At(1).Type()
+		}
+		return key, val
+	}
+	return nil, nil
+}
+
+func (fs *fnState) rangeStmt(s *ast.RangeStmt) ir.Stmt {
+	info := fs.e.cfg.Info
+	st := &ir.RangeStmt{Pos: fs.pos(s), X: fs.expr(s.X), Define: s.Tok == token.DEFINE}
+	if st.Define {
+		for _, x := range []ast.Expr{s.Key, s.Value} {
+			id, ok := x.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			if v, ok := info.Defs[id].(*types.Var); ok && v != nil {
+				st.Fresh = append(st.Fresh, fs.declare(v, 0))
+			}
+		}
+		st.PerIter = fs.perIteration(s.Pos())
+	}
+	// for k, v = range x where an iteration value needs an implicit
+	// conversion to its target (interface, channel direction): the IR range
+	// assigns iteration values as they are, so this is lowered to
+	// for k', v' := range x { k, v = T(k'), T(v'); body } — the spec's
+	// per-iteration assignment, with the conversions explicit.
+	var pre ir.Stmt
+	if !st.Define && s.Tok == token.ASSIGN {
+		kt, vt := rangeTypes(info.Types[s.X].Type)
+		conv := false
+		for i, x := range []ast.Expr{s.Key, s.Value} {
+			from := []types.Type{kt, vt}[i]
+			if x != nil && from != nil && needsConversion(from, fs.lhsType(x)) {
+				conv = true
+			}
+		}
+		if conv {
+			as := &ir.AssignStmt{Pos: fs.pos(s), Op: ir.AssignOpPlain}
+			for i, x := range []ast.Expr{s.Key, s.Value} {
+				from := []types.Type{kt, vt}[i]
+				if x == nil {
+					continue
+				}
+				v := types.NewVar(token.NoPos, fs.e.cfg.Pkg, []string{"·key", "·value"}[i], from)
+				id := fs.declare(v, 0)
+				tmp := &ir.LocalExpr{Type: fs.e.typeID(from), Pos: fs.pos(x), Local: id}
+				st.Fresh = append(st.Fresh, id)
+				if i == 0 {
+					st.Key = tmp
+				} else {
+					st.Value = tmp
+				}
+				var rhs ir.Expr = tmp
+				if to := fs.lhsType(x); to != nil && needsConversion(from, to) {
+					rhs = &ir.ConvertExpr{Type: fs.e.typeID(to), Pos: fs.pos(x), X: tmp, Implicit: true}
+				}
+				as.Lhs = append(as.Lhs, fs.lhs(x))
+				as.Rhs = append(as.Rhs, rhs)
+			}
+			st.Define = true
+			pre = as
+		}
+	}
+	if pre == nil {
+		if s.Key != nil {
+			st.Key = fs.lhs(s.Key)
+		}
+		if s.Value != nil {
+			st.Value = fs.lhs(s.Value)
+		}
+	}
+	st.Body = fs.stmtList(s.Body.List)
+	if pre != nil {
+		st.Body = append([]ir.Stmt{pre}, st.Body...)
+	}
+	return st
 }

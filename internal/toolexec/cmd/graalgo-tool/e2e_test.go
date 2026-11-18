@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"testing"
 
 	"graalgo-toolexec/archive"
@@ -262,15 +263,48 @@ func TestCompileErrorIsStock(t *testing.T) {
 	}
 }
 
-// A construct the skeleton does not lower yet (//go:embed) must fail the
-// build with a message naming the package, never produce a binary.
-func TestUnsupportedConstructFailsLoudly(t *testing.T) {
+// //go:embed reaches the IR: the -embedcfg cmd/go passes is read and the
+// file contents land in DATA behind a Data initializer.
+func TestEmbedThroughToolexec(t *testing.T) {
 	e := setup(t)
 	src := "package lib\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar data string\n\nfunc Answer() int {\n\treturn len(data)\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "data.txt"), []byte("hi"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "data.txt"), []byte("embedded!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exe := filepath.Join(t.TempDir(), "skel")
+	if out, err := e.build(exe); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	b, err := bundle.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range b.Packages {
+		if p.ImportPath != "example.com/skel/lib" {
+			continue
+		}
+		f, err := ir.DecodeValidate(p.IR)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(f.Data) != "embedded!" {
+			t.Errorf("DATA = %q", f.Data)
+		}
+		return
+	}
+	t.Fatal("no IR for lib")
+}
+
+// Input the IR cannot represent (nesting deeper than the decoders accept,
+// a legal program for gc) must fail the build with a message naming the
+// package, never produce a binary or a cached archive that fails later.
+func TestUnsupportedConstructFailsLoudly(t *testing.T) {
+	e := setup(t)
+	src := "package lib\n\nfunc Answer() int {\n\tx := 1\n\treturn " + strings.Repeat("x+", 1100) + "x\n}\n"
+	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	exe := filepath.Join(t.TempDir(), "skel")
@@ -278,10 +312,117 @@ func TestUnsupportedConstructFailsLoudly(t *testing.T) {
 	if err == nil {
 		t.Fatal("build succeeded")
 	}
-	if !strings.Contains(out, "graalgo-tool: example.com/skel/lib:") || !strings.Contains(out, "go:embed") {
+	if !strings.Contains(out, "graalgo-tool: example.com/skel/lib:") || !strings.Contains(out, "nesting deeper than") {
 		t.Errorf("unexpected diagnostics:\n%s", out)
 	}
 	if _, statErr := os.Stat(exe); statErr == nil {
 		t.Error("an executable was written")
+	}
+}
+
+// Coordinator review (c): the IR is emitted for the build's target, not
+// the host: GOARCH=386 gives 4-byte layout and a 386 GIR header.
+func TestCrossTargetIR(t *testing.T) {
+	e := setup(t)
+	src := "package lib\n\nimport \"unsafe\"\n\nconst W = unsafe.Sizeof(uintptr(0))\n\nfunc Answer() int {\n\treturn int(W)\n}\n"
+	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(t.TempDir(), "lib.a")
+	out, err := goCmd(t, e.moduleDir, []string{"GOCACHE=" + e.cache, "GOFLAGS=", "CGO_ENABLED=0", "GOARCH=386"},
+		"build", "-toolexec", e.tool, "-o", a, "./lib")
+	if err != nil {
+		t.Fatalf("GOARCH=386 build: %v\n%s", err, out)
+	}
+	data, err := archive.Read(a, archive.IRMember)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, err := ir.DecodeValidate(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.GOARCH != "386" {
+		t.Errorf("GIR GOARCH = %q, want 386", f.GOARCH)
+	}
+	for _, o := range f.Objects {
+		if o.Name == "W" && (o.Value == nil || o.Value.Text != "4") {
+			t.Errorf("unsafe.Sizeof(uintptr(0)) = %+v, want 4 on 386", o.Value)
+		}
+	}
+}
+
+// Coordinator review (d): link -X settings (the user's and cmd/go's) and
+// the module build info reach the bundle instead of being dropped.
+func TestLinkCarriesXAndModinfo(t *testing.T) {
+	e := setup(t)
+	exe := filepath.Join(t.TempDir(), "skel")
+	if out, err := e.build(exe, "-ldflags=-X=example.com/skel/lib.Version=v1.2"); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	b, err := bundle.ReadFile(exe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, x := range b.X {
+		found = found || x == "example.com/skel/lib.Version=v1.2"
+	}
+	if !found {
+		t.Errorf("bundle -X settings %q lack the user's", b.X)
+	}
+	if !strings.Contains(b.ModInfo, "example.com/skel") {
+		t.Errorf("bundle modinfo %q lacks the main module", b.ModInfo)
+	}
+}
+
+// Coordinator review (e): environment the link step reads is part of the
+// link tool's -V=full identity, so cmd/go does not reuse a link output
+// produced under another GRAALGO_RUNNER / GRAALGO_RACE.
+func TestLinkIdentityCoversEnv(t *testing.T) {
+	e := setup(t)
+	gotooldir, err := goCmd(t, ".", nil, "env", "GOTOOLDIR")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(strings.TrimSpace(gotooldir), "link")
+	probe := func(env ...string) string {
+		cmd := exec.Command(e.tool, link, "-V=full")
+		cmd.Env = append(os.Environ(), env...)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(out)
+	}
+	base := probe("GRAALGO_RUNNER=/a", "GRAALGO_RACE=")
+	if probe("GRAALGO_RUNNER=/b", "GRAALGO_RACE=") == base {
+		t.Error("GRAALGO_RUNNER does not change the link identity")
+	}
+	if probe("GRAALGO_RUNNER=/a", "GRAALGO_RACE=ignore") == base {
+		t.Error("GRAALGO_RACE does not change the link identity")
+	}
+}
+
+// Coordinator review (g): a tool killed by a signal is mirrored (W1 exited
+// 255), and every -d flag is checked for the libfuzzer refusal.
+func TestSignalAndRepeatedFlags(t *testing.T) {
+	e := setup(t)
+	cmd := exec.Command(e.tool, "/bin/sh", "-c", "kill -TERM $$")
+	err := cmd.Run()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) {
+		t.Fatalf("pass-through of a signalled tool: %v", err)
+	}
+	if ws, ok := ee.Sys().(syscall.WaitStatus); !ok || !ws.Signaled() || ws.Signal() != syscall.SIGTERM {
+		t.Errorf("graalgo-tool exited with %v, want death by SIGTERM", ee.ProcessState)
+	}
+	gotooldir, _ := goCmd(t, ".", nil, "env", "GOTOOLDIR")
+	compile := filepath.Join(strings.TrimSpace(gotooldir), "compile")
+	src := filepath.Join(t.TempDir(), "x.go")
+	os.WriteFile(src, []byte("package x\n"), 0o644)
+	out, err := exec.Command(e.tool, compile, "-d=libfuzzer", "-d=checkptr", "-o", filepath.Join(t.TempDir(), "x.a"), "-p", "x", src).CombinedOutput()
+	if err == nil || !strings.Contains(string(out), "libfuzzer") {
+		t.Errorf("-d=libfuzzer followed by another -d was not refused: %v\n%s", err, out)
 	}
 }

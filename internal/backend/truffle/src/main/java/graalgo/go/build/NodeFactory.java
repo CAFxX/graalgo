@@ -171,6 +171,18 @@ public final class NodeFactory {
         return new NodeFactory(inst, b, u.symbol).buildRoot(0);
     }
 
+    /**
+     * The target of a method promoted from an embedded interface: called with the embedded
+     * interface value as receiver, it forwards the remaining arguments to that value's method.
+     */
+    public static RootCallTarget ifaceForwarder(GoLanguage lang, GoType iface, String key) {
+        int index = methodIndex(iface, key);
+        int params = iface.u().imethods[index].sig.params.length;
+        Expr call = new Calls.IfaceCall(new N.Arg(1), iface, index, argNodes(2, params));
+        return new Calls.ThunkRoot(lang, FrameDescriptor.newBuilder().build(), iface.str() + "." + key, call)
+                .getCallTarget();
+    }
+
     private RootCallTarget buildRoot(int captures) {
         List<Stmt> pro = new ArrayList<>();
         for (int i = 0; i < captures; i++) {
@@ -287,6 +299,7 @@ public final class NodeFactory {
             case Gir.Expr.MapLit x -> x.type();
             case Gir.Expr.FuncLit x -> x.type();
             case Gir.Expr.TupleConvert x -> x.type();
+            case Gir.Expr.Data x -> x.type();
         };
     }
 
@@ -462,6 +475,7 @@ public final class NodeFactory {
         return switch (e) {
             case null -> true;
             case Gir.Expr.Const x -> true;
+            case Gir.Expr.Data x -> true;
             case Gir.Expr.Nil x -> true;
             case Gir.Expr.Local x -> true;
             case Gir.Expr.Global x -> true;
@@ -879,6 +893,15 @@ public final class NodeFactory {
                 return funcLit(fl);
             case Gir.Expr.TupleConvert tc:
                 return tupleConvert(tc);
+            case Gir.Expr.Data d: {
+                // An embedded file: bytes of the package's DATA section (range checked here).
+                byte[] data = pkg.gir.data();
+                if (d.off() < 0 || d.len() < 0 || d.off() > data.length || d.len() > data.length - d.off()) {
+                    throw new IllegalStateException("Data expression outside the DATA section of " + pkg.path);
+                }
+                return new N.ConstRef(new Str(java.util.Arrays.copyOfRange(data, (int) d.off(),
+                        (int) (d.off() + d.len()))));
+            }
         }
     }
 
@@ -2326,16 +2349,14 @@ public final class NodeFactory {
                     sends.add(null);
                 }
                 case Gir.Stmt.Assign a -> {
-                    Gir.Expr.Recv r = (Gir.Expr.Recv) a.rhs()[0];
-                    chans.add(expr(r.ch()));
+                    chans.add(expr(recvOf(a.rhs()[0]).ch()));
                     sends.add(null);
-                    recvStores(a.lhs(), null, r, valueSlot, okSlot, b);
+                    recvStores(a.lhs(), null, a.rhs()[0], valueSlot, okSlot, b);
                 }
                 case Gir.Stmt.Define d -> {
-                    Gir.Expr.Recv r = (Gir.Expr.Recv) d.rhs()[0];
-                    chans.add(expr(r.ch()));
+                    chans.add(expr(recvOf(d.rhs()[0]).ch()));
                     sends.add(null);
-                    recvStores(d.lhs(), d.fresh(), r, valueSlot, okSlot, b);
+                    recvStores(d.lhs(), d.fresh(), d.rhs()[0], valueSlot, okSlot, b);
                 }
                 default -> throw new IllegalStateException("select communication " + c.comm());
             }
@@ -2358,10 +2379,27 @@ public final class NodeFactory {
         return target.brk == null ? all : new Ctl.BreakTarget(all, target.brk);
     }
 
-    private void recvStores(Gir.Expr[] lhs, int[] fresh, Gir.Expr.Recv r, int valueSlot, int okSlot, List<Stmt> out) {
+    /** The receive of a select communication, under the implicit conversion the frontend adds. */
+    private static Gir.Expr.Recv recvOf(Gir.Expr rhs) {
+        return switch (rhs) {
+            case Gir.Expr.Recv r -> r;
+            case Gir.Expr.Convert c -> recvOf(c.x());
+            case Gir.Expr.TupleConvert c -> recvOf(c.x());
+            default -> throw new IllegalStateException("select receive " + rhs.getClass().getSimpleName());
+        };
+    }
+
+    private void recvStores(Gir.Expr[] lhs, int[] fresh, Gir.Expr rhs, int valueSlot, int okSlot, List<Stmt> out) {
+        Gir.Expr.Recv r = recvOf(rhs);
         GoType elem = ty(r.ch()).u().elem;
-        Expr v = new N.ReadRef(valueSlot);
-        v = elem.carrier() == GoType.C_FLAT ? new Mem.Copy(v) : typed(elem, v);
+        Expr raw = new N.ReadRef(valueSlot);
+        Expr received = elem.carrier() == GoType.C_FLAT ? new Mem.Copy(raw) : typed(elem, raw);
+        // The value's target type: the element type unless the frontend wrapped the receive.
+        GoType to = ty(rhs);
+        if (to.kind == GoType.TUPLE) {
+            to = to.results[0];
+        }
+        Expr v = rhs == r ? received : convertNode(elem, to, () -> received);
         out.add(storeTo(lhs[0], fresh, v, null));
         if (lhs.length > 1) {
             out.add(storeTo(lhs[1], fresh, new N.ReadBool(okSlot), null));

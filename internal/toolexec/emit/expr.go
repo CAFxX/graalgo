@@ -40,9 +40,9 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 	info := e.cfg.Info
 	tv, hasTV := info.Types[x]
 	if hasTV && tv.Value != nil {
-		return &ir.ConstExpr{Type: e.typeID(tv.Type), Pos: fs.pos(x), Value: *constValueOf(tv.Value)}
+		return &ir.ConstExpr{Type: e.typeID(concrete(tv.Type)), Pos: fs.pos(x), Value: *constValueOf(tv.Value)}
 	}
-	typ := func() ir.TypeID { return e.typeID(tv.Type) }
+	typ := func() ir.TypeID { return e.typeID(concrete(tv.Type)) }
 	switch x := x.(type) {
 	case *ast.ParenExpr:
 		return fs.expr(x.X)
@@ -58,16 +58,22 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		if inst := fs.instance(x.X); inst != nil {
 			return inst
 		}
-		return &ir.IndexExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X), Index: fs.indexOperand(x.X, x.Index)}
+		if se := fs.genericMethodSel(x); se != nil {
+			return fs.instMethodVal(se, tv.Type) // s.M[T]: method value with type arguments
+		}
+		return &ir.IndexExpr{Type: typ(), Pos: fs.opPos(x, x.Lbrack), X: fs.expr(x.X), Index: fs.indexOperand(x.X, x.Index)}
 	case *ast.IndexListExpr:
 		if inst := fs.instance(x.X); inst != nil {
 			return inst
+		}
+		if se := fs.genericMethodSel(x); se != nil {
+			return fs.instMethodVal(se, tv.Type)
 		}
 	case *ast.SliceExpr:
 		if _, isArr := info.Types[x.X].Type.Underlying().(*types.Array); isArr {
 			fs.markAddrTaken(x.X)
 		}
-		return &ir.SliceExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X), Lo: fs.optExpr(x.Low), Hi: fs.optExpr(x.High), Max: fs.optExpr(x.Max)}
+		return &ir.SliceExpr{Type: typ(), Pos: fs.opPos(x, x.Lbrack), X: fs.expr(x.X), Lo: fs.optExpr(x.Low), Hi: fs.optExpr(x.High), Max: fs.optExpr(x.Max)}
 	case *ast.StarExpr:
 		return &ir.DerefExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X)}
 	case *ast.UnaryExpr:
@@ -98,22 +104,58 @@ func (fs *fnState) expr(x ast.Expr) ir.Expr {
 		default:
 			l, r = fs.expr(x.X), fs.expr(x.Y)
 		}
+		if op == ir.BinOpShl || op == ir.BinOpShr {
+			r = fs.shiftCount(x.Y, r)
+		}
 		if n, ok := l.(*ir.NilExpr); ok {
 			n.Type = e.typeID(rt)
 		}
 		if n, ok := r.(*ir.NilExpr); ok {
 			n.Type = e.typeID(lt)
 		}
-		return &ir.BinaryExpr{Type: typ(), Pos: fs.pos(x), Op: op, X: l, Y: r}
+		return &ir.BinaryExpr{Type: typ(), Pos: fs.opPos(x, x.OpPos), Op: op, X: l, Y: r}
 	case *ast.CallExpr:
 		return fs.call(x)
 	case *ast.TypeAssertExpr:
-		return &ir.TypeAssertExpr{Type: typ(), Pos: fs.pos(x), X: fs.expr(x.X), Target: e.typeID(info.Types[x.Type].Type)}
+		return &ir.TypeAssertExpr{Type: typ(), Pos: fs.opPos(x, x.Lparen-1), X: fs.expr(x.X), Target: e.typeID(info.Types[x.Type].Type)}
 	case *ast.KeyValueExpr:
 		e.unsupportedf(x.Pos(), "key-value expression outside a composite literal")
 	}
 	e.unsupportedf(x.Pos(), "expression %T", x)
 	return nil
+}
+
+func isTypeParam(t types.Type) bool {
+	_, ok := types.Unalias(t).(*types.TypeParam)
+	return ok
+}
+
+// isUntyped reports whether t is an untyped basic type.
+func isUntyped(t types.Type) bool {
+	b, ok := t.(*types.Basic)
+	return ok && b.Info()&types.IsUntyped != 0
+}
+
+// concrete is the type an expression of type t has in the IR: untyped
+// types other than untyped nil become their default type (the type go/types
+// leaves recorded for print/println arguments, conditions and untyped
+// boolean results of comparisons). Contexts that give an untyped value
+// another type (shift counts, conversions to type parameters, nil) are
+// handled where they occur.
+func concrete(t types.Type) types.Type {
+	if isUntyped(t) && t.(*types.Basic).Kind() != types.UntypedNil {
+		return types.Default(t)
+	}
+	return t
+}
+
+// shiftCount types an untyped constant shift count as uint (spec: "an
+// untyped constant representable by a value of type uint").
+func (fs *fnState) shiftCount(y ast.Expr, r ir.Expr) ir.Expr {
+	if c, ok := r.(*ir.ConstExpr); ok && isUntyped(fs.e.cfg.Info.Types[y].Type) {
+		c.Type = fs.e.typeID(types.Typ[types.Uint])
+	}
+	return r
 }
 
 func (fs *fnState) optExpr(x ast.Expr) ir.Expr {
@@ -221,6 +263,42 @@ func (fs *fnState) instance(fun ast.Expr) ir.Expr {
 	return nil
 }
 
+// genericMethodSel returns x.M (or T.M) for an explicit instantiation
+// x.M[U...] / T.M[U...] of a generic method (its type arguments are
+// recorded on M).
+func (fs *fnState) genericMethodSel(x ast.Expr) *ast.SelectorExpr {
+	var base ast.Expr
+	switch y := x.(type) {
+	case *ast.IndexExpr:
+		base = y.X
+	case *ast.IndexListExpr:
+		base = y.X
+	default:
+		return nil
+	}
+	se, ok := unparen(base).(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	if sel, ok := fs.e.cfg.Info.Selections[se]; ok && sel.Kind() != types.FieldVal {
+		return se
+	}
+	return nil
+}
+
+// instMethodVal is the method value s.M[T...]: typed with the
+// instantiated signature (go/types records the generic one on s.M).
+func (fs *fnState) instMethodVal(se *ast.SelectorExpr, t types.Type) ir.Expr {
+	v := fs.selector(se)
+	switch mv := v.(type) {
+	case *ir.MethodValExpr:
+		mv.Type = fs.e.typeID(t)
+	case *ir.MethodExprExpr:
+		mv.Type = fs.e.typeID(t)
+	}
+	return v
+}
+
 // fieldPathType returns the type reached by following field indices from t.
 func fieldPathType(t types.Type, path []int) types.Type {
 	for _, i := range path {
@@ -279,7 +357,7 @@ func (fs *fnState) selector(x *ast.SelectorExpr) ir.Expr {
 			return &ir.IfaceMethodExprExpr{Type: typ, Pos: fs.pos(x), Iface: e.typeID(recvT), Name: name, Pkg: pkg}
 		}
 		if len(sel.Index()) > 1 {
-			e.unsupportedf(x.Pos(), "method expression through an embedded field")
+			return fs.promotedMethodExpr(x, sel)
 		}
 		return &ir.MethodExprExpr{Type: typ, Pos: fs.pos(x), Method: fs.methodSymRef(m), RecvType: e.typeID(recvT), Targs: fs.methodTargs(x)}
 	}
@@ -338,15 +416,28 @@ func (fs *fnState) methodRecv(x *ast.SelectorExpr, sel *types.Selection) (ir.Exp
 	_, wantPtr := types.Unalias(recvDecl).(*types.Pointer)
 	_, havePtr := types.Unalias(have).Underlying().(*types.Pointer)
 	if !isIface && wantPtr && !havePtr {
-		// implicit &: x (or the embedded field) must be addressable
-		if len(path) == 0 {
+		// implicit &: x (or the embedded field) must be addressable; x
+		// itself is when no pointer is followed on the way.
+		if !sel.Indirect() {
 			fs.markAddrTaken(x.X)
 		}
 	}
-	r := fs.expr(x.X)
+	return fs.adjustRecv(fs.expr(x.X), base, path, m, func() ir.PosID { return fs.pos(x.X) })
+}
+
+// adjustRecv adjusts receiver r of type base to method m's receiver:
+// through the embedding path, then & or *.
+func (fs *fnState) adjustRecv(r ir.Expr, base types.Type, path []int, m *types.Func, pos func() ir.PosID) (ir.Expr, bool) {
+	e := fs.e
+	have := base
 	if len(path) > 0 {
-		r = &ir.FieldExpr{Type: e.typeID(have), Pos: fs.pos(x.X), X: r, Path: ints(path)}
+		have = fieldPathType(base, path)
+		r = &ir.FieldExpr{Type: e.typeID(have), Pos: pos(), X: r, Path: ints(path)}
 	}
+	recvDecl := m.Signature().Recv().Type()
+	isIface := types.IsInterface(recvDecl)
+	_, wantPtr := types.Unalias(recvDecl).(*types.Pointer)
+	_, havePtr := types.Unalias(have).Underlying().(*types.Pointer)
 	if _, isTP := types.Unalias(have).(*types.TypeParam); isTP {
 		return r, true // dispatch through the type parameter's constraint
 	}
@@ -355,11 +446,63 @@ func (fs *fnState) methodRecv(x *ast.SelectorExpr, sel *types.Selection) (ir.Exp
 	}
 	switch {
 	case wantPtr && !havePtr:
-		r = &ir.AddrExpr{Type: e.typeID(types.NewPointer(have)), Pos: fs.pos(x.X), X: r}
+		r = &ir.AddrExpr{Type: e.typeID(types.NewPointer(have)), Pos: pos(), X: r}
 	case !wantPtr && havePtr:
-		r = &ir.DerefExpr{Type: e.typeID(have.Underlying().(*types.Pointer).Elem()), Pos: fs.pos(x.X), X: r}
+		r = &ir.DerefExpr{Type: e.typeID(have.Underlying().(*types.Pointer).Elem()), Pos: pos(), X: r}
 	}
 	return r, false
+}
+
+// promotedMethodExpr lowers T.M, M promoted through an embedded field, to
+// func(recv T, params...) results { return recv.<path>.M(params...) }:
+// the IR's MethodExpr names a declared method of T itself.
+func (fs *fnState) promotedMethodExpr(x *ast.SelectorExpr, sel *types.Selection) ir.Expr {
+	e := fs.e
+	sig := e.cfg.Info.Types[x].Type.(*types.Signature)
+	m := sel.Obj().(*types.Func)
+	pos := fs.pos(x)
+	e.stats.Funcs++
+	child := e.newFunc(fs, sig, x.Pos())
+	lit := &ir.FuncLitExpr{Type: e.typeID(sig), Pos: pos}
+	var args []ir.Expr
+	var recv ir.Expr
+	for i := range sig.Params().Len() {
+		v := sig.Params().At(i)
+		id := child.declare(types.NewVar(token.NoPos, e.cfg.Pkg, v.Name(), v.Type()), 1)
+		child.body.Params = append(child.body.Params, id)
+		ref := &ir.LocalExpr{Type: e.typeID(v.Type()), Pos: child.posAt(x.Pos(), 0), Local: id}
+		if i == 0 {
+			recv = ref
+		} else {
+			args = append(args, ref)
+		}
+	}
+	for i := range sig.Results().Len() {
+		v := sig.Results().At(i)
+		child.body.Results = append(child.body.Results, child.declare(types.NewVar(token.NoPos, e.cfg.Pkg, "", v.Type()), 2))
+	}
+	cpos := child.posAt(x.Pos(), 0)
+	idx := sel.Index()
+	r, isIface := child.adjustRecv(recv, sel.Recv(), idx[:len(idx)-1], m, func() ir.PosID { return cpos })
+	var rt types.Type = sig.Results()
+	if sig.Results().Len() == 1 {
+		rt = sig.Results().At(0).Type()
+	}
+	var call ir.Expr
+	if isIface {
+		name, pkg := methodName(m)
+		call = &ir.IfaceCallExpr{Type: e.typeID(rt), Pos: cpos, Recv: r, Name: name, Pkg: pkg, Args: args, Spread: sig.Variadic()}
+	} else {
+		call = &ir.MethodCallExpr{Type: e.typeID(rt), Pos: cpos, Recv: r, Method: child.methodSymRef(m), RecvType: child.recvTypeID(r), Targs: fs.methodTargs(x), Args: args, Spread: sig.Variadic()}
+	}
+	if sig.Results().Len() > 0 {
+		child.body.Body = []ir.Stmt{&ir.ReturnStmt{Pos: cpos, Results: []ir.Expr{call}}}
+	} else {
+		child.body.Body = []ir.Stmt{&ir.ExprStmt{Pos: cpos, X: call}}
+	}
+	e.stats.FuncsOK++
+	lit.Body = *child.body
+	return lit
 }
 
 func exprType(x ir.Expr) ir.TypeID {
@@ -376,21 +519,42 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 	switch {
 	case funTV.IsType():
 		to := funTV.Type
+		arg := info.Types[x.Args[0]]
+		switch {
+		case arg.IsNil():
+			// T(nil) is the nil value of T
+			return &ir.NilExpr{Type: e.typeID(to), Pos: fs.pos(x)}
+		case arg.Value != nil && isTypeParam(to):
+			// Conversions of a constant to a type parameter are the only
+			// ones go/types does not fold (it records the operand with its
+			// default type, which may not hold the value): spec "yields a
+			// non-constant value of that type, with the value represented
+			// as a value of the type argument" — so the IR constant has the
+			// type parameter's type and is materialized per instantiation.
+			return &ir.ConstExpr{Type: e.typeID(to), Pos: fs.pos(x), Value: *constValueOf(arg.Value)}
+		}
 		return &ir.ConvertExpr{Type: e.typeID(to), Pos: fs.pos(x), X: fs.expr(x.Args[0])}
 	case funTV.IsBuiltin():
 		return fs.builtinCall(x, typ)
 	}
-	if se, ok := unparen(x.Fun).(*ast.SelectorExpr); ok {
+	fun := unparen(x.Fun)
+	if se := fs.genericMethodSel(fun); se != nil {
+		fun = se
+	}
+	if se, ok := fun.(*ast.SelectorExpr); ok {
 		if sel, ok := info.Selections[se]; ok && sel.Kind() == types.MethodVal {
 			m := sel.Obj().(*types.Func)
 			recv, isIface := fs.methodRecv(se, sel)
-			sig := info.Types[se].Type.(*types.Signature)
+			sig, _ := info.Types[x.Fun].Type.(*types.Signature) // instantiated for s.M[T](...)
+			if sig == nil {
+				sig = info.Types[se].Type.(*types.Signature)
+			}
 			args := fs.args(x, sig)
 			if isIface {
 				name, pkg := methodName(m)
-				return &ir.IfaceCallExpr{Type: typ, Pos: fs.pos(x), Recv: recv, Name: name, Pkg: pkg, Args: args, Spread: spread}
+				return &ir.IfaceCallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Recv: recv, Name: name, Pkg: pkg, Args: args, Spread: spread}
 			}
-			return &ir.MethodCallExpr{Type: typ, Pos: fs.pos(x), Recv: recv, Method: fs.methodSymRef(m), RecvType: fs.recvTypeID(recv), Targs: fs.methodTargs(se), Args: args, Spread: spread}
+			return &ir.MethodCallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Recv: recv, Method: fs.methodSymRef(m), RecvType: fs.recvTypeID(recv), Targs: fs.methodTargs(se), Args: args, Spread: spread}
 		}
 	}
 	sig, ok := coreType(funTV.Type).(*types.Signature)
@@ -398,7 +562,7 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 		e.unsupportedf(x.Pos(), "call of non-function %s", funTV.Type)
 	}
 	fn := fs.expr(x.Fun)
-	return &ir.CallExpr{Type: typ, Pos: fs.pos(x), Fn: fn, Args: fs.args(x, sig), Spread: spread}
+	return &ir.CallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Fn: fn, Args: fs.args(x, sig), Spread: spread}
 }
 
 // args emits call arguments converted to the parameter types.
@@ -466,7 +630,7 @@ func (fs *fnState) builtinCall(x *ast.CallExpr, typ ir.TypeID) ir.Expr {
 	if !ok {
 		e.unsupportedf(x.Pos(), "builtin %s", b.Name())
 	}
-	call := &ir.BuiltinCallExpr{Type: typ, Pos: fs.pos(x), Builtin: bi, Spread: x.Ellipsis.IsValid()}
+	call := &ir.BuiltinCallExpr{Type: typ, Pos: fs.opPos(x, x.Lparen), Builtin: bi, Spread: x.Ellipsis.IsValid()}
 	args := x.Args
 	switch bi {
 	case ir.BuiltinMake, ir.BuiltinNew:
@@ -611,6 +775,7 @@ func (fs *fnState) funcLit(x *ast.FuncLit) ir.Expr {
 	}
 	child.depth = fs.depth
 	child.body.Body = child.stmtList(x.Body.List)
+	child.endReturn(sig, x.Body.Rbrace)
 	e.stats.FuncsOK++
 	lit.Body = *child.body
 	return lit

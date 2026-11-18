@@ -39,6 +39,8 @@ type Config struct {
 	// FileName maps a source position's file name to the name recorded in
 	// the IR (the -trimpath rewrite); nil keeps names unchanged.
 	FileName func(string) string
+	// Embed is the -embedcfg (nil: the package has no //go:embed).
+	Embed *EmbedConfig
 }
 
 // Stats counts what the emitter saw: every AST node kind in function
@@ -104,13 +106,16 @@ type emitter struct {
 	keyer ir.TypeKeyer
 
 	typeIDs     map[string]ir.TypeID
+	typeOf      []types.Type // TypeID-1 -> the go/types type it was interned from
 	symIDs      map[symKey]uint32
 	objIDs      map[types.Object]uint32
 	funcIDs     map[*types.Func]uint32
 	localTypes  map[*types.TypeName]string
+	localTargs  map[*types.TypeName][]types.Type // local types of generic functions
 	tparamOwner map[*types.TypeParam]string
 	typedefs    []*types.TypeName
 	linknames   map[string]string
+	dataOff     map[string][2]uint64 // embedded file -> (offset, length) in DATA
 
 	errFirst string
 	errCount int
@@ -130,10 +135,13 @@ func Emit(cfg Config) (*ir.File, *Stats, error) {
 		objIDs:      map[types.Object]uint32{},
 		funcIDs:     map[*types.Func]uint32{},
 		localTypes:  map[*types.TypeName]string{},
+		localTargs:  map[*types.TypeName][]types.Type{},
 		tparamOwner: map[*types.TypeParam]string{},
 		linknames:   map[string]string{},
+		dataOff:     map[string][2]uint64{},
 	}
-	e.keyer = ir.TypeKeyer{LocalName: e.localTypeName, TypeParamOwner: e.typeParamOwner}
+	e.keyer = ir.TypeKeyer{LocalName: e.localTypeName, TypeParamOwner: e.typeParamOwner,
+		LocalTargs: func(tn *types.TypeName) []types.Type { return e.localTargs[tn] }}
 	if e.sizes == nil {
 		return nil, nil, fmt.Errorf("emit: no gc sizes for GOARCH %q", cfg.GOARCH)
 	}
@@ -278,6 +286,7 @@ func (e *emitter) typeID(t types.Type) ir.TypeID {
 		return id
 	}
 	e.file.Types = append(e.file.Types, ir.TypeEntry{Key: key})
+	e.typeOf = append(e.typeOf, t)
 	id := ir.TypeID(len(e.file.Types))
 	e.typeIDs[key] = id
 	e.file.Types[id-1].Type = e.typeStructure(t)
@@ -354,15 +363,21 @@ func (e *emitter) typeStructure(t types.Type) ir.Type {
 			}
 			ms[i] = ir.IfaceMethod{Name: m.Name(), Pkg: pkg, Sig: e.typeID(m.Type())}
 		}
+		// Embeddeds: the normalized type set (ir.InterfaceTypeSet), the
+		// same value the canonical key encodes: `comparable` when
+		// required, then one element for the term list (the type itself
+		// for a single non-tilde term, else a Union).
 		var emb []ir.TypeID
-		for i := range t.NumEmbeddeds() {
-			et := t.EmbeddedType(i)
-			if _, isIface := et.Underlying().(*types.Interface); isIface {
-				if n, ok := et.(*types.Named); !ok || n.Obj().Pkg() != nil {
-					continue
-				}
+		ts := ir.InterfaceTypeSet(t)
+		if ts.Comparable {
+			emb = append(emb, e.typeID(types.Universe.Lookup("comparable").Type()))
+		}
+		if !ts.All {
+			if len(ts.Terms) == 1 && !ts.Terms[0].Tilde() {
+				emb = append(emb, e.typeID(ts.Terms[0].Type()))
+			} else {
+				emb = append(emb, e.typeID(types.NewUnion(ts.Terms)))
 			}
-			emb = append(emb, e.typeID(et))
 		}
 		return &ir.InterfaceType{Methods: ms, Embeddeds: emb, Implicit: t.IsImplicit()}
 	case *types.Tuple:
@@ -374,6 +389,9 @@ func (e *emitter) typeStructure(t types.Type) ir.Type {
 		}
 		if t.Origin() == t && t.TypeParams().Len() > 0 {
 			e.registerTypeParams(t.TypeParams(), pkgPath(obj.Pkg())+"."+obj.Name())
+		}
+		if lt := e.localTargs[obj]; len(lt) > 0 && t.TypeArgs().Len() == 0 {
+			return &ir.NamedType{Sym: e.objSym(obj), Targs: e.typeIDs_(lt)}
 		}
 		return &ir.NamedType{Sym: e.objSym(obj), Targs: e.typeListIDs(t.TypeArgs())}
 	case *types.TypeParam:
@@ -536,6 +554,7 @@ func (e *emitter) run() {
 				fs.body.Results = append(fs.body.Results, fs.declareParam(sig.Results().At(i), 2))
 			}
 			fs.body.Body = fs.stmtList(d.fd.Body.List)
+			fs.endReturn(sig, d.fd.Body.Rbrace)
 		})
 		if fs.ok {
 			e.file.Bodies[i] = fs.body
@@ -552,15 +571,35 @@ func (e *emitter) run() {
 func (e *emitter) emitVarInit() {
 	e.file.Init.VarInit = -1
 	order := e.cfg.Info.InitOrder
-	if len(order) == 0 {
+	var embeds []embedVar
+	func() {
+		defer func() {
+			if p := recover(); p != nil {
+				u, ok := p.(unsupported)
+				if !ok {
+					panic(p)
+				}
+				e.record(u)
+			}
+		}()
+		embeds = e.scanEmbeds()
+	}()
+	if len(order) == 0 && len(embeds) == 0 {
 		return
+	}
+	start := token.NoPos
+	if len(embeds) > 0 {
+		start = embeds[0].pos
+	} else {
+		start = order[0].Rhs.Pos()
 	}
 	idx := len(e.file.Funcs)
 	e.file.Funcs = append(e.file.Funcs, ir.Func{Name: "init·vars", Flags: 16, Sig: e.typeID(types.NewSignatureType(nil, nil, nil, nil, nil, false))})
 	e.file.Bodies = append(e.file.Bodies, nil)
-	fs := e.newFunc(nil, nil, order[0].Rhs.Pos())
+	fs := e.newFunc(nil, nil, start)
 	var initCounts []map[string]int
 	e.body(fs, func() {
+		fs.body.Body = append(fs.body.Body, fs.embedInits(embeds)...)
 		for _, in := range order {
 			initCounts = append(initCounts, e.countNodes(in.Rhs))
 			var lhs []ir.Expr
@@ -575,7 +614,15 @@ func (e *emitter) emitVarInit() {
 			if len(in.Lhs) == 1 {
 				rhs = fs.convExpr(in.Rhs, in.Lhs[0].Type())
 			} else {
-				rhs = fs.commaOkExpr(in.Rhs)
+				var targets []types.Type
+				for _, v := range in.Lhs {
+					if v.Name() != "_" {
+						targets = append(targets, v.Type())
+					} else {
+						targets = append(targets, nil)
+					}
+				}
+				rhs = fs.multiExpr(in.Rhs, targets)
 			}
 			fs.body.Body = append(fs.body.Body, &ir.AssignStmt{Pos: fs.pos(in.Rhs), Op: ir.AssignOpPlain, Lhs: lhs, Rhs: []ir.Expr{rhs}})
 		}
@@ -586,56 +633,98 @@ func (e *emitter) emitVarInit() {
 		}
 		e.file.Bodies[idx] = fs.body
 		e.file.Funcs[idx].Syms, e.file.Funcs[idx].Objs = fs.refs()
-		pos := e.cfg.Fset.Position(order[0].Rhs.Pos())
+		pos := e.cfg.Fset.Position(start)
 		e.file.Funcs[idx].File, e.file.Funcs[idx].Line = e.fileName(pos.Filename), uint64(pos.Line)
 	}
 	e.file.Init.VarInit = int32(idx)
 }
 
 // emitTypedefs writes TYPEDEFS for every defined type declared in this
-// package (package-level and local). Interning a type may discover more,
-// so the list is drained until it stops growing.
+// package (package-level and local), and for every unnamed struct type in
+// the type table whose value or pointer method set is non-empty (promoted
+// methods, design §3.4: the backend never runs a method-set algorithm).
+// Interning a type may discover more of either, so both lists are drained
+// until they stop growing.
 func (e *emitter) emitTypedefs() {
-	for i := 0; i < len(e.typedefs); i++ {
-		tn := e.typedefs[i]
-		named, ok := tn.Type().(*types.Named)
-		if !ok {
+	nextType := 0
+	for i := 0; i < len(e.typedefs) || nextType < len(e.typeOf); {
+		if i < len(e.typedefs) {
+			e.emitNamedTypedef(e.typedefs[i])
+			i++
 			continue
 		}
-		td := ir.TypeDef{Type: e.typeID(named), Underlying: e.typeID(named.Underlying()), Tparams: e.tparamIDs(named.TypeParams()), Size: -1, Align: -1}
-		for j := range named.NumMethods() {
-			m := named.Method(j)
-			pkg := ""
-			if !m.Exported() {
-				pkg = pkgPath(m.Pkg())
-			}
-			_, ptr := m.Signature().Recv().Type().(*types.Pointer)
-			fid := int32(-1)
-			if id, ok := e.funcIDs[m]; ok {
-				fid = int32(id)
-			}
-			if fid < 0 {
-				continue // method declared as "_"
-			}
-			td.Methods = append(td.Methods, ir.Method{Name: m.Name(), Pkg: pkg, PtrRecv: ptr, Fn: uint32(fid)})
+		t := e.typeOf[nextType]
+		nextType++
+		if st, ok := t.(*types.Struct); ok {
+			e.emitStructTypedef(st)
 		}
-		if _, isIface := named.Underlying().(*types.Interface); !isIface {
-			td.Mset = e.methodSet(named)
-			td.PtrMset = e.methodSet(types.NewPointer(named))
-		}
-		if !mentionsTypeParam(named.Underlying(), map[types.Type]bool{}) && named.TypeParams().Len() == 0 {
-			td.Size = e.sizes.Sizeof(named)
-			td.Align = e.sizes.Alignof(named)
-			if st, ok := named.Underlying().(*types.Struct); ok {
-				fields := make([]*types.Var, st.NumFields())
-				for k := range fields {
-					fields[k] = st.Field(k)
-				}
-				td.Offsets = e.sizes.Offsetsof(fields)
-			}
-		}
-		e.file.TypeDefs = append(e.file.TypeDefs, td)
 	}
+}
+
+func (e *emitter) emitStructTypedef(st *types.Struct) {
+	embeds := false
+	for i := range st.NumFields() {
+		embeds = embeds || st.Field(i).Embedded()
+	}
+	if !embeds {
+		return
+	}
+	mset, ptrMset := e.methodSet(st), e.methodSet(types.NewPointer(st))
+	if len(mset) == 0 && len(ptrMset) == 0 {
+		return
+	}
+	td := ir.TypeDef{Type: e.typeID(st), Mset: mset, PtrMset: ptrMset, Size: -1, Align: -1}
+	e.setLayout(&td, st)
+	e.file.TypeDefs = append(e.file.TypeDefs, td)
+}
+
+func (e *emitter) setLayout(td *ir.TypeDef, t types.Type) {
+	if mentionsTypeParam(t, map[types.Type]bool{}) {
+		return
+	}
+	td.Size = e.sizes.Sizeof(t)
+	td.Align = e.sizes.Alignof(t)
+	if st, ok := t.Underlying().(*types.Struct); ok {
+		fields := make([]*types.Var, st.NumFields())
+		for k := range fields {
+			fields[k] = st.Field(k)
+		}
+		td.Offsets = e.sizes.Offsetsof(fields)
+	}
+}
+
+func (e *emitter) emitNamedTypedef(tn *types.TypeName) {
+	named, ok := tn.Type().(*types.Named)
+	if !ok {
+		return
+	}
+	td := ir.TypeDef{Type: e.typeID(named), Underlying: e.typeID(named.Underlying()), Tparams: e.tparamIDs(named.TypeParams()), Size: -1, Align: -1}
+	if lt := e.localTargs[tn]; len(lt) > 0 {
+		// A local type of a generic function: generic in the function's
+		// type parameters (one type per instantiation, as in gc).
+		td.Tparams = e.typeIDs_(lt)
+	}
+	for j := range named.NumMethods() {
+		m := named.Method(j)
+		pkg := ""
+		if !m.Exported() {
+			pkg = pkgPath(m.Pkg())
+		}
+		_, ptr := m.Signature().Recv().Type().(*types.Pointer)
+		id, ok := e.funcIDs[m]
+		if !ok {
+			continue // method declared as "_"
+		}
+		td.Methods = append(td.Methods, ir.Method{Name: m.Name(), Pkg: pkg, PtrRecv: ptr, Fn: id})
+	}
+	if _, isIface := named.Underlying().(*types.Interface); !isIface {
+		td.Mset = e.methodSet(named)
+		td.PtrMset = e.methodSet(types.NewPointer(named))
+	}
+	if len(td.Tparams) == 0 {
+		e.setLayout(&td, named)
+	}
+	e.file.TypeDefs = append(e.file.TypeDefs, td)
 }
 
 func (e *emitter) methodSet(t types.Type) []ir.MsetEntry {
@@ -757,8 +846,16 @@ func (e *emitter) nameLocalTypes() {
 				continue
 			}
 			owner := fd.Name.Name
+			var tparams []types.Type
 			if obj, ok := e.cfg.Info.Defs[fd.Name].(*types.Func); ok {
 				owner = symbolName(obj)
+				e.registerFunc(obj)
+				sig := obj.Signature()
+				for _, l := range []*types.TypeParamList{sig.RecvTypeParams(), sig.TypeParams()} {
+					for i := range l.Len() {
+						tparams = append(tparams, l.At(i))
+					}
+				}
 			}
 			n := 0
 			ast.Inspect(fd.Body, func(node ast.Node) bool {
@@ -768,6 +865,9 @@ func (e *emitter) nameLocalTypes() {
 				}
 				if tn, ok := e.cfg.Info.Defs[ts.Name].(*types.TypeName); ok {
 					e.localTypes[tn] = tn.Name() + "·" + owner + "·" + strconv.Itoa(n)
+					if len(tparams) > 0 {
+						e.localTargs[tn] = tparams
+					}
 					n++
 				}
 				return true

@@ -6,7 +6,9 @@
 //
 //	stub ELF | bundle | trailer
 //	trailer := bundle offset (8 bytes LE) | bundle length (8 bytes LE) | "GGB1"
-//	bundle  := "GGBN" | version | runner | main package | count | package*
+//	bundle  := "GGBN" | version | runner | main package | count | x* | modinfo
+//	           | count | package*
+//	x       := "importpath.name=value" (a link -X setting)
 //	package := import path | IR bytes
 //
 // Integers are unsigned varints and strings/byte fields are
@@ -24,7 +26,7 @@ import (
 const (
 	bundleMagic  = "GGBN"
 	trailerMagic = "GGB1"
-	version      = 1
+	version      = 2
 	trailerLen   = 8 + 8 + len(trailerMagic)
 )
 
@@ -40,7 +42,15 @@ type Bundle struct {
 	// time. GRAALGO_RUNNER overrides it at run time.
 	Runner string
 	// Main is the import path of the main package ("main").
-	Main     string
+	Main string
+	// X are the linker's -X settings, "importpath.name=value", in command
+	// line order (the user's -ldflags and cmd/go's own, such as
+	// runtime.godebugDefault); the backend applies them before the
+	// package's initializers (design §3.6).
+	X []string
+	// ModInfo is the main module's build info (importcfg.link "modinfo"),
+	// what debug.ReadBuildInfo reports.
+	ModInfo  string
 	Packages []Package
 }
 
@@ -50,6 +60,11 @@ func Encode(b *Bundle) []byte {
 	out = binary.AppendUvarint(out, version)
 	out = appendBytes(out, []byte(b.Runner))
 	out = appendBytes(out, []byte(b.Main))
+	out = binary.AppendUvarint(out, uint64(len(b.X)))
+	for _, x := range b.X {
+		out = appendBytes(out, []byte(x))
+	}
+	out = appendBytes(out, []byte(b.ModInfo))
 	out = binary.AppendUvarint(out, uint64(len(b.Packages)))
 	for _, p := range b.Packages {
 		out = appendBytes(out, []byte(p.ImportPath))
@@ -125,6 +140,11 @@ func Decode(data []byte) (*Bundle, error) {
 		return nil, fmt.Errorf("bundle: unsupported version %d (this build reads %d)", v, version)
 	}
 	b := &Bundle{Runner: string(d.bytes()), Main: string(d.bytes())}
+	nx := d.uvarint()
+	for i := uint64(0); i < nx && d.err == nil; i++ {
+		b.X = append(b.X, string(d.bytes()))
+	}
+	b.ModInfo = string(d.bytes())
 	n := d.uvarint()
 	for i := uint64(0); i < n && d.err == nil; i++ {
 		b.Packages = append(b.Packages, Package{ImportPath: string(d.bytes()), IR: d.bytes()})

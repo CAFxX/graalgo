@@ -29,6 +29,8 @@ public final class PackageUnit {
     private final Map<String, Integer> funcByName = new HashMap<>();
     private final Map<String, Integer> objByName = new HashMap<>();
     private final Map<String, Gir.TypeDef> typeDefs = new HashMap<>();
+    /** TYPEDEFS entries of unnamed struct types with promoted methods, by type id. */
+    private final Map<Integer, Gir.TypeDef> structDefs = new HashMap<>();
     // Globals layout.
     private int[] globalPrim;
     private int[] globalRef;
@@ -56,6 +58,8 @@ public final class PackageUnit {
         for (Gir.TypeDef td : s.typeDefs) {
             if (s.types[td.type() - 1].type() instanceof Gir.Type.Named n) {
                 typeDefs.put(gir.string(s.symRefs[n.sym()].name()), td);
+            } else {
+                structDefs.put(td.type(), td);
             }
         }
     }
@@ -222,7 +226,13 @@ public final class PackageUnit {
                     fields[i] = new Field(str(f.name()), str(f.pkg()), type(f.type(), env), f.embedded(),
                             str(f.tag()));
                 }
-                return table.struct(fields);
+                GoType struct = table.struct(fields);
+                Gir.TypeDef td = structDefs.get(id);
+                if (td != null) {
+                    struct.attachMethods(() -> methodSet(td, struct, env, false),
+                            () -> methodSet(td, struct, env, true));
+                }
+                return struct;
             }
             case Gir.Type.Signature sig:
                 return table.func(types(sig.params(), env), types(sig.results(), env), sig.variadic());
@@ -299,7 +309,10 @@ public final class PackageUnit {
 
     private Map<String, Method> methodSet(String typeName, GoType owner, GoType[] targs, boolean pointer) {
         Gir.TypeDef td = typeDef(typeName);
-        TypeEnv env = typeEnv(td, targs);
+        return methodSet(td, owner, typeEnv(td, targs), pointer);
+    }
+
+    private Map<String, Method> methodSet(Gir.TypeDef td, GoType owner, TypeEnv env, boolean pointer) {
         Map<String, Method> out = new HashMap<>();
         for (Gir.MsetEntry e : pointer ? td.ptrMset() : td.mset()) {
             String mname = str(e.name());
@@ -310,10 +323,11 @@ public final class PackageUnit {
                 path[i] = (int) e.path()[i];
             }
             if (e.method() < 0) {
-                out.put(key, new Method(key, path, false, owner, pointer, () -> {
-                    throw new IllegalStateException("method " + key + " of " + owner.key
-                            + " is promoted from an embedded interface: not supported yet");
-                }));
+                // Promoted from an embedded interface: the receiver the path leads to is that
+                // interface value, and the method is a dynamic call on it.
+                GoType iface = type(e.recvType(), env);
+                out.put(key, new Method(key, path, false, owner, pointer,
+                        () -> graalgo.go.build.NodeFactory.ifaceForwarder(program.language, iface, key)));
                 continue;
             }
             Gir.SymRef msym = s.symRefs[e.method()];

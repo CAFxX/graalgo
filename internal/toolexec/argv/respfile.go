@@ -11,6 +11,7 @@ package argv
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -190,34 +191,81 @@ func expand(in []string, depth int) ([]string, error) {
 
 // ApplyRewrites applies a compile -trimpath value ("prefix=>replacement"
 // rules separated by ';'; a rule without "=>" strips its prefix) to a file
-// name, with cmd/internal/objabi.ApplyRewrites semantics: the first rule
-// whose prefix is a path prefix of name wins.
-func ApplyRewrites(name, rewrites string) string {
+// name: cmd/internal/objabi.ApplyRewrites, verbatim. The first rule whose
+// prefix is a path prefix of file wins; rewritten reports whether one did
+// (even if the result equals the input).
+func ApplyRewrites(file, rewrites string) (string, bool) {
 	start := 0
 	for i := 0; i <= len(rewrites); i++ {
 		if i == len(rewrites) || rewrites[i] == ';' {
-			if out, ok := applyRewrite(name, rewrites[start:i]); ok {
-				return out
+			if out, ok := applyRewrite(file, rewrites[start:i]); ok {
+				return out, true
 			}
 			start = i + 1
 		}
 	}
-	return name
+	return file, false
 }
 
-func applyRewrite(name, rule string) (string, bool) {
-	prefix, repl := rule, ""
-	if j := strings.LastIndex(rule, "=>"); j >= 0 {
-		prefix, repl = rule[:j], rule[j+len("=>"):]
+func applyRewrite(path, rewrite string) (string, bool) {
+	prefix, replace := rewrite, ""
+	if j := strings.LastIndex(rewrite, "=>"); j >= 0 {
+		prefix, replace = rewrite[:j], rewrite[j+len("=>"):]
 	}
-	if prefix == "" || !strings.HasPrefix(name, prefix) || (len(name) > len(prefix) && name[len(prefix)] != '/') {
-		return name, false
+	if prefix == "" || !hasPathPrefix(path, prefix) {
+		return path, false
 	}
-	if len(name) == len(prefix) {
-		return repl, true
+	if len(path) == len(prefix) {
+		return replace, true
 	}
-	if repl == "" {
-		return name[len(prefix)+1:], true
+	if replace == "" {
+		return path[len(prefix)+1:], true
 	}
-	return repl + name[len(prefix):], true
+	return replace + path[len(prefix):], true
+}
+
+// hasPathPrefix is objabi's: t is a prefix of s ending at a separator,
+// ignoring ASCII case and treating '\\' as '/'.
+func hasPathPrefix(s, t string) bool {
+	if len(t) > len(s) {
+		return false
+	}
+	var i int
+	for i = 0; i < len(t); i++ {
+		cs, ct := int(s[i]), int(t[i])
+		if 'A' <= cs && cs <= 'Z' {
+			cs += 'a' - 'A'
+		}
+		if 'A' <= ct && ct <= 'Z' {
+			ct += 'a' - 'A'
+		}
+		if cs == '\\' {
+			cs = '/'
+		}
+		if ct == '\\' {
+			ct = '/'
+		}
+		if cs != ct {
+			return false
+		}
+	}
+	return i >= len(s) || s[i] == '/' || s[i] == '\\'
+}
+
+// AbsFile is cmd/internal/objabi.AbsFile for a linux target: the name gc
+// records for file in positions, given the compile's working directory,
+// its -trimpath value and GOROOT.
+func AbsFile(dir, file, rewrites, goroot string) string {
+	abs := file
+	if dir != "" && !filepath.IsAbs(file) {
+		abs = filepath.Join(dir, file)
+	}
+	abs, rewritten := ApplyRewrites(abs, rewrites)
+	if !rewritten && goroot != "" && hasPathPrefix(abs, goroot) {
+		abs = "$GOROOT" + abs[len(goroot):]
+	}
+	if abs == "" {
+		abs = "??"
+	}
+	return abs
 }

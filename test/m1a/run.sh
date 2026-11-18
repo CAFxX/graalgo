@@ -12,8 +12,9 @@
 # docs/arch/toolexec-design.md §8), made observable by transform.py, the
 # programs of test/m1a/programs/ (language areas the corpus is thin on: open-coded
 # and chained defers, the flat value model, interfaces, generics, goroutines),
-# and the multi-package modules under test/m1a/multipkg/ (one directory = one module;
-# its root package is main).
+# the multi-package modules under test/m1a/multipkg/ (one directory = one module;
+# its root package is main), and the programs of the reference GIR interpreter
+# (internal/toolexec/girinterp/testdata/progs).
 #
 # Usage: test/m1a/run.sh [-v] [PROGRAM.go | MODULE_DIR]...
 #   -v   print the diff of every failing program
@@ -62,6 +63,15 @@ if [ $# -eq 0 ]; then
     mapfile -t programs < <(cd "$ROOT" && grep -rLE '^[[:space:]]*import' --include='*.go' test/corpus test/m1a/programs | sort)
     for d in "$HERE"/multipkg/*/; do
         [ -f "$d/go.mod" ] && programs+=("test/m1a/multipkg/$(basename "$d")")
+    done
+    # The emitter lane's programs (the reference GIR interpreter's own set).
+    INTERP="internal/toolexec/girinterp/testdata/progs"
+    for f in "$ROOT/$INTERP"/*; do
+        if [ -d "$f" ] && [ -f "$f/go.mod" ]; then
+            programs+=("$INTERP/$(basename "$f")")
+        elif [ -f "$f" ] && [ "${f%.go}" != "$f" ] && ! grep -qE '^[[:space:]]*import' "$f"; then
+            programs+=("$INTERP/$(basename "$f")")
+        fi
     done
 else
     programs=("$@")
