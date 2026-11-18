@@ -1,0 +1,127 @@
+PASS T.Kind.struct struct
+PASS T.Size.struct 160
+PASS T.Align 8
+PASS T.FieldAlign 8
+PASS T.Kind.basic intstringfloat64uint8boolcomplex128
+PASS T.Bits 32
+PASS T.Comparable falsetrue
+PASS T.String.struct main.P
+PASS T.Name.struct P
+FAIL T.PkgPath.struct :: T.PkgPath.struct 
+PASS T.String.ptr *main.P
+PASS T.String.slice []map[string]int
+FAIL T.String.func :: T.String.func func(int, ...string) main.__wsd_pair_lit
+FAIL T.String.chan :: T.String.chan chan int
+PASS T.String.array [4]*main.MyInt
+PASS T.String.anon struct { A int; B int }
+PASS T.Name.unnamed []
+PASS T.Name.MyInt MyInt
+PASS T.PkgPath.builtin []
+PASS T.Elem.ptr P
+PASS T.Elem.slice int8
+PASS T.Elem.map []int
+PASS T.Key main.MyInt
+PASS T.Elem.chan string
+FAIL T.ChanDir :: T.ChanDir chan
+PASS T.Len 7
+PASS T.NumField 13
+PASS T.Field.Name Y
+FAIL T.Field.Type :: T.Field.Type []byte
+PASS T.Field.Offset 48
+PASS T.Field.Tag json:"y,omitempty" k:"v"
+PASS T.Field.Tag.Get y,omitempty
+PASS T.Field.Anonymous trueInner
+PASS T.Field.PkgPath mainfalse
+PASS T.Field.Index 14
+PASS T.FieldByName [3]uint16true
+PASS T.FieldByName.promoted float64true2
+PASS T.FieldByIndex B
+FAIL T.NumIn/Out :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+PASS T.IsVariadic true
+PASS T.NumMethod.value 4
+PASS T.NumMethod.ptr 5
+PASS T.Method.Name AddGet
+FAIL T.Method.Type :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: interface dispatch: no method table installed for dynamic type "reflect.rtype" (needs gofrontend >= 0.4.0 WS D method tables)
+FAIL T.MethodByName :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: interface dispatch: no method table installed for dynamic type "reflect.rtype" (needs gofrontend >= 0.4.0 WS D method tables)
+FAIL T.NumMethod.iface :: T.NumMethod.iface 0
+FAIL T.Method.iface :: graalgo-run: fatal internal error in goroutine: java.lang.ArrayIndexOutOfBoundsException: Index 0 out of bounds for length 0
+FAIL T.Implements :: T.Implements truetrue
+FAIL T.Implements.error :: T.Implements.error truetrue
+FAIL T.AssignableTo :: T.AssignableTo truetrue
+PASS T.ConvertibleTo true
+PASS T.identity truefalse
+FAIL T.identity.elem :: T.identity.elem falsefalse
+PASS PointerTo *main.Ptrue
+FAIL SliceOf :: SliceOf []main.Pfalse
+PASS MapOf map[string]main.P
+PASS ArrayOf [5]uint8
+PASS ChanOf chan int
+PASS FuncOf func(int) string
+PASS StructOf struct { A int; B string }24
+PASS TypeFor map[string]main.P
+PASS V.Field.Int 42
+PASS V.Field.String hi
+PASS V.Field.Bytes zz
+FAIL V.Field.nested :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+FAIL V.Field.embedded :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+PASS V.Field.array 9
+PASS V.Field.unexported falsefalse
+PASS V.Kind structptr
+PASS V.Type main.P
+PASS V.Bool/Uint/Float/Complex true91.52
+PASS V.Int.widths 1099511557473
+FAIL V.IsValid/IsZero/IsNil :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+FAIL V.IsZero.struct :: V.IsZero.struct falsefalse
+PASS V.Interface 42
+PASS V.Interface.struct 42
+PASS V.Len/Cap 39614
+PASS V.Index.slice b
+FAIL V.Index.string :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+FAIL V.Slice :: V.Slice PANIC
+PASS V.String.nonstring <int Value>
+PASS V.Elem.ptr 42
+PASS V.CanSet/CanAddr falsetruetrue
+PASS V.SetInt 7
+PASS V.SetString new
+FAIL V.SetFloat.nested :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+FAIL V.Set.struct :: graalgo-run: fatal internal error in goroutine: java.lang.IllegalStateException: reflect.typedmemmove: aggregate store through a byte-offset view
+PASS V.Set.slice-elem 5
+FAIL V.Set.array-elem :: graalgo-run: fatal internal error in goroutine: java.lang.IllegalArgumentException: argument type mismatch
+FAIL V.SetBytes/SetLen :: V.SetBytes/SetLen abcd
+FAIL V.Addr :: graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class graalgo.p3unsafe.UnsafeTable$ByteRef cannot be cast to class graalgo.values.GoStruct (graalgo.p3unsafe.UnsafeTable$ByteRef and graalgo.v
+FAIL V.Set.ptr-field :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+FAIL V.Set.iface-field :: graalgo-run: fatal internal error in goroutine: java.lang.IllegalStateException: reflect.typedmemmove: byte-offset view root is not an array: graalgo.values.GoBox(GoBox{GoStruct{main.P}})
+PASS V.Pointer.eq true
+PASS V.UnsafePointer true
+FAIL New/Zero/Indirect :: graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class java.lang.Long cannot be cast to class graalgo.values.GoStruct (java.lang.Long is in module java.base of loader 'bootstrap'; graalgo.val
+FAIL V.MapIndex :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+FAIL V.MapKeys :: graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class graalgo.values.GoMap cannot be cast to class graalgo.values.GoStruct (graalgo.values.GoMap and graalgo.values.GoStruct are in unnamed mo
+FAIL V.MapRange :: graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class graalgo.values.GoMap cannot be cast to class graalgo.values.GoStruct (graalgo.values.GoMap and graalgo.values.GoStruct are in unnamed mo
+FAIL V.SetMapIndex :: graalgo-run: fatal internal error in goroutine: java.lang.NullPointerException: Cannot invoke "java.lang.Long.longValue()" because "<parameter4>" is null
+FAIL MakeMap :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: linkname: symbol "reflect.makemap" takes 1 arguments, got 2
+FAIL MakeSlice/Append/Copy :: graalgo-run: fatal internal error in goroutine: java.lang.NullPointerException: Cannot read field "kind" because "<local4>.elem" is null
+FAIL MakeChan/Send/Recv :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: linkname: symbol "reflect.makechan" takes 1 arguments, got 2
+FAIL V.Call :: V.Call <invalid Value>
+FAIL V.Call.variadic :: graalgo-run: fatal internal error in goroutine: java.lang.ClassCastException: class java.lang.Long cannot be cast to class graalgo.values.GoSlice (java.lang.Long is in module java.base of loader 'bootstrap'; graalgo.valu
+FAIL V.Method.Call :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: reflect.Type.Method: expected Type value, got null
+FAIL V.Method.ptr.Call :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: reflect.Type.Method: expected Type value, got null
+FAIL V.NumMethod :: V.NumMethod 0
+FAIL MakeFunc :: MakeFunc PANIC
+PASS Swapper ca
+FAIL V.Convert :: V.Convert 0int
+FAIL V.Convert.iface :: V.Convert.iface PANIC
+PASS V.Elem.iface main.P
+PASS V.CanInt/CanFloat truefalse
+PASS V.Comparable/Equal truetrue
+PASS V.OverflowInt true
+FAIL V.Grow/Clear :: graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: linkname: symbol "reflect.growslice" takes 2 arguments, got 3
+FAIL V.SetZero :: graalgo-run: fatal internal error in goroutine: java.lang.IllegalStateException: reflect.typedmemclr: aggregate store through a byte-offset view
+FAIL DeepEqual :: graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe: byte-offset derivation from a non-array referent traps (D5: the handle model cannot reinterpret memory)
+PASS VisibleFields 15
+FAIL Select :: Select PANIC
+FAIL TypeAssert :: TypeAssert PANIC
+PASS V.Seq 1
+PASS T.Fields.iter XYZIPMFEAACsI
+PASS panic.ValueError reflect: call of reflect.Value.Int on string Value
+FAIL panic.unexported-set :: panic.unexported-set reflect: unknown method using value obtained using unexported field
+reflectprobe: 76/126 checks agree with gc

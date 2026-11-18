@@ -212,12 +212,23 @@ Related: [Makefile](../Makefile) (root build entry point),
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output
     equality with gc and prints best-round times (`make bench`; not a gate).
+  - [spikes/abi/](../test/spikes/abi/) — prototypes behind
+    [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
+    `run.sh` or is a `go run` tool):
+    [unsafescan/](../test/spikes/abi/unsafescan/) inventories `unsafe` and
+    descriptor-layout patterns in std from typed source;
+    [reflectprobe/](../test/spikes/abi/reflectprobe/) measures how much of
+    the reflect API agrees with gc under the current backend;
+    [descview/](../test/spikes/abi/descview/) synthesizes gc-layout type
+    descriptors in Java and has gc's own reflect judge them.
 - [docs/](../docs/)
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
   - [arch/](../docs/arch/) — architecture documentation, consolidated from
     the research-era [SPEC.md](arch/SPEC.md), [PHASES.md](arch/PHASES.md), and
     [FEASIBILITY.md](arch/FEASIBILITY.md).
     [RECOVERY.md](arch/RECOVERY.md) is the 2026-11-17 recovery plan;
+    [abi-spike.md](arch/abi-spike.md) reports the two de-risking prototypes
+    of that design (verbatim reflect on descriptor views; the syscall table);
     [toolexec-design.md](arch/toolexec-design.md) is its track-T1 design for
     the per-package `-toolexec` compile/link path (tool protocol, IR,
     stdlib fork boundary, measured intrinsic surface, milestones).
