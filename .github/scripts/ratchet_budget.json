@@ -33,7 +33,7 @@
   "internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java": 5,
   "internal/backend/truffle/src/main/java/graalgo/frontend/TypeAssertNode.java": 1,
   "internal/backend/truffle/src/main/java/graalgo/frontend/UnimplementedRootNode.java": 3,
-  "internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java": 6,
+  "internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java": 5,
   "internal/frontend/diskimport.go": 1,
   "internal/frontend/export.go": 4,
   "internal/frontend/mr_disk.go": 1,
