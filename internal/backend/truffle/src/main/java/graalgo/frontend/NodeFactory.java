@@ -5640,7 +5640,19 @@ public final class NodeFactory {
                 for (int j = 0; j < cases.size(); j++) {
                     String ep = cp + ".cases[" + j + "]";
                     GoExprNode ce = buildExpr(asObject(cases.get(j), ep), ctx);
-                    if (tagKind != GoKind.INTERFACE) {
+                    if (tagKind != GoKind.INTERFACE && ce.kind() == GoKind.INTERFACE) {
+                        // Interface-typed case against a concrete tag: Go
+                        // compares as interfaces (the tag boxes to the
+                        // case's interface type), so the case is never
+                        // converted to the tag's kind; SwitchNode matches
+                        // the tag's descriptor against the case's dynamic
+                        // type.
+                        if (tagDesc == null) {
+                            tagDesc = tagKind.isUntyped()
+                                    ? untypedDefaultDescriptor(ctx, tag, defaultKind(tagKind), path)
+                                    : typeDescriptorFor(ctx, tagTypeId, path);
+                        }
+                    } else if (tagKind != GoKind.INTERFACE) {
                         // Untyped case constants take the tag's type
                         // (Go == semantics: carriers must match for GoEquality).
                         ce = maybeConvert(ce, tagKind, tagTypeId, ctx, ep);

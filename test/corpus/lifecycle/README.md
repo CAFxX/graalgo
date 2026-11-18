@@ -16,6 +16,7 @@ lane T0.A and SPEC §3.5 ([docs/arch/SPEC.md](../../../docs/arch/SPEC.md)).
 | `lc20` | `runtime.GOMAXPROCS` honors the environment and returns the previous value |
 | `lc21` | `os.Exit` with live goroutines and pending defers |
 | `lc22` | a goroutine blocked reading a pipe releases its scheduler slot (GOMAXPROCS=1) |
+| `lc23` | an expression switch evaluates its tag once, also against interface-typed cases |
 
 ## Files and comparison
 

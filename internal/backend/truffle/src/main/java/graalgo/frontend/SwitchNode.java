@@ -35,7 +35,11 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
     private final GoKind tagKind;
     /** Dynamic-type descriptor per case expression (build-time resolved), flattened like above. */
     @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1) private final GoTypeDescriptor[] allCaseDescs;
-    /** Dynamic-type descriptor of the tag (for interface-typed cases). */
+    /**
+     * Descriptor of the tag's type for interface-typed cases: the tag's
+     * static interface type for an interface tag, else the concrete tag
+     * type (set when some case is interface-typed).
+     */
     private final GoTypeDescriptor tagDesc;
     private String label;
 
@@ -164,8 +168,10 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
             if (ci.isNil()) {
                 return false;
             }
+            // The tag was evaluated once (tagVal): Go evaluates the switch
+            // expression exactly once, never per interface-typed case.
             return ci.descriptor() == tagDesc
-                    && GoEquality.equal(Boxing.box(tagKind, tag, frame), ci.data());
+                    && GoEquality.equal(tagVal, ci.data());
         }
         return GoEquality.equal(tagVal, Boxing.box(ck, caseNode, frame));
     }
