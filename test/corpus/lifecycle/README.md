@@ -22,6 +22,7 @@ lane T0.A and SPEC §3.5 ([docs/arch/SPEC.md](../../../docs/arch/SPEC.md)).
 | `lc26` | a backward `goto` loop is preempted like any loop (GOMAXPROCS=1) |
 | `lc27`–`lc30` | the panic value's `Error()`/`String()` panics (gc's `panic while printing panic value` throw), sleeps, or needs other goroutines while the report renders (world still running) |
 | `lc31` | main returns while a goroutine's panic report is still rendering: exit 0, no partial report |
+| `lc32`–`lc34` | finalizers run on a goroutine: a queued finalizer is a waker (no false deadlock) and may block; a panicking finalizer is fatal; a live finalizable object does not mask a deadlock |
 
 ## Files and comparison
 

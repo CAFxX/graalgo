@@ -847,6 +847,83 @@ public final class SchedulerCore {
     /** Main goroutine called runtime.Goexit. */
     private volatile boolean mainGoexited;
 
+    // ---- finalizers as possible wakers (gc checkdead vs. the finalizer queue) ----
+
+    /**
+     * Finalizers registered with this program and neither cancelled nor
+     * dispatched: their object may be (or become) collected, and the JDK
+     * Cleaner thread — outside the scheduler — then spawns the finalizer
+     * goroutine, which may wake a parked goroutine. gc queues finalizers
+     * synchronously during the GC that finds them; here the Cleaner runs
+     * shortly after, so a deadlock check must give it that moment.
+     */
+    private final AtomicInteger pendingFinalizers = new AtomicInteger();
+    /** Finalizers dispatched so far (monotonic); guarded by its monitor for waits. */
+    private final java.util.concurrent.atomic.AtomicLong finalizerEpoch =
+            new java.util.concurrent.atomic.AtomicLong();
+    /** Epoch for which a settle wait already ran (drainer thread only). */
+    private long settledFinalizerEpoch = -1;
+    /** Bound on one settle wait for the Cleaner (deadlock report delay). */
+    private static final long FINALIZER_SETTLE_MILLIS = 1000;
+
+    /** A finalizer was registered (runtime.SetFinalizer). */
+    public void finalizerRegistered() {
+        pendingFinalizers.incrementAndGet();
+    }
+
+    /** A pending finalizer was removed (SetFinalizer(x, nil)). */
+    public void finalizerCancelled() {
+        pendingFinalizers.decrementAndGet();
+    }
+
+    /** The Cleaner dispatched a finalizer (its goroutine is spawned, if any). */
+    public void finalizerDispatched() {
+        pendingFinalizers.decrementAndGet();
+        synchronized (finalizerEpoch) {
+            finalizerEpoch.incrementAndGet();
+            finalizerEpoch.notifyAll();
+        }
+        pokeScheduler();
+    }
+
+    /**
+     * Drainer side of the finalizer waker (lock held): when finalizers are
+     * pending and no settle wait ran for the current dispatch epoch, start
+     * one — a bounded wait for the Cleaner to dispatch, then a drainer
+     * poke — and suppress this report. A dispatch spawns a goroutine (no
+     * longer all parked); if none comes, the re-check reports the
+     * deadlock. A genuine deadlock with live finalizable objects is thus
+     * reported, at most {@link #FINALIZER_SETTLE_MILLIS} late.
+     */
+    private boolean deferForFinalizers() {
+        if (pendingFinalizers.get() <= 0) {
+            return false;
+        }
+        long epoch = finalizerEpoch.get();
+        if (settledFinalizerEpoch == epoch) {
+            return false;
+        }
+        settledFinalizerEpoch = epoch;
+        Thread.ofPlatform().daemon(true).name("graalgo-finalizer-settle").start(() -> {
+            long deadline = System.nanoTime() + FINALIZER_SETTLE_MILLIS * 1_000_000L;
+            synchronized (finalizerEpoch) {
+                while (finalizerEpoch.get() == epoch && !exiting) {
+                    long left = (deadline - System.nanoTime()) / 1_000_000L;
+                    if (left <= 0) {
+                        break;
+                    }
+                    try {
+                        finalizerEpoch.wait(left);
+                    } catch (InterruptedException e) {
+                        return;
+                    }
+                }
+            }
+            pokeScheduler();
+        });
+        return true;
+    }
+
     /**
      * Asks the drainer to re-evaluate scheduler-global conditions (the
      * timer heap calls this when its last timer retires, so a deadlock
@@ -1012,7 +1089,7 @@ public final class SchedulerCore {
             if (!mainGoexited) {
                 return false; // main not started yet / already exiting
             }
-            if (!beginFatal()) {
+            if (deferForFinalizers() || !beginFatal()) {
                 return false;
             }
             System.out.flush();
@@ -1027,7 +1104,7 @@ public final class SchedulerCore {
             // (still starting/exiting): not a deadlock.
             return false;
         }
-        if (!beginFatal()) {
+        if (deferForFinalizers() || !beginFatal()) {
             return false;
         }
         user.sort(java.util.Comparator.comparingLong(h -> h.id));
