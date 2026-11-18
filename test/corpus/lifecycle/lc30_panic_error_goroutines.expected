@@ -1,0 +1,8 @@
+-- stdout --
+start
+
+-- stderr (normalized) --
+panic: from goroutine
+
+goroutine N [running]:
+-- exit 2 --

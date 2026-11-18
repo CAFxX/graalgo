@@ -451,9 +451,10 @@ public final class SchedulerCore {
         }
         if (exiting) {
             if (h == fatalOwner) {
-                // The fatal reporter runs Error()/String() with the world
-                // stopped: it must never quantum-park (no admission
-                // happens any more), so it runs to completion.
+                // The fatal reporter prints with the world stopped (Go
+                // Error()/String() already ran, world running, before it
+                // claimed the report): it must never quantum-park (no
+                // admission happens any more), so it runs to completion.
                 return;
             }
             // Process exit in progress (main returned, os.Exit, fatal
@@ -573,12 +574,16 @@ public final class SchedulerCore {
                 if (h.isMain) {
                     // gc: main returning exits the process with status 0,
                     // abandoning every other goroutine (runtime.main).
-                    requestExit(0);
+                    mainReturned();
                 }
             } catch (GoroutineTerminated gt) {
                 // Torn down by terminate(): the program is over.
             } catch (graalgo.runtime.PanicException pe) {
-                recordPanic(pe);
+                try {
+                    recordPanic(pe);
+                } catch (GoroutineTerminated gt) {
+                    // Torn down while rendering the report.
+                }
             } catch (graalgo.runtime.Goexit g) {
                 // Goexit: this goroutine just dies. For main, the program
                 // keeps running until the other goroutines finish or
@@ -640,22 +645,65 @@ public final class SchedulerCore {
 
     /**
      * An uncaught Go panic is fatal to the whole process, in any
-     * goroutine (gc {@code fatalpanic}): print the panic chain and this
-     * goroutine's traceback, then exit 2 immediately — other goroutines
-     * are frozen, never awaited.
+     * goroutine (gc {@code gopanic} → {@code preprintpanics} →
+     * {@code fatalpanic}): render the panic chain, then print it and this
+     * goroutine's traceback and exit 2 — other goroutines are frozen,
+     * never awaited.
+     *
+     * <p>Rendering runs Go {@code Error()}/{@code String()} methods with
+     * the world still running, exactly like gc's {@code preprintpanics}:
+     * they may sleep, lock, use channels and other goroutines. Only once
+     * the text exists does the fatal report claim the process
+     * ({@link #beginFatal}) and stop the world. A method that panics
+     * yields gc's {@code fatal error: panic while printing panic value};
+     * every path ends in {@link #requestExit} (no hang).
      */
     private void recordPanic(graalgo.runtime.PanicException pe) {
         panicCount.incrementAndGet();
-        if (!beginFatal()) {
-            return; // another fatal error owns the report; process is exiting
+        synchronized (lifecycleLock) {
+            if (exiting) {
+                return; // exit/another fatal already owns the process
+            }
+            panicsRendering++;
         }
-        // gc preprintpanics: Error()/String() run on the panicking
-        // goroutine, before the world is considered dead.
-        String header = graalgo.runtime.PanicRendering.renderPanicChain(pe);
-        StringBuilder sb = new StringBuilder(header);
-        Object v = pe.goValue();
-        if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
-            sb.append("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n");
+        String header = null;
+        String throwText = null;
+        Throwable crash = null;
+        try {
+            header = graalgo.runtime.PanicRendering.renderPanicChain(pe);
+        } catch (graalgo.runtime.PanicException inner) {
+            throwText = "panic while printing panic value: " + panicWhilePrintingValue(inner);
+        } catch (graalgo.runtime.Goexit g) {
+            // gc's preprintpanics recovers nothing from a Goexit and its
+            // runtime then crashes ("fatal error: unknown pc"); graalgo
+            // reports the cause instead (still a fatal error, exit 2).
+            throwText = "panic while printing panic value: runtime.Goexit called";
+        } catch (GoroutineTerminated gt) {
+            throw gt;
+        } catch (RuntimeException | StackOverflowError e) {
+            crash = e;
+        } finally {
+            synchronized (lifecycleLock) {
+                panicsRendering--;
+            }
+        }
+        if (crash != null) {
+            recordCrash("internal error", crash);
+            return;
+        }
+        if (!beginFatal()) {
+            return; // exit/another fatal won while rendering: nothing prints
+        }
+        StringBuilder sb = new StringBuilder();
+        if (throwText != null) {
+            // gc throw(): "fatal error: <text>", then the traceback.
+            sb.append("fatal error: ").append(throwText).append('\n');
+        } else {
+            sb.append(header);
+            Object v = pe.goValue();
+            if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
+                sb.append("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0x0]\n");
+            }
         }
         sb.append('\n');
         com.oracle.truffle.api.source.SourceSection throwSec = null;
@@ -672,6 +720,33 @@ public final class SchedulerCore {
         System.err.print(sb);
         System.err.flush();
         requestExit(2);
+    }
+
+    /**
+     * gc preprintpanics' recover: a {@code string} value prints as is,
+     * anything else as {@code type <dynamic type>}.
+     */
+    private static String panicWhilePrintingValue(graalgo.runtime.PanicException inner) {
+        Object v = inner.goValue();
+        Object d = inner.descriptor();
+        graalgo.values.GoKind kind = d instanceof graalgo.values.GoTypeDescriptor td ? td.kind() : null;
+        boolean plainString = inner.goTypeName() == null
+                && (kind == graalgo.values.GoKind.STRING || kind == graalgo.values.GoKind.UNTYPED_STRING
+                    || (kind == null && v instanceof graalgo.values.GoString));
+        if (plainString && v instanceof graalgo.values.GoString gs) {
+            return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+        }
+        String type = null;
+        if (v instanceof graalgo.runtime.GoErrorValue e) {
+            type = e.typeName();
+        }
+        if (type == null) {
+            type = inner.goTypeName();
+        }
+        if (type == null && d instanceof graalgo.values.GoTypeDescriptor td) {
+            type = td.name();
+        }
+        return "type " + (type != null ? type : "?");
     }
 
     private void recordCrash(String what, Throwable t) {
@@ -722,6 +797,18 @@ public final class SchedulerCore {
             new java.util.concurrent.atomic.AtomicBoolean();
     /** The goroutine printing the fatal report (exempt from the freeze). */
     private volatile GoroutineHandle fatalOwner;
+    /**
+     * Guards the exit decision: {@link #exiting}, the fatal claim and
+     * {@link #panicsRendering} change together under it, so a goroutine
+     * panic and main returning (or os.Exit) agree on one outcome. A leaf
+     * lock (taken with the drainer lock held, never the reverse).
+     */
+    private final Object lifecycleLock = new Object();
+    /**
+     * Uncaught panics whose report is being rendered (gc
+     * {@code runningPanicDefers} for the preprintpanics phase).
+     */
+    private int panicsRendering;
     /** Live non-system goroutines (gc checkdead's user goroutine count). */
     private final AtomicInteger liveUser = new AtomicInteger();
     /** A main goroutine was spawned: deadlock detection is armed. */
@@ -749,17 +836,49 @@ public final class SchedulerCore {
         return mainGoexited;
     }
 
-    /** Claims the single fatal-report slot; false if another fatal won. */
+    /**
+     * Claims the single fatal-report slot and stops the world; false if
+     * another fatal won or process exit already began (gc: the first of
+     * exit/fatalpanic owns the process).
+     */
     private boolean beginFatal() {
-        if (!fatal.compareAndSet(false, true)) {
-            return false;
+        synchronized (lifecycleLock) {
+            if (exiting || !fatal.compareAndSet(false, true)) {
+                return false;
+            }
+            // The reporting goroutine keeps running to print; everyone
+            // else freezes at its next safepoint.
+            fatalOwner = currentHandle.get();
+            exiting = true;
+            exitPending = true;
+            return true;
         }
-        // The reporting goroutine keeps running (it may call Go
-        // Error()/String() methods while rendering); everyone else freezes.
-        fatalOwner = currentHandle.get();
-        exiting = true;
-        exitPending = true;
-        return true;
+    }
+
+    /**
+     * Main returned (gc {@code runtime.main}): if another goroutine is
+     * rendering a panic report, yield to it a bounded number of times
+     * (gc: up to 1000 {@code Gosched} while {@code runningPanicDefers});
+     * if a fatal report then owns the process, park forever (gc
+     * {@code waitReasonPanicWait}) so the exit status is the report's 2,
+     * never 0 with panic output; otherwise exit 0.
+     */
+    private void mainReturned() {
+        for (int i = 0; i < 1000; i++) {
+            synchronized (lifecycleLock) {
+                if (panicsRendering == 0 || exiting) {
+                    break;
+                }
+            }
+            yieldCurrent();
+        }
+        synchronized (lifecycleLock) {
+            if (!fatal.get()) {
+                requestExit(0);
+                return;
+            }
+        }
+        freezeForExit();
     }
 
     /**
@@ -769,9 +888,11 @@ public final class SchedulerCore {
      * immediately and running goroutines freeze at their next safepoint.
      */
     public void requestExit(int code) {
-        exiting = true;
-        exitPending = true;
-        exitCode.complete(code);
+        synchronized (lifecycleLock) {
+            exiting = true;
+            exitPending = true;
+            exitCode.complete(code);
+        }
     }
 
     /** True when the calling thread is a scheduler goroutine. */

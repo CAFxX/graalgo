@@ -1,0 +1,7 @@
+-- stdout --
+
+-- stderr (normalized) --
+fatal error: panic while printing panic value: type main.myErr
+
+goroutine N [running]:
+-- exit 2 --

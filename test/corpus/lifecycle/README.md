@@ -20,6 +20,8 @@ lane T0.A and SPEC §3.5 ([docs/arch/SPEC.md](../../../docs/arch/SPEC.md)).
 | `lc24` | a typed nil pointer in an interface selects its type's case in a type switch, not `case nil` |
 | `lc25` | a method call on a nil interface evaluates its arguments before panicking |
 | `lc26` | a backward `goto` loop is preempted like any loop (GOMAXPROCS=1) |
+| `lc27`–`lc30` | the panic value's `Error()`/`String()` panics (gc's `panic while printing panic value` throw), sleeps, or needs other goroutines while the report renders (world still running) |
+| `lc31` | main returns while a goroutine's panic report is still rendering: exit 0, no partial report |
 
 ## Files and comparison
 
@@ -32,7 +34,9 @@ lane T0.A and SPEC §3.5 ([docs/arch/SPEC.md](../../../docs/arch/SPEC.md)).
   (`DH_TIMEOUT`, default 120 s).
 
 The normalization keeps what the lifecycle owns — fatal/panic message
-lines, the panic chain, and `goroutine N [reason]:` headers — and drops
-frame lines and `created by` trailers: stack-trace fidelity (frame names,
+lines, the panic chain, and `goroutine N [reason]:` headers (also in the
+`gp=… m=…` form a gc `fatal error` throw prints) — and drops frame lines,
+`created by` trailers, and the gc runtime's own goroutines (`created by
+runtime.*`) that a throw dumps: stack-trace fidelity (frame names,
 paths, inlining, `+0x` offsets) is the [traceback corpus](../traceback/)'s
 subject and a known divergence there.

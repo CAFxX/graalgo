@@ -1,0 +1,7 @@
+-- stdout --
+
+-- stderr (normalized) --
+fatal error: panic while printing panic value: x
+
+goroutine N [running]:
+-- exit 2 --
