@@ -69,6 +69,7 @@ public final class MapKeyHash {
     private static volatile GoFunc func;
 
     /** Returns the shared Hasher func value, creating it on first use. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoFunc func() {
         GoFunc f = func;
         if (f == null) {
@@ -92,6 +93,7 @@ public final class MapKeyHash {
      * Exactly one storage level is unwrapped to obtain the key value;
      * a pointer key's value is the pointer itself, never its pointee.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long hash(Object keyPtr, long seed) {
         Object value = resolveKeyValue(keyPtr);
         return mix64(hash64(value, 0) ^ seed);
@@ -111,6 +113,7 @@ public final class MapKeyHash {
     private static final java.util.concurrent.atomic.AtomicLong NEXT_POINTER_HASH =
             new java.util.concurrent.atomic.AtomicLong(1);
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long pointerHash(GoPointer gp) {
         if (gp.isNil()) {
             return 0;
@@ -120,6 +123,7 @@ public final class MapKeyHash {
     }
 
     /** Resolves the key value from the pointer addressing its storage. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object resolveKeyValue(Object keyPtr) {
         Object storage;
         if (keyPtr instanceof Number n) {
@@ -164,6 +168,7 @@ public final class MapKeyHash {
     }
 
     /** 64-bit value hash; depth guards against pathological value cycles. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long hash64(Object v, int depth) {
         if (depth > 256) {
             throw new FrontendException("mapkeyhash: value cycle while hashing");
@@ -274,11 +279,13 @@ public final class MapKeyHash {
     }
 
     /** Boost hash_combine, 64-bit. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long combine(long h, long v) {
         return h ^ (v + 0x9E3779B97F4A7C15L + (h << 6) + (h >>> 2));
     }
 
     /** SplitMix64 finalizer (Stafford mix13). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long mix64(long x) {
         long z = x + 0x9E3779B97F4A7C15L;
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;

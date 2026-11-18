@@ -631,6 +631,21 @@ public final class SchedulerCore {
             new java.util.concurrent.CompletableFuture<>();
     /** Set once the process is exiting: admissions stop, safepoints freeze. */
     private volatile boolean exiting;
+    /**
+     * Process-wide mirror of {@link #exiting} for the strided
+     * {@code Safepoint.poll()} fast path: the poll countdown skips the
+     * full quantum check for up to {@code STRIDE - 1} polls, but a
+     * pending exit must still freeze a running goroutine at its very next
+     * safepoint (no extra output after exit/fatal begins), so the fast
+     * path reads this flag on every poll. Set together with
+     * {@link #exiting}; never cleared (one exit per process).
+     */
+    private static volatile boolean exitPending;
+
+    /** True once any installed scheduler began process exit. */
+    public static boolean exitPending() {
+        return exitPending;
+    }
     /** First fatal reporter wins the right to print (gc: one fatal trace). */
     private final java.util.concurrent.atomic.AtomicBoolean fatal =
             new java.util.concurrent.atomic.AtomicBoolean();
@@ -672,6 +687,7 @@ public final class SchedulerCore {
         // Error()/String() methods while rendering); everyone else freezes.
         fatalOwner = currentHandle.get();
         exiting = true;
+        exitPending = true;
         return true;
     }
 
@@ -683,6 +699,7 @@ public final class SchedulerCore {
      */
     public void requestExit(int code) {
         exiting = true;
+        exitPending = true;
         exitCode.complete(code);
     }
 

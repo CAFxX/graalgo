@@ -43,6 +43,7 @@ public final class ReflectLinknames {
     }
 
     /** Registers the reflect + reflectlite runtime-helper tables. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void registerAll() {
         // fix-redmaster-r42: reflect's //go:linknamestd
         // compiledTypelinks, served through its linkname-bound
@@ -160,6 +161,7 @@ public final class ReflectLinknames {
     // ------------------------------------------------------------------
 
     /** {@code unsafe_New(t)}: a handle to fresh zeroed storage for one t. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object unsafeNew(long tok) {
         return ReflectRefs.intern(new ReflectRefs.Cell(ReflectOpNode.zeroFor(tok)));
     }
@@ -169,6 +171,7 @@ public final class ReflectLinknames {
      * for n values of t (the backing array of the slice reflect builds
      * over it — see reflect/value.go's makeSlice path).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object unsafeNewArray(long tok, int n) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(tok);
         Object arr = ReflectValues.newArray(t.kind, n);
@@ -181,6 +184,7 @@ public final class ReflectLinknames {
     }
 
     /** {@code makechan(t, size)}: the new channel's handle. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object makeChan(long tok, int size) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(tok);
         long elemSize = t.elem.size < 0 ? 8 : t.elem.size;
@@ -192,12 +196,14 @@ public final class ReflectLinknames {
     // ------------------------------------------------------------------
 
     /** {@code typedmemmove(t, dst, src)}: copies one t from src to dst. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void typedmemmove(long tok, Object dst, Object src) {
         Object value = loadPointerValue(src, tok, "reflect.typedmemmove");
         storePointerValue(dst, tok, value, "reflect.typedmemmove");
     }
 
     /** {@code memmove(dst, src, n)}: byte copy (overlap-safe, as gc). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void memmove(Object dst, Object src, int n) {
         Object[] d = byteBacking(dst, "reflect.memmove dst");
         Object[] s = byteBacking(src, "reflect.memmove src");
@@ -215,6 +221,7 @@ public final class ReflectLinknames {
     }
 
     /** {@code typedarrayclear(t, ptr, len)}: zeroes len t values at ptr. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void typedArrayClear(long elemTok, Object ptr, int len) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(elemTok);
         Object[] backing = arrayBacking(ptr, "reflect.typedarrayclear");
@@ -231,6 +238,7 @@ public final class ReflectLinknames {
      * the slice type t between two unsafeheader.Slice values; returns
      * the element count.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object typedSliceCopy(long sliceTok, GoStruct dst, GoStruct src) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(sliceTok);
         Object[] d = sliceBacking(dst);
@@ -250,6 +258,7 @@ public final class ReflectLinknames {
      * the reflect Append path ({@code ReflectOpNode.reflectAppend}).
      * The result is an unsafeheader.Slice struct with old's descriptor.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object growSlice(long sliceTok, GoStruct old, int num) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(sliceTok);
         Object[] s = sliceBacking(old);
@@ -284,6 +293,7 @@ public final class ReflectLinknames {
     // ------------------------------------------------------------------
 
     /** {@code resolveNameOff(ptr, off)}: off 0 → nil; else the name pointer. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object resolveNameOff(Object offArg) {
         int off = (int) num(offArg);
         if (off == 0) {
@@ -298,6 +308,7 @@ public final class ReflectLinknames {
     }
 
     /** {@code resolveTypeOff(ptr, off)}: off 0 or -1 → nil; else the type pointer. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object resolveTypeOff(Object offArg) {
         int off = (int) num(offArg);
         if (off == 0 || off == -1) {
@@ -320,6 +331,7 @@ public final class ReflectLinknames {
      * through; a GoPointer is interned by its storage (element
      * pointers into byte arrays become derived byte-offset handles).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object asGuestPointer(Object v) {
         if (v == null) {
             return 0L;
@@ -346,6 +358,7 @@ public final class ReflectLinknames {
     }
 
     /** {@code resolveTextOff(ptr, off)}: off 0 → nil; else the registered pointer. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object resolveTextOff(Object offArg) {
         int off = (int) num(offArg);
         if (off == 0) {
@@ -370,6 +383,7 @@ public final class ReflectLinknames {
      * with the guest Value built over dst, exactly as the boxing in
      * {@code InterfaceBoxNode} leaves it.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void ifaceE2I(long targetTok, Object src, Object dst) {
         Object iface;
         if (src == null || src == GoInterface.NIL) {
@@ -385,6 +399,7 @@ public final class ReflectLinknames {
     }
 
     /** {@code chansend0(ch, val, nb)}: send the value at val on ch. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object chanSend0(Object chPtr, Object valPtr, Object nbArg) {
         ChanOps.Chan ch = asChan(chPtr, "reflect.chansend0");
         Object val = loadRawPointer(valPtr, "reflect.chansend0");
@@ -404,6 +419,7 @@ public final class ReflectLinknames {
     // Argument adaptation.
     // ------------------------------------------------------------------
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long num(Object o) {
         if (o instanceof Number n) {
             return n.longValue();
@@ -419,6 +435,7 @@ public final class ReflectLinknames {
      * the copy names no minted shell or fails the cross-check — the caller
      * then fails loudly rather than resolving to a wrong type.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long tokForHeaderCopy(GoStruct header) {
         Long strId = headerLong(header, "Str");
         Long kind = headerLong(header, "Kind_");
@@ -438,6 +455,7 @@ public final class ReflectLinknames {
     }
 
     /** The Long value of a header field, or null when absent/not longs-carried. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Long headerLong(GoStruct header, String name) {
         List<GoStructDescriptor.Field> fields = header.descriptor().fields();
         for (int i = 0; i < fields.size(); i++) {
@@ -458,6 +476,7 @@ public final class ReflectLinknames {
      * below). Anything else fails loudly: an unresolvable type argument
      * is a guest-visible error, never a guess.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static long tokForTypeArg(Object arg, String symbol) {
         if (arg instanceof GoPointer p) {
             Object ref = p.referent();
@@ -571,6 +590,7 @@ public final class ReflectLinknames {
     private static final ThreadLocal<java.util.IdentityHashMap<GoStruct, Boolean>> SYNTHESIZING =
             ThreadLocal.withInitial(java.util.IdentityHashMap::new);
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long synthesizeDynamicToken(GoStruct header) {
         GoStruct ext = null;
         String extName = null;
@@ -647,6 +667,7 @@ public final class ReflectLinknames {
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long synthesizeDynamicStruct(GoStruct header, GoStruct structType) {
         ReflectTypes.Table table = ReflectTypes.table();
         if (table != dynStructTable) {
@@ -726,6 +747,7 @@ public final class ReflectLinknames {
      * the token delegates to the {@code funcOf} family, which
      * canonicalizes by (ins, outs, variadic) like gc's func cache.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long synthesizeDynamicFunc(GoStruct header, GoStruct funcType, GoStruct parent) {
         long kind = fieldLong(header, "Kind_");
         if (kind != 19) {
@@ -784,6 +806,7 @@ public final class ReflectLinknames {
     }
 
     /** A struct field by name (ordinal lookup; fails loudly when absent). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object fieldObj(GoStruct s, String name) {
         GoStructDescriptor d = s.descriptor();
         for (int i = 0; i < d.fields().size(); i++) {
@@ -800,6 +823,7 @@ public final class ReflectLinknames {
     }
 
     /** A longs-carried struct field by name (fails loudly when absent). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long fieldLong(GoStruct s, String name) {
         GoStructDescriptor d = s.descriptor();
         for (int i = 0; i < d.fields().size(); i++) {
@@ -832,6 +856,7 @@ public final class ReflectLinknames {
      * struct type's PkgPath Name, per the guest rule, never from the
      * field Name's trailing offset.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static NameParts decodeAbiName(GoStruct nameStruct) {
         Object bytesObj = fieldObj(nameStruct, "Bytes");
         if (bytesObj == null) {
@@ -884,6 +909,7 @@ public final class ReflectLinknames {
     }
 
     /** abi varint (7 bits per byte, little-endian groups; max 10 bytes). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int[] readNameVarint(byte[] bytes, int off) {
         int v = 0;
         for (int i = 0; i < 10; i++) {
@@ -900,6 +926,7 @@ public final class ReflectLinknames {
     }
 
     /** UnsafeTable resolve that yields null instead of throwing. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object tryResolve(long handle) {
         try {
             return ReflectRefs.resolve(handle);
@@ -909,6 +936,7 @@ public final class ReflectLinknames {
     }
 
     /** The value denoted by a guest pointer for type tok (a copy source). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static Object loadPointerValue(Object ptr, long tok, String symbol) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(tok);
         if (ptr instanceof Number n) {
@@ -960,6 +988,7 @@ public final class ReflectLinknames {
      * (empty struct/array) or an unidentifiable struct fails loudly
      * rather than returning the container as the value.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static Object loadOffsetZero(long handle, ReflectTypes.TypeInfo target, String symbol) {
         Object v = ReflectRefs.denotedValue(handle, target.kind);
         while (true) {
@@ -1013,6 +1042,7 @@ public final class ReflectLinknames {
      * (or any other shape that cannot yield the target kind) fails
      * loudly rather than returning a wrong value.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object loadOffsetZeroUnnamed(GoStruct gs, ReflectTypes.TypeInfo target, String symbol) {
         Object cur = gs;
         while (true) {
@@ -1051,6 +1081,7 @@ public final class ReflectLinknames {
     }
 
     /** The first field with data at byte offset 0 (skipping zero-sized fields). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static ReflectTypes.FieldInfo firstDataFieldAtZero(ReflectTypes.TypeInfo info) {
         for (ReflectTypes.FieldInfo f : info.fields) {
             if (f.offset == 0 && f.type != null && f.type.size > 0) {
@@ -1061,6 +1092,7 @@ public final class ReflectLinknames {
     }
 
     /** Element 0 of a Java array, read as the target kind's carrier. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object arrayElemAtZero(Object array, ReflectTypes.TypeInfo target, String symbol) {
         if (array instanceof Object[] oa) {
             return oa[0];
@@ -1082,6 +1114,7 @@ public final class ReflectLinknames {
     }
 
     /** The Java array at a resolved view's root (unwrapping ArrayRef/GoSlice). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object arrayRoot(
             graalgo.p3unsafe.UnsafeTable.ResolvedView view, String symbol) {
         Object root = view.root();
@@ -1099,6 +1132,7 @@ public final class ReflectLinknames {
     }
 
     /** The element index a resolved view denotes for values of type t. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int elementIndex(
             graalgo.p3unsafe.UnsafeTable.ResolvedView view,
             ReflectTypes.TypeInfo t, String symbol) {
@@ -1122,6 +1156,7 @@ public final class ReflectLinknames {
     }
 
     /** A kind-free load (the referent is already the canonical D5 value). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object loadRawPointer(Object ptr, String symbol) {
         if (ptr instanceof Number n) {
             long h = n.longValue();
@@ -1145,6 +1180,7 @@ public final class ReflectLinknames {
      * the destination observe the copy), and into fresh storage for
      * cell destinations.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static void storePointerValue(Object ptr, long tok, Object value, String symbol) {
         ReflectTypes.TypeInfo t = ReflectTypes.table().info(tok);
         boolean aggregate = t.kind == GoKind.STRUCT || t.kind == GoKind.ARRAY;
@@ -1237,6 +1273,7 @@ public final class ReflectLinknames {
      * mismatch, or a chain deeper than 64 (caller keeps its previous
      * behavior); never stores into a mismatched field.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean storeOffsetZeroField(GoStruct gs, GoKind kind, Object value) {
         if (kind == GoKind.STRUCT) {
             return false;
@@ -1266,16 +1303,19 @@ public final class ReflectLinknames {
     }
 
     /** A fresh aggregate holding a shallow copy of {@code value} (gc copy semantics). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object copyOfAggregate(ReflectTypes.TypeInfo t, Object value) {
         Object fresh = ReflectOpNode.zeroFor(t.tok);
         ReflectOpNode.copyAggregate(t, fresh, value);
         return fresh;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isArray(Object o) {
         return o != null && o.getClass().isArray();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static ChanOps.Chan asChan(Object ptr, String symbol) {
         // The guest's Value.pointer() for a direct (non-indir) chan
         // value is the channel object itself; addressable values pass
@@ -1289,6 +1329,7 @@ public final class ReflectLinknames {
         throw new IllegalStateException(symbol + ": not a channel: " + describe(ptr));
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoMap asMap(Object ptr, String symbol) {
         Object ref = ptr instanceof Number n
                 ? ReflectRefs.denotedValue(n.longValue(), GoKind.MAP)
@@ -1304,6 +1345,7 @@ public final class ReflectLinknames {
     // ------------------------------------------------------------------
 
     /** Reads an unsafeheader.Slice struct field by name. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object sliceHeaderField(GoStruct s, String name) {
         GoStructDescriptor desc = s.descriptor();
         for (int i = 0; i < desc.fields().size(); i++) {
@@ -1316,6 +1358,7 @@ public final class ReflectLinknames {
     }
 
     /** Writes an unsafeheader.Slice struct's Data/Len/Cap fields. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void setSliceHeader(GoStruct s, Object data, long len, long cap) {
         GoStructDescriptor desc = s.descriptor();
         for (int i = 0; i < desc.fields().size(); i++) {
@@ -1331,6 +1374,7 @@ public final class ReflectLinknames {
     }
 
     /** {array, offset, len, cap} for an unsafeheader.Slice struct value. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object[] sliceBacking(GoStruct s) {
         Object data = sliceHeaderField(s, "Data");
         int len = (int) num(sliceHeaderField(s, "Len"));
@@ -1354,6 +1398,7 @@ public final class ReflectLinknames {
      * GoPointer and the handle shapes, exactly as the byte-offset
      * view helpers ({@code arrayRoot}) already unwrap it.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object[] arrayBacking(Object ptr, String symbol) {
         if (ptr instanceof GoPointer p) {
             if (p.isElemPointer()) {
@@ -1388,6 +1433,7 @@ public final class ReflectLinknames {
     }
 
     /** {byte[], offset} for a pointer denoting byte storage. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object[] byteBacking(Object ptr, String symbol) {
         Object[] b = arrayBackingOrNull(ptr);
         if (b != null && b[0] instanceof byte[]) {
@@ -1404,6 +1450,7 @@ public final class ReflectLinknames {
                 + describe(ptr));
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object[] arrayBackingOrNull(Object ptr) {
         try {
             return arrayBacking(ptr, "reflect");
@@ -1413,6 +1460,7 @@ public final class ReflectLinknames {
     }
 
     /** Short shape description for fail-fast messages. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String describe(Object o) {
         if (o == null) {
             return "null";

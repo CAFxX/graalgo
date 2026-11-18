@@ -25,6 +25,7 @@ public final class Timers {
      * Monotonic nanosecond clock (REAL): {@code runtime.nanotime}.
      * Never wall-clock; never goes backwards on this platform.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long nanotime() {
         return System.nanoTime();
     }
@@ -35,6 +36,7 @@ public final class Timers {
      * slot is released while sleeping. {@code ns <= 0} returns
      * immediately (gc {@code time.Sleep} parity).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void sleep(long ns) {
         if (ns <= 0) {
             return;
@@ -57,6 +59,7 @@ public final class Timers {
      * call scheduler park operations. The timer id is discarded; use
      * {@link #startTimerId} when cancellation is needed.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void startTimer(long whenNanos, Runnable callback) {
         startTimerId(whenNanos, callback);
     }
@@ -65,6 +68,7 @@ public final class Timers {
      * Additive (Phase 2): like {@link #startTimer} but returns the
      * timer id for {@link #stopTimer}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long startTimerId(long whenNanos, Runnable callback) {
         if (callback == null) {
             throw new IllegalArgumentException("startTimer: null callback");
@@ -77,6 +81,7 @@ public final class Timers {
      * when the id is unknown or the timer already fired (gc Stop
      * parity for the racy window).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void stopTimer(long timerId) {
         SchedulerCore.current().timerHeap().cancel(timerId);
     }
@@ -85,6 +90,7 @@ public final class Timers {
      * Additive (Phase 2): {@code time.After(d)} — the channel of a
      * one-shot timer firing after {@code ns} nanoseconds.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static ChanOps.Chan after(long ns) {
         return GoTimer.after(ns);
     }
@@ -92,6 +98,7 @@ public final class Timers {
     /**
      * Additive (Phase 2): {@code time.NewTimer(d)}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoTimer newTimer(long ns) {
         return GoTimer.newTimer(ns);
     }
@@ -99,6 +106,7 @@ public final class Timers {
     /**
      * Additive (Phase 2): {@code time.NewTicker(d)}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoTimer newTicker(long ns) {
         return GoTimer.newTicker(ns);
     }
@@ -107,6 +115,7 @@ public final class Timers {
      * Additive (Phase 2): {@code time.Tick(d)} (no Stop handle; the
      * ticker is reclaimed at program end, gc parity).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static ChanOps.Chan tick(long ns) {
         return GoTimer.tick(ns);
     }

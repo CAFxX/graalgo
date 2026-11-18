@@ -120,6 +120,7 @@ public final class GoConvert {
      * Go {@code string(i)} for a typed integer value (already a long):
      * negative or &gt; 0x10FFFF or a surrogate → U+FFFD.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoString intToString(long v) {
         if (v < 0 || v > 0x10FFFF || (v >= 0xD800 && v <= 0xDFFF)) {
             return GoString.fromUtf8("\uFFFD");
@@ -132,6 +133,7 @@ public final class GoConvert {
      * exact decimal string (needed when the value exceeds 64 bits, e.g.
      * {@code string(1<<64 + 0x1F600)} → U+FFFD, as gc computes).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoString untypedIntToString(String decimal) {
         BigInteger v = new BigInteger(decimal);
         if (v.signum() < 0 || v.compareTo(BigInteger.valueOf(0x10FFFF)) > 0

@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
@@ -24,7 +25,7 @@ public final class CompositeLitNode extends GoExprNode {
     @Children private GoExprNode[] keyNodes; // null unless keyed map/array/slice
     @Children private GoExprNode[] valueNodes;
     /** Field indices parallel to {@link #valueNodes} for keyed struct literals; null otherwise. */
-    private final int[] fieldIdx;
+    @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] fieldIdx;
     private final boolean keyed;
     private final boolean isPointer;
     // Slice/array/map element + map key kinds (resolved at build).
@@ -71,15 +72,20 @@ public final class CompositeLitNode extends GoExprNode {
     private Object buildSlice(VirtualFrame frame) {
         int n = valueNodes.length;
         if (keyed) {
-            int max = -1;
-            for (GoExprNode k : keyNodes) {
-                max = Math.max(max, (int) k.executeLong(frame));
-            }
-            n = max + 1;
+            n = maxKey(frame) + 1;
         }
         Object arr = Boxing.newArray(elemKind, n);
         fillArray(arr, n, frame);
         return new GoSlice(arr, 0, n, n);
+    }
+
+    @ExplodeLoop
+    private int maxKey(VirtualFrame frame) {
+        int max = -1;
+        for (GoExprNode k : keyNodes) {
+            max = Math.max(max, (int) k.executeLong(frame));
+        }
+        return max;
     }
 
     private Object buildArray(VirtualFrame frame) {
@@ -90,9 +96,7 @@ public final class CompositeLitNode extends GoExprNode {
 
     private void fillArray(Object arr, int n, VirtualFrame frame) {
         if (!keyed) {
-            for (int i = 0; i < valueNodes.length; i++) {
-                Boxing.arraySet(arr, elemKind, i, elemValue(frame, i));
-            }
+            fillUnkeyed(arr, frame);
             // Missing elements: fresh zeros for composite element kinds.
             for (int i = valueNodes.length; i < n; i++) {
                 if (elemZeroTemplate != null) {
@@ -102,6 +106,26 @@ public final class CompositeLitNode extends GoExprNode {
             return;
         }
         boolean[] set = new boolean[n];
+        fillKeyed(arr, n, set, frame);
+        for (int i = 0; i < n; i++) {
+            if (!set[i] && elemZeroTemplate != null) {
+                Boxing.arraySet(arr, elemKind, i, Boxing.freshZeroCopy(elemZeroTemplate));
+            }
+        }
+    }
+
+    // The element/key evaluation loops run over @Children, so they are
+    // unrolled (each child call then inlines); the zero-fill loops above
+    // have runtime trip counts and stay ordinary loops.
+    @ExplodeLoop
+    private void fillUnkeyed(Object arr, VirtualFrame frame) {
+        for (int i = 0; i < valueNodes.length; i++) {
+            Boxing.arraySet(arr, elemKind, i, elemValue(frame, i));
+        }
+    }
+
+    @ExplodeLoop
+    private void fillKeyed(Object arr, int n, boolean[] set, VirtualFrame frame) {
         for (int j = 0; j < valueNodes.length; j++) {
             int idx = (int) keyNodes[j].executeLong(frame);
             if (idx < 0 || idx >= n) {
@@ -112,11 +136,6 @@ public final class CompositeLitNode extends GoExprNode {
             Boxing.arraySet(arr, elemKind, idx, elemValue(frame, j));
             set[idx] = true;
         }
-        for (int i = 0; i < n; i++) {
-            if (!set[i] && elemZeroTemplate != null) {
-                Boxing.arraySet(arr, elemKind, i, Boxing.freshZeroCopy(elemZeroTemplate));
-            }
-        }
     }
 
     /** One element value: boxed, through the value-copy rule. */
@@ -124,6 +143,7 @@ public final class CompositeLitNode extends GoExprNode {
         return Boxing.copyForAssign(elemKind, Boxing.box(elemKind, valueNodes[j], frame));
     }
 
+    @ExplodeLoop
     private Object buildMap(VirtualFrame frame) {
         GoMap m = new GoMap(Math.max(8, valueNodes.length * 2));
         for (int j = 0; j < valueNodes.length; j++) {
@@ -146,6 +166,12 @@ public final class CompositeLitNode extends GoExprNode {
                 objects[f.index()] = graalgo.values.GoString.EMPTY;
             }
         }
+        fillStructValues(frame, longs, objects);
+        return new GoStruct(structDesc, longs, objects);
+    }
+
+    @ExplodeLoop
+    private void fillStructValues(VirtualFrame frame, long[] longs, Object[] objects) {
         for (int j = 0; j < valueNodes.length; j++) {
             int fi = keyed ? fieldIdx[j] : j;
             GoStructDescriptor.Field f = structDesc.field(fi);
@@ -156,6 +182,5 @@ public final class CompositeLitNode extends GoExprNode {
                 objects[f.index()] = Boxing.copyForAssign(f.kind(), b);
             }
         }
-        return new GoStruct(structDesc, longs, objects);
     }
 }

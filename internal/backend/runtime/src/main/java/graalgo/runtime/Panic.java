@@ -47,11 +47,13 @@ public final class Panic {
      * Enables or disables pre-1.21 {@code panic(nil)} semantics.
      * Additive w.r.t. the Phase-1 surface (not in the freeze).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void setPanicNilOldBehavior(boolean enabled) {
         panicNilOldBehavior = enabled;
     }
 
     /** Whether pre-1.21 {@code panic(nil)} semantics are enabled. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean isPanicNilOldBehavior() {
         return panicNilOldBehavior;
     }
@@ -65,6 +67,7 @@ public final class Panic {
      * case the nil is preserved (pre-1.21 semantics). A {@link GoInterface}
      * value is unboxed to its dynamic type/value first.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void throwPanic(Object goValue) {
         throwPanic(goValue, null, null, null);
     }
@@ -80,6 +83,7 @@ public final class Panic {
      * @param goTypeName Go-syntax type name for composite rendering, or null.
      * @param throwSite  the throwing AST node, or null.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void throwPanic(Object goValue, Object descriptor, String goTypeName, Node throwSite) {
         Object v = goValue;
         Object d = descriptor;
@@ -158,6 +162,7 @@ public final class Panic {
      * wrapper as data: their field values are not recoverable from
      * the carrier, so that path stays loud rather than fabricated.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object recover() {
         GoroutineState s = GoroutineState.current();
         if (s == null || !s.isRecoverAllowed()) {

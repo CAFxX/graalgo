@@ -1,5 +1,9 @@
 package graalgo.frontend;
 
+import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+
 import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
@@ -24,8 +28,27 @@ public final class FuncConstNode extends GoExprNode {
         this.objId = objId;
     }
 
+    /**
+     * The resolved function value. The function table is filled once at
+     * program build ({@code NodeFactory} rejects a second binding of an
+     * object id) and never rebound, so the first successful lookup is the
+     * value for the program's lifetime: a compilation constant.
+     */
+    @CompilationFinal private GoFunc cached;
+
     @Override
     public Object executeObject(VirtualFrame frame) {
+        GoFunc f = cached;
+        if (f == null) {
+            CompilerDirectives.transferToInterpreterAndInvalidate();
+            f = lookup();
+            cached = f;
+        }
+        return f;
+    }
+
+    @TruffleBoundary
+    private GoFunc lookup() {
         GoFunc f = funcTable.get(objId);
         if (f == null) {
             throw new FrontendException(

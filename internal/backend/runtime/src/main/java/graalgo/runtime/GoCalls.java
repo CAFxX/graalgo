@@ -48,6 +48,7 @@ public final class GoCalls {
      * @param args the call arguments in D5 mapping.
      * @return the call's single result, or null for void calls.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object invoke(GoFunc fn, Object[] args) {
         return fn.target().call(callArgs(fn, args));
     }
@@ -57,6 +58,7 @@ public final class GoCalls {
      * {@code runtime error: invalid memory address or nil pointer
      * dereference}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue nilFuncCall() {
         // P0-fmt-016: gc panics with runtime.errorString here.
         return GoErrors.nilDereference();

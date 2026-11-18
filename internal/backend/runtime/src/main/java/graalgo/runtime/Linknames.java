@@ -57,6 +57,7 @@ public final class Linknames {
      * @param arity the exact number of D5-boxed arguments the target takes;
      *              checked at every dispatch.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void register(String symbol, Target target, int arity) {
         if (symbol == null || target == null) {
             throw new IllegalArgumentException("Linknames.register: null symbol or target");
@@ -68,6 +69,7 @@ public final class Linknames {
     }
 
     /** Removes all registrations (tests). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void clear() {
         TARGETS.clear();
         GO_FUNCS.clear();
@@ -88,6 +90,7 @@ public final class Linknames {
      * instead of recursing into its own stub (gc reports an undefined-
      * symbol link error for the same program).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object dispatch(String symbol, Object[] args) {
         Registration r = TARGETS.get(symbol);
         if (r != null) {
@@ -107,6 +110,7 @@ public final class Linknames {
     }
 
     /** Binds a compiled Go function under its qualified Go name (launcher). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void bindGo(String qualifiedName, GoFunc fn) {
         if (qualifiedName == null || fn == null) {
             throw new IllegalArgumentException("Linknames.bindGo: null name or function");
@@ -115,6 +119,7 @@ public final class Linknames {
     }
 
     /** Looks up a Go function bound by {@link #bindGo}, or null. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoFunc resolveGo(String qualifiedName) {
         return GO_FUNCS.get(qualifiedName);
     }
@@ -130,6 +135,7 @@ public final class Linknames {
      * for concrete parameters, so the helper sees the D5 values a direct
      * Go call would pass (P3-M4).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object callGo(String qualifiedName, Object[] args) {
         GoFunc fn = GO_FUNCS.get(qualifiedName);
         if (fn == null) {

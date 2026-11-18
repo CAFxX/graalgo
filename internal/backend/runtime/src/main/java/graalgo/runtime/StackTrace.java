@@ -54,6 +54,7 @@ public final class StackTrace {
      * Interns a (function, file, line) site, returning its dense PC id
      * (stable within the process).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long intern(String funcName, String file, int line) {
         Key k = new Key(funcName, file, line);
         Long id = INTERN.get(k);
@@ -76,6 +77,7 @@ public final class StackTrace {
     }
 
     /** Resolves an interned PC id, or null when unknown. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static PcInfo lookup(long pc) {
         if (pc <= 0) {
             return null;
@@ -89,6 +91,7 @@ public final class StackTrace {
     }
 
     /** Records a function's definition site (first write wins). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void recordFuncDef(String funcName, String file, int line) {
         FUNC_DEFS.putIfAbsent(funcName, new DefInfo(file, line));
     }
@@ -97,6 +100,7 @@ public final class StackTrace {
      * The entry PC for the named function (its definition site), or 0 when
      * unknown. gc: "Entry ... may be zero if not known".
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long entryFor(String funcName) {
         DefInfo d = FUNC_DEFS.get(funcName);
         if (d == null) {
@@ -112,10 +116,12 @@ public final class StackTrace {
      * bare declared name and stays unqualified (the wire carries no
      * package path — documented divergence).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String qualifyFuncName(String name) {
         return "main".equals(name) ? "main.main" : name;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String sectionFile(SourceSection sec) {
         if (sec == null || sec.getSource() == null) {
             return "";
@@ -124,6 +130,7 @@ public final class StackTrace {
         return name != null ? name : "";
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int sectionLine(SourceSection sec) {
         return sec != null ? sec.getStartLine() : 0;
     }
@@ -137,6 +144,7 @@ public final class StackTrace {
      * site before capturing, mirroring {@code FuncValueCallNode}).
      * Function definition sites are recorded for {@link #entryFor}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static List<FrameData> capture() {
         List<FrameData> out = new ArrayList<>();
         GoroutineState state = GoroutineState.current();
@@ -166,6 +174,7 @@ public final class StackTrace {
      * intrinsic's own call site — the analogue of what
      * {@code FuncValueCallNode} does for real calls.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static List<FrameData> captureAt(SourceSection callSite) {
         GoroutineState state = GoroutineState.current();
         if (state != null) {

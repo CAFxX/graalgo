@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.Intrinsics;
 import graalgo.values.GoKind;
@@ -157,10 +158,7 @@ public final class AppendNode extends GoExprNode {
         // s's backing array read the just-written value (gc reads the
         // original). Evaluate every element value first, then grow, then
         // store.
-        Object[] vals = new Object[n];
-        for (int i = 0; i < n; i++) {
-            vals[i] = readElem(elemChildren[i], frame);
-        }
+        Object[] vals = evalElems(frame);
         // M7: fast path — if the slice has capacity, extend the header
         // (shares the backing array), exactly like gc's append. Only call
         // growslice when len+n exceeds cap; unconditional growth
@@ -182,6 +180,20 @@ public final class AppendNode extends GoExprNode {
             store(arr, base + i, vals[i]);
         }
         return out;
+    }
+
+    /**
+     * Evaluates every element child in order. Unrolled: a loop over
+     * {@code @Children} that is not exploded leaves each child call
+     * virtual, so the frame escapes and compilation bails out.
+     */
+    @ExplodeLoop
+    private Object[] evalElems(VirtualFrame frame) {
+        Object[] vals = new Object[elemChildren.length];
+        for (int i = 0; i < elemChildren.length; i++) {
+            vals[i] = readElem(elemChildren[i], frame);
+        }
+        return vals;
     }
 
     private Object readElem(GoExprNode child, VirtualFrame frame) {

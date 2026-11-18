@@ -248,7 +248,18 @@ public final class NodeFactory {
 
     /** A built program plus introspection data for tests and the launcher. */
     public record Program(GoRootNode root, FrameDescriptor descriptor, Map<String, Integer> slotsByName,
-            Map<String, GoKind> kindsByName, Map<Integer, GoFunc> functions) {}
+            Map<String, GoKind> kindsByName, Map<Integer, GoFunc> functions) {
+        /**
+         * Materializes the entry root's call target, which adopts the
+         * whole tree (sets every node's parent). Launchers run main by
+         * {@code root().execute(frame)} directly; without adoption an OSR
+         * loop node in main cannot find its root and every OSR compile of
+         * a main loop fails ("rootNode is null" in prepareForCompilation).
+         */
+        public Program {
+            root.getCallTarget();
+        }
+    }
 
     private final Source source;
     /** One Truffle Source per input file; position "file" indices select

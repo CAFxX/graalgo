@@ -31,6 +31,7 @@ public final class GoFloatFmt {
      * {@code fmt} ∈ {'e','E','f','g','G'}, {@code prec} significant digits
      * ({@code -1} = shortest), {@code bitSize} ∈ {32, 64}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String formatFloat(double v, char fmt, int prec, int bitSize) {
         boolean neg = isNegative(v, bitSize);
         double av = neg ? -v : v; // careful: -(-0.0) is +0.0; handled below
@@ -69,6 +70,7 @@ public final class GoFloatFmt {
     }
 
     /** Formats a complex value like Go's {@code AppendComplex}: {@code (re+imi)}. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String formatComplex(double re, double im, char fmt, int prec, int bitSize) {
         StringBuilder sb = new StringBuilder();
         sb.append('(');
@@ -82,6 +84,7 @@ public final class GoFloatFmt {
         return sb.toString();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isNegative(double v, int bitSize) {
         if (bitSize == 32) {
             return (Float.floatToRawIntBits((float) v) & 0x8000_0000) != 0;
@@ -99,6 +102,7 @@ public final class GoFloatFmt {
      * "4.9E-324"; Go prints "5e-324"). Subnormals take a dedicated
      * verified-search path below.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static DecParts shortestParts(double av, int bitSize) {
         if (isSubnormal(av, bitSize)) {
             return shortestSubnormalParts(av, bitSize);
@@ -150,6 +154,7 @@ public final class GoFloatFmt {
      * True when {@code av} (positive, nonzero — callers abs and zero-check
      * first) is subnormal at the given bit size.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isSubnormal(double av, int bitSize) {
         if (bitSize == 32) {
             int bits = Float.floatToRawIntBits((float) av);
@@ -172,6 +177,7 @@ public final class GoFloatFmt {
      * exact value, then the even last digit. Termination is guaranteed:
      * the exact binary expansion itself (<= 767 digits) round-trips.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static DecParts shortestSubnormalParts(double av, int bitSize) {
         java.math.BigDecimal exact = bitSize == 32
                 ? new java.math.BigDecimal((double) (float) av) // widening is exact
@@ -254,6 +260,7 @@ public final class GoFloatFmt {
      * Mirrors Go's {@code d.Assign(mant); d.Shift(exp-mantBits)} then the
      * per-verb {@code d.Round(...)}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static DecParts roundedParts(double av, int bitSize, char fmt, int prec) {
         java.math.BigDecimal exact;
         if (bitSize == 32) {
@@ -327,6 +334,7 @@ public final class GoFloatFmt {
      * {@code fmt} and {@code prec}. {@code shortest} selects the
      * precision-6 rule for the '%g' e-vs-f decision.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static String fmtEFG(boolean neg, byte[] s, int dp, int nd, int prec, char fmt, boolean shortest) {
         if (fmt == 'g' || fmt == 'G') {
             int eprec = prec;
@@ -445,6 +453,7 @@ public final class GoFloatFmt {
      * Go's {@code strconv} {@code 'b'} format: {@code [-]mantissap±exp}
      * with the exact mantissa bits (ftoa.go fmtB).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String formatBinary(double v, int bitSize) {
         long b = bitSize == 32 ? Float.floatToRawIntBits((float) v) & 0xFFFF_FFFFL
                 : Double.doubleToRawLongBits(v);
@@ -478,6 +487,7 @@ public final class GoFloatFmt {
      * Go's {@code strconv} {@code 'x'}/{@code 'X'} format:
      * {@code [-]0x1.yyyyp±ddd} (ftoa.go fmtX, verbatim port).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String formatHex(double v, char fmt, int prec, int bitSize) {
         long b = bitSize == 32 ? Float.floatToRawIntBits((float) v) & 0xFFFF_FFFFL
                 : Double.doubleToRawLongBits(v);

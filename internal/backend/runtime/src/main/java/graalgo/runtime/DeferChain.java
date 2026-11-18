@@ -19,11 +19,12 @@ import java.util.List;
  * {@link #runAll}; the watermark unwind methods are additive.
  */
 public final class DeferChain {
-    private final Deque<DeferredCall> chain = new ArrayDeque<>();
+    private final ArrayDeque<DeferredCall> chain = new ArrayDeque<>();
     /** Monotonic push-order counter (PKG-039: merges stashed range defers). */
     private long nextSeqno = 1;
 
     /** Pushes a deferred call (frozen). Evaluated arguments are captured. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void push(DeferredCall call) {
         call.setSeqno(nextSeqno++);
         pushEntry(call);
@@ -43,6 +44,7 @@ public final class DeferChain {
      * Runs all deferred calls, LIFO (frozen). Used when the goroutine ends;
      * function returns use {@link #unwindReturning(int)} with their watermark.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void runAll() {
         unwindReturning(0);
     }
@@ -52,6 +54,7 @@ public final class DeferChain {
      * normal function return. Deferred calls see the function's named return
      * values as the body left them (defer runs before the return completes).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void unwindReturning(int mark) {
         while (chain.size() > mark) {
             DeferredCall dc = chain.pop();
@@ -78,6 +81,7 @@ public final class DeferChain {
      * (their {@code recover()} calls see nil), then the function resumes
      * normally.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public PanicException unwindPanicking(int mark, PanicException initial) {
         GoroutineState state = GoroutineState.current();
         PanicException prev = state != null ? state.panicking() : null;
@@ -136,6 +140,7 @@ public final class DeferChain {
      * Runs deferred calls down to {@code mark} during a {@link Goexit}.
      * Not recoverable: the recover flag stays disarmed throughout.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void unwindGoexiting(int mark) {
         GoroutineState state = GoroutineState.current();
         if (state != null) {
@@ -163,6 +168,7 @@ public final class DeferChain {
      * order (oldest first). Used by the range-over-func yield to extract
      * the loop body's deferred calls (gc's {@code deferrangefunc}).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public List<DeferredCall> takeAbove(int base) {
         List<DeferredCall> out = new ArrayList<>();
         while (chain.size() > base) {
@@ -186,6 +192,7 @@ public final class DeferChain {
      * @param stash the enclosing frame's stashed range-body defers in
      *              push order; empty or null is a no-op.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public void adoptRangeDefers(int mark, List<DeferredCall> stash) {
         if (stash == null || stash.isEmpty()) {
             return;

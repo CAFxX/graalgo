@@ -1,6 +1,7 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.BuiltinPrint;
 import graalgo.values.GoKind;
@@ -34,6 +35,7 @@ public final class PrintNode extends GoExprNode {
     }
 
     @Override
+    @ExplodeLoop
     public long executeLong(VirtualFrame frame) {
         BuiltinPrint.Arg[] bargs = new BuiltinPrint.Arg[args.length];
         for (int i = 0; i < args.length; i++) {

@@ -2,6 +2,7 @@ package graalgo.p3reflect;
 
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
@@ -90,6 +91,7 @@ public final class ReflectOpNode extends GoExprNode {
      * in primitive frame slots, so a blind {@code executeObject} throws
      * {@code FrameSlotTypeException}.
      */
+    @ExplodeLoop
     private Object dispatchBoxed(VirtualFrame frame) {
         Object[] argv = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
@@ -259,6 +261,9 @@ public final class ReflectOpNode extends GoExprNode {
     // Dispatch.
     // ------------------------------------------------------------------
 
+    // T0.B: the reflect op table (string-keyed, recursive conversions,
+    // metadata walks) is host code, not a PE target.
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object dispatch(String op, Object[] argv) {
         return switch (op) {
             case "tKind" -> (long) ReflectTypes.kindOf(asTok(argv[0]));
@@ -527,6 +532,7 @@ public final class ReflectOpNode extends GoExprNode {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static graalgo.values.GoStructDescriptor structDescFor(TypeInfo t) {
         // The struct's GoStructDescriptor: built from the wire via layout.
         // (Captured per-type at install in a full implementation; here we
@@ -547,6 +553,7 @@ public final class ReflectOpNode extends GoExprNode {
      * arrays with struct elements zeroed. (The flat new-Object[] left
      * nested struct fields null, breaking Field() chains on New(T).)
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoStruct zeroStruct(TypeInfo t) {
         graalgo.values.GoStructDescriptor desc = structDescFor(t);
         GoStruct s = new GoStruct(desc, new long[desc.longsCount()],
@@ -674,7 +681,7 @@ public final class ReflectOpNode extends GoExprNode {
             }
             case STRING -> {
                 GoString gs = (GoString) ReflectRefs.denotedValue(p.ptr(), GoKind.STRING);
-                byte b = gs.bytes()[i];
+                byte b = (byte) gs.byteAt(i);
                 long h = ReflectRefs.intern(b);
                 long uint8Tok = ReflectTypes.table().tokForKind(GoKind.UINT8);
                 return ReflectValues.pack(desc, uint8Tok, h, 0);
@@ -779,7 +786,7 @@ public final class ReflectOpNode extends GoExprNode {
         return switch (t.kind) {
             case ARRAY -> t.arrayLen;
             case SLICE -> ((GoSlice) d5).len();
-            case STRING -> ((GoString) d5).bytes().length;
+            case STRING -> ((GoString) d5).length();
             case MAP -> graalgo.runtime.Intrinsics.mapLen((GoMap) d5);
             case CHAN -> graalgo.runtime.ChanOps.len((graalgo.runtime.ChanOps.Chan) d5);
             case POINTER -> {
@@ -840,7 +847,7 @@ public final class ReflectOpNode extends GoExprNode {
             case FLOAT64 -> ((Double) d5) == 0d;
             case COMPLEX64 -> graalgo.values.GoComplex32.ZERO.equals(d5);
             case COMPLEX128 -> graalgo.values.GoComplex64.ZERO.equals(d5);
-            case STRING -> ((GoString) d5).bytes().length == 0;
+            case STRING -> ((GoString) d5).length() == 0;
             case ARRAY -> {
                 for (int i = 0; i < t.arrayLen; i++) {
                     if (!isZeroValue(t.elem,

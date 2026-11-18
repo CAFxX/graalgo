@@ -213,6 +213,7 @@ public final class ReflectTypes {
      * @param doc the parsed frontend/v1 document (parse-once: caller reuses
      *            NodeFactory.document())
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void install(Json.Object doc, Map<Integer, GoFunc> functions) {
         TypeTable types = new TypeTable(doc.array("types", "document"));
         installed = build(doc, types, functions);
@@ -221,6 +222,7 @@ public final class ReflectTypes {
     }
 
     /** The current run's table; fails fast when no run is installed. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Table table() {
         Table t = installed;
         if (t == null) {
@@ -239,12 +241,14 @@ public final class ReflectTypes {
      * wire-id → token registry, never through a TypeInfo's
      * representative wire id.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long tokForWireId(int wireId) {
         Long tok = table().wireIdToTok.get(wireId);
         return tok == null ? -1 : tok;
     }
 
     /** The TypeInfo for a qualified type name, or null. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static TypeInfo infoForName(String qname) {
         Table t = table();
         for (int i = 1; i < t.byTok.size(); i++) {
@@ -271,6 +275,7 @@ public final class ReflectTypes {
      * by the candidate's field count, and unnamed structs cannot
      * recurse (a struct cannot name itself without a name).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static TypeInfo infoForStructString(String structString) {
         Table t = table();
         for (int i = 1; i < t.byTok.size(); i++) {
@@ -296,6 +301,7 @@ public final class ReflectTypes {
     }
 
     /** Token for a GoTypeDescriptor (via the patch-03 wireId registry). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long tokForDescriptor(Object descriptor) {
         Table table = table();
         Integer wireId = graalgo.frontend.NodeFactory.wireIdForDescriptor(
@@ -324,6 +330,7 @@ public final class ReflectTypes {
      * Unnamed composites fall back to the wire-id registry, then to
      * on-demand structural construction.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static graalgo.values.GoTypeDescriptor descriptorForTok(long tok) {
         Table table = table();
         graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
@@ -371,6 +378,7 @@ public final class ReflectTypes {
             graalgo.values.GoTypeDescriptor> ON_DEMAND_STRUCTURAL_DESCS =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static graalgo.values.GoTypeDescriptor buildStructuralDescriptorOnDemand(TypeInfo t) {
         String key = typeString(t.tok);
         graalgo.values.GoTypeDescriptor d = ON_DEMAND_STRUCTURAL_DESCS.get(key);
@@ -389,6 +397,7 @@ public final class ReflectTypes {
      * Canonical basic-type name for a wire basic name, mirroring the
      * frontend's canonicalization (see NodeFactory.canonicalBasicName).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String canonicalBasicName(String wireName) {
         // The frontend maps aliases/legacy spellings to the canonical Go
         // name; replicate the mapping used by basicDescriptorForName.
@@ -399,6 +408,7 @@ public final class ReflectTypes {
     // Construction.
     // ------------------------------------------------------------------
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Table build(Json.Object doc, TypeTable types, Map<Integer, GoFunc> functions) {
         Map<Integer, Integer> funcdeclSig = collectFuncdeclSigs(doc);
         Table table = new Table();
@@ -430,12 +440,14 @@ public final class ReflectTypes {
     }
 
     /** Walks the document for funcdecl nodes; maps obj id → sig type id. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Map<Integer, Integer> collectFuncdeclSigs(Json.Object doc) {
         Map<Integer, Integer> out = new HashMap<>();
         collectFuncdeclSigs(doc, out);
         return out;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void collectFuncdeclSigs(Json.Value v, Map<Integer, Integer> out) {
         if (v instanceof Json.Object o) {
             if (isKind(o, "funcdecl")) {
@@ -457,6 +469,7 @@ public final class ReflectTypes {
         }
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isKind(Json.Object o, String kind) {
         Json.Value kv = o.opt("kind");
         return kv instanceof Json.Str s && kind.equals(s.value());
@@ -467,6 +480,7 @@ public final class ReflectTypes {
     // ------------------------------------------------------------------
 
     /** Builds the unresolved shell for one wire type id. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static TypeInfo shell(TypeTable types, int id) {
         String path = "types[" + id + "]";
         Json.Object entry = types.entry(id, path);
@@ -558,6 +572,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoKind basicKind(String name) {
         return switch (name) {
             case "bool" -> GoKind.BOOL;
@@ -593,6 +608,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long basicSize(GoKind k) {
         return switch (k) {
             case BOOL, INT8, UINT8 -> 1;
@@ -605,6 +621,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int basicAlign(GoKind k) {
         return (int) Math.min(basicSize(k), 8);
     }
@@ -627,6 +644,7 @@ public final class ReflectTypes {
     // cycle cut only needs the token, never completed field lists.
     // ------------------------------------------------------------------
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void resolve(Table table, TypeTable types, TypeInfo[] shells,
             Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         // Phase A: mint tokens for every id.
@@ -655,6 +673,7 @@ public final class ReflectTypes {
      * token was already built via canonical sharing. Re-entrant: called
      * from infoOrShell for forward references.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void buildOne(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
             boolean force) {
@@ -692,6 +711,7 @@ public final class ReflectTypes {
     }
 
     /** Token for a wire id (phase A must have run). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long tokForId(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         String key = keyForId(table, types, shells, id, functions, funcdeclSig);
@@ -718,6 +738,7 @@ public final class ReflectTypes {
      * Table.info fails fast on it). Consumers must not assume a child
      * TypeInfo is complete unless its tok != -1.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static TypeInfo infoOrShell(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         long tok = tokForId(table, types, shells, id, functions, funcdeclSig);
@@ -738,6 +759,7 @@ public final class ReflectTypes {
         return built;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String keyForId(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         String path = "types[" + id + "]";
@@ -749,6 +771,7 @@ public final class ReflectTypes {
     }
 
     /** Canonical structural key for one wire id. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String canonicalKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, String kind, Json.Object d,
             Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig, String path,
@@ -816,6 +839,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String keyOf(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
             Set<Integer> tpActive) {
@@ -827,6 +851,7 @@ public final class ReflectTypes {
     }
 
     /** Struct key: ordered field (name, tag, anonymous, type-key) list. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String structKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, Json.Object d, Map<Integer, GoFunc> functions,
             Map<Integer, Integer> funcdeclSig, String path, Set<Integer> tpActive) {
@@ -847,6 +872,7 @@ public final class ReflectTypes {
     }
 
     /** Interface key: ordered method (name, sig-key) list. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String interfaceKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, Json.Object d, Map<Integer, GoFunc> functions,
             Map<Integer, Integer> funcdeclSig, String path, Set<Integer> tpActive) {
@@ -865,6 +891,7 @@ public final class ReflectTypes {
     }
 
     /** Signature key: params/results type keys + variadic. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String signatureKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, Json.Object d, Map<Integer, GoFunc> functions,
             Map<Integer, Integer> funcdeclSig, String path, Set<Integer> tpActive) {
@@ -896,11 +923,13 @@ public final class ReflectTypes {
         return sb.toString();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isEmbedded(Json.Object f) {
         Json.Value v = f.opt("embedded");
         return v instanceof Json.Bool b && b.value();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Json.Object arrObj(Json.Array a, int i, String path) {
         Json.Value v = a.get(i);
         if (!(v instanceof Json.Object o)) {
@@ -910,6 +939,7 @@ public final class ReflectTypes {
     }
 
     /** Builds the full TypeInfo for one wire id (references resolved). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static TypeInfo buildInfo(Table table, TypeTable types, TypeInfo[] shells,
             int id, String kind, Json.Object d, long tok,
             Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig, String path) {
@@ -1061,6 +1091,7 @@ public final class ReflectTypes {
     }
 
     /** Reads a struct entry's fields. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static List<FieldInfo> readFields(Table table, TypeTable types, TypeInfo[] shells,
             Json.Object d, String path,
             Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
@@ -1094,6 +1125,7 @@ public final class ReflectTypes {
      * Reads a named/pointer entry's method table, sorted by name (gc
      * order). Signatures resolve via funcdecl obj→sig.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static List<MethodInfo> readMethods(Table table, TypeTable types, TypeInfo[] shells,
             Json.Object d, String path,
             Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
@@ -1219,6 +1251,7 @@ public final class ReflectTypes {
      * embedding path to the interface field value and dispatches the
      * method on it, mirroring IfaceDispatchNode's redispatch.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static MethodInfo readRedispatchMethod(Table table, TypeTable types,
             TypeInfo[] shells, String path,
             Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
@@ -1299,6 +1332,7 @@ public final class ReflectTypes {
     }
 
     /** Reads a wire "index" int array (embedding path); null → null. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int[] readWireIndex(Json.Object eo, String path) {
         Json.Value iv = eo.opt("index");
         if (iv == null || iv instanceof Json.Null) {
@@ -1336,6 +1370,7 @@ public final class ReflectTypes {
      * pre-existing value semantics for embedded fields via reflect; the
      * alternative (crash) is strictly worse.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoFunc makeStructEmbedWrapper(GoFunc inner, int[] embPath,
             String methodName, boolean pointerReceiver) {
         RootNode root = new RootNode(null) {
@@ -1369,6 +1404,7 @@ public final class ReflectTypes {
      * invokes the method — mirroring IfaceDispatchNode's redispatch loop,
      * including chaining through nested embedded interfaces.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoFunc makeRedispatchFunc(String methodName, int[] embPath,
             int embeddedIfaceId, List<String> embMethodNames) {
         RootNode root = new RootNode(null) {
@@ -1432,6 +1468,7 @@ public final class ReflectTypes {
     // ------------------------------------------------------------------
 
     /** Kind of a token as the synthetic Kind ordinal. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int kindOf(long tok) {
         return kindOrdinal(table().info(tok));
     }
@@ -1439,6 +1476,7 @@ public final class ReflectTypes {
     /** Maps a TypeInfo to the synthetic reflect.Kind constant ordinal.
      * The wire basic name distinguishes int/int64, uint/uint64/uintptr,
      * byte/uint8, rune/int32 (GoKind conflates them). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int kindOrdinal(TypeInfo t) {
         if (t.kind == null) {
             return 0; // Invalid
@@ -1482,6 +1520,7 @@ public final class ReflectTypes {
     }
 
     /** gc-exact Type.String() rendering. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String typeString(long tok) {
         TypeInfo t = table().info(tok);
         if (t.isNamed()) {
@@ -1523,6 +1562,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String funcString(TypeInfo t) {
         StringBuilder sb = new StringBuilder("func(");
         for (int i = 0; i < t.ins.size(); i++) {
@@ -1556,6 +1596,7 @@ public final class ReflectTypes {
         return sb.toString();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String structString(TypeInfo t) {
         StringBuilder sb = new StringBuilder("struct { ");
         for (int i = 0; i < t.fields.size(); i++) {
@@ -1578,6 +1619,7 @@ public final class ReflectTypes {
     }
 
     /** Go-syntax double-quoted string literal (strconv.Quote equivalent). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String goQuote(String s) {
         StringBuilder sb = new StringBuilder("\"");
         for (int i = 0; i < s.length(); i++) {
@@ -1600,6 +1642,7 @@ public final class ReflectTypes {
         return sb.append('"').toString();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String interfaceString(TypeInfo t) {
         // Interface method lists are not retained (only needed for
         // Implements, which uses the wire directly); render structurally.
@@ -1607,6 +1650,7 @@ public final class ReflectTypes {
     }
 
     /** Implements: does type t implement interface u? */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean implementsType(long tok, long uTok) {
         Table table = table();
         TypeInfo t = table.info(tok);
@@ -1621,6 +1665,7 @@ public final class ReflectTypes {
      * unexported methods never match — gc-exact). The empty interface is
      * implemented by every type.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean implementsDetailed(TypeInfo t, TypeInfo u) {
         if (u.interfaceMethods.isEmpty()) {
             return true;
@@ -1641,6 +1686,7 @@ public final class ReflectTypes {
     }
 
     /** AssignableTo: gc's assignability rules. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean assignableTo(long tok, long uTok) {
         if (tok == uTok) {
             return true;
@@ -1660,6 +1706,7 @@ public final class ReflectTypes {
         return false;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean compositeAssignable(TypeInfo t, TypeInfo u) {
         if (t.kind != u.kind) {
             return false;
@@ -1678,11 +1725,13 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean isEmptyInterface(TypeInfo u) {
         return u.kind == GoKind.INTERFACE;
     }
 
     /** ConvertibleTo: gc's convertibility rules (v1-relevant subset). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean convertibleTo(long tok, long uTok) {
         if (tok == uTok || assignableTo(tok, uTok)) {
             return true;
@@ -1727,6 +1776,7 @@ public final class ReflectTypes {
      * side effect (the abi shell's PtrToThis fast path,
      * fix-redmaster-r41).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long existingPtrTo(long tok) {
         Table table = table();
         TypeInfo t = table.info(tok);
@@ -1734,6 +1784,7 @@ public final class ReflectTypes {
         return existing == null ? 0 : existing;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long ptrTo(long tok) {
         Table table = table();
         TypeInfo t = table.info(tok);
@@ -1759,6 +1810,7 @@ public final class ReflectTypes {
     }
 
     /** arrayOf: token for [n]T (synthesized; no methods). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long arrayOf(long elemTok, int n) {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
@@ -1778,6 +1830,7 @@ public final class ReflectTypes {
     }
 
     /** sliceOf: token for []T (synthesized; no methods). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long sliceOf(long elemTok) {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
@@ -1797,6 +1850,7 @@ public final class ReflectTypes {
     }
 
     /** mapOf: token for map[K]V (synthesized; no methods). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long mapOf(long keyTok, long elemTok) {
         Table table = table();
         TypeInfo key = table.info(keyTok);
@@ -1817,6 +1871,7 @@ public final class ReflectTypes {
     }
 
     /** chanOf: token for chan T with direction (synthesized; no methods). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long chanOf(long elemTok, int dirOrdinal) {
         Table table = table();
         TypeInfo elem = table.info(elemTok);
@@ -1858,6 +1913,7 @@ public final class ReflectTypes {
      * falls through to the aggregate-kind switch and throws for
      * STRING and the other basic kinds.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long dynamicTokForName(String qname, GoKind kind) {
         Table table = table();
         TypeInfo existing = infoForName(qname);
@@ -1942,6 +1998,7 @@ public final class ReflectTypes {
     }
 
     /** funcOf: token for func(in...) out (synthesized; no methods). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long funcOf(long[] inToks, long[] outToks, boolean variadic) {
         Table table = table();
         StringBuilder keySb = new StringBuilder("func:");
@@ -1984,6 +2041,7 @@ public final class ReflectTypes {
      * aligned up to the maximum field alignment. (Verified field-by-field
      * against gc 1.27.1 by probe.)
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long structOf(String[] names, long[] toks, String[] tags,
             String[] pkgPaths, boolean[] anon) {
         Table table = table();
@@ -2036,6 +2094,7 @@ public final class ReflectTypes {
         return newTok;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long alignUp(long offset, int align) {
         long a = align;
         return (offset + a - 1) & ~(a - 1);
@@ -2065,6 +2124,7 @@ public final class ReflectTypes {
      * pointer dereferenced (gc semantics); that uses a dedicated
      * wrapper.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static List<MethodInfo> promoteMethods(Table table, TypeInfo outer,
             List<FieldInfo> fields) {
         List<MethodInfo> out = new ArrayList<>();
@@ -2099,6 +2159,7 @@ public final class ReflectTypes {
     }
 
     /** Promotes one method: wraps it to route the outer receiver down the embedding path. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static MethodInfo promoteOne(Table table, TypeInfo outer, MethodInfo m,
             int[] path, boolean embeddedIsPointer, int index) {
         GoFunc wrapped;
@@ -2131,6 +2192,7 @@ public final class ReflectTypes {
      * dereferenced so the value-receiver method gets the E value (gc
      * semantics). Mirrors {@link #makeStructEmbedWrapper}'s shape.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoFunc makeDerefEmbedWrapper(GoFunc inner, int[] embPath) {
         RootNode root = new RootNode(null) {
             @Override
@@ -2176,6 +2238,7 @@ public final class ReflectTypes {
      */
     private static final Map<Long, List<MethodInfo>> METHOD_SET_CACHE = new HashMap<>();
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static List<MethodInfo> methodSetFor(long tok) {
         TypeInfo t = table().info(tok);
         if (!t.methods.isEmpty()) {
@@ -2198,6 +2261,7 @@ public final class ReflectTypes {
     }
 
     /** Structural key of an already-built TypeInfo (for ptrTo). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String structuralKey(TypeInfo t) {
         // Reuse the canonical key scheme: named types by name, composites
         // by structure. Synthesized struct/func/interface types (from
@@ -2261,6 +2325,7 @@ public final class ReflectTypes {
      * NodeFactory's). The qualified names are "reflect.Value",
      * "reflect.Method", "reflect.StructField", "reflect.rtype".
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static void captureDescriptors(TypeTable types) {
         // P3-M8 fix: tolerant of programs that don't import reflect.
         // If the types aren't present, leave descriptors null; reflect
@@ -2294,6 +2359,7 @@ public final class ReflectTypes {
     }
 
     /** Public: struct descriptor for any synthetic named struct type. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static graalgo.values.GoStructDescriptor structDescriptorFor(String qualifiedName) {
         Table table = table();
         // Find the wire id via the table's wireIdToTok keys... instead,
@@ -2307,10 +2373,12 @@ public final class ReflectTypes {
 
     private static volatile graalgo.frontend.TypeTable cachedTypes;
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static void cacheTypes(graalgo.frontend.TypeTable types) {
         cachedTypes = types;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static graalgo.values.GoStructDescriptor structDescFor(
             TypeTable types, String qualifiedName) {
         int n = types.size();
@@ -2341,6 +2409,7 @@ public final class ReflectTypes {
     }
 
     /** GoKind for a wire type id (following named→underlying). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoKind fieldKind(TypeTable types, int id, String path) {
         Json.Object entry = types.entry(id, path);
         String kind = entry.string("kind", path);
@@ -2356,6 +2425,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoKind kindToGoKind(String kind) {
         return switch (kind) {
             case "array" -> GoKind.ARRAY;
@@ -2367,6 +2437,7 @@ public final class ReflectTypes {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static graalgo.values.GoTypeDescriptor descriptorFor(
             TypeTable types, String qualifiedName) {
         int n = types.size();
@@ -2391,6 +2462,7 @@ public final class ReflectTypes {
     }
 
     /** The Value struct descriptor. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static graalgo.values.GoStructDescriptor valueDescriptor() {
         graalgo.values.GoStructDescriptor d = valueDesc;
         if (d == null) {
@@ -2400,6 +2472,7 @@ public final class ReflectTypes {
     }
 
     /** The Method struct descriptor. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static graalgo.values.GoStructDescriptor methodDescriptor() {
         graalgo.values.GoStructDescriptor d = methodDesc;
         if (d == null) {
@@ -2409,6 +2482,7 @@ public final class ReflectTypes {
     }
 
     /** The StructField struct descriptor. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static graalgo.values.GoStructDescriptor structFieldDescriptor() {
         graalgo.values.GoStructDescriptor d = structFieldDesc;
         if (d == null) {
@@ -2427,6 +2501,7 @@ public final class ReflectTypes {
      * only built when the frontend references the named interface id, so
      * the capture was null and every boxType crashed.)
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static graalgo.values.GoInterface boxType(long tok) {
         graalgo.values.GoStruct rt = new graalgo.values.GoStruct(
                 rtypeDescStruct, new long[0], new Object[]{tok});

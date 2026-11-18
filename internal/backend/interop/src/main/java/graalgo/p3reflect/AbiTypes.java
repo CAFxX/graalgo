@@ -188,6 +188,7 @@ public final class AbiTypes {
      * {@code PtrType.Elem} back to the struct) terminate with the shell
      * rather than recursing forever.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized GoPointer abiPointerForTok(long tok) {
         ReflectTypes.Table table = ReflectTypes.table();
         if (table != cachedTable) {
@@ -218,6 +219,7 @@ public final class AbiTypes {
     }
 
     /** The type token of a canonical abi shell; 0 when not minted here. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long tokForShell(GoStruct shell) {
         Long tok = SHELL_TOKS.get(shell);
         return tok == null ? 0 : tok;
@@ -231,6 +233,7 @@ public final class AbiTypes {
      * a fabricated or stale header fails loudly instead of resolving to
      * the wrong type.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized long tokForStrId(int strId) {
         Long tok = STR_ID_TO_TOK.get(strId);
         return tok == null ? 0 : tok;
@@ -241,6 +244,7 @@ public final class AbiTypes {
      * returns its offset ID (negative, from -1 downward; the same
      * pointer value deduplicates to the same ID).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized int addReflectOff(Object ptr) {
         Integer existing = REFLECT_OFFS_INV.get(ptr);
         if (existing != null) {
@@ -258,6 +262,7 @@ public final class AbiTypes {
      * value reflect registered (which must be the name-bytes pointer it
      * was given). Null when the offset is unknown.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized Object nameOffPointer(int off) {
         byte[] enc = NAME_OFFS.get(off);
         if (enc != null) {
@@ -272,6 +277,7 @@ public final class AbiTypes {
      * PtrToThis registry, a negative ID the run-time registry. Null
      * when the offset is unknown.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static synchronized Object typeOffPointer(int off) {
         Object v = TYPE_OFFS.get(off);
         if (v != null) {
@@ -289,6 +295,7 @@ public final class AbiTypes {
      * (a struct naming itself through a pointer — the pointer kind
      * itself terminates the recursion, so this is belt-and-braces).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long ptrBytes(ReflectTypes.TypeInfo info, Set<Long> visiting) {
         switch (info.kind) {
             case POINTER, MAP, CHAN, FUNC, UNSAFE_POINTER, STRING, SLICE -> {
@@ -338,6 +345,7 @@ public final class AbiTypes {
      * element mask; a struct ORs its fields' masks shifted by their
      * word offsets. Basic kinds carry no pointers.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean[] gcMaskWords(ReflectTypes.TypeInfo info, Set<Long> visiting) {
         int words = (int) (info.size / 8);
         boolean[] mask = new boolean[Math.max(words, 0)];
@@ -389,6 +397,7 @@ public final class AbiTypes {
     }
 
     /** Registers a type's name encoding; returns its Str (nameOff) ID. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static synchronized int registerTypeName(String typeString, boolean exported) {
         byte[] enc = encodeName(typeString, "", exported, false);
         int id = nextNameOff++;
@@ -397,6 +406,7 @@ public final class AbiTypes {
     }
 
     /** Registers a pointer type's shell pointer; returns its PtrToThis ID. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static synchronized int registerPtrToThis(Object shellPtr) {
         int id = nextTypeOff++;
         TYPE_OFFS.put(id, shellPtr);
@@ -404,6 +414,7 @@ public final class AbiTypes {
     }
 
     /** Descriptor name for a kind's abi struct (basic kinds use plain {@code Type}). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String abiStructName(GoKind kind) {
         return switch (kind) {
             case POINTER -> "internal/abi.PtrType";
@@ -419,6 +430,7 @@ public final class AbiTypes {
     }
 
     /** Fills a memoized shell: the {@code Type} header plus kind-specific fields. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void fillAbiStruct(GoStruct shell, GoStructDescriptor desc,
             ReflectTypes.TypeInfo info, long tok) {
         String structName = abiStructName(info.kind);
@@ -435,6 +447,7 @@ public final class AbiTypes {
     }
 
     /** Fills the {@code internal/abi.Type} header fields (no arithmetic needed). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void fillTypeFields(GoStruct s, ReflectTypes.TypeInfo info, long tok) {
         GoStructDescriptor desc = s.descriptor();
         setLongByName(desc, s, "Size_", info.size);
@@ -534,6 +547,7 @@ public final class AbiTypes {
     }
 
     /** Fills the kind-specific extension fields of a non-{@code Type} abi struct. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void fillExtension(GoStruct shell, GoStructDescriptor desc,
             ReflectTypes.TypeInfo info) {
         switch (info.kind) {
@@ -624,6 +638,7 @@ public final class AbiTypes {
     }
 
     /** A zero {@code internal/abi.Name} (Bytes nil, so Name() reads empty). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoStruct zeroName() {
         return GoStruct.zero(ReflectTypes.structDescriptorFor("internal/abi.Name"));
     }
@@ -644,6 +659,7 @@ public final class AbiTypes {
      * zero Name's nil {@code Bytes} made every Field call on a struct
      * value die with a nil dereference.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoStruct nameFor(String name, String tag, boolean exported, boolean embedded) {
         GoStructDescriptor nameDesc = ReflectTypes.structDescriptorFor("internal/abi.Name");
         GoStruct s = GoStruct.zero(nameDesc);
@@ -656,6 +672,7 @@ public final class AbiTypes {
     }
 
     /** The {@code abi.NewName} byte encoding (see {@link #nameFor}). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static byte[] encodeName(String name, String tag, boolean exported, boolean embedded) {
         byte[] nameBytes = name.getBytes(java.nio.charset.StandardCharsets.UTF_8);
         byte[] tagBytes = tag.getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -689,6 +706,7 @@ public final class AbiTypes {
     }
 
     /** Unsigned LEB128, as {@code abi.writeVarint} emits for name/tag lengths. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static byte[] writeVarint(int n) {
         byte[] tmp = new byte[5];
         int i = 0;
@@ -705,6 +723,7 @@ public final class AbiTypes {
     }
 
     /** Stable non-zero hash for a type (the reflect surface never reads it). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long stableHash(ReflectTypes.TypeInfo info) {
         String seed = info.name.isEmpty() ? info.kind.name() + ":" + info.size : info.name;
         int h = seed.hashCode();
@@ -715,6 +734,7 @@ public final class AbiTypes {
     }
 
     /** Whether a type is comparable (its {@code Equal} is non-null in gc). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static boolean comparable(ReflectTypes.TypeInfo info, Set<Long> visiting) {
         switch (info.kind) {
             case FUNC, SLICE, MAP -> {
@@ -758,6 +778,7 @@ public final class AbiTypes {
      * {@code Comparable()}; the body is real so a direct call is not a
      * stub.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static synchronized GoFunc equalFunc() {
         if (equalFunc != null) {
             return equalFunc;
@@ -791,6 +812,7 @@ public final class AbiTypes {
      * {@code Data} at 8) and {@code NonEmptyInterface} ({@code Itab} at
      * 0, {@code Data} at 8) fit; anything else falls back.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStruct buildInterfaceView(GoInterface gi, String targetQName,
             List<ViewField> layout) {
         for (ViewField f : layout) {
@@ -899,6 +921,7 @@ public final class AbiTypes {
      * the same denoted-value read the reflect intrinsics use. A zero
      * Type word with a zero Data word is the nil interface.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoInterface unpackInterfaceView(GoStruct s, List<ViewField> layout) {
         Object typeWord = null;
         Object itabWord = null;
@@ -993,6 +1016,7 @@ public final class AbiTypes {
      * yields the scalar, not the array); anything else is interned as-is.
      * Null data (typed nil) is handle 0.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long dataHandleFor(Object data) {
         if (data == null) {
             return 0;
@@ -1012,6 +1036,7 @@ public final class AbiTypes {
     }
 
     /** Descriptor field ordinal by name, or -1. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static int fieldOrdinal(GoStructDescriptor desc, String name) {
         for (int i = 0; i < desc.fields().size(); i++) {
             if (desc.field(i).name().equals(name)) {
@@ -1021,6 +1046,7 @@ public final class AbiTypes {
         return -1;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void setLongByName(GoStructDescriptor desc, GoStruct s,
             String name, long value) {
         int ordinal = fieldOrdinal(desc, name);
@@ -1031,6 +1057,7 @@ public final class AbiTypes {
         s.setLong(ordinal, value);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void setObjectByName(GoStructDescriptor desc, GoStruct s,
             String name, Object value) {
         int ordinal = fieldOrdinal(desc, name);
@@ -1041,6 +1068,7 @@ public final class AbiTypes {
         s.setObject(ordinal, value);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static void requireNonNull(Object v, ReflectTypes.TypeInfo info, String what) {
         if (v == null) {
             throw new IllegalStateException("reflect: " + info.kind + " type without "

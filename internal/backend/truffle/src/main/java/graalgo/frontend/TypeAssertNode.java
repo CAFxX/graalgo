@@ -129,6 +129,7 @@ public final class TypeAssertNode extends GoExprNode {
      * absent from the document, yet they implement {@code error} and
      * {@code runtime.Error} exactly like gc's), else empty.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     static Set<String> dynamicMethodSetOf(Map<String, Set<String>> dynamicMethodSets, String name) {
         Set<String> s = dynamicMethodSets.get(name);
         if (s != null) {
@@ -136,6 +137,27 @@ public final class TypeAssertNode extends GoExprNode {
         }
         Set<String> rt = graalgo.runtime.RuntimeErrorTypes.methodSet(name);
         return rt != null ? rt : Set.of();
+    }
+
+    /**
+     * gc's missing-method name for a failed non-empty interface assertion:
+     * the name-sorted first implkey of {@code wanted} absent from
+     * {@code have}. Cold (panic) path, kept out of compiled code.
+     */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private static String firstMissingMethod(Set<String> have, List<String> wanted) {
+        String missing = null;
+        for (String k : wanted) {
+            if (!have.contains(k)) {
+                int nul = k.indexOf('\u0000');
+                String name = nul >= 0 ? k.substring(0, nul) : k;
+                name = name.substring(name.lastIndexOf('.') + 1);
+                if (missing == null || name.compareTo(missing) < 0) {
+                    missing = name;
+                }
+            }
+        }
+        return missing;
     }
 
     private Object read(VirtualFrame frame) {
@@ -157,20 +179,9 @@ public final class TypeAssertNode extends GoExprNode {
                 // first missing method in the interface's (name-sorted)
                 // method order, or a nil operand.
                 String dyn = gi.isNil() ? null : ((GoTypeDescriptor) gi.descriptor()).name();
-                String missing = null;
-                if (dyn != null) {
-                    Set<String> have = dynamicMethodSetOf(dynamicMethodSets, dyn);
-                    for (String k : assertedIfaceMethods) {
-                        if (!have.contains(k)) {
-                            int nul = k.indexOf('\u0000');
-                            String name = nul >= 0 ? k.substring(0, nul) : k;
-                            name = name.substring(name.lastIndexOf('.') + 1);
-                            if (missing == null || name.compareTo(missing) < 0) {
-                                missing = name;
-                            }
-                        }
-                    }
-                }
+                String missing = dyn == null ? null
+                        : firstMissingMethod(dynamicMethodSetOf(dynamicMethodSets, dyn),
+                                assertedIfaceMethods);
                 Panic.throwPanic(GoErrors.interfaceConversionMissing(dyn, assertedName, missing),
                         null, null, this);
             }

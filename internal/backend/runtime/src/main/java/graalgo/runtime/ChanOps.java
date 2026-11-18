@@ -36,6 +36,7 @@ public final class ChanOps {
      * {@link #makeChan(long, int, Object)} with the type-directed zero
      * when the program can observe a closed-channel receive.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Chan makeChan(long elemSizeBytes, int capacity) {
         return makeChan(elemSizeBytes, capacity, null);
     }
@@ -46,6 +47,7 @@ public final class ChanOps {
      * zero so {@code <-ch} on a closed, drained channel observes Go's
      * zero value.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Chan makeChan(long elemSizeBytes, int capacity, Object zeroValue) {
         if (capacity < 0) {
             Panic.throwPanic(GoStrings.of("makechan: negative capacity"));
@@ -54,6 +56,7 @@ public final class ChanOps {
     }
 
     /** {@code ch <- v} (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void send(Chan ch, Object value) {
         requireGoChan(ch).send(value);
     }
@@ -64,6 +67,7 @@ public final class ChanOps {
      * {@code (zero, false)}; the ok bit is not observable through this
      * signature — the two-value receive form is a P2-M3 exporter item).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object recv(Chan ch) {
         return requireGoChan(ch).recv().value();
     }
@@ -72,21 +76,25 @@ public final class ChanOps {
      * Two-value receive {@code v, ok = <-ch} (additive; Phase 2). The
      * future exporter lowers the comma-ok form to this.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoChan.RecvResult recvOk(Chan ch) {
         return requireGoChan(ch).recv();
     }
 
     /** {@code close(ch)} (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void close(Chan ch) {
         requireGoChan(ch).close();
     }
 
     /** {@code len(ch)}: buffered element count (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int len(Chan ch) {
         return requireGoChan(ch).buffered();
     }
 
     /** {@code cap(ch)}: buffer capacity (frozen signature). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int cap(Chan ch) {
         return requireGoChan(ch).capacity();
     }
@@ -96,6 +104,7 @@ public final class ChanOps {
      * case index. A {@code SelectCase} with {@code chan == null}
      * denotes {@code default:}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static int selectGo(SelectCase[] cases) {
         if (cases == null) {
             throw new IllegalArgumentException("selectGo: null cases");
@@ -107,6 +116,7 @@ public final class ChanOps {
     }
 
     /** Value received by the last {@link #selectGo} on this thread. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object selectRecvValue() {
         SelectResult r = SELECT_RESULT.get();
         if (r == null) {
@@ -116,6 +126,7 @@ public final class ChanOps {
     }
 
     /** Ok bit received by the last {@link #selectGo} on this thread. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean selectRecvOk() {
         SelectResult r = SELECT_RESULT.get();
         if (r == null) {
@@ -131,6 +142,7 @@ public final class ChanOps {
     /** One select case (channel + direction); frozen record. */
     public record SelectCase(Chan chan, boolean send, Object sendValue) {}
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoChan requireGoChan(Chan ch) {
         if (!(ch instanceof GoChan g)) {
             throw new IllegalArgumentException(

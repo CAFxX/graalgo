@@ -61,6 +61,7 @@ public final class ReflectCalls {
      * Invokes a func-typed Value's callable with D5 arguments.
      * Returns the D5 result (single result; v1 has no multi-result funcs).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object invokeCallable(Object callable, Object[] d5Args) {
         if (callable instanceof GoFunc gf) {
             return GoCalls.invoke(gf, d5Args);
@@ -85,6 +86,7 @@ public final class ReflectCalls {
      * The MakeFunc trampoline: D5 args → []Value → callback → D5 result.
      * The callback is a synthetic {@code func([]Value) []Value} Value.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static Object invokeMakeFunc(MakeFuncVal mfv, Object[] d5Args) {
         ReflectTypes.Table table = ReflectTypes.table();
         ReflectTypes.TypeInfo funcType = table.info(mfv.funcTok);
@@ -114,6 +116,7 @@ public final class ReflectCalls {
         return ReflectValues.unbox(resultValue);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long unpackHandle(GoStruct v) {
         return ReflectValues.parts(v).ptr();
     }

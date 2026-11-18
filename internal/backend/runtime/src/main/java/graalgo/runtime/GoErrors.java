@@ -43,6 +43,7 @@ public final class GoErrors {
      * overriding negative format (which omits {@code y}); {@code y} always
      * renders signed (it is a length/capacity).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue bounds(BoundsCode code, long x, long y, boolean signed) {
         String xs = signed ? Long.toString(x) : Long.toUnsignedString(x);
         String msg;
@@ -66,6 +67,7 @@ public final class GoErrors {
     }
 
     /** Index out of range (signed or unsigned index). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue indexOutOfRange(long idx, long len, boolean signed) {
         return bounds(BoundsCode.INDEX, idx, len, signed);
     }
@@ -76,11 +78,13 @@ public final class GoErrors {
      * misuse, nil-map writes, makechan size errors). Implements
      * {@code runtime.Error} like every runtime panic value.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue plain(String s) {
         return new GoErrorValue(s, false, "runtime.plainError", quote(s), s);
     }
 
     /** Assignment to an entry in a nil map. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue assignmentToNilMap() {
         // P0-fmt-016: gc's plainError is a string kind; %#v quotes the
         // underlying string, and Error() has no "runtime error: " prefix.
@@ -89,6 +93,7 @@ public final class GoErrors {
     }
 
     /** Nil pointer/map/... dereference (adds the SIGSEGV traceback line). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue nilDereference() {
         // P0-fmt-016: gc's errorString is a string kind whose Error()
         // prepends "runtime error: ".
@@ -98,6 +103,7 @@ public final class GoErrors {
     }
 
     /** Integer divide by zero. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue integerDivideByZero() {
         String s = "integer divide by zero";
         return new GoErrorValue("runtime error: " + s, false,
@@ -105,6 +111,7 @@ public final class GoErrors {
     }
 
     /** Negative shift amount. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue negativeShift() {
         String s = "negative shift amount";
         return new GoErrorValue("runtime error: " + s, false,
@@ -115,6 +122,7 @@ public final class GoErrors {
      * Failed type assertion: {@code interface conversion: <iface> is
      * <dynamic>, not <asserted>} (gc renders all three in Go syntax).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue interfaceConversion(String iface, String dynamic, String asserted) {
         // P0-fmt-016: gc's *runtime.TypeAssertionError; its %#v embeds
         // nondeterministic addresses, so no pre-rendered Go-syntax form.
@@ -132,6 +140,7 @@ public final class GoErrors {
      *
      * @param dynamic the dynamic type name, or null for a nil interface
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue interfaceConversionMissing(String dynamic, String asserted,
             String missingMethod) {
         String msg = dynamic == null
@@ -142,6 +151,7 @@ public final class GoErrors {
     }
 
     /** Go-quotes a string as UTF-8 bytes (strconv.Quote). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String quote(String s) {
         return GoQuote.quote(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
@@ -153,6 +163,7 @@ public final class GoErrors {
      * e.g. {@code "runtime error: range function continued iteration
      * after whole loop exit"}.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue rangeState(String msg) {
         return new GoErrorValue("runtime error: " + msg, false,
                 "runtime.errorString", quote(msg), msg);
@@ -164,6 +175,7 @@ public final class GoErrors {
      * compared with == (runtime/alg.go: efaceeq/ifaceeq). The type name is
      * in Go syntax (e.g. "func()", "[]int").
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoErrorValue comparingUncomparable(String typeName) {
         return new GoErrorValue("runtime error: comparing uncomparable type " + typeName);
     }

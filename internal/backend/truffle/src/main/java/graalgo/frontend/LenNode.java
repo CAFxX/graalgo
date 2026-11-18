@@ -37,7 +37,7 @@ public final class LenNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         return switch (argKind) {
-            case STRING, UNTYPED_STRING -> ((GoString) child.executeObject(frame)).bytes().length;
+            case STRING, UNTYPED_STRING -> ((GoString) child.executeObject(frame)).length();
             case ARRAY -> java.lang.reflect.Array.getLength(child.executeObject(frame));
             // P3-M9: len of *[N]T — dereference the pointer, get array length.
             case POINTER -> {

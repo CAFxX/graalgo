@@ -45,6 +45,7 @@ public final class UnsafeFromPtrNode extends GoExprNode {
             return 0;
         }
         if (!(p instanceof GoPointer gp)) {
+            com.oracle.truffle.api.CompilerDirectives.transferToInterpreterAndInvalidate();
             throw new FrontendException("unsafefromptr: expected a *T value, got "
                     + p.getClass().getSimpleName());
         }

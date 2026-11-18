@@ -132,6 +132,7 @@ public final class GcInterop {
      * @param obj must be a Go pointer ({@code *T}); nil clears.
      * @param finalizer a {@link GoFunc} taking the pointer, or null to remove.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void setFinalizer(Object obj, Object finalizer) {
         if (obj == null) {
             throw new IllegalArgumentException(
@@ -191,6 +192,7 @@ public final class GcInterop {
      * which is precisely why {@link java.lang.ref.Reference#reachabilityFence}
      * exists (ADR-0002 D4, reviewer P1-2).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void keepAlive(Object x) {
         java.lang.ref.Reference.reachabilityFence(x);
     }
@@ -202,6 +204,7 @@ public final class GcInterop {
     /** Number of explicit {@code runtime.GC()} calls (for memstats). */
     private static final AtomicLong FORCED_GC_COUNT = new AtomicLong();
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long totalCollections() {
         long total = 0;
         boolean any = false;
@@ -224,6 +227,7 @@ public final class GcInterop {
      * anyway — <b>documented approximation:</b> callers must not depend on
      * reclamation having completed (ADR-0002 D4).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void gc() {
         FORCED_GC_COUNT.incrementAndGet();
         // Release pinned GoPointers: the explicit GC is the program's signal
@@ -262,6 +266,7 @@ public final class GcInterop {
      * {@code weak.Make} vehicle: wraps {@code obj} in a {@link WeakReference}.
      * Null in → null out (Go: {@code weak.Make} of nil is nil).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static WeakReference<Object> newWeakRef(Object obj) {
         return obj == null ? null : new WeakReference<>(obj);
     }
@@ -270,6 +275,7 @@ public final class GcInterop {
      * {@code weak.Pointer.Value} vehicle: the referent, or null if collected
      * (or the reference itself is null).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object weakRefValue(WeakReference<Object> ref) {
         return ref == null ? null : ref.get();
     }
@@ -326,6 +332,7 @@ public final class GcInterop {
      *       GCCPUFraction — recorded in {@code DIVERGENCES.md}.
      * </ul>
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Map<String, Long> memStats() {
         Map<String, Long> m = new LinkedHashMap<>();
         MemoryMXBean mem = ManagementFactory.getMemoryMXBean();
@@ -361,6 +368,7 @@ public final class GcInterop {
      * Returns the last-256 GC pause durations in nanoseconds, oldest first
      * (Go {@code MemStats.PauseNs} analog; zeros where no pause recorded yet).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long[] pauseNsRing() {
         long[] out = new long[PAUSE_RING.length];
         synchronized (PAUSE_LOCK) {

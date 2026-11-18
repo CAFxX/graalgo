@@ -46,6 +46,7 @@ public final class ReflectValues {
     /** Unpacks a Value struct into (typ, ptr, flag). */
     public record ValueParts(long typ, long ptr, long flag) {}
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static ValueParts parts(GoStruct v) {
         Object typObj = v.getObject(0);
         Object ptrObj = v.getObject(1);
@@ -57,6 +58,7 @@ public final class ReflectValues {
         return new ValueParts(typ, ptr, v.getLong(2));
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean isValid(GoStruct v) {
         return parts(v).typ() != 0;
     }
@@ -66,11 +68,13 @@ public final class ReflectValues {
      * build time (see ReflectOpNode) and matches NodeFactory's layout
      * exactly (same field order, same {@code layout()} assignment).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStruct pack(GoStructDescriptor desc, long typ, long ptr, long flag) {
         return new GoStruct(desc, new long[]{flag}, new Object[]{typ, ptr});
     }
 
     /** The zero Value. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStruct zero(GoStructDescriptor desc) {
         return pack(desc, 0, 0, 0);
     }
@@ -87,6 +91,7 @@ public final class ReflectValues {
      * the staged NodeFactory registry (patch 03), then to the canonical
      * token via the install-time wireId→tok map.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long typeof(Object iface) {
         if (iface == null || iface == graalgo.values.GoInterface.NIL) {
             return 0;
@@ -108,11 +113,13 @@ public final class ReflectValues {
      * Token for a GoTypeDescriptor via the patch-03 registry. Called from
      * ReflectTypes (which holds the wireId→tok map).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long tokForDescriptor(Object descriptor) {
         return ReflectTypes.tokForDescriptor(descriptor);
     }
 
     /** Structural token for a direct D5 value (non-interface path). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static long tokForDirectValue(Object v) {
         ReflectTypes.Table table = ReflectTypes.table();
         GoKind k = kindOfValue(v);
@@ -120,6 +127,7 @@ public final class ReflectValues {
     }
 
     /** Best-effort GoKind for a direct D5 value. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static GoKind kindOfValue(Object v) {
         if (v instanceof Integer) {
             return GoKind.INT32;
@@ -158,6 +166,7 @@ public final class ReflectValues {
     }
 
     /** Unboxes a Value struct to its D5 value (no RO check; synthetic Go checks). */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object unbox(GoStruct v) {
         ValueParts p = parts(v);
         return ReflectRefs.load(p.ptr());
@@ -167,10 +176,12 @@ public final class ReflectValues {
     // Scalar getters (canonical boxed forms).
     // ------------------------------------------------------------------
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long getInt(Object d5) {
         return ((Long) d5).longValue();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static long getUint(Object d5) {
         if (d5 instanceof Long l) {
             return l.longValue();
@@ -178,6 +189,7 @@ public final class ReflectValues {
         return ((Integer) d5).intValue() & 0xFFFFFFFFL;
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static double getFloat(Object d5) {
         if (d5 instanceof Double dd) {
             return dd;
@@ -189,12 +201,14 @@ public final class ReflectValues {
     // Array helpers (D5 mapping, mirroring Boxing).
     // ------------------------------------------------------------------
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object newArray(GoKind elemKind, int len) {
         // Single canonical allocator: Boxing.newArray owns the kind→backing
         // mapping (D5). This wrapper exists for call-site continuity only.
         return graalgo.frontend.Boxing.newArray(elemKind, len);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object arrayGet(Object array, GoKind elemKind, int i) {
         return switch (elemKind) {
             // Narrow backing stores (D5): sign-extend on load, zero-extend
@@ -212,6 +226,7 @@ public final class ReflectValues {
         };
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void arraySet(Object array, GoKind elemKind, int i, Object boxed) {
         switch (elemKind) {
             // Narrowing conversion preserves the low bits; reads re-extend
@@ -236,6 +251,7 @@ public final class ReflectValues {
      * (longs vs objects) is determined by its GoKind, mirroring
      * GoStructDescriptor.layout.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object structFieldGet(GoStruct s, int fieldIndex, GoKind kind) {
         // The descriptor's Field records carry the carrier assignment;
         // use them directly (robust against layout changes).
@@ -257,6 +273,7 @@ public final class ReflectValues {
         return s.getObject(fieldIndex);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void structFieldSet(GoStruct s, int fieldIndex, GoKind kind, Object boxed) {
         GoStructDescriptor.Field f = s.descriptor().field(fieldIndex);
         if (f.inLongs()) {

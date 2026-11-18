@@ -60,6 +60,7 @@ public final class RuntimeErrorTypes {
      * The canonical descriptor for a runtime panic value, or null when
      * {@code typeName} is not a runtime error type.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoTypeDescriptor descriptor(String typeName) {
         return typeName == null ? null : DESCRIPTORS.get(typeName);
     }
@@ -69,6 +70,7 @@ public final class RuntimeErrorTypes {
      * {@code descriptorName} is not one (callers then fall back to the
      * empty set, exactly as for any type without methods).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Set<String> methodSet(String descriptorName) {
         return DESCRIPTORS.containsKey(descriptorName) ? METHOD_SET : null;
     }

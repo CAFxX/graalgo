@@ -62,6 +62,7 @@ public final class PanicRendering {
      * on the panicking goroutine (the methods are Go code). Ends with a
      * newline.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String renderPanicChain(PanicException top) {
         java.util.List<PanicException> chain = new java.util.ArrayList<>();
         for (PanicException p = top; p != null; p = p.link()) {
@@ -140,6 +141,7 @@ public final class PanicRendering {
         return renderValue(v, kind, typeName);
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String renderPanicLine(PanicException p) {
         Object v = p.goValue();
         RenderInfo info = infoFor(p.descriptor(), p.goTypeName());
@@ -159,6 +161,7 @@ public final class PanicRendering {
      *                 types (e.g. {@code main.MyInt}) and composite types
      *                 (e.g. {@code []int}), null for predeclared basics.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String renderValue(Object value, GoKind kind, String typeName) {
         if (value instanceof GoErrorValue e) {
             return printIndented(e.errorString());
@@ -207,6 +210,7 @@ public final class PanicRendering {
      * Derives the rendering inputs from a panic descriptor. Returns null
      * when the descriptor is absent (degraded path).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static RenderInfo infoFor(Object descriptor, String goTypeName) {
         if (!(descriptor instanceof GoTypeDescriptor d)) {
             return null;
@@ -232,6 +236,7 @@ public final class PanicRendering {
      * Replaces {@code \n} with {@code \n\t} so the traceback stays
      * unambiguously parseable (runtime/error.go {@code printindented}).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static String printIndented(String s) {
         int i = s.indexOf('\n');
         if (i < 0) {
@@ -248,6 +253,7 @@ public final class PanicRendering {
         return sb.toString();
     }
 
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     private static String utf8(GoString gs) {
         return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
     }

@@ -4,6 +4,7 @@ import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.DirectCallNode;
+import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
@@ -16,8 +17,8 @@ import graalgo.values.GoFunc;
  * distinct targets each get a {@link DirectCallNode}, which the Graal
  * compiler can inline at the call site. A fourth distinct target rewrites
  * the node to the megamorphic {@link #callMegamorphic fallback}, which
- * keeps today's exact behavior (indirect call through
- * {@link GoCalls#invoke}).
+ * calls through an {@link IndirectCallNode} (same semantics as
+ * {@link GoCalls#invoke}, without a host boundary in compiled code).
  *
  * <p>The guard keys on the compiled {@link RootCallTarget} (not the
  * {@link GoFunc} wrapper): closure evaluations allocate fresh wrappers
@@ -40,7 +41,8 @@ public abstract class CallDispatchNode extends Node {
     }
 
     @Specialization(replaces = "callCached")
-    static Object callMegamorphic(GoFunc fn, Object[] args) {
-        return GoCalls.invoke(fn, args);
+    static Object callMegamorphic(GoFunc fn, Object[] args,
+                                  @Cached IndirectCallNode callNode) {
+        return callNode.call(fn.target(), GoCalls.callArgs(fn, args));
     }
 }

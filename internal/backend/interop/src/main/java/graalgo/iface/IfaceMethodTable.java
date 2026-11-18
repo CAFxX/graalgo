@@ -201,6 +201,7 @@ public final class IfaceMethodTable {
      * builds synthetic method funcs for embedded-interface-promoted
      * methods outside the iface package.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static IfaceItab itabFor(String descriptorName, int ifaceId, List<String> ifaceMethodNames) {
         ItabKey key = new ItabKey(descriptorName, ifaceId);
         return itabs.computeIfAbsent(key,

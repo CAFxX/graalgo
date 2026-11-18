@@ -97,6 +97,111 @@ public final class AtomicOpNode extends GoExprNode {
     private final String op;
     private final String atomicType;
 
+    // T0.B: the operation is dispatched on an int opcode resolved once at
+    // construction. Switching on the per-execution concatenation
+    // atomicType + "." + op (the previous shape) cannot be constant-folded
+    // by partial evaluation (string concat + hashCode), so every compiled
+    // atomic op carried the whole string switch and bailed out.
+    private static final int OP_INT64_LOAD = 0;
+    private static final int OP_INT64_ADD = 1;
+    private static final int OP_INT64_SWAP = 2;
+    private static final int OP_INT64_AND = 3;
+    private static final int OP_INT64_OR = 4;
+    private static final int OP_UINT64_LOAD = 5;
+    private static final int OP_UINT64_ADD = 6;
+    private static final int OP_UINT64_SWAP = 7;
+    private static final int OP_UINT64_AND = 8;
+    private static final int OP_UINT64_OR = 9;
+    private static final int OP_UINTPTR_LOAD = 10;
+    private static final int OP_UINTPTR_ADD = 11;
+    private static final int OP_UINTPTR_SWAP = 12;
+    private static final int OP_UINTPTR_AND = 13;
+    private static final int OP_UINTPTR_OR = 14;
+    private static final int OP_INT32_LOAD = 15;
+    private static final int OP_INT32_ADD = 16;
+    private static final int OP_INT32_SWAP = 17;
+    private static final int OP_INT32_AND = 18;
+    private static final int OP_INT32_OR = 19;
+    private static final int OP_UINT32_LOAD = 20;
+    private static final int OP_UINT32_ADD = 21;
+    private static final int OP_UINT32_SWAP = 22;
+    private static final int OP_UINT32_AND = 23;
+    private static final int OP_UINT32_OR = 24;
+    private static final int OP_INT64_COMPAREANDSWAP = 25;
+    private static final int OP_UINT64_COMPAREANDSWAP = 26;
+    private static final int OP_UINTPTR_COMPAREANDSWAP = 27;
+    private static final int OP_INT32_COMPAREANDSWAP = 28;
+    private static final int OP_UINT32_COMPAREANDSWAP = 29;
+    private static final int OP_BOOL_LOAD = 30;
+    private static final int OP_BOOL_SWAP = 31;
+    private static final int OP_BOOL_COMPAREANDSWAP = 32;
+    private static final int OP_POINTER_COMPAREANDSWAP = 33;
+    private static final int OP_VALUE_COMPAREANDSWAP = 34;
+    private static final int OP_INT64_STORE = 35;
+    private static final int OP_UINT64_STORE = 36;
+    private static final int OP_UINTPTR_STORE = 37;
+    private static final int OP_INT32_STORE = 38;
+    private static final int OP_UINT32_STORE = 39;
+    private static final int OP_BOOL_STORE = 40;
+    private static final int OP_POINTER_LOAD = 41;
+    private static final int OP_POINTER_STORE = 42;
+    private static final int OP_POINTER_SWAP = 43;
+    private static final int OP_VALUE_LOAD = 44;
+    private static final int OP_VALUE_STORE = 45;
+    private static final int OP_VALUE_SWAP = 46;
+    /** Opcode table: index = opcode, value = "atomic.Type.Op". */
+    private static final java.util.List<String> OP_KEYS = java.util.List.of(
+            "atomic.Int64.Load",
+            "atomic.Int64.Add",
+            "atomic.Int64.Swap",
+            "atomic.Int64.And",
+            "atomic.Int64.Or",
+            "atomic.Uint64.Load",
+            "atomic.Uint64.Add",
+            "atomic.Uint64.Swap",
+            "atomic.Uint64.And",
+            "atomic.Uint64.Or",
+            "atomic.Uintptr.Load",
+            "atomic.Uintptr.Add",
+            "atomic.Uintptr.Swap",
+            "atomic.Uintptr.And",
+            "atomic.Uintptr.Or",
+            "atomic.Int32.Load",
+            "atomic.Int32.Add",
+            "atomic.Int32.Swap",
+            "atomic.Int32.And",
+            "atomic.Int32.Or",
+            "atomic.Uint32.Load",
+            "atomic.Uint32.Add",
+            "atomic.Uint32.Swap",
+            "atomic.Uint32.And",
+            "atomic.Uint32.Or",
+            "atomic.Int64.CompareAndSwap",
+            "atomic.Uint64.CompareAndSwap",
+            "atomic.Uintptr.CompareAndSwap",
+            "atomic.Int32.CompareAndSwap",
+            "atomic.Uint32.CompareAndSwap",
+            "atomic.Bool.Load",
+            "atomic.Bool.Swap",
+            "atomic.Bool.CompareAndSwap",
+            "atomic.Pointer.CompareAndSwap",
+            "atomic.Value.CompareAndSwap",
+            "atomic.Int64.Store",
+            "atomic.Uint64.Store",
+            "atomic.Uintptr.Store",
+            "atomic.Int32.Store",
+            "atomic.Uint32.Store",
+            "atomic.Bool.Store",
+            "atomic.Pointer.Load",
+            "atomic.Pointer.Store",
+            "atomic.Pointer.Swap",
+            "atomic.Value.Load",
+            "atomic.Value.Store",
+            "atomic.Value.Swap");
+
+    /** Opcode for this node's atomicType.op, or -1 (unsupported: default arms). */
+    private final int opcode;
+
     @Child
     private GoExprNode recv;
     @Children
@@ -107,8 +212,15 @@ public final class AtomicOpNode extends GoExprNode {
         super(resultKind);
         this.op = op;
         this.atomicType = atomicType;
+        this.opcode = OP_KEYS.indexOf(atomicType + "." + op);
         this.recv = recv;
         this.args = args;
+    }
+
+    /** Cold path: this op has no arm in the requested execute method. */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
+    private FrontendException notAnOp(String what) {
+        return new FrontendException("atomic op " + atomicType + "." + op + " " + what);
     }
 
     private Object cell(VirtualFrame frame) {
@@ -152,22 +264,22 @@ public final class AtomicOpNode extends GoExprNode {
 
     @Override
     public long executeLong(VirtualFrame frame) {
-        return switch (atomicType + "." + op) {
-            case "atomic.Int64.Load" -> Atomics.loadInt64(cell64(frame));
-            case "atomic.Int64.Add" -> Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Int64.Swap" -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Int64.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Int64.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uint64.Load" -> Atomics.loadInt64(cell64(frame));
-            case "atomic.Uint64.Add" -> Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uint64.Swap" -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uint64.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uint64.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.Load" -> Atomics.loadUintptr(cell64(frame));
-            case "atomic.Uintptr.Add" -> Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
+        return switch (opcode) {
+            case OP_INT64_LOAD -> Atomics.loadInt64(cell64(frame));
+            case OP_INT64_ADD -> Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_INT64_SWAP -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_INT64_AND -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_INT64_OR -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINT64_LOAD -> Atomics.loadInt64(cell64(frame));
+            case OP_UINT64_ADD -> Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINT64_SWAP -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINT64_AND -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINT64_OR -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINTPTR_LOAD -> Atomics.loadUintptr(cell64(frame));
+            case OP_UINTPTR_ADD -> Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
+            case OP_UINTPTR_SWAP -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
+            case OP_UINTPTR_AND -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINTPTR_OR -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
             // PKG-053: integer binary/comparison nodes always read
             // operands via executeLong (BinaryOpNode), so the 32-bit
             // ops serve it too by delegating to executeInt.
@@ -175,61 +287,58 @@ public final class AtomicOpNode extends GoExprNode {
             // kinds zero-extend (Uint32); callers mask to the operand
             // width (extend) or compare unsigned on the preserved low
             // 32 bits (Long.compareUnsigned).
-            case "atomic.Int32.Load", "atomic.Int32.Add", "atomic.Int32.Swap",
-                 "atomic.Int32.And", "atomic.Int32.Or" -> executeInt(frame);
-            case "atomic.Uint32.Load", "atomic.Uint32.Add", "atomic.Uint32.Swap",
-                 "atomic.Uint32.And", "atomic.Uint32.Or" -> executeInt(frame) & 0xFFFFFFFFL;
-            default -> throw new FrontendException(
-                    "atomic op " + atomicType + "." + op + " is not a long op");
+            case OP_INT32_LOAD, OP_INT32_ADD, OP_INT32_SWAP,
+                 OP_INT32_AND, OP_INT32_OR -> executeInt(frame);
+            case OP_UINT32_LOAD, OP_UINT32_ADD, OP_UINT32_SWAP,
+                 OP_UINT32_AND, OP_UINT32_OR -> executeInt(frame) & 0xFFFFFFFFL;
+            default -> throw notAnOp("is not a long op");
         };
     }
 
     @Override
     public int executeInt(VirtualFrame frame) {
-        return switch (atomicType + "." + op) {
-            case "atomic.Int32.Load" -> Atomics.loadInt32(cell32(frame));
-            case "atomic.Int32.Add" -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Int32.Swap" -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Int32.And" -> Atomics.andInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Int32.Or" -> Atomics.orInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Uint32.Load" -> Atomics.loadInt32(cell32(frame));
-            case "atomic.Uint32.Add" -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Uint32.Swap" -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Uint32.And" -> Atomics.andInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Uint32.Or" -> Atomics.orInt32(cell32(frame), args[0].executeInt(frame));
-            default -> throw new FrontendException(
-                    "atomic op " + atomicType + "." + op + " is not an int op");
+        return switch (opcode) {
+            case OP_INT32_LOAD -> Atomics.loadInt32(cell32(frame));
+            case OP_INT32_ADD -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_INT32_SWAP -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_INT32_AND -> Atomics.andInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_INT32_OR -> Atomics.orInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_UINT32_LOAD -> Atomics.loadInt32(cell32(frame));
+            case OP_UINT32_ADD -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_UINT32_SWAP -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_UINT32_AND -> Atomics.andInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_UINT32_OR -> Atomics.orInt32(cell32(frame), args[0].executeInt(frame));
+            default -> throw notAnOp("is not an int op");
         };
     }
 
     @Override
     public boolean executeBoolean(VirtualFrame frame) {
-        return switch (atomicType + "." + op) {
-            case "atomic.Int64.CompareAndSwap" -> Atomics.compareAndSwapInt64(cell64(frame),
+        return switch (opcode) {
+            case OP_INT64_COMPAREANDSWAP -> Atomics.compareAndSwapInt64(cell64(frame),
                     args[0].executeLong(frame), args[1].executeLong(frame));
-            case "atomic.Uint64.CompareAndSwap" -> Atomics.compareAndSwapInt64(cell64(frame),
+            case OP_UINT64_COMPAREANDSWAP -> Atomics.compareAndSwapInt64(cell64(frame),
                     args[0].executeLong(frame), args[1].executeLong(frame));
-            case "atomic.Uintptr.CompareAndSwap" -> Atomics.compareAndSwapUintptr(cell64(frame),
+            case OP_UINTPTR_COMPAREANDSWAP -> Atomics.compareAndSwapUintptr(cell64(frame),
                     args[0].executeLong(frame), args[1].executeLong(frame));
-            case "atomic.Int32.CompareAndSwap" -> Atomics.compareAndSwapInt32(cell32(frame),
+            case OP_INT32_COMPAREANDSWAP -> Atomics.compareAndSwapInt32(cell32(frame),
                     args[0].executeInt(frame), args[1].executeInt(frame));
-            case "atomic.Uint32.CompareAndSwap" -> Atomics.compareAndSwapInt32(cell32(frame),
+            case OP_UINT32_COMPAREANDSWAP -> Atomics.compareAndSwapInt32(cell32(frame),
                     args[0].executeInt(frame), args[1].executeInt(frame));
-            case "atomic.Bool.Load" -> Atomics.loadBool(cell32(frame));
-            case "atomic.Bool.Swap" -> Atomics.swapBool(cell32(frame), args[0].executeBoolean(frame));
-            case "atomic.Bool.CompareAndSwap" -> Atomics.compareAndSwapBool(cell32(frame),
+            case OP_BOOL_LOAD -> Atomics.loadBool(cell32(frame));
+            case OP_BOOL_SWAP -> Atomics.swapBool(cell32(frame), args[0].executeBoolean(frame));
+            case OP_BOOL_COMPAREANDSWAP -> Atomics.compareAndSwapBool(cell32(frame),
                     args[0].executeBoolean(frame), args[1].executeBoolean(frame));
             // P3-M10: reference-cell CAS with Go equality semantics
             // (Pointer[T] compares addresses via GoPointer.sameStorageAs;
             // Value compares interface values via GoEquality) — Java
             // reference identity is wrong for both (&x evaluated twice
             // yields two wrappers; separately boxed equal anys differ).
-            case "atomic.Pointer.CompareAndSwap" -> Atomics.compareAndSwapGoPointer(cellRef(frame),
+            case OP_POINTER_COMPAREANDSWAP -> Atomics.compareAndSwapGoPointer(cellRef(frame),
                     args[0].executeObject(frame), args[1].executeObject(frame));
-            case "atomic.Value.CompareAndSwap" -> Atomics.compareAndSwapGoValue(cellRef(frame),
+            case OP_VALUE_COMPAREANDSWAP -> Atomics.compareAndSwapGoValue(cellRef(frame),
                     args[0].executeObject(frame), args[1].executeObject(frame));
-            default -> throw new FrontendException(
-                    "atomic op " + atomicType + "." + op + " is not a boolean op");
+            default -> throw notAnOp("is not a boolean op");
         };
     }
 
@@ -237,37 +346,36 @@ public final class AtomicOpNode extends GoExprNode {
     public Object executeObject(VirtualFrame frame) {
         // Only the void Store reaches here (kind INTERFACE), plus the
         // POINTER/INTERFACE-valued Load/Swap of Pointer[T]/Value.
-        switch (atomicType + "." + op) {
-            case "atomic.Int64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uint64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Uintptr.Store" -> Atomics.storeUintptr(cell64(frame), args[0].executeLong(frame));
-            case "atomic.Int32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Uint32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
-            case "atomic.Bool.Store" -> Atomics.storeBool(cell32(frame), args[0].executeBoolean(frame));
+        switch (opcode) {
+            case OP_INT64_STORE -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINT64_STORE -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
+            case OP_UINTPTR_STORE -> Atomics.storeUintptr(cell64(frame), args[0].executeLong(frame));
+            case OP_INT32_STORE -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_UINT32_STORE -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
+            case OP_BOOL_STORE -> Atomics.storeBool(cell32(frame), args[0].executeBoolean(frame));
             // P3-M10: Pointer[T] (*T is an opaque Java reference; a zero
             // Pointer loads null, which is Go's nil *T) and Value (any).
-            case "atomic.Pointer.Load" -> {
+            case OP_POINTER_LOAD -> {
                 return Atomics.loadPointer(cellRef(frame));
             }
-            case "atomic.Pointer.Store" -> {
+            case OP_POINTER_STORE -> {
                 Atomics.storePointer(cellRef(frame), args[0].executeObject(frame));
                 return null;
             }
-            case "atomic.Pointer.Swap" -> {
+            case OP_POINTER_SWAP -> {
                 return Atomics.swapPointer(cellRef(frame), args[0].executeObject(frame));
             }
-            case "atomic.Value.Load" -> {
+            case OP_VALUE_LOAD -> {
                 return Atomics.loadPointer(cellRef(frame));
             }
-            case "atomic.Value.Store" -> {
+            case OP_VALUE_STORE -> {
                 Atomics.storePointer(cellRef(frame), args[0].executeObject(frame));
                 return null;
             }
-            case "atomic.Value.Swap" -> {
+            case OP_VALUE_SWAP -> {
                 return Atomics.swapPointer(cellRef(frame), args[0].executeObject(frame));
             }
-            default -> throw new FrontendException(
-                    "atomic op " + atomicType + "." + op + " is not a void op");
+            default -> throw notAnOp("is not a void op");
         }
         return null;
     }

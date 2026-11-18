@@ -73,6 +73,7 @@ public final class GoStructDescriptor {
      * (null otherwise); structDescs[i] is the nested struct descriptor for
      * STRUCT-kind fields (null otherwise).
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
             List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs,
             List<GoStructDescriptor> structDescs) {
@@ -101,6 +102,7 @@ public final class GoStructDescriptor {
      * Prefer the seven-argument overload when nested descriptors are
      * available.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
             List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs) {
         java.util.ArrayList<GoStructDescriptor> descs = new java.util.ArrayList<>(names.size());
@@ -115,6 +117,7 @@ public final class GoStructDescriptor {
      * elements are left uninitialized (legacy behavior). Prefer the
      * six-argument overload when element descriptors are available.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
             List<Integer> arrayLens, List<GoKind> arrayElemKinds) {
         java.util.ArrayList<GoStructDescriptor> descs = new java.util.ArrayList<>(names.size());
@@ -128,6 +131,7 @@ public final class GoStructDescriptor {
      * Legacy layout without array lengths (all -1/null). For call sites that
      * don't have array length info.
      */
+    @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds) {
         java.util.ArrayList<Integer> lens = new java.util.ArrayList<>(names.size());
         java.util.ArrayList<GoKind> elemKinds = new java.util.ArrayList<>(names.size());

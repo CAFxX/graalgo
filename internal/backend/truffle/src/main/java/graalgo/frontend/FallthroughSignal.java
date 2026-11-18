@@ -7,8 +7,8 @@ package graalgo.frontend;
  * re-testing its case expressions. go/types guarantees it only appears as
  * the final statement of a non-final clause.
  */
-public final class FallthroughSignal extends RuntimeException {
+public final class FallthroughSignal extends com.oracle.truffle.api.nodes.ControlFlowException {
     public FallthroughSignal() {
-        super(null, null, false, false);
+
     }
 }

@@ -108,7 +108,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-jit bench test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-p3frontend test-ci test-regression
 
@@ -154,6 +154,22 @@ check:
 # `make test` (see header comment).
 test-ci: build
 	$(MAKE) -C internal/backend/truffle smoke-test
+	$(MAKE) test-jit
+
+# JIT regression guard (~30 s): runs test/jit/peguard under graalgo with
+# synchronous, traced Truffle compilation and fails if any compilation
+# fails (e.g. a PermanentBailoutException from partial evaluation entering
+# JDK code), if a guarded hot function or an OSR loop is never compiled,
+# or if the output differs from gc's. See test/jit/run_pe_guard.sh.
+# Keep the JVM temp files off the shared /tmp tmpfs.
+test-jit: build
+	mkdir -p $(CURDIR)/test/jit/.tmp
+	TMPDIR="$(CURDIR)/test/jit/.tmp" test/jit/run_pe_guard.sh
+
+# gc-vs-graalgo micro-benchmarks (minutes; not part of any gate): best-round
+# times and ratios, failing on output mismatch. See test/bench/run.sh.
+bench: build
+	test/bench/run.sh
 
 # Regression tests for fixed PKGs ([test/regression/](test/regression/)):
 # each test/regression/<pkg>/ directory is a Go test package run through
