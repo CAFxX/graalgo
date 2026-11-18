@@ -142,6 +142,10 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # per-cycle lines ARE the GODEBUG=schedtrace/gctrace feature (P2-M5).
 # PinAudit is a reporting tool.
 check: main $(OUT_TEST)/.built
+	@echo "== pinned-jar checksum gate (lib/LIB.md) =="
+	@cd lib && sha256sum --quiet --strict -c SHA256SUMS.txt || { echo "PINNED-JAR GATE FAILED: checksum mismatch"; exit 1; }
+	@cd lib && for j in *.jar; do grep -q "  $$j\$$" SHA256SUMS.txt || { echo "PINNED-JAR GATE FAILED: $$j not in SHA256SUMS.txt"; exit 1; }; done
+	@echo "pinned-jar gate clean"
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi

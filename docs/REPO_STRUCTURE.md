@@ -196,7 +196,9 @@ Related: [Makefile](../Makefile) (root build entry point),
     Truffle compilation and fails on any compilation failure (e.g. a partial
     evaluation bailout), on a hot function or OSR loop that never compiles,
     or on output that differs from gc's. `make test-jit` (part of
-    `make test-ci`).
+    `make test-ci`). [run_pe_check.sh](../test/jit/run_pe_check.sh)
+    (`make pe-check`, TR-0) runs the whole benchmark set with
+    `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
   - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output

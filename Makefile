@@ -111,7 +111,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-jit bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-p3frontend test-ci test-java-fast test-regression
 
@@ -171,6 +171,16 @@ test-ci: build
 test-jit: build
 	mkdir -p $(CURDIR)/test/jit/.tmp
 	TMPDIR="$(CURDIR)/test/jit/.tmp" test/jit/run_pe_guard.sh
+
+# Partial-evaluation gate over the benchmark set (minutes; truffle-design
+# §10.2 TR-0): every test/bench program runs with
+# engine.CompilationFailureAction=ExitVM and synchronous compilation; fails
+# on any failed compilation (bailout), a wrong output, or nothing compiled.
+# See test/jit/run_pe_check.sh. Not per-push (test-jit is the per-push guard).
+pe-check: build
+	mkdir -p $(CURDIR)/test/jit/.tmp
+	TMPDIR="$(CURDIR)/test/jit/.tmp" GO="$(GO)" test/jit/run_pe_check.sh $(PE_CHECK_PROGRAMS)
+PE_CHECK_PROGRAMS ?=
 
 # gc-vs-graalgo micro-benchmarks (minutes; not part of any gate): best-round
 # times and ratios, failing on output mismatch. See test/bench/run.sh.

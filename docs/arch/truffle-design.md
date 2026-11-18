@@ -1230,7 +1230,11 @@ tool, the DAP server, Insight, their shared JSON dependency, and the polyglot
 TCK for tests. The exact coordinates (`org.graalvm.tools:*-tool`,
 `org.graalvm.sdk:polyglot-tck`, `org.graalvm.truffle:truffle-tck*`) are to be
 confirmed against Maven Central when they are fetched; they were not
-verifiable offline.
+verifiable offline. **TR-0 (2026-11-18):** confirmed on Central at 25.0.4.1.1
+and added: `profiler-tool`, `chromeinspector-tool`, `dap-tool`,
+`coverage-tool`, `insight-tool`, `org.graalvm.shadowed:json`,
+`org.graalvm.sdk:polyglot-tck`; the JUnit-based `truffle-tck*` artifacts are
+deferred to TR-8 ([LIB.md](../../internal/backend/truffle/lib/LIB.md)).
 
 ### 6.2 Source sections
 
