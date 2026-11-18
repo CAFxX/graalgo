@@ -335,12 +335,26 @@ public final class TimerHeap {
         }
     }
 
+    /** Set by {@link #stop}: the timer thread ends. */
+    private volatile boolean stopped;
+
+    /** Ends the timer thread (scheduler teardown); pending timers never fire. */
+    public void stop() {
+        synchronized (lock) {
+            stopped = true;
+            lock.notifyAll();
+        }
+    }
+
     private void timerLoop() {
         for (;;) {
             final Entry e;
             synchronized (lock) {
                 Entry next;
                 for (;;) {
+                    if (stopped) {
+                        return;
+                    }
                     next = heap.peek();
                     if (next == null) {
                         try {

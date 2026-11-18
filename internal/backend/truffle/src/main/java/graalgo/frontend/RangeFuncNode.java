@@ -222,7 +222,7 @@ public final class RangeFuncNode extends GoStmtNode {
                          int keySlot, GoKind keyKind, boolean keyBoxed, boolean keyDefine,
                          int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine,
                          String label, int rangeStashSlot) {
-            super(null, descriptor);
+            super(graalgo.language.GoLanguage.currentOrNull(), descriptor);
             this.body = body;
             this.stateSlot = stateSlot;
             this.keySlot = keySlot;
@@ -239,7 +239,7 @@ public final class RangeFuncNode extends GoStmtNode {
 
         @Override
         public Object execute(VirtualFrame frame) {
-            Safepoint.poll();
+            Safepoint.poll(this);
             Object[] args = frame.getArguments();
             GoFunc self = (GoFunc) args[0];
             MaterializedFrame outer = self.closureFrame();

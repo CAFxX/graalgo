@@ -1,5 +1,6 @@
 package graalgo.sched;
 
+import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -40,6 +41,49 @@ import graalgo.jfr.ParkReason;
  * scheduler; unit tests use instances directly.
  */
 public final class SchedulerCore {
+    /** Builds one goroutine's unstarted carrier thread (see the constructor). */
+    private final Function<Runnable, Thread> goroutineThreads;
+
+    /**
+     * Thrown out of a park into a goroutine when its scheduler is torn down
+     * ({@link #terminate}): unwinds the goroutine without running defers
+     * (gc runs none at exit) and is swallowed by the goroutine wrapper.
+     */
+    public static final class GoroutineTerminated extends Error {
+        private static final long serialVersionUID = 1L;
+
+        GoroutineTerminated() {
+            super("goroutine terminated: scheduler torn down", null, false, false);
+        }
+    }
+
+    private static final GoroutineTerminated TERMINATED = new GoroutineTerminated();
+
+    /** Set by {@link #terminate}: every park throws {@link GoroutineTerminated}. */
+    private volatile boolean terminated;
+
+    /**
+     * Carrier threads that may still be alive. A carrier is removed only
+     * once its thread has terminated (pruned lazily on spawn), so that
+     * {@link #terminate} also joins carriers whose goroutine body already
+     * returned but whose thread is still finishing.
+     */
+    private final java.util.Set<Thread> goroutineCarriers =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private void trackCarrier(Thread t) {
+        goroutineCarriers.add(t);
+        // Amortized pruning: the set stays within a constant factor of
+        // the live goroutine count.
+        if (goroutineCarriers.size() > 2 * liveGoroutines.get() + 64) {
+            goroutineCarriers.removeIf(c -> c.getState() == Thread.State.TERMINATED);
+        }
+    }
+
+    private static Thread plainVirtualThread(Runnable body) {
+        return Thread.ofVirtual().unstarted(body);
+    }
+
     /** Default quantum: 10 ms (P2-D5, measured in spike 2b). */
     public static final long DEFAULT_QUANTUM_NANOS = 10_000_000L;
 
@@ -115,6 +159,18 @@ public final class SchedulerCore {
      * @param quantumNanos quantum per admission, nanoseconds
      */
     public SchedulerCore(int gomaxprocs, long quantumNanos) {
+        this(gomaxprocs, quantumNanos, SchedulerCore::plainVirtualThread);
+    }
+
+    /**
+     * @param goroutineThreads builds the (unstarted) carrier thread of one
+     *     goroutine around its body. Inside a polyglot context these are
+     *     polyglot threads (graalgo.language.GoContext); the default, for
+     *     embedders and tests without a context, is a bare virtual thread.
+     */
+    public SchedulerCore(int gomaxprocs, long quantumNanos,
+            Function<Runnable, Thread> goroutineThreads) {
+        this.goroutineThreads = goroutineThreads;
         this.requestedCap = Math.max(1, gomaxprocs);
         this.carrierParallelism = Math.max(1, Runtime.getRuntime().availableProcessors());
         // P2-D6: effective cap = min(GOMAXPROCS, carrier parallelism).
@@ -125,6 +181,10 @@ public final class SchedulerCore {
         // which parks while pinned; doing it lazily on a goroutine carrier
         // emits jdk.VirtualThreadPinned on the conformance corpus.
         JfrEvents.ensureRegistered();
+        // Same reason: GoroutineState.install consults the Go context
+        // holder on every goroutine start; initialize its class here, not
+        // first on a goroutine carrier (class-init waits pin).
+        graalgo.language.GoContext.activeOrNull();
         this.drainer = new Drainer(this);
         this.timerHeap = new graalgo.runtime.TimerHeap(this);
     }
@@ -167,6 +227,9 @@ public final class SchedulerCore {
 
     /** Starts the drainer. Must precede the first spawn. */
     public void start() {
+        // A new program run in this process (an embedder's next context):
+        // the previous run's exit no longer applies.
+        exitPending = false;
         drainer.start();
         timerHeap.start();
     }
@@ -411,6 +474,9 @@ public final class SchedulerCore {
         // wakeups re-park on the acked < t condition. No wakeup is lost
         // because the drainer sets acked BEFORE unparking (GG-WAKE-0001).
         while (h.acked.get() < t) {
+            if (terminated) {
+                throw TERMINATED;
+            }
             LockSupport.park();
         }
         // P2-M6: commit the park event (if long enough) on resume. The
@@ -488,7 +554,7 @@ public final class SchedulerCore {
             }
         }
         long t = armPark(h);
-        Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {
+        Thread vthread = goroutineThreads.apply(() -> {
             currentHandle.set(h);
             h.thread = Thread.currentThread();
             GoroutineState state = new GoroutineState();
@@ -509,6 +575,8 @@ public final class SchedulerCore {
                     // abandoning every other goroutine (runtime.main).
                     requestExit(0);
                 }
+            } catch (GoroutineTerminated gt) {
+                // Torn down by terminate(): the program is over.
             } catch (graalgo.runtime.PanicException pe) {
                 recordPanic(pe);
             } catch (graalgo.runtime.Goexit g) {
@@ -550,6 +618,8 @@ public final class SchedulerCore {
                 drainer.offer(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
             }
         });
+        vthread.setName("goroutine-" + h.id);
+        trackCarrier(vthread);
         h.thread = vthread;
         if (!system) {
             liveUser.incrementAndGet();
@@ -638,7 +708,8 @@ public final class SchedulerCore {
      * pending exit must still freeze a running goroutine at its very next
      * safepoint (no extra output after exit/fatal begins), so the fast
      * path reads this flag on every poll. Set together with
-     * {@link #exiting}; never cleared (one exit per process).
+     * {@link #exiting}; cleared when the next scheduler starts (a later
+     * program run in the same process, e.g. an embedder's next context).
      */
     private static volatile boolean exitPending;
 
@@ -727,6 +798,38 @@ public final class SchedulerCore {
     }
 
     /**
+     * Tears the scheduler down after the program has exited (an embedder
+     * closing its context, truffle-design §2.3): every goroutine still
+     * parked — frozen by exit, blocked on a channel, waiting for
+     * admission — unwinds with {@link GoroutineTerminated} at its park;
+     * no defers run. Waits up to {@code timeoutMillis} for the carriers to
+     * finish and returns the ones that did not (a goroutine inside a
+     * blocking system call, or spinning without a park, cannot be
+     * stopped this way).
+     */
+    public java.util.List<Thread> terminate(long timeoutMillis) throws InterruptedException {
+        terminated = true;
+        exiting = true;
+        exitPending = true;
+        drainer.stop();
+        timerHeap.stop();
+        long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+        for (Thread t : goroutineCarriers) {
+            LockSupport.unpark(t);
+        }
+        java.util.List<Thread> stuck = new java.util.ArrayList<>();
+        for (Thread t : goroutineCarriers) {
+            long left = (deadline - System.nanoTime()) / 1_000_000L;
+            if (left <= 0 || !t.join(java.time.Duration.ofMillis(left))) {
+                if (t.isAlive()) {
+                    stuck.add(t);
+                }
+            }
+        }
+        return stuck;
+    }
+
+    /**
      * Stops the calling goroutine for good during process exit: it parks
      * forever (no defers run — gc's exit runs none either), so it can
      * produce no further output while the launcher exits the process.
@@ -737,6 +840,9 @@ public final class SchedulerCore {
             return;
         }
         for (;;) {
+            if (terminated) {
+                throw TERMINATED;
+            }
             LockSupport.park(this);
         }
     }

@@ -56,6 +56,39 @@ public final class Safepoint {
         pollBoundary();
     }
 
+    /**
+     * The poll as seen from {@code node}'s code (TR-1). For a root built
+     * inside a Go context the countdown lives in the thread's
+     * {@code GoThreadSlot} (the language's {@code ContextThreadLocal}):
+     * partial evaluation folds the language check and reads the slot
+     * inline, so compiled code pays a decrement and a branch per poll and
+     * calls the boundary once every {@link #STRIDE} polls. Measured
+     * reason: on polyglot threads the host {@code ThreadLocal} lookup of
+     * {@link #poll()} misses its first probe (more thread-locals per
+     * thread) and cost ~20% on the {@code loop} benchmark. Language-less
+     * roots (no context: unit tests, graalgo-run) keep {@link #poll()}.
+     * Same semantics: a pending exit bypasses the stride.
+     */
+    public static void poll(com.oracle.truffle.api.nodes.Node node) {
+        graalgo.language.GoLanguage lang =
+                node.getRootNode().getLanguage(graalgo.language.GoLanguage.class);
+        if (lang == null) {
+            pollBoundary();
+            return;
+        }
+        graalgo.language.GoThreadSlot slot = lang.threadSlot();
+        if (--slot.pollCountdown > 0 && !graalgo.sched.SchedulerCore.exitPending()) {
+            return;
+        }
+        slot.pollCountdown = STRIDE;
+        pollFull();
+    }
+
+    @TruffleBoundary(allowInlining = false)
+    private static void pollFull() {
+        graalgo.sched.SchedulerCore.pollCurrentThreadStatic();
+    }
+
     @TruffleBoundary(allowInlining = false)
     private static void pollBoundary() {
         Countdown c = COUNTDOWN.get();

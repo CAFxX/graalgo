@@ -90,6 +90,19 @@ public final class Drainer {
         return drainerThread;
     }
 
+    /** Set by {@link #stop}: the drain loop ends at its next token. */
+    private volatile boolean stopped;
+
+    /**
+     * Ends the drain loop (scheduler teardown, SchedulerCore#terminate):
+     * goroutines unwinding after teardown offer EXIT tokens for goroutines
+     * that were never admitted, which the accounting must not see.
+     */
+    void stop() {
+        stopped = true;
+        inbox.offer(ResumeToken.poke());
+    }
+
     /** MPSC offer from vthreads. Never blocks. */
     void offer(ResumeToken token) {
         inbox.offer(token);
@@ -118,6 +131,9 @@ public final class Drainer {
                 // Non-terminating drainer: a stray interrupt must not kill
                 // the scheduler. Swallow and continue.
                 continue;
+            }
+            if (stopped) {
+                return;
             }
             try {
                 synchronized (lock) {

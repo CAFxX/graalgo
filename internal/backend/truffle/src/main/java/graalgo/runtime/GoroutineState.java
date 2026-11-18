@@ -81,32 +81,57 @@ public final class GoroutineState {
     }
 
     // ------------------------------------------------------------------
-    // Phase-2 holder: virtual-thread-scoped. Every other class goes
-    // through current(); install/restore nest as before.
+    // Holder. Two views of one per-thread value, written together by
+    // install/restore on the owning thread:
+    //  - HOLDER, a host ThreadLocal: the lookup for runtime code (behind
+    //    @TruffleBoundary) and for runs without a polyglot context (unit
+    //    tests, the graalgo-run/SchedMain launchers);
+    //  - inside a Go context, the thread's GoThreadSlot (the language's
+    //    ContextThreadLocal, truffle-design §2.5), which compiled code of a
+    //    language-bound root reads inline: current(RootNode).
     // ------------------------------------------------------------------
 
     private static final ThreadLocal<GoroutineState> HOLDER = new ThreadLocal<>();
 
-    /** The current goroutine's state, or null outside any Go execution. */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoroutineState current() {
         return HOLDER.get();
     }
 
     /**
-     * Installs {@code next} as current, returning the previous holder for
-     * {@link #restore(GoroutineState)}.
+     * The current goroutine's state, as seen from code of {@code root}. A
+     * root built inside a Go context (it has the language) only ever runs on
+     * threads entered in that context, where the thread slot is
+     * authoritative: partial evaluation folds the language check and reads
+     * the context thread-local inline, with no boundary call. Language-less
+     * roots (built without a context) fall back to {@link #current()}.
      */
+    public static GoroutineState current(com.oracle.truffle.api.nodes.RootNode root) {
+        graalgo.language.GoLanguage lang = root.getLanguage(graalgo.language.GoLanguage.class);
+        if (lang != null) {
+            return lang.threadSlot().state;
+        }
+        return current();
+    }
+
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static GoroutineState install(GoroutineState next) {
         GoroutineState prev = HOLDER.get();
         HOLDER.set(next);
+        setSlot(next);
         return prev;
     }
 
-    /** Restores the holder saved by {@link #install(GoroutineState)}. */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static void restore(GoroutineState prev) {
         HOLDER.set(prev);
+        setSlot(prev);
+    }
+
+    private static void setSlot(GoroutineState s) {
+        graalgo.language.GoContext c = graalgo.language.GoContext.activeOrNull();
+        if (c != null && c.isEntered()) {
+            c.threadSlot().state = s;
+        }
     }
 }

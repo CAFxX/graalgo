@@ -2,7 +2,6 @@ package graalgo.frontend;
 
 import java.util.Arrays;
 
-import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -38,7 +37,7 @@ public final class LinknameRootNode extends RootNode {
     private SourceSection sourceSection;
 
     public LinknameRootNode(String symbol, String funcName, boolean boxResult) {
-        super((TruffleLanguage<?>) null, FrameDescriptor.newBuilder().build());
+        super(graalgo.language.GoLanguage.currentOrNull(), FrameDescriptor.newBuilder().build());
         this.symbol = symbol;
         this.funcName = funcName;
         this.boxResult = boxResult;
@@ -46,7 +45,7 @@ public final class LinknameRootNode extends RootNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Safepoint.poll();
+        Safepoint.poll(this);
         Object[] args = frame.getArguments();
         Object[] callArgs = Arrays.copyOfRange(args, 1, args.length);
         Object result = Linknames.dispatch(symbol, callArgs);

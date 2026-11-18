@@ -46,7 +46,10 @@ it; delete `synth_*.go` and the v1 JSON frontend. Design doc first
 (`toolexec-design.md`, written by lane T1).
 
 **T2 — language integration**: `TruffleLanguage` registration + polyglot
-`Context` (GG-0005/0024), then Go↔Java interop and debugging.
+`Context` (GG-0005/0024), then Go↔Java interop and debugging. TR-0 (tool/TCK
+jars, `make pe-check`) and TR-1 (language shell; the product launcher runs
+programs through `Context.eval`) landed 2026-11-18 — see
+[truffle-design.md §13.4](truffle-design.md).
 
 **T3 — modes**: native-image AOT, hybrid, isolates, mode selection
 (GG-0006/0049/0050/0060/0025/0026), reachability metadata (GG-0052).

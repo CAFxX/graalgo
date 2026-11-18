@@ -154,7 +154,7 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
                 throw c;
             }
         }
-        Safepoint.poll(); // D8 seam.
+        Safepoint.poll(this); // D8 seam.
         return true;
     }
 }

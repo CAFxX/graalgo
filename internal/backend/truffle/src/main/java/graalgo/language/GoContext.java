@@ -1,0 +1,224 @@
+package graalgo.language;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.TruffleContext;
+import com.oracle.truffle.api.TruffleLanguage.ContextReference;
+import com.oracle.truffle.api.TruffleLanguage.Env;
+import com.oracle.truffle.api.nodes.Node;
+import graalgo.frontend.NodeFactory;
+import graalgo.launcher.OsSurfaceInitializer;
+import graalgo.sched.SchedulerCore;
+import java.io.File;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.ServiceLoader;
+import java.util.function.Function;
+
+/**
+ * One Go program run inside a polyglot context (truffle-design §2.3–2.6).
+ *
+ * <p>Owns the {@link Env} and runs the program: os surface, scheduler with
+ * goroutine threads built through the polyglot thread builder, {@code main}
+ * as the first goroutine, the exit status. The runtime's process-global
+ * statics (the installed scheduler, type/itab tables, GoOs) stay where they
+ * are until TR-5 (§2.4); {@link #activate} records the one live context for
+ * the static helpers that need to know whether they run inside it.
+ */
+public final class GoContext {
+    private static final ContextReference<GoContext> REFERENCE =
+            ContextReference.create(GoLanguage.class);
+
+    /** The live context (policy EXCLUSIVE: at most one per process in practice). */
+    private static volatile GoContext active;
+
+    /** The scheduler of the last run, torn down when the context closes. */
+    private volatile SchedulerCore scheduler;
+
+    /** True while {@link #run} executes a program. */
+    private volatile boolean running;
+
+    final GoLanguage language;
+    final Env env;
+    private final TruffleContext truffleContext;
+    private final boolean virtualThreads;
+
+    GoContext(GoLanguage language, Env env) {
+        this.language = language;
+        this.env = env;
+        this.truffleContext = env.getContext();
+        String threads = env.getOptions().get(GoLanguage.GoroutineThreads);
+        switch (threads) {
+            case "virtual" -> virtualThreads = true;
+            case "platform" -> virtualThreads = false;
+            default -> throw new IllegalArgumentException(
+                    "go.GoroutineThreads must be 'virtual' or 'platform', got '" + threads + "'");
+        }
+    }
+
+    public static GoContext get(Node node) {
+        return REFERENCE.get(node);
+    }
+
+    /**
+     * Makes {@code context} the live one. Until TR-5 the scheduler, type
+     * tables and os surface are process-global, so a second context may not
+     * start while another runs a program (a finished one is replaced: the
+     * launchers never close theirs, see P3SyncMain).
+     */
+    static synchronized void activate(GoContext context) {
+        GoContext prev = active;
+        if (prev != null && prev != context && prev.running) {
+            throw new IllegalStateException("graalgo runs one Go program per process at a "
+                    + "time until its runtime state is per-context (truffle-design TR-5); "
+                    + "another Go context is running a program");
+        }
+        active = context;
+    }
+
+    static synchronized void deactivate(GoContext context) {
+        if (active == context) {
+            active = null;
+        }
+    }
+
+    /** The live Go context, or {@code null} outside any (unit tests, legacy launchers). */
+    public static GoContext activeOrNull() {
+        return active;
+    }
+
+    /** Is a Go context entered on the current thread? */
+    public static boolean isEnteredOnCurrentThread() {
+        GoContext c = active;
+        return c != null && c.isEntered();
+    }
+
+    /**
+     * Context close (truffle-design §2.3): goroutines the program left
+     * behind — frozen by exit, blocked forever — are torn down so the
+     * polyglot layer finds every goroutine thread finished. A goroutine
+     * that cannot be stopped (in a blocking system call) is reported.
+     */
+    void finalizeContext() {
+        SchedulerCore sched = scheduler;
+        if (sched == null) {
+            return;
+        }
+        List<Thread> stuck;
+        try {
+            stuck = sched.terminate(10_000);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return;
+        }
+        if (!stuck.isEmpty()) {
+            throw new IllegalStateException("cannot close the Go context: goroutine thread(s) "
+                    + stuck + " did not stop (blocked outside the scheduler)");
+        }
+    }
+
+    /** Is this context entered on the current thread? */
+    public boolean isEntered() {
+        return truffleContext.isEntered();
+    }
+
+    /**
+     * Runs {@code body} entered in this context. For runtime threads that
+     * are not polyglot threads but run Go code (the finalizer thread): the
+     * code of language-bound roots reads the thread's context state.
+     */
+    @TruffleBoundary
+    public void runEntered(Runnable body) {
+        if (truffleContext.isEntered()) {
+            body.run();
+            return;
+        }
+        Object prev = truffleContext.enter(null);
+        try {
+            body.run();
+        } finally {
+            truffleContext.leave(null, prev);
+        }
+    }
+
+    /** This thread's slot; the context must be entered on the current thread. */
+    public GoThreadSlot threadSlot() {
+        return language.threadSlot.get();
+    }
+
+    List<Path> sourceFiles() {
+        String spec = env.getOptions().get(GoLanguage.SourceFiles);
+        List<Path> files = new ArrayList<>();
+        if (!spec.isEmpty()) {
+            for (String f : spec.split(File.pathSeparator, -1)) {
+                files.add(Path.of(f));
+            }
+        }
+        return files;
+    }
+
+    /**
+     * Goroutine carrier factory for the scheduler: polyglot threads, entered
+     * in this context for their whole life (§2.6 item 2), virtual unless
+     * {@code go.GoroutineThreads=platform}.
+     */
+    private Function<Runnable, Thread> goroutineThreads() {
+        return body -> env.newTruffleThreadBuilder(body).virtual(virtualThreads).build();
+    }
+
+    /**
+     * Runs the program: os surface, scheduler, {@code main} as the first
+     * goroutine; returns the exit status (T0.A contract: 0 main returned,
+     * 2 uncaught panic / deadlock, n os.Exit(n), 1 internal crash). Other
+     * goroutines are abandoned, as gc's exit abandons them.
+     */
+    @TruffleBoundary
+    int run(NodeFactory.Program program) {
+        running = true;
+        try {
+            return runProgram(program);
+        } finally {
+            running = false;
+        }
+    }
+
+    private int runProgram(NodeFactory.Program program) {
+        initializeOsSurface(env.getApplicationArguments());
+        int gmp = env.getOptions().get(GoLanguage.Gomaxprocs);
+        if (gmp <= 0) {
+            // gc's default: one P per CPU.
+            gmp = Runtime.getRuntime().availableProcessors();
+        }
+        SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS,
+                goroutineThreads());
+        scheduler = sched;
+        SchedulerCore prev = SchedulerCore.install(sched);
+        sched.start();
+        try {
+            sched.spawnMain(() -> program.root().getCallTarget().call());
+            return sched.awaitExit();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("interrupted while awaiting program exit", e);
+        } finally {
+            SchedulerCore.install(prev);
+        }
+    }
+
+    /**
+     * (Re)initializes the Go os surface through the {@link OsSurfaceInitializer}
+     * providers on the class path (interop's GoOs) before package init runs:
+     * {@code os.Args} must already be visible to package-var initializers.
+     */
+    private static void initializeOsSurface(String[] argv) {
+        boolean found = false;
+        for (OsSurfaceInitializer initializer : ServiceLoader.load(OsSurfaceInitializer.class)) {
+            found = true;
+            initializer.initialize(argv);
+        }
+        if (!found) {
+            throw new IllegalStateException("no OsSurfaceInitializer provider on the class "
+                    + "path (the interop module): os.Args and the os surface would be empty");
+        }
+    }
+}

@@ -116,7 +116,7 @@ public final class ForRepeatingNode extends Node implements RepeatingNode {
         if (writeback != null) {
             writeback.executeVoid(frame);
         }
-        Safepoint.poll(); // D8 seam at the loop back-edge
+        Safepoint.poll(this); // D8 seam at the loop back-edge
         return true;
     }
 }

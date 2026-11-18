@@ -1,6 +1,5 @@
 package graalgo.frontend;
 
-import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotTypeException;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -53,14 +52,14 @@ public final class GoRootNode extends RootNode {
      *                       contains no range-over-func.
      */
     public GoRootNode(FrameDescriptor descriptor, GoStmtNode body, int rangeStashSlot) {
-        super((TruffleLanguage<?>) null, descriptor);
+        super(graalgo.language.GoLanguage.currentOrNull(), descriptor);
         this.body = body;
         this.rangeStashSlot = rangeStashSlot;
     }
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Safepoint.poll(); // D8 seam: no-op in Phase 1; Phase 2 gives it semantics.
+        Safepoint.poll(this); // D8 seam: no-op in Phase 1; Phase 2 gives it semantics.
         GoroutineState state = new GoroutineState();
         GoroutineState prev = GoroutineState.install(state);
         DeferChain chain = state.deferChain();

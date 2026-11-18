@@ -94,7 +94,12 @@ Related: [Makefile](../Makefile) (root build entry point),
       value model (`graalgo.values`), and the Go runtime on the JVM
       (`graalgo.runtime` intrinsics, channels, panics, maps, timers, GC
       interop; `graalgo.sched` scheduler and its launcher; `graalgo.jfr`;
-      `graalgo.safepoint`; `graalgo.launcher` — graalgo-run's `Main`).
+      `graalgo.safepoint`; `graalgo.launcher` — graalgo-run's `Main`), and
+      the Truffle language registration
+      [graalgo.language](../internal/backend/truffle/src/main/java/graalgo/language/)
+      (`GoLanguage`, id `go`; `GoContext`): the product launcher
+      (P3SyncMain) runs every program as `Context.eval` of the
+      frontend/v1 wire document (truffle-design TR-1).
       Nodes and runtime call each other, so they compile in one javac
       round. Two test runners: `graalgo.test.Runner` (nodes, values,
       corpus differentials) and `graalgo.sched.SchedTestRunner`

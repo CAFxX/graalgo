@@ -113,7 +113,14 @@ public final class GcInterop {
                 return;
             }
             try {
-                GoCalls.invoke(fn, new Object[] { null });
+                // The Cleaner thread is no polyglot thread: enter the Go
+                // context (if the program runs in one) around the call.
+                graalgo.language.GoContext c = graalgo.language.GoContext.activeOrNull();
+                if (c != null) {
+                    c.runEntered(() -> GoCalls.invoke(fn, new Object[] { null }));
+                } else {
+                    GoCalls.invoke(fn, new Object[] { null });
+                }
             } catch (Throwable t) {
                 // gc: a panicking finalizer crashes the program. We cannot
                 // crash the host from here; be loud instead.

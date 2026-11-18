@@ -9,7 +9,10 @@
 #   graalgo.sched (+ ...)     the user-space scheduler, its launcher
 #                             (SchedMain), pin audit and JFR glue
 #   graalgo.jfr               JFR event classes
-#   graalgo.launcher          graalgo-run's entry point (Main)
+#   graalgo.launcher          graalgo-run's entry point (Main) and the
+#                             polyglot embedding helper (GoPolyglot)
+#   graalgo.language          the Truffle language: GoLanguage (id "go"),
+#                             GoContext, the program root (TR-1)
 #
 # The AST nodes and the runtime call each other (a genuine compile cycle),
 # so they are one module compiled in one javac round. (Until T0.D,

@@ -2,7 +2,6 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
-import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotTypeException;
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -103,7 +102,7 @@ public final class GoFuncRootNode extends RootNode {
                           int closureSlot, int[] paramSlots, GoKind[] paramKinds,
                           int resultSlot, GoKind resultKind, String funcName, int[] snapSlots,
                           boolean resultBoxed, int rangeStashSlot) {
-        super((TruffleLanguage<?>) null, descriptor);
+        super(graalgo.language.GoLanguage.currentOrNull(), descriptor);
         this.body = body;
         this.closureSlot = closureSlot;
         this.paramSlots = paramSlots;
@@ -129,7 +128,7 @@ public final class GoFuncRootNode extends RootNode {
 
     @Override
     public Object execute(VirtualFrame frame) {
-        Safepoint.poll();
+        Safepoint.poll(this);
         Object[] args = frame.getArguments();
         GoFunc fn = (GoFunc) args[0];
         frame.setObject(closureSlot, fn.closureFrame());
@@ -227,7 +226,7 @@ public final class GoFuncRootNode extends RootNode {
     }
 
     private Object executeBody(VirtualFrame frame) {
-        GoroutineState state = GoroutineState.current();
+        GoroutineState state = GoroutineState.current(this);
         DeferChain chain = state != null ? state.deferChain() : null;
         int mark = chain != null ? chain.depth() : 0;
         GoStackFrameHead head = null;

@@ -99,7 +99,7 @@ public final class RangeIntNode extends Node implements RepeatingNode, LabelTarg
                 frame.setLong(keySlot, i);
             }
         }
-        Safepoint.poll();
+        Safepoint.poll(this);
         try {
             body.executeVoid(frame);
         } catch (ContinueSignal s) {

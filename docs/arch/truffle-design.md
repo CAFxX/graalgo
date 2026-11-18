@@ -1897,6 +1897,48 @@ real tests; nothing depends on the prototype's files.
 - Anything involving polyglot isolates for a third-party language (T3,
   GG-0027).
 
+### 13.4 TR-1 as built (2026-11-18)
+
+[GoLanguage](../../internal/backend/truffle/src/main/java/graalgo/language/GoLanguage.java)
+(id `go`, byte MIME types `application/x-graalgo-wire+json` — the v1 wire
+document — and the reserved bundle type) and
+[GoContext](../../internal/backend/truffle/src/main/java/graalgo/language/GoContext.java).
+The product launcher (P3SyncMain) runs every program as `Context.eval` of
+the wire document through
+[GoPolyglot](../../internal/backend/truffle/src/main/java/graalgo/launcher/GoPolyglot.java);
+`Context.parse` is `--check`; `eval` returns the exit status as an `int`.
+graalgo-run (`Main`) and `SchedMain` still run without a context (their
+root nodes keep a `null` language).
+
+- **Policy `EXCLUSIVE`**, as §2.4 prescribes until TR-5; a second context
+  is refused while another runs a program.
+- **Goroutine threads** come from `env.newTruffleThreadBuilder(..).virtual(true)`
+  (option `go.GoroutineThreads=platform` for platform threads); the Cleaner
+  (finalizer) thread enters the context around Go calls. `finalizeContext`
+  tears the scheduler down (parked goroutines unwind without running defers),
+  so an embedder can close a context whose program left goroutines blocked.
+- **`ContextThreadLocal`**: one `GoThreadSlot` per thread (the `M` of §2.5)
+  holds the current `GoroutineState` and the safepoint poll countdown.
+  Language-bound roots read it inline (`GoroutineState.current(RootNode)`,
+  `Safepoint.poll(Node)`); runtime code behind boundaries keeps the host
+  `ThreadLocal` (both are written together).
+- **Safepoints**: the counter fast path stays (P-B has not run; §2.7's
+  `ThreadLocalAction` scheme is not used). Measured reason for moving the
+  countdown into the slot: on polyglot threads the host `ThreadLocal` lookup
+  misses its first probe (JFR: `ThreadLocalMap.getEntryAfterMiss` topped the
+  profile) and cost ~20 % on `loop`.
+- **Not done**: `os.Exit` still goes through the scheduler's exit request
+  (not `closeExited`); the `--cpusampler` check; the static audit of TR-5.
+
+Benchmarks (`test/bench`, nice 19, `-Xmx2g -XX:ActiveProcessorCount=4`, three
+interleaved runs each, median best-round ms, TR-0 build vs TR-1 build):
+chanpingpong 1582 → 1609, fib 8.71 → 11.81, iface 20.6 → 19.8, loop 48.5 →
+17.3, maps 3.13 → 2.89, slicesum 16.5 → 9.26, strbuild 14.1 → 11.7,
+structs 59.4 → 59.6. `fib`'s best-of-15 is a warm-up artefact: its tier-2
+compilation (~300 ms) lands after round 15 because the earlier rounds are
+now faster (first 15 rounds: 377 ms → 292 ms of wall time); at 80 rounds the
+steady state is 8.5 → 6.5 ms. `make pe-check`: 0 bailouts.
+
 ## 14. Items for the owner
 
 Proposed SPEC amendments (none is assumed by the work packages that precede
