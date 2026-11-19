@@ -134,6 +134,11 @@ public final class Program {
                 public Object equalFunc(GoType t) {
                     return new Closure(new TypeEqual(language, t).getCallTarget(), null);
                 }
+
+                @Override
+                public Object hashFunc(GoType t) {
+                    return new Closure(new TypeHash(language, t).getCallTarget(), null);
+                }
             });
         }
         return p;

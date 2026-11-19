@@ -403,8 +403,17 @@ func (w *walker) describe(t *abiType) {
 		}
 	case kMap:
 		m := (*mapType)(unsafe.Pointer(t))
-		// Hasher is code (W9b); every other word is data.
-		w.fact("map key=" + w.ref(m.Key) + " elem=" + w.ref(m.Elem) + " groupsize=" + itoa(int(m.GroupSize)) +
+		// Hasher is code: called, on a zero key, it must be a function of
+		// the key and the seed (its values are the runtime's own).
+		hasher := "<nil>"
+		if m.Hasher != nil && m.Flags&2 == 0 {
+			var zero [1024]uint64
+			k := unsafe.Pointer(&zero)
+			hasher = b2s(m.Key.Size_ > 8192 || m.Hasher(k, 1) == m.Hasher(k, 1) && m.Hasher(k, 1) != m.Hasher(k, 2))
+		} else if m.Hasher != nil {
+			hasher = "set"
+		}
+		w.fact("map key=" + w.ref(m.Key) + " elem=" + w.ref(m.Elem) + " hasher=" + hasher + " groupsize=" + itoa(int(m.GroupSize)) +
 			" keysoff=" + itoa(int(m.KeysOff)) + " keystride=" + itoa(int(m.KeyStride)) + " elemsoff=" + itoa(int(m.ElemsOff)) +
 			" elemstride=" + itoa(int(m.ElemStride)) + " elemoff=" + itoa(int(m.ElemOff)) + " flags=" + itoa(int(m.Flags)))
 		w.group(m.Group)

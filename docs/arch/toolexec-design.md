@@ -1516,7 +1516,8 @@ per-push), `make test-m1r` 15/15, `make test-m1w13` 16/16.
   map group layout and flags, results of the equality functions. Five
   seeded builder errors (kind, size, field offset, name offset, method
   order) are each detected. Not compared, being code or link-dependent in
-  gc: `Method.Ifn`/`Tfn`, `MapType.Hasher`, an unexported method's type,
+  gc: `Method.Ifn`/`Tfn`, the values of `MapType.Hasher` (it is called and
+  must depend on key and seed), an unexported method's type,
   `PtrToThis` of types that are not defined.
 - *Intrinsics.* The seven body-less functions of `internal/reflectlite`
   (`resolveNameOff`, `resolveTypeOff`, `unsafe_New`, `typedmemmove`,
@@ -1561,8 +1562,8 @@ per-push), `make test-m1r` 15/15, `make test-m1w13` 16/16.
   23, `os` 47, `fmt` 71 (`runtime` 15, `reflect` 14). The semaphores,
   `internal/bytealg` and the `time` system calls are lane m1c's.
 - *Not in this lane:* W9b — package `reflect` (the 14 symbols above, the
-  call path, descriptors made at run time, method code offsets, the map
-  hasher, itab words).
+  call path, descriptors made at run time, method code offsets, itab
+  words).
 
 ## 14. Amendments (2026-11-18)
 

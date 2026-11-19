@@ -151,7 +151,7 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   through `unsafe` has gc's layout and content
   ([truffle-design.md](truffle-design.md) §15, gate `make test-imgcheck`)
   except the words that are code in gc — `abi.Method.Ifn`/`Tfn` hold gc's
-  "unreachable method" value -1 and `abi.MapType.Hasher` is nil — and
+  "unreachable method" value -1 — and
   `PtrToThis`, which is set for defined types and types with pointer
   methods only (gc also sets it when its linker kept the pointer type). The
   first word of a non-empty interface header reads as the dynamic type's

@@ -20,9 +20,10 @@
 # The two outputs must be identical: the 24 scalar bytes of abi.Type
 # (Size_, PtrBytes, Hash, TFlag, Align_, FieldAlign_, Kind_) byte for byte,
 # everything else fact for fact. Not compared, because gc's values are
-# code addresses or depend on what its linker kept: Method.Ifn/Tfn,
-# MapType.Hasher, the type of an unexported method, PtrToThis of a type
-# that is not defined (main.go says where).
+# code addresses or depend on what its linker kept: Method.Ifn/Tfn, the
+# values of MapType.Hasher (it is called: a function of key and seed), the
+# type of an unexported method, PtrToThis of a type that is not defined
+# (main.go says where).
 #
 # Then the mutants: the graalgo leg again with one deliberate builder error
 # per run (-Dgraalgo.descriptors.mutate=kind|size|offset|nameoff|methods);

@@ -40,7 +40,7 @@ import java.util.Set;
  * ({@code reflectOffs}); {@link #resolve} is {@code resolveNameOff}/{@code resolveTypeOff}.
  *
  * <p>Not built here (W9b): method code offsets ({@code Method.Ifn}/{@code Tfn} are gc's
- * "unreachable" value -1) and the map hasher ({@code MapType.Hasher} is nil).
+ * "unreachable" value -1).
  */
 public final class Descriptors {
     /** What the loaded program provides: {@code internal/abi}'s types and func values. */
@@ -53,6 +53,9 @@ public final class Descriptors {
 
         /** A Go func value {@code func(p, q unsafe.Pointer) bool} comparing two values of type {@code t}. */
         Object equalFunc(GoType t);
+
+        /** A Go func value {@code func(p unsafe.Pointer, seed uintptr) uintptr} hashing a value of type {@code t}. */
+        Object hashFunc(GoType t);
     }
 
     static final int TFLAG_UNCOMMON = 1, TFLAG_EXTRA_STAR = 2, TFLAG_NAMED = 4, TFLAG_REGULAR_MEMORY = 8,
@@ -916,6 +919,7 @@ public final class Descriptors {
                 putRef(img, fo(ks, "Key"), get(u.mapKey));
                 putRef(img, fo(ks, "Elem"), get(u.elem));
                 putRef(img, fo(ks, "Group"), get(group));
+                putRef(img, fo(ks, "Hasher"), host.hashFunc(u.mapKey));
                 putInt(img, fo(ks, "GroupSize"), group.gcSize());
                 putInt(img, fo(ks, "KeysOff"), keysOff);
                 putInt(img, fo(ks, "KeyStride"), slot.gcSize());
