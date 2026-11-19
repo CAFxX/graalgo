@@ -176,7 +176,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1c test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite pe-check-m1a test-m1r test-m1c test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck
 
@@ -403,6 +403,15 @@ bench-m1a: build
 pe-check-m1a: build
 	GO="$(GO)" test/m1a/bench.sh --pe-check $(M1A_BENCH)
 M1A_BENCH ?=
+
+# The benchmark suite (not a gate; ~25 min for the whole suite with --pgo):
+# test/bench/suite/ under gc, gc+PGO and graalgo (graalgo-tool, node
+# package), results checked against gc; warmup curves, steady-state medians,
+# time to peak, JSON. Method and numbers: docs/arch/performance.md.
+# BENCH_ARGS: e.g. "--reps 3 --pgo --json out.json fib loop".
+bench-suite: build
+	GO="$(GO)" test/bench/suite.sh $(BENCH_ARGS)
+BENCH_ARGS ?=
 
 # Toolexec milestone M1r/M1b differential gate (not per-push yet): programs
 # that import standard-library packages, built through graalgo-tool against
