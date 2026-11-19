@@ -306,6 +306,20 @@ Related: [Makefile](../Makefile) (root build entry point),
     [probes/](../test/m1c/probes/) matches gc (another lane's piece landed);
     [mutants.sh](../test/m1c/mutants.sh) plants the bugs listed in
     [mutants.py](../test/m1c/mutants.py) and requires the gate to fail.
+  - [fuzz/](../test/fuzz/) — the differential fuzzer of the new path
+    (`make fuzz-newpath N= SEED=`, nightly
+    [fuzz-newpath.yml](../.github/workflows/fuzz-newpath.yml), not per-push):
+    [run.py](../test/fuzz/run.py) builds each program with gc and through
+    graalgo-tool ([setup.sh](../test/fuzz/setup.sh)), classifies it (match,
+    diverge, gg-crash, gg-build, timeout, bad-program), dedups signatures and
+    delta-debugs failures (`--minimize`); [gen.py](../test/fuzz/gen.py)
+    generates seeded programs (println output, generics, interfaces,
+    closures, runtime panics under recover); [corpus/](../test/fuzz/corpus/)
+    holds hand-written adversarial programs by area (numeric, strslice,
+    lang, control, stdlib); [repro/](../test/fuzz/repro/) the minimal
+    reproducers of open bugs, listed with their pinned signatures in
+    [known.txt](../test/fuzz/known.txt). A fixed bug's reproducer moves to
+    the gate it belongs to (test/m1a, test/m1r, ...).
   - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
     runs named backend unit-test classes with per-test timing
     (`make test-java-fast` / `test-java-slow`);
