@@ -9,7 +9,7 @@ import java.util.concurrent.locks.LockSupport;
 /**
  * The single platform-thread drainer (P2-D2, P2-D3).
  *
- * <p>Loop: blocking take from the MPSC inbox → route the token into its
+ * <p>Loop: take (spin briefly, then block) from the MPSC inbox → route the token into its
  * lane → admit while {@code inflight < cap} → hard-assert the invariants.
  * Lane order per GG-WAKE-0003: {@code wakeFifo} &gt; {@code initFifo} &gt;
  * {@code runFifo}. The drainer is non-terminating: a stray interrupt is
@@ -122,11 +122,37 @@ public final class Drainer {
         }
     }
 
+    /**
+     * How long the drainer polls an empty inbox before it blocks (WP-POLLCOST follow-up,
+     * performance.md): a goroutine hop (unpark, then park) offers two tokens a few microseconds
+     * apart, and a blocked drainer pays a futex wake-up (tens of µs on a loaded host) for each.
+     * Spinning this long after the last token keeps a steady park/unpark stream off the futex;
+     * an idle scheduler spins once per burst and then blocks as before. Only the waiting
+     * changes: tokens are processed in the same order by the same thread.
+     */
+    static final long SPIN_NANOS = 50_000L;
+
+    private ResumeToken next() throws InterruptedException {
+        ResumeToken t = inbox.poll();
+        if (t != null) {
+            return t;
+        }
+        long deadline = System.nanoTime() + SPIN_NANOS;
+        do {
+            Thread.onSpinWait();
+            t = inbox.poll();
+            if (t != null) {
+                return t;
+            }
+        } while (System.nanoTime() < deadline);
+        return inbox.take();
+    }
+
     private void drainLoop() {
         for (;;) {
             final ResumeToken token;
             try {
-                token = inbox.take();
+                token = next();
             } catch (InterruptedException ie) {
                 // Non-terminating drainer: a stray interrupt must not kill
                 // the scheduler. Swallow and continue.
