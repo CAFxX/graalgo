@@ -475,27 +475,11 @@ func __isV4InV6Prefix(b []byte) bool {
 // To4 converts the IPv4 address ip to a 4-byte representation.
 // If ip is not an IPv4 address, To4 returns nil.
 func (ip IP) To4() IP {
-	if len(ip) == 16 {
-		// Check for IPv4-mapped or 4-in-6.
-		is4in6 := true
-		for i := 0; i < 10; i++ {
-			if ip[i] != 0 {
-				is4in6 = false
-				break
-			}
-		}
-		if is4in6 && ip[10] == 0xff && ip[11] == 0xff {
-			is4in6 = true
-		} else if is4in6 {
-			// 4-in-6 (::ffff:0:0/96 prefix not required here; check all-zero prefix)
-			is4in6 = ip[10] == 0 && ip[11] == 0
-		}
-		if is4in6 {
-			return IP{ip[12], ip[13], ip[14], ip[15]}
-		}
-	}
 	if len(ip) == 4 {
 		return ip
+	}
+	if len(ip) == 16 && __isV4InV6Prefix(ip[:12]) {
+		return ip[12:16]
 	}
 	return nil
 }
