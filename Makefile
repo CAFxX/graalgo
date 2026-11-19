@@ -47,6 +47,12 @@
 #   phase2 SchedTestRunner, phase3 IfaceTestRunner, plus the wave1-3
 #   corpus differentials). It takes 30+ minutes and runs in local
 #   verification and nightly runs, not per-push. Invoke it explicitly.
+#   `make e2e` — the published-module end-to-end probes
+#   ([test/e2e/](test/e2e/): `github.com/google/uuid` compiled
+#   as-published, gc vs graalgo differential via run_module.sh). Each of
+#   the 8 cases runs two JVM backend invocations plus a gc build, and the
+#   module cache needs priming over the network on first run. Runs in CI's
+#   full-suite job (weekly + manual dispatch), not per-push.
 #
 
 
@@ -108,7 +114,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test-v2 test e2e clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-p3frontend test-ci test-regression
 
@@ -123,7 +129,7 @@ gen-synth:
 # Force-regenerate the gofrontend binary and overlay.json from the
 # vendored frontend sources (internal/frontend/*.go + internal/frontend/go overlay).
 generate: gen-synth
-	cd internal/frontend && ./build.sh build
+	cd internal/frontend && GO="$(GO)" ./build.sh build
 
 build:
 	$(MAKE) -C internal/backend/truffle main
@@ -173,6 +179,24 @@ test-regression: generate build graalgo
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
 
+# e2e: published-module differential probes ([test/e2e/](test/e2e/)).
+# Compares gc (`go build`+run) vs the product launcher
+# ([internal/backend/graalgo-sync-run](internal/backend/graalgo-sync-run),
+# P3SyncMain) with --gmp=1 and --gmp=4 legs, per case: byte-identical
+# stdout, equal exit codes, and (for panics) the first stderr line.
+# `timeout` per graalgo leg (GR_TIMEOUT, default 300s) is the failability
+# mechanism for hang regressions: a reintroduced hang is killed and fails
+# the case instead of hanging CI. /tmp is a 512M tmpfs shared with other
+# work and routinely full: keep the JVM and scratch files on the
+# persistent disk (same pattern as the snapshot targets); test/e2e/.tmp is
+# gitignored. NOT in `all` (hence not per-push): ~10-20 min, needs network
+# for the module cache on first run. Wired into CI's full-suite job.
+E2E_TMP := $(CURDIR)/test/e2e/.tmp
+e2e: generate build
+	mkdir -p $(E2E_TMP) && \
+	TMPDIR="$(E2E_TMP)" GOTMPDIR="$(E2E_TMP)" \
+	GR="$(CURDIR)" ./test/e2e/run_module.sh $(CURDIR)/test/e2e/uuid
+
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the
 # internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
@@ -220,15 +244,26 @@ test-v2:
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
 #   make gate1 PKG=foo — single package trial
+# Fail-loud (review-2026-11-09-13 C-P1-1): every package runs to the end so
+# the log shows the full per-package table, then the target exits 1 if any
+# package failed — run.py exits 1 on DIVERGE and on harness errors, and no
+# `|| true` may silence it. (The both-legs-fail verdict hole in run.py
+# itself is N-P0-1, a separate lane.)
 GATE1_PKGS ?= strconv errors sort strings bytes
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@failed=""; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
-	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || failed="$$failed $$pkg"; \
+	done; \
+	if [ -n "$$failed" ]; then \
+		echo "Gate 1 pilot FAILED for:$${failed}"; \
+		echo "See tools/gate1/.tmp/*/verdict.txt"; \
+		exit 1; \
+	fi; \
+	echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build
 	@test -n "$(PKG)" || (echo "usage: make gate1 PKG=<pkg>"; exit 1)

@@ -18,7 +18,14 @@ This directory holds end-to-end proofs: real published Go modules compiled
 
 ## Status
 
-`run_module.sh` still targets the pre-restructure backend layout
-(`phases/phase3` classpaths, `P3SyncMain --gmp` legs). It needs updating to
-invoke [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
-before it runs again — see the driver-hardening lane.
+`run_module.sh` invokes the current product launcher
+([internal/backend/graalgo-sync-run](../../internal/backend/graalgo-sync-run),
+P3SyncMain) with `--gmp=1` and `--gmp=4` legs, after `make build` at the
+repo root. Run the whole probe set with `make e2e` (wired into CI's
+full-suite job — weekly + manual dispatch — not per-push: ~10–20 min, and
+the module cache needs priming over the network on first run via
+`go mod download`). `run_module.sh <probe-dir> [case...]` also runs
+standalone; `GR` defaults to the repo root derived from the script's
+location. Exit code is non-zero iff any case fails any leg; a hung
+backend leg is killed after `GR_TIMEOUT` seconds (default 300) and fails
+its case as TIMEOUT.

@@ -124,3 +124,11 @@ jobs:
 
       - name: make test (full differential suite)
         run: make test
+
+      - name: make e2e (published-module probes)
+        # The uuid probe cases ([test/e2e/](../../test/e2e/)):
+        # github.com/google/uuid compiled as-published, gc vs graalgo
+        # differential via test/e2e/run_module.sh (8 cases x 2 gmp legs).
+        # Same weekly cadence as the rest of the full suite; needs network
+        # for `go mod download` on first run.
+        run: make e2e
