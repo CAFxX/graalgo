@@ -24,6 +24,12 @@ public final class Panics {
         return new GoPanic(n, GoLanguage.get(n).runtimeTypes().box(e));
     }
 
+    /** A Go fatal error (gc {@code throw}): reported at once; the result unwinds the goroutine. */
+    @TruffleBoundary
+    public static RuntimeException fatal(Node n, String text) {
+        return GoProcess.get(n).fatal(text);
+    }
+
     @TruffleBoundary
     public static GoPanic nilDeref(Node n) {
         return of(n, GoErrors.nilDereference());

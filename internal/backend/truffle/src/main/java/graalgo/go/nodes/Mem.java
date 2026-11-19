@@ -7,13 +7,16 @@ import graalgo.go.nodes.N.GoNode;
 import graalgo.go.nodes.N.I64;
 import graalgo.go.nodes.N.Ref;
 import graalgo.go.nodes.N.Stmt;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import graalgo.go.runtime.Panics;
+import graalgo.go.runtime.Unsafe;
 import graalgo.go.runtime.Values;
 import graalgo.go.types.GoType;
 import graalgo.go.values.Flat;
 import graalgo.go.values.GoMap;
 import graalgo.go.values.Ptr;
 import graalgo.go.values.Slice;
+import graalgo.go.values.View;
 
 /**
  * Memory locations of the flat value model (SPEC §3.4, GG-0061/0062): a location is an object
@@ -29,6 +32,12 @@ import graalgo.go.values.Slice;
  *
  * <p>The region of a load or store is chosen by the factory from the static type of the leaf
  * ({@link LoadI64}/{@link LoadU8}/{@link LoadI8}/{@link LoadRef}); nothing here tests a shape.
+ *
+ * <p>The one dynamic property is the pointer of a dereference ({@link PtrLoc}): whole object,
+ * interior pointer, or — the third shape, GG-0062 / ADR-0015 decision 1 — a view pointer that
+ * a checked conversion from {@code unsafe.Pointer} produced because the pointee's leaves are not
+ * the referent's. Then {@link Loc#resolve} returns null and the consumer goes by gc byte offset
+ * through the referent's leaf table ({@link Unsafe}), behind a branch typed code never enters.
  */
 public final class Mem {
     private Mem() {}
@@ -55,12 +64,30 @@ public final class Mem {
         public void need(int regions) {}
 
         /**
-         * The pointer to the location ({@code &x}). Shapes that have the three offsets at hand
-         * override this to build the pointer without the scratch slots.
+         * The pointer to the location ({@code &x}), {@code type} being the location's type.
+         * Shapes that have the three offsets at hand override this to build the pointer
+         * without the scratch slots.
          */
-        public Object addr(VirtualFrame frame) {
+        public Object addr(VirtualFrame frame, GoType type) {
             Flat o = resolve(frame);
+            if (o == null) {
+                return Unsafe.typed(this, viewObj(frame), viewOff(frame), type, null);
+            }
             return Ptr.make(o, prim(frame), ref(frame), byt(frame));
+        }
+
+        /**
+         * After {@link #resolve} returned null: the location is reached through a view pointer
+         * (GG-0062, ADR-0015 decision 1) and is byte {@link #viewOff} of this object. Only
+         * locations behind a pointer can be; the consumers take their slow path through
+         * {@link Unsafe}.
+         */
+        public Flat viewObj(VirtualFrame frame) {
+            throw new IllegalStateException("not a view location");
+        }
+
+        public long viewOff(VirtualFrame frame) {
+            throw new IllegalStateException("not a view location");
         }
 
         /** The regions a value of type {@code t} occupies. */
@@ -69,15 +96,37 @@ public final class Mem {
         }
     }
 
-    /** The frame's three scratch slots for the offsets of a dynamic location. */
-    public record Aux(int p, int r, int b) {}
+    /**
+     * The frame's scratch slots of a dynamic location: the three slot offsets, and for a
+     * location reached through a view the referent and the gc byte offset.
+     */
+    public record Aux(int p, int r, int b, int v, int g) {}
 
     /** A location whose offsets live in the frame's scratch slots. */
     abstract static class DynLoc extends Loc {
         final int auxP;
         final int auxR;
         final int auxB;
+        final int auxV;
+        final int auxG;
         @com.oracle.truffle.api.CompilerDirectives.CompilationFinal int need = ALL;
+
+        @Override
+        public final Flat viewObj(VirtualFrame frame) {
+            return (Flat) frame.getObject(auxV);
+        }
+
+        @Override
+        public final long viewOff(VirtualFrame frame) {
+            return frame.getLong(auxG);
+        }
+
+        /** Enters view mode: {@link #resolve} returns the null this returns. */
+        final Flat view(VirtualFrame frame, Flat obj, long off) {
+            frame.setObject(auxV, obj);
+            frame.setLong(auxG, off);
+            return null;
+        }
 
         @Override
         public void need(int regions) {
@@ -88,6 +137,8 @@ public final class Mem {
             this.auxP = aux.p();
             this.auxR = aux.r();
             this.auxB = aux.b();
+            this.auxV = aux.v();
+            this.auxG = aux.g();
         }
 
         @Override
@@ -163,15 +214,34 @@ public final class Mem {
         private final int p;
         private final int r;
         private final int b;
+        /** The static pointee type: its leaf table turns the field path into a byte offset for views. */
+        private final GoType pointee;
         private final BranchProfile interior = BranchProfile.create();
+        private final BranchProfile viewed = BranchProfile.create();
         private final BranchProfile nil = BranchProfile.create();
 
-        public PtrLoc(Ref ptr, int p, int r, int b, Aux aux) {
+        public PtrLoc(Ref ptr, GoType pointee, int p, int r, int b, Aux aux) {
             super(aux);
             this.ptr = ptr;
+            this.pointee = pointee;
             this.p = p;
             this.r = r;
             this.b = b;
+        }
+
+        /** The third shape: a view pointer, or the fatal error for a word that is no pointer. */
+        private Flat resolveView(VirtualFrame frame, Object o) {
+            if (o instanceof View v) {
+                viewed.enter();
+                return view(frame, v.obj, v.off + pathOff());
+            }
+            nil.enter();
+            throw o == null ? Panics.nilDeref(this) : Panics.fatal(this, Unsafe.INVALID);
+        }
+
+        @TruffleBoundary
+        private long pathOff() {
+            return pointee.gcOffOfLeaf(p + r + b);
         }
 
         @Override
@@ -185,12 +255,11 @@ public final class Mem {
                 set(frame, q.prim + p, q.ref + r, q.byt + b);
                 return q.obj;
             }
-            nil.enter();
-            throw Panics.nilDeref(this);
+            return resolveView(frame, o);
         }
 
         @Override
-        public Object addr(VirtualFrame frame) {
+        public Object addr(VirtualFrame frame, GoType type) {
             Object o = ptr.executeGeneric(frame);
             if (o instanceof Flat flat) {
                 return Ptr.make(flat, p, r, b);
@@ -198,8 +267,8 @@ public final class Mem {
                 interior.enter();
                 return Ptr.make(q.obj, q.prim + p, q.ref + r, q.byt + b);
             }
-            nil.enter();
-            throw Panics.nilDeref(this);
+            resolveView(frame, o);
+            return Unsafe.typed(this, viewObj(frame), viewOff(frame), type, null);
         }
     }
 
@@ -243,7 +312,7 @@ public final class Mem {
         }
 
         @Override
-        public Object addr(VirtualFrame frame) {
+        public Object addr(VirtualFrame frame, GoType type) {
             Slice s = (Slice) slice.executeGeneric(frame);
             long i = index.executeLong(frame);
             if (Long.compareUnsigned(i, s.len) >= 0) {
@@ -265,12 +334,20 @@ public final class Mem {
         private final int p;
         private final int r;
         private final int b;
+        private final GoType elem;
         private final BranchProfile outOfRange = BranchProfile.create();
+        private final BranchProfile viewed = BranchProfile.create();
         private final boolean signed;
+
+        @TruffleBoundary
+        private long viewOffOf(long i) {
+            return i * elem.gcSize() + elem.gcOffOfLeaf(p + r + b);
+        }
 
         /** {@code signed}: whether the index's type is signed (the panic's text). */
         public IndexLoc(Loc parent, I64 index, long len, GoType elem, int p, int r, int b, Aux aux, boolean signed) {
             super(aux);
+            this.elem = elem;
             this.signed = signed;
             this.parent = parent;
             this.index = index;
@@ -292,6 +369,18 @@ public final class Mem {
         @Override
         public Flat resolve(VirtualFrame frame) {
             Flat o = parent.resolve(frame);
+            if (o == null) {
+                // The array is reached through a view: the element is a byte offset further on.
+                viewed.enter();
+                Flat vo = parent.viewObj(frame);
+                long vg = parent.viewOff(frame);
+                long vi = index.executeLong(frame);
+                if (Long.compareUnsigned(vi, len) >= 0) {
+                    outOfRange.enter();
+                    throw Panics.index(this, vi, len, signed);
+                }
+                return view(frame, vo, vg + viewOffOf(vi));
+            }
             int bp = (need & P) != 0 ? parent.prim(frame) : 0;
             int br = (need & R) != 0 ? parent.ref(frame) : 0;
             int bb = (need & B) != 0 ? parent.byt(frame) : 0;
@@ -465,14 +554,22 @@ public final class Mem {
     public static final class LoadI64 extends I64 {
         @Child private Loc loc;
 
-        public LoadI64(Loc loc) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public LoadI64(Loc loc, GoType type) {
             this.loc = loc;
+            this.type = type;
             loc.need(Loc.P);
         }
 
         @Override
         public long executeLong(VirtualFrame frame) {
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                return Unsafe.loadScalar(this, loc.viewObj(frame), loc.viewOff(frame), type);
+            }
             return o.prims[loc.prim(frame)];
         }
     }
@@ -481,14 +578,22 @@ public final class Mem {
     public static final class LoadU8 extends I64 {
         @Child private Loc loc;
 
-        public LoadU8(Loc loc) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public LoadU8(Loc loc, GoType type) {
             this.loc = loc;
+            this.type = type;
             loc.need(Loc.B);
         }
 
         @Override
         public long executeLong(VirtualFrame frame) {
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                return Unsafe.loadScalar(this, loc.viewObj(frame), loc.viewOff(frame), type);
+            }
             return o.bytes[loc.byt(frame)] & 0xFFL;
         }
     }
@@ -497,14 +602,22 @@ public final class Mem {
     public static final class LoadI8 extends I64 {
         @Child private Loc loc;
 
-        public LoadI8(Loc loc) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public LoadI8(Loc loc, GoType type) {
             this.loc = loc;
+            this.type = type;
             loc.need(Loc.B);
         }
 
         @Override
         public long executeLong(VirtualFrame frame) {
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                return Unsafe.loadScalar(this, loc.viewObj(frame), loc.viewOff(frame), type);
+            }
             return o.bytes[loc.byt(frame)];
         }
     }
@@ -512,14 +625,22 @@ public final class Mem {
     public static final class LoadRef extends Ref {
         @Child private Loc loc;
 
-        public LoadRef(Loc loc) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public LoadRef(Loc loc, GoType type) {
             this.loc = loc;
+            this.type = type;
             loc.need(Loc.R);
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                return Unsafe.loadRef(this, loc.viewObj(frame), loc.viewOff(frame), type);
+            }
             return o.refs[loc.ref(frame)];
         }
     }
@@ -544,6 +665,9 @@ public final class Mem {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                return Unsafe.loadFlat(this, loc.viewObj(frame), loc.viewOff(frame), type);
+            }
             return o.sub(type, np == 0 ? 0 : loc.prim(frame), np, nr == 0 ? 0 : loc.ref(frame), nr,
                     nb == 0 ? 0 : loc.byt(frame), nb);
         }
@@ -554,8 +678,12 @@ public final class Mem {
         @Child private Loc loc;
         @Child private I64 value;
 
-        public StoreI64(Loc loc, I64 value) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public StoreI64(Loc loc, GoType type, I64 value) {
             this.loc = loc;
+            this.type = type;
             this.value = value;
             loc.need(Loc.P);
         }
@@ -564,6 +692,11 @@ public final class Mem {
         public void executeVoid(VirtualFrame frame) {
             long v = value.executeLong(frame);
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                Unsafe.storeScalar(this, loc.viewObj(frame), loc.viewOff(frame), type, v);
+                return;
+            }
             o.prims[loc.prim(frame)] = v;
         }
     }
@@ -573,8 +706,12 @@ public final class Mem {
         @Child private Loc loc;
         @Child private I64 value;
 
-        public StoreByte(Loc loc, I64 value) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public StoreByte(Loc loc, GoType type, I64 value) {
             this.loc = loc;
+            this.type = type;
             this.value = value;
             loc.need(Loc.B);
         }
@@ -583,6 +720,11 @@ public final class Mem {
         public void executeVoid(VirtualFrame frame) {
             long v = value.executeLong(frame);
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                Unsafe.storeScalar(this, loc.viewObj(frame), loc.viewOff(frame), type, v);
+                return;
+            }
             o.bytes[loc.byt(frame)] = (byte) v;
         }
     }
@@ -591,8 +733,12 @@ public final class Mem {
         @Child private Loc loc;
         @Child private Expr value;
 
-        public StoreRef(Loc loc, Expr value) {
+        private final GoType type;
+        private final BranchProfile viewed = BranchProfile.create();
+
+        public StoreRef(Loc loc, GoType type, Expr value) {
             this.loc = loc;
+            this.type = type;
             this.value = value;
             loc.need(Loc.R);
         }
@@ -601,6 +747,11 @@ public final class Mem {
         public void executeVoid(VirtualFrame frame) {
             Object v = value.executeGeneric(frame);
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                viewed.enter();
+                Unsafe.storeRef(this, loc.viewObj(frame), loc.viewOff(frame), type, v);
+                return;
+            }
             o.refs[loc.ref(frame)] = v;
         }
     }
@@ -610,8 +761,11 @@ public final class Mem {
         @Child private Loc loc;
         @Child private Expr value;
 
-        public StoreSub(Loc loc, Expr value) {
+        private final GoType type;
+
+        public StoreSub(Loc loc, GoType type, Expr value) {
             this.loc = loc;
+            this.type = type;
             this.value = value;
         }
 
@@ -619,6 +773,10 @@ public final class Mem {
         public void executeVoid(VirtualFrame frame) {
             Flat v = (Flat) value.executeGeneric(frame);
             Flat o = loc.resolve(frame);
+            if (o == null) {
+                Unsafe.storeFlat(this, loc.viewObj(frame), loc.viewOff(frame), type, v);
+                return;
+            }
             o.store(loc.prim(frame), loc.ref(frame), loc.byt(frame), v);
         }
     }
@@ -627,13 +785,17 @@ public final class Mem {
     public static final class AddrOf extends Ref {
         @Child private Loc loc;
 
-        public AddrOf(Loc loc) {
+        private final GoType type;
+
+        /** {@code type}: the type of the location (the pointee of the result). */
+        public AddrOf(Loc loc, GoType type) {
             this.loc = loc;
+            this.type = type;
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            return loc.addr(frame);
+            return loc.addr(frame, type);
         }
     }
 

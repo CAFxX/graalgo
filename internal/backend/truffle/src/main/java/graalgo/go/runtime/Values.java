@@ -224,7 +224,7 @@ public final class Values {
             case GoType.SLICE, GoType.MAP, GoType.FUNC:
                 throw new Uncomparable(t, true);
             case GoType.POINTER, GoType.UNSAFE_POINTER, GoType.CHAN:
-                return v == null ? 0 : v instanceof Ptr p ? p.hashCode() : System.identityHashCode(v);
+                return Unsafe.hashPointer(v);
             default:
                 if (v instanceof Double d) {
                     return d == 0 ? 0 : d.hashCode();

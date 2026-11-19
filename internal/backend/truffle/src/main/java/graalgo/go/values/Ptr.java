@@ -34,8 +34,11 @@ public final class Ptr {
         if (a == b) {
             return true;
         }
-        return a instanceof Ptr p && b instanceof Ptr q && p.obj == q.obj && p.prim == q.prim && p.ref == q.ref
-                && p.byt == q.byt;
+        if (a instanceof Ptr p && b instanceof Ptr q) {
+            return p.obj == q.obj && p.prim == q.prim && p.ref == q.ref && p.byt == q.byt;
+        }
+        // A view names its location by gc byte offset: compare locations, not shapes.
+        return (a instanceof View || b instanceof View) && graalgo.go.runtime.Unsafe.sameLocation(a, b);
     }
 
     @Override
@@ -45,6 +48,6 @@ public final class Ptr {
 
     @Override
     public int hashCode() {
-        return System.identityHashCode(obj) * 31 + prim * 7 + ref + byt * 13;
+        return graalgo.go.runtime.Unsafe.hashPointer(this);
     }
 }

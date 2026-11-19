@@ -114,3 +114,8 @@ intrinsic sync/atomic.SwapPointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.
 intrinsic sync/atomic.CompareAndSwapPointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer, unsafe.Pointer) bool
 intrinsic sync/atomic.LoadPointer AtomicIntrinsics func(*unsafe.Pointer) unsafe.Pointer
 intrinsic sync/atomic.StorePointer AtomicIntrinsics func(*unsafe.Pointer, unsafe.Pointer)
+# atomic.Value brackets its first store with the runtime's procPin/procUnpin so that gc's
+# collector never sees the marker pointer in the type word; a JVM reference slot holds the
+# marker safely, so the pair is a no-op here (procPin's result, the P's id, is unused).
+intrinsic sync/atomic.runtime_procPin   AtomicIntrinsics func() int
+intrinsic sync/atomic.runtime_procUnpin AtomicIntrinsics func()

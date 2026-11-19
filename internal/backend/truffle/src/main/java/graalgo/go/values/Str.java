@@ -15,6 +15,11 @@ public final class Str {
     public final byte[] b;
     public final int off;
     public final int len;
+    /**
+     * The storage as an addressable object, set by the first {@code unsafe.StringData} of this
+     * string (or the object {@code unsafe.String} made it over): a cache, benign when raced.
+     */
+    public Flat flat;
 
     /** Wraps {@code b}; the caller gives up the array. */
     public Str(byte[] b) {

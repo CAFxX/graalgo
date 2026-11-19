@@ -1,6 +1,7 @@
 package graalgo.go.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import graalgo.go.types.GoType;
 import graalgo.go.values.Flat;
 import graalgo.go.values.Slice;
 import graalgo.go.values.Str;
@@ -92,7 +93,7 @@ public final class Strs {
 
     /** {@code []rune(string)}. */
     @TruffleBoundary
-    public static Slice toRunes(Str s) {
+    public static Slice toRunes(Str s, GoType backing) {
         long[] tmp = new long[s.len];
         int n = 0;
         int end = s.off + s.len;
@@ -101,7 +102,8 @@ public final class Strs {
             tmp[n++] = (int) d;
             i += (int) (d >>> 32);
         }
-        return new Slice(new Flat(null, java.util.Arrays.copyOf(tmp, n), Flat.NO_REFS, Flat.NO_BYTES), 0, 0, 0, n, n);
+        return new Slice(new Flat(backing, java.util.Arrays.copyOf(tmp, n), Flat.NO_REFS, Flat.NO_BYTES), 0, 0, 0, n,
+                n);
     }
 
     /** {@code string([]byte)}. */
@@ -114,9 +116,9 @@ public final class Strs {
     }
 
     /** {@code []byte(string)}. */
-    public static Slice toBytes(Str s) {
+    public static Slice toBytes(Str s, GoType backing) {
         int n = s.len;
-        return new Slice(new Flat(null, Flat.NO_PRIMS, Flat.NO_REFS, s.toBytes()), 0, 0, 0, n, n);
+        return new Slice(new Flat(backing, Flat.NO_PRIMS, Flat.NO_REFS, s.toBytes()), 0, 0, 0, n, n);
     }
 
     /** {@code s[lo:hi]} (bounds already checked): shares the bytes, as gc does. */

@@ -25,6 +25,11 @@ public final class GoType {
             COMPLEX128 = 16, STRING = 17, UNSAFE_POINTER = 18;
     public static final int POINTER = 30, SLICE = 31, ARRAY = 32, MAP = 33, CHAN = 34, STRUCT = 35, FUNC = 36,
             INTERFACE = 37, TUPLE = 38, NAMED = 40;
+    /**
+     * The layout of a slice backing store: elements of {@link #elem} back to back, as many as
+     * the object's arrays hold ({@link #backing}). Not a Go type; never the type of a value.
+     */
+    public static final int BACKING = 39;
 
     /** Carriers: how a value of the type travels through nodes and where it is stored. */
     public static final int C_I64 = 0, C_F64 = 1, C_BOOL = 2, C_REF = 3, C_FLAT = 4;
@@ -100,6 +105,7 @@ public final class GoType {
     /** A defined type's alignment as the frontend records it; 0: none recorded. */
     private long declaredAlign;
     private Object[] zeroRefs;
+    private volatile GoType backing;
     private volatile String str;
     private final ConcurrentHashMap<GoType, Object> itabs = new ConcurrentHashMap<>();
     private static final Object NO_ITAB = new Object();
@@ -151,6 +157,31 @@ public final class GoType {
                 this.ptrMethodsSupplier = ptrMethods;
             }
         }
+    }
+
+    /**
+     * The layout descriptor of a slice backing store whose elements have this type: what
+     * {@code Flat.type} is for the object {@code make([]T, n)} allocates, so that a pointer into
+     * it has a leaf table (GG-0062).
+     */
+    public GoType backing() {
+        GoType b = backing;
+        if (b == null) {
+            synchronized (lock) {
+                if (backing == null) {
+                    backing = new GoType(lock, "backing " + key, BACKING, null, null, new GoType[0], this, null, 0, 0,
+                            null, null, null, false, null);
+                }
+                b = backing;
+            }
+        }
+        return b;
+    }
+
+    /** One gc word holding a pointer: pointers, maps, channels, functions, unsafe.Pointer. */
+    public boolean isPointerShaped() {
+        int k = u().kind;
+        return k == POINTER || k == UNSAFE_POINTER || k == MAP || k == CHAN || k == FUNC;
     }
 
     /** The underlying (structural) type; {@code this} for a type that is not defined. */
@@ -590,6 +621,15 @@ public final class GoType {
 
     private Leaf leafAt(long off, long base, int p, int r, int b) {
         GoType t = u();
+        if (t.kind == BACKING) {
+            long es = t.elem.gcSize();
+            if (off < 0 || es == 0) {
+                return null;
+            }
+            long i = off / es;
+            return t.elem.leafAt(off - i * es, i * es, Math.toIntExact(i * t.elem.nPrim()),
+                    Math.toIntExact(i * t.elem.nRef()), Math.toIntExact(i * t.elem.nByte()));
+        }
         if (off < 0 || off >= t.gcSize()) {
             return null;
         }
@@ -626,6 +666,14 @@ public final class GoType {
     @TruffleBoundary
     public long gcOffOfLeaf(int k) {
         GoType t = u();
+        if (t.kind == BACKING) {
+            int en = t.elem.nLeaves();
+            if (en == 0) {
+                return 0;
+            }
+            int i = k / en;
+            return i * t.elem.gcSize() + t.elem.gcOffOfLeaf(k - i * en);
+        }
         int n = t.nLeaves();
         if (k < 0 || k > n) {
             throw new IllegalArgumentException("leaf " + k + " of " + key);

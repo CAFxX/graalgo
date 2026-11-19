@@ -28,7 +28,9 @@ public final class GoProcess {
     public final Flat[] globals;
     private final SchedulerCore sched;
     private final OutputStream err;
-    private final TypeTable types;
+    public final TypeTable types;
+    /** The {@code uintptr} handle table of this process (GG-0062). */
+    public final Handles handles = new Handles();
 
     public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
         this.globals = globals;
@@ -63,7 +65,26 @@ public final class GoProcess {
             body.run();
         } catch (GoPanic p) {
             fatalPanic(p);
+        } catch (Fatal f) {
+            // Reported where it was thrown; the process is exiting.
         }
+    }
+
+    /** Unwinds the goroutine after a fatal error was reported: no deferred call runs (gc throw). */
+    public static final class Fatal extends com.oracle.truffle.api.nodes.ControlFlowException {
+        private static final long serialVersionUID = 1L;
+    }
+
+    /**
+     * gc's {@code throw}: {@code fatal error: text}, the goroutine header, exit status 2. Not a
+     * panic — nothing recovers it and no deferred call runs.
+     */
+    @TruffleBoundary
+    public Fatal fatal(String text) {
+        writeErr(("fatal error: " + text + "\n\ngoroutine " + sched.currentGoroutine().id + " [running]:\n")
+                .getBytes(StandardCharsets.UTF_8));
+        sched.requestExit(2);
+        return new Fatal();
     }
 
     private void fatalPanic(GoPanic top) {

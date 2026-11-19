@@ -24,6 +24,7 @@ import graalgo.go.nodes.N.I64;
 import graalgo.go.nodes.N.Jump;
 import graalgo.go.nodes.N.Ref;
 import graalgo.go.nodes.N.Stmt;
+import graalgo.go.nodes.Unsafes;
 import graalgo.go.types.GoType;
 import graalgo.go.types.GoType.Field;
 import graalgo.go.types.Method;
@@ -332,7 +333,8 @@ public final class NodeFactory {
     private Mem.Aux aux() {
         if (aux == null) {
             aux = new Mem.Aux(fdb.addSlot(FrameSlotKind.Int, null, null), fdb.addSlot(FrameSlotKind.Int, null, null),
-                    fdb.addSlot(FrameSlotKind.Int, null, null));
+                    fdb.addSlot(FrameSlotKind.Int, null, null), fdb.addSlot(FrameSlotKind.Object, null, null),
+                    fdb.addSlot(FrameSlotKind.Long, null, null));
         }
         return aux;
     }
@@ -423,14 +425,14 @@ public final class NodeFactory {
         switch (t.carrier()) {
             case GoType.C_I64:
                 // The region is static: a byte-sized leaf lives in the object's byte region.
-                return !t.isByteLeaf() ? new Mem.LoadI64(loc)
-                        : t.isUnsigned() ? new Mem.LoadU8(loc) : new Mem.LoadI8(loc);
+                return !t.isByteLeaf() ? new Mem.LoadI64(loc, t)
+                        : t.isUnsigned() ? new Mem.LoadU8(loc, t) : new Mem.LoadI8(loc, t);
             case GoType.C_F64:
-                return new N.RawF64(new Mem.LoadI64(loc));
+                return new N.RawF64(new Mem.LoadI64(loc, t));
             case GoType.C_BOOL:
-                return new N.RawBool(new Mem.LoadU8(loc));
+                return new N.RawBool(new Mem.LoadU8(loc, t));
             case GoType.C_REF:
-                return new Mem.LoadRef(loc);
+                return new Mem.LoadRef(loc, t);
             default:
                 return new Mem.LoadSub(loc, t);
         }
@@ -439,11 +441,11 @@ public final class NodeFactory {
     private static Stmt store(GoType t, Loc loc, Expr v) {
         switch (t.carrier()) {
             case GoType.C_REF:
-                return new Mem.StoreRef(loc, v);
+                return new Mem.StoreRef(loc, t, v);
             case GoType.C_FLAT:
-                return new Mem.StoreSub(loc, v);
+                return new Mem.StoreSub(loc, t, v);
             default:
-                return t.isByteLeaf() ? new Mem.StoreByte(loc, raw(t, v)) : new Mem.StoreI64(loc, raw(t, v));
+                return t.isByteLeaf() ? new Mem.StoreByte(loc, t, raw(t, v)) : new Mem.StoreI64(loc, t, raw(t, v));
         }
     }
 
@@ -644,8 +646,9 @@ public final class NodeFactory {
             }
             case Gir.Expr.Deref d: {
                 Supplier<Expr> ptr = operand(d.x(), pre);
+                GoType pointee = ty(d.x()).u().elem;
                 aux();
-                return (p, r, b) -> new Mem.PtrLoc(asRef(ptr.get()), p, r, b, aux);
+                return (p, r, b) -> new Mem.PtrLoc(asRef(ptr.get()), pointee, p, r, b, aux);
             }
             case Gir.Expr.Field f:
                 return fieldLoc(f, pre);
@@ -679,8 +682,9 @@ public final class NodeFactory {
         GoType t = ty(x).u();
         if (t.kind == GoType.POINTER) {
             Supplier<Expr> ptr = operand(x, pre);
+            GoType pointee = t.elem;
             aux();
-            return (p, r, b) -> new Mem.PtrLoc(asRef(ptr.get()), p, r, b, aux);
+            return (p, r, b) -> new Mem.PtrLoc(asRef(ptr.get()), pointee, p, r, b, aux);
         }
         LocMk base = locOf(x, pre);
         if (base == null) {
@@ -708,8 +712,11 @@ public final class NodeFactory {
             if (k < path.length - 1 && ft.kind == GoType.POINTER) {
                 // Implicit dereference of an embedded pointer.
                 LocMk ptrField = cur;
+                GoType ptrType = fld.type;
+                GoType pointee = ft.elem;
                 aux();
-                cur = (p, r, b) -> new Mem.PtrLoc(new Mem.LoadRef(ptrField.make(0, 0, 0)), p, r, b, aux);
+                cur = (p, r, b) -> new Mem.PtrLoc(new Mem.LoadRef(ptrField.make(0, 0, 0), ptrType), pointee, p, r, b,
+                        aux);
                 ft = ft.elem.u();
             }
             t = ft;
@@ -880,7 +887,7 @@ public final class NodeFactory {
                         ty(b.type()));
             case Gir.Expr.Deref d:
                 aux();
-                return load(ty(d.type()), new Mem.PtrLoc(asRef(expr(d.x())), 0, 0, 0, aux));
+                return load(ty(d.type()), new Mem.PtrLoc(asRef(expr(d.x())), ty(d.x()).u().elem, 0, 0, 0, aux));
             case Gir.Expr.Addr a:
                 return addr(a);
             case Gir.Expr.Recv r: {
@@ -1219,7 +1226,7 @@ public final class NodeFactory {
         if (mk == null) {
             throw new IllegalStateException("address of " + x.getClass().getSimpleName());
         }
-        return new Mem.AddrOf(mk.make(0, 0, 0));
+        return new Mem.AddrOf(mk.make(0, 0, 0), ty(x));
     }
 
     private Expr index(Gir.Expr.Index ix) {
@@ -1287,6 +1294,8 @@ public final class NodeFactory {
         if (t.isInteger()) {
             if (f.isInteger()) {
                 return f.kind == t.kind ? x : wrap(t, asI64(x));
+            } else if (f.kind == GoType.UNSAFE_POINTER) {
+                return new Unsafes.PtrToInt(x);
             } else if (f.isFloat()) {
                 F64 d = asF64(x);
                 if (u64(t)) {
@@ -1320,7 +1329,12 @@ public final class NodeFactory {
             }
             return x;
         } else if (t.kind == GoType.SLICE && f.kind == GoType.STRING) {
-            return t.elem.u().kind == GoType.UINT8 ? new Data.StrToBytes(x) : new Data.StrToRunes(x);
+            return t.elem.u().kind == GoType.UINT8 ? new Data.StrToBytes(x, t.elem) : new Data.StrToRunes(x, t.elem);
+        } else if (t.kind == GoType.UNSAFE_POINTER && f.isInteger()) {
+            return new Unsafes.IntToPtr(asI64(x));
+        } else if (t.kind == GoType.POINTER && f.kind == GoType.UNSAFE_POINTER) {
+            // The checked identity of ADR-0015 decision 1 (the reverse direction is the identity).
+            return new Unsafes.ToPtr(x, t.elem);
         }
         if (f.kind == t.kind) {
             return x;
@@ -1824,6 +1838,24 @@ public final class NodeFactory {
                 }
                 return acc;
             }
+            case Gir.Builtin.UNSAFE_ADD:
+                return new Unsafes.Add(a0.get(), asI64(a1.get()));
+            case Gir.Builtin.UNSAFE_SLICE:
+                return new Unsafes.MakeSlice(a0.get(), asI64(a1.get()), ty(a[0]).u().elem);
+            case Gir.Builtin.UNSAFE_SLICE_DATA:
+                return new Unsafes.SliceData(a0.get());
+            case Gir.Builtin.UNSAFE_STRING:
+                return new Unsafes.MakeString(a0.get(), asI64(a1.get()));
+            case Gir.Builtin.UNSAFE_STRING_DATA:
+                return new Unsafes.StringData(a0.get());
+            case Gir.Builtin.UNSAFE_SIZEOF:
+                // Folded by the frontend unless the operand's type depends on a type parameter:
+                // here it is instantiated, and its gc layout is the type's own (GG-0061).
+                return new N.ConstI64(ty(a[0]).gcSize());
+            case Gir.Builtin.UNSAFE_ALIGNOF:
+                return new N.ConstI64(ty(a[0]).gcAlign());
+            case Gir.Builtin.UNSAFE_OFFSETOF:
+                return new N.ConstI64(offsetOf(a[0]));
             case Gir.Builtin.RECOVER:
                 // `defer recover()` does not recover: recover is not called by a deferred function.
                 // Nor does recover() in a range-over-func body: the body runs inside yield.
@@ -1836,6 +1868,29 @@ public final class NodeFactory {
                 throw new Unsupported("builtin " + Gir.Builtin.name(c.builtin()));
             }
         }
+    }
+
+    /** {@code unsafe.Offsetof(x.f)}: gc's offset of {@code f} in the struct {@code x}, through embedded structs. */
+    private long offsetOf(Gir.Expr e) {
+        if (!(e instanceof Gir.Expr.Field f)) {
+            throw new IllegalStateException("unsafe.Offsetof of " + e.getClass().getSimpleName());
+        }
+        GoType t = ty(f.x()).u();
+        if (t.kind == GoType.POINTER) {
+            t = t.elem.u();
+        }
+        long off = 0;
+        long[] path = f.path();
+        for (int k = 0; k < path.length; k++) {
+            t.gcSize();
+            Field fld = t.fields[(int) path[k]];
+            GoType ft = fld.type.u();
+            // The offset is relative to the struct that holds f directly or through embedded
+            // structs: a step through an embedded pointer starts over.
+            off = k < path.length - 1 && ft.kind == GoType.POINTER ? 0 : off + fld.gcOff;
+            t = ft.kind == GoType.POINTER && k < path.length - 1 ? ft.elem.u() : ft;
+        }
+        return off;
     }
 
     /** A builtin that is a statement (no value), or null. */
@@ -2597,7 +2652,7 @@ public final class NodeFactory {
                 }
                 if (needValue) {
                     Loc base = xt.kind == GoType.ARRAY ? new Mem.FlatLoc(new N.ReadRef(a), 0, 0, 0)
-                            : new Mem.PtrLoc(new N.ReadRef(a), 0, 0, 0, aux);
+                            : new Mem.PtrLoc(new N.ReadRef(a), xt.elem, 0, 0, 0, aux);
                     Loc loc = new Mem.IndexLoc(base, readIdx.get(), at.len, at.elem, 0, 0, 0, aux, true);
                     pre.add(rangeVar(r, r.value(), load(at.elem, loc)));
                 }

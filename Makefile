@@ -147,9 +147,9 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check check-repo test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a
+all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -357,6 +357,16 @@ M1A_BENCH ?=
 test-m1r: build
 	GO="$(GO)" test/m1r/run.sh $(M1R_PROGRAMS)
 M1R_PROGRAMS ?=
+
+# The pointer-model gate (toolexec W13; SPEC §3.4, GG-0061/GG-0062, ADR-0015;
+# ~1.5 min, per-push): programs that use package unsafe, through graalgo-tool
+# on the node package against gc — the generated load/store program over every
+# byte offset of a corpus of struct types per addressable kind, unsafe idioms
+# of real code, gc's own -d=checkptr fatal errors, and the documented
+# restrictions. See test/m1w13/run.sh. M1W13_PROGRAMS narrows the run.
+test-m1w13: build
+	GO="$(GO)" test/m1w13/run.sh $(M1W13_PROGRAMS)
+M1W13_PROGRAMS ?=
 
 # The GOROOT a graalgo distribution ships (docs/arch/toolexec-design.md
 # §5.1): the upstream distribution of $(GO) with the fork of

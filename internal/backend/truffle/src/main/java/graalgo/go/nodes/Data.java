@@ -14,6 +14,7 @@ import graalgo.go.nodes.N.Stmt;
 import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.Panics;
 import graalgo.go.runtime.Strs;
+import graalgo.go.runtime.Unsafe;
 import graalgo.go.runtime.Values;
 import graalgo.go.types.GoType;
 import graalgo.go.values.Flat;
@@ -164,24 +165,32 @@ public final class Data {
     }
 
     public static final class StrToBytes extends StrConv {
-        public StrToBytes(Expr x) {
+        private final GoType backing;
+
+        /** {@code elem}: the element type of the result (a byte type). */
+        public StrToBytes(Expr x, GoType elem) {
             super(x);
+            this.backing = elem.backing();
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            return Strs.toBytes((Str) x.executeGeneric(frame));
+            return Strs.toBytes((Str) x.executeGeneric(frame), backing);
         }
     }
 
     public static final class StrToRunes extends StrConv {
-        public StrToRunes(Expr x) {
+        private final GoType backing;
+
+        /** {@code elem}: the element type of the result (a rune type). */
+        public StrToRunes(Expr x, GoType elem) {
             super(x);
+            this.backing = elem.backing();
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            return Strs.toRunes((Str) x.executeGeneric(frame));
+            return Strs.toRunes((Str) x.executeGeneric(frame), backing);
         }
     }
 
@@ -255,6 +264,7 @@ public final class Data {
 
     /** {@code a[lo:hi:max]} on an addressable array (or through a pointer to one). */
     public static final class SliceOfArray extends Ref {
+        private final GoType elem;
         @Child private Loc array;
         @Child private I64 lo;
         @Child private I64 hi;
@@ -268,6 +278,7 @@ public final class Data {
 
         /** {@code unsigned}: the {@code UNSIGNED_*} bits of the index operands. */
         public SliceOfArray(Loc array, long len, I64 lo, I64 hi, I64 max, GoType elem, int unsigned) {
+            this.elem = elem;
             this.unsigned = unsigned;
             this.array = array;
             this.len = len;
@@ -282,15 +293,23 @@ public final class Data {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Flat o = array.resolve(frame);
-            int bp = array.prim(frame);
-            int br = array.ref(frame);
-            int bb = array.byt(frame);
+            Flat viewObj = o == null ? array.viewObj(frame) : null;
+            long viewOff = o == null ? array.viewOff(frame) : 0;
+            int bp = o == null ? 0 : array.prim(frame);
+            int br = o == null ? 0 : array.ref(frame);
+            int bb = o == null ? 0 : array.byt(frame);
             long l = lo == null ? 0 : lo.executeLong(frame);
             long h = hi == null ? len : hi.executeLong(frame);
             long m = max == null ? len : max.executeLong(frame);
             if (Long.compareUnsigned(m, len) > 0 || Long.compareUnsigned(h, m) > 0 || Long.compareUnsigned(l, h) > 0) {
                 bad.enter();
                 throw boundsPanic(this, max != null, l, h, m, len, false, unsigned);
+            }
+            if (o == null) {
+                // An array behind a view pointer: a slice shares storage, so its elements must
+                // be the referent's own leaves (GG-0062), else gc's checkptr fatal error.
+                return Unsafe.sliceOver(this, Unsafe.pointer(viewObj, viewOff + l * elem.gcSize()), h - l, m - l, elem,
+                        Unsafe.STRADDLES);
             }
             return new Slice(o, bp + (int) l * np, br + (int) l * nr, bb + (int) l * nb, (int) (h - l), (int) (m - l));
         }
@@ -330,9 +349,11 @@ public final class Data {
         private final int nb;
         @CompilationFinal(dimensions = 1) private final Object[] zeroElem;
         private final long maxElems;
+        private final GoType backing;
         private final BranchProfile bad = BranchProfile.create();
 
         public MakeSlice(GoType elem, I64 len, I64 cap) {
+            this.backing = elem.backing();
             this.len = len;
             this.cap = cap;
             this.np = elem.nPrim();
@@ -355,7 +376,7 @@ public final class Data {
                 bad.enter();
                 throw Panics.error(this, "makeslice: cap out of range");
             }
-            return new Slice(backing((int) c, np, nr, nb, zeroElem), 0, 0, 0, (int) n, (int) c);
+            return new Slice(backing(backing, (int) c, np, nr, nb, zeroElem), 0, 0, 0, (int) n, (int) c);
         }
     }
 
@@ -373,13 +394,13 @@ public final class Data {
         return k == 0 ? MAX_ARRAY : MAX_ARRAY / k;
     }
 
-    /** A zeroed backing store for {@code cap} elements. */
-    static Flat backing(int cap, int np, int nr, int nb, Object[] zeroElem) {
+    /** A zeroed backing store for {@code cap} elements; {@code type}: the element type's {@link GoType#backing}. */
+    static Flat backing(GoType type, int cap, int np, int nr, int nb, Object[] zeroElem) {
         Object[] refs = nr == 0 ? Flat.NO_REFS : new Object[cap * nr];
         if (zeroElem != null) {
             fillZero(refs, 0, cap, zeroElem);
         }
-        return new Flat(null, np == 0 ? Flat.NO_PRIMS : new long[cap * np], refs,
+        return new Flat(type, np == 0 ? Flat.NO_PRIMS : new long[cap * np], refs,
                 nb == 0 ? Flat.NO_BYTES : new byte[cap * nb]);
     }
 
@@ -497,10 +518,12 @@ public final class Data {
         private final int np;
         private final int nr;
         private final int nb;
+        private final GoType backing;
         @CompilationFinal(dimensions = 1) private final Object[] zeroElem;
         @Children private final Init[] inits;
 
         public SliceLit(GoType elem, int len, Init[] inits) {
+            this.backing = elem.backing();
             this.len = len;
             this.np = elem.nPrim();
             this.nr = elem.nRef();
@@ -512,7 +535,7 @@ public final class Data {
         @Override
         @ExplodeLoop
         public Object executeGeneric(VirtualFrame frame) {
-            Flat o = backing(len, np, nr, nb, zeroElem);
+            Flat o = backing(backing, len, np, nr, nb, zeroElem);
             for (Init i : inits) {
                 i.init(frame, o);
             }
@@ -523,18 +546,18 @@ public final class Data {
     // ---------------------------------------------------------------- append / copy / clear
 
     /** Room for {@code add} more elements: the slice itself or a grown copy (gc growslice caps). */
-    static Slice reserve(Slice s, int add, int np, int nr, int nb, long elemSize, boolean pointers,
+    static Slice reserve(Slice s, int add, GoType backing, int np, int nr, int nb, long elemSize, boolean pointers,
             Object[] zeroElem) {
         int need = s.len + add;
         if (need <= s.cap) {
             return s;
         }
-        return grow(s, need, np, nr, nb, elemSize, pointers, zeroElem);
+        return grow(s, need, backing, np, nr, nb, elemSize, pointers, zeroElem);
     }
 
     @TruffleBoundary
-    private static Slice grow(Slice s, int need, int np, int nr, int nb, long elemSize, boolean pointers,
-            Object[] zeroElem) {
+    private static Slice grow(Slice s, int need, GoType backing, int np, int nr, int nb, long elemSize,
+            boolean pointers, Object[] zeroElem) {
         if (need < 0 || need > maxElems(np, nr, nb)) {
             throw new OutOfMemoryError("growslice: len out of range");
         }
@@ -553,7 +576,7 @@ public final class Data {
         if (zeroElem != null) {
             fillZero(refs, s.len, cap, zeroElem);
         }
-        return new Slice(new Flat(null, prims, refs, bytes), 0, 0, 0, s.len, cap);
+        return new Slice(new Flat(backing, prims, refs, bytes), 0, 0, 0, s.len, cap);
     }
 
     /** Shared configuration of the append nodes. */
@@ -564,10 +587,12 @@ public final class Data {
         protected final int nb;
         protected final long elemSize;
         protected final boolean pointers;
+        protected final GoType backing;
         @CompilationFinal(dimensions = 1) protected final Object[] zeroElem;
 
         AppendBase(Expr slice, GoType elem) {
             this.slice = slice;
+            this.backing = elem.backing();
             this.np = elem.nPrim();
             this.nr = elem.nRef();
             this.nb = elem.nByte();
@@ -577,7 +602,7 @@ public final class Data {
         }
 
         protected final Slice room(Slice s, int add) {
-            return reserve(s, add, np, nr, nb, elemSize, pointers, zeroElem);
+            return reserve(s, add, backing, np, nr, nb, elemSize, pointers, zeroElem);
         }
 
         protected final Slice extended(Slice s, int add) {

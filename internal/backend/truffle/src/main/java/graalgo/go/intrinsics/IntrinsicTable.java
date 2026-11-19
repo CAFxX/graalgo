@@ -16,7 +16,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "3aa07de7982167a8";
+    public static final String HASH = "19ba544492df9089";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -139,6 +139,10 @@ public final class IntrinsicTable {
                 return new R_sync_atomic_SwapUint64(language);
             case "sync/atomic.SwapUintptr":
                 return new R_sync_atomic_SwapUintptr(language);
+            case "sync/atomic.runtime_procPin":
+                return new R_sync_atomic_runtime_procPin(language);
+            case "sync/atomic.runtime_procUnpin":
+                return new R_sync_atomic_runtime_procUnpin(language);
             case "syscall.Exit":
                 return new R_syscall_Exit(language);
             default:
@@ -933,6 +937,31 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return AtomicIntrinsics.sync_atomic_SwapUintptr(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code sync/atomic.runtime_procPin}: {@code func() int}. */
+    static final class R_sync_atomic_runtime_procPin extends Root {
+        R_sync_atomic_runtime_procPin(GoLanguage language) {
+            super(language, "sync/atomic.runtime_procPin");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return AtomicIntrinsics.sync_atomic_runtime_procPin(this);
+        }
+    }
+
+    /** {@code sync/atomic.runtime_procUnpin}: {@code func()}. */
+    static final class R_sync_atomic_runtime_procUnpin extends Root {
+        R_sync_atomic_runtime_procUnpin(GoLanguage language) {
+            super(language, "sync/atomic.runtime_procUnpin");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            AtomicIntrinsics.sync_atomic_runtime_procUnpin(this);
+            return null;
         }
     }
 
