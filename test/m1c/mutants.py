@@ -10,6 +10,8 @@ import sys
 
 J = "internal/backend/truffle/src/main/java/graalgo/"
 SYNC = J + "go/intrinsics/SyncIntrinsics.java"
+BYTEALG = J + "go/intrinsics/BytealgIntrinsics.java"
+KERNELS = ["test/m1c/programs/bytealg_kernels.go"]
 
 MUTANTS = [
     # (name, file, anchor, replacement, programs that must fail)
@@ -33,6 +35,26 @@ MUTANTS = [
      '        acquire(node, addr, lifo, "sync.Mutex.Lock");',
      '        acquire(node, addr, lifo, "semacquire");',
      ["test/m1c/programs/sync_deadlock_mutex.go"]),
+    ("compare-signed", BYTEALG,
+     "Integer.signum(Arrays.compareUnsigned(",
+     "Integer.signum(Arrays.compare(",
+     KERNELS),
+    ("compare-prefix-equal", BYTEALG,
+     "        Slice x = (Slice) a, y = (Slice) b;\n        return Integer.signum(",
+     "        Slice x = (Slice) a, y = (Slice) b;\n        if (x.len == 0 || y.len == 0) {\n            return 0;\n        }\n        return Integer.signum(",
+     KERNELS),
+    ("index-misses-last-position", BYTEALG,
+     "for (int i = 0, last = n - m; i <= last; i++) {",
+     "for (int i = 0, last = n - m; i < last; i++) {",
+     KERNELS),
+    ("indexbytestring-ignores-offset", BYTEALG,
+     "return indexByte(s.b, s.off, s.len, (byte) c);",
+     "return indexByte(s.b, 0, s.len, (byte) c);",
+     KERNELS),
+    ("makenozero-exact-cap", BYTEALG,
+     "int cap = n == 0 ? 0 : graalgo.runtime.Intrinsics.nextSliceCap((int) n, 0, 1, false);",
+     "int cap = (int) n;",
+     KERNELS),
 ]
 
 

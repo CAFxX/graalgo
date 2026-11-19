@@ -164,6 +164,18 @@ intrinsic internal/synctest.IsInBubble      SyncIntrinsics func() bool
 intrinsic internal/synctest.associate       SyncIntrinsics func(unsafe.Pointer) int
 intrinsic internal/synctest.disassociate    SyncIntrinsics func(unsafe.Pointer)
 intrinsic internal/synctest.isAssociated    SyncIntrinsics func(unsafe.Pointer) bool
+# --- internal/bytealg: the amd64 assembly functions (compare_native.go,
+# count_native.go, index_native.go, indexbyte_native.go) over the byte
+# region, and MakeNoZero, which the runtime provides by //go:linkname
+# (runtime/slice.go) -----------------------------------------------------------
+intrinsic internal/bytealg.Compare          BytealgIntrinsics func([]uint8, []uint8) int
+intrinsic internal/bytealg.IndexByte        BytealgIntrinsics func([]uint8, uint8) int
+intrinsic internal/bytealg.IndexByteString  BytealgIntrinsics func(string, uint8) int
+intrinsic internal/bytealg.Count            BytealgIntrinsics func([]uint8, uint8) int
+intrinsic internal/bytealg.CountString      BytealgIntrinsics func(string, uint8) int
+intrinsic internal/bytealg.Index            BytealgIntrinsics func([]uint8, []uint8) int
+intrinsic internal/bytealg.IndexString      BytealgIntrinsics func(string, string) int
+intrinsic internal/bytealg.MakeNoZero       BytealgIntrinsics func(int) []uint8
 # --- internal/runtime/atomic: the assembly store-release sync.Pool uses
 # (atomic_amd64.s; a plain store is a release store on amd64) ---------------
 intrinsic internal/runtime/atomic.StoreReluintptr AtomicIntrinsics func(*uintptr, uintptr)

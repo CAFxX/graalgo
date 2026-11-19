@@ -25,6 +25,12 @@
 # gate turns itself on when that piece lands (a master merge) — nobody has to
 # remember to enable it. M1C_STRICT=1 turns every PENDING into a failure.
 #
+# Link flags. A program whose first lines contain
+#     //m1c:ldflags <flags>
+# is built with -ldflags=<flags> on both legs (bytealg_kernels.go pulls
+# internal/bytealg's assembly by //go:linkname and needs gc's
+# -checklinkname=0).
+#
 # Usage: test/m1c/run.sh [-v] [PROGRAM.go]...
 #   -v   print the diff of every failing program
 # Env:   GO, GRAALVM_HOME, GRAALGO_TMP (see test/lib/infra.sh),
@@ -83,9 +89,12 @@ compare() {
     cp "$src" "$w/mod/main.go"
     printf 'module m1c/p\n\ngo 1.27\n' > "$w/mod/go.mod"
     reason=""
-    if ! ( cd "$w/mod" && "$GO" build -o "$w/gc.bin" . ) >"$w/gc.build" 2>&1; then
+    local ldflags goflags=""
+    ldflags=$(head -20 "$src" | sed -n 's|^//m1c:ldflags \(.*\)$|\1|p' | head -1)
+    [ -n "$ldflags" ] && goflags="-ldflags=$ldflags"
+    if ! ( cd "$w/mod" && GOFLAGS="$goflags" "$GO" build -o "$w/gc.bin" . ) >"$w/gc.build" 2>&1; then
         reason="gc rejects the program (corpus bug)"
-    elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
+    elif ! ( cd "$w/mod" && GOFLAGS="$goflags" toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
     else
         gc_status=0

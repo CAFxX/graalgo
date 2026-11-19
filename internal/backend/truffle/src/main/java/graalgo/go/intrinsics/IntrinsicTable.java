@@ -17,11 +17,27 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "fd4217e86e416140";
+    public static final String HASH = "39506eea1eaaccf4";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
         switch (symbol) {
+            case "internal/bytealg.Compare":
+                return new R_internal_bytealg_Compare(language);
+            case "internal/bytealg.Count":
+                return new R_internal_bytealg_Count(language);
+            case "internal/bytealg.CountString":
+                return new R_internal_bytealg_CountString(language);
+            case "internal/bytealg.Index":
+                return new R_internal_bytealg_Index(language);
+            case "internal/bytealg.IndexByte":
+                return new R_internal_bytealg_IndexByte(language);
+            case "internal/bytealg.IndexByteString":
+                return new R_internal_bytealg_IndexByteString(language);
+            case "internal/bytealg.IndexString":
+                return new R_internal_bytealg_IndexString(language);
+            case "internal/bytealg.MakeNoZero":
+                return new R_internal_bytealg_MakeNoZero(language);
             case "internal/runtime/atomic.StoreReluintptr":
                 return new R_internal_runtime_atomic_StoreReluintptr(language);
             case "internal/sync.fatal":
@@ -225,6 +241,110 @@ public final class IntrinsicTable {
         @Override
         public boolean isInternal() {
             return true;
+        }
+    }
+
+    /** {@code internal/bytealg.Compare}: {@code func([]uint8, []uint8) int}. */
+    static final class R_internal_bytealg_Compare extends Root {
+        R_internal_bytealg_Compare(GoLanguage language) {
+            super(language, "internal/bytealg.Compare");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_Compare(this, a[1], a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.Count}: {@code func([]uint8, uint8) int}. */
+    static final class R_internal_bytealg_Count extends Root {
+        R_internal_bytealg_Count(GoLanguage language) {
+            super(language, "internal/bytealg.Count");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_Count(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.CountString}: {@code func(string, uint8) int}. */
+    static final class R_internal_bytealg_CountString extends Root {
+        R_internal_bytealg_CountString(GoLanguage language) {
+            super(language, "internal/bytealg.CountString");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_CountString(this, (Str) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.Index}: {@code func([]uint8, []uint8) int}. */
+    static final class R_internal_bytealg_Index extends Root {
+        R_internal_bytealg_Index(GoLanguage language) {
+            super(language, "internal/bytealg.Index");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_Index(this, a[1], a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.IndexByte}: {@code func([]uint8, uint8) int}. */
+    static final class R_internal_bytealg_IndexByte extends Root {
+        R_internal_bytealg_IndexByte(GoLanguage language) {
+            super(language, "internal/bytealg.IndexByte");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_IndexByte(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.IndexByteString}: {@code func(string, uint8) int}. */
+    static final class R_internal_bytealg_IndexByteString extends Root {
+        R_internal_bytealg_IndexByteString(GoLanguage language) {
+            super(language, "internal/bytealg.IndexByteString");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_IndexByteString(this, (Str) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.IndexString}: {@code func(string, string) int}. */
+    static final class R_internal_bytealg_IndexString extends Root {
+        R_internal_bytealg_IndexString(GoLanguage language) {
+            super(language, "internal/bytealg.IndexString");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_IndexString(this, (Str) a[1], (Str) a[2]);
+        }
+    }
+
+    /** {@code internal/bytealg.MakeNoZero}: {@code func(int) []uint8}. */
+    static final class R_internal_bytealg_MakeNoZero extends Root {
+        R_internal_bytealg_MakeNoZero(GoLanguage language) {
+            super(language, "internal/bytealg.MakeNoZero");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.internal_bytealg_MakeNoZero(this, (long) a[1]);
         }
     }
 

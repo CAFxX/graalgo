@@ -27,6 +27,13 @@ public final class SliceGrowthTest {
         // large: 1.25x growth after threshold
         // oldCap=256, newLen=257 -> 256 + (256+768)/4 = 256+256=512
         assertCap(257, 256, 8, false, 512);
+        // The last two entries of gc's SizeToSizeClass128 (sizes 32641..32768
+        // reach indexes 247 and 248): the table once stopped at 246 and this
+        // threw ArrayIndexOutOfBoundsException (found by test/m1c's
+        // bytealg_kernels.go through MakeNoZero; gc: 32768 for both).
+        assertCap(32760, 0, 1, false, 32768);
+        assertCap(32700, 0, 1, false, 32768);
+        assertCap(32761, 0, 1, false, 32768);
     }
 
     private static void assertCap(int newLen, int oldCap, long elemSize,
