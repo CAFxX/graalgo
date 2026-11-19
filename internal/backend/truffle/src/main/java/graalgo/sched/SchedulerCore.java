@@ -200,6 +200,7 @@ public final class SchedulerCore {
         // P2-D6: effective cap = min(GOMAXPROCS, carrier parallelism).
         this.cap = Math.min(requestedCap, carrierParallelism);
         this.quantumNanos = quantumNanos;
+        startPollTicker(quantumNanos);
         // P2-M7 (GG-0057): force-initialize the JFR event classes here on
         // the startup thread. Their <clinit> calls FlightRecorder.register,
         // which parks while pinned; doing it lazily on a goroutine carrier
@@ -833,6 +834,68 @@ public final class SchedulerCore {
     }
 
     /**
+     * The poll epoch (WP-POLLCOST): the only shared word {@code Safepoint.poll}
+     * reads on its fast path. A poll takes the full quantum check
+     * ({@link #pollCurrentThreadStatic}) only when the epoch differs from the one its thread saw
+     * at its last full poll, so the fast path is one load and one compare — no store, no
+     * per-poll countdown. The epoch moves (a) every {@link #pollTickNanos} on the
+     * {@code graalgo-poll-ticker} daemon thread, so a running goroutine checks its quantum
+     * deadline at its first poll after each tick: quantum expiry is noticed at most one tick
+     * late (the tick is at most a quarter of the smallest quantum, GG-SCHED-0001); and (b) in
+     * {@link #markExiting}, together with {@link #exitEpoch}, so a pending exit still freezes a
+     * running goroutine at its very next poll. Volatile so that a compiled loop re-reads it on
+     * every back-edge (a plain read could be hoisted out of a loop whose full-poll branch was
+     * never taken) and so a tick is seen promptly; on x86 the read is a plain load.
+     */
+    private static volatile int pollEpoch;
+
+    /** The current poll epoch (see the field). */
+    public static int pollEpoch() {
+        return pollEpoch;
+    }
+
+    /** The upper bound of the poll tick: 1 ms. */
+    static final long MAX_POLL_TICK_NANOS = 1_000_000L;
+    /** The lower bound of the poll tick: 50 µs. */
+    static final long MIN_POLL_TICK_NANOS = 50_000L;
+    /** The tick period: a quarter of the smallest quantum seen, clamped (guarded by the class). */
+    private static long pollTickNanos = MAX_POLL_TICK_NANOS;
+    private static Thread pollTicker;
+
+    /** The current tick period, nanoseconds. */
+    public static synchronized long pollTickNanos() {
+        return pollTickNanos;
+    }
+
+    /**
+     * Starts the poll ticker on first use and shortens its period to a quarter of
+     * {@code quantumNanos} (clamped to [{@link #MIN_POLL_TICK_NANOS}, {@link
+     * #MAX_POLL_TICK_NANOS}]) when that is shorter. The ticker is a daemon platform thread
+     * that lives as long as the JVM: one wake-up per tick (≈1,000/s at the default quantum)
+     * whether or not goroutines run, which is the price of a store-free poll.
+     */
+    private static synchronized void startPollTicker(long quantumNanos) {
+        long tick = Math.max(MIN_POLL_TICK_NANOS, Math.min(MAX_POLL_TICK_NANOS, quantumNanos / 4));
+        if (tick < pollTickNanos) {
+            pollTickNanos = tick;
+        }
+        if (pollTicker != null) {
+            return;
+        }
+        pollTicker = Thread.ofPlatform().daemon(true).name("graalgo-poll-ticker").unstarted(() -> {
+            while (true) {
+                java.util.concurrent.locks.LockSupport.parkNanos(pollTickNanos());
+                bumpPollEpoch();
+            }
+        });
+        pollTicker.start();
+    }
+
+    private static synchronized void bumpPollEpoch() {
+        pollEpoch++;
+    }
+
+    /**
      * Sets {@link #exiting}, then bumps the fast-path {@link #exitEpoch} —
      * once per scheduler: later calls (teardown of an exited scheduler)
      * leave the epoch, and so every other thread's fast path, alone.
@@ -845,6 +908,7 @@ public final class SchedulerCore {
             if (!exiting) {
                 exiting = true;
                 exitEpoch++;
+                pollEpoch++;
             }
         }
     }

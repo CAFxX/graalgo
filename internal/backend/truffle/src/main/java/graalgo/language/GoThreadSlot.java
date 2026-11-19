@@ -12,10 +12,8 @@ import graalgo.runtime.GoroutineState;
  */
 public final class GoThreadSlot {
     public GoroutineState state;
-    /** Polls left before the next full quantum check (Safepoint.poll(Node)). */
-    public int pollCountdown;
-    /** SchedulerCore.exitEpoch() at this thread's last full poll (Safepoint.poll(Node)). */
-    public int exitEpoch;
+    /** SchedulerCore.pollEpoch() at this thread's last full poll (Safepoint.poll(Node)). */
+    public int pollEpoch = -1;
     /** The goroutine state of the bundle node package (graalgo.go), created on first use. */
     public graalgo.go.runtime.G g;
 }
