@@ -43,9 +43,11 @@ public final class Ifaces {
     @GenerateInline(false)
     public abstract static class Implements extends GoNode {
         final GoType iface;
+        final int ifaceId;
 
         Implements(GoType iface) {
             this.iface = iface;
+            this.ifaceId = iface.ifaceId();
         }
 
         public abstract boolean execute(GoType dyn);
@@ -57,7 +59,7 @@ public final class Ifaces {
 
         @Specialization(replaces = "cached")
         boolean lookup(GoType dyn) {
-            return dyn.itab(iface) != null;
+            return dyn.itabFast(iface, ifaceId) != null;
         }
     }
 

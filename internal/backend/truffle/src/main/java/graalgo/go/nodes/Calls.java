@@ -438,10 +438,12 @@ public final class Calls {
     public abstract static class IfaceDispatch extends GoNode {
         final GoType iface;
         final int index;
+        final int ifaceId;
 
         IfaceDispatch(GoType iface, int index) {
             this.iface = iface;
             this.index = index;
+            this.ifaceId = iface.ifaceId();
         }
 
         public abstract Object execute(Iface recv, Object[] args);
@@ -464,7 +466,7 @@ public final class Calls {
         }
 
         Method method(GoType dyn) {
-            Itab itab = dyn.itab(iface);
+            Itab itab = dyn.itabFast(iface, ifaceId);
             return itab.methods[index];
         }
     }
