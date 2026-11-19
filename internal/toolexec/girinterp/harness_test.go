@@ -64,7 +64,12 @@ func corpusPrograms(t *testing.T) []program {
 // m1aPrograms lists test/m1a/programs, the M1a gate's own programs
 // (test/m1a/run.sh runs them on the node package): the reference
 // interpreter must agree with gc on them too — except programs with go
-// statements (it has no scheduler) or imports (it has no intrinsics).
+// statements (it has no scheduler) or imports (it has no intrinsics), and
+// eval_order.go: the interpreter evaluates operands strictly left to right,
+// which the Go spec allows and gc's order pass does not do
+// (docs/arch/toolexec-design.md §13, finding 3). The node package follows
+// gc; the reference interpreter follows the spec's "usual order" until it
+// gets the same hoisting.
 func m1aPrograms(t *testing.T) []program {
 	files, err := filepath.Glob("../../../test/m1a/programs/*.go")
 	if err != nil || len(files) == 0 {
@@ -82,7 +87,7 @@ func m1aPrograms(t *testing.T) []program {
 			goStmt = goStmt || ok
 			return !goStmt
 		})
-		if !goStmt {
+		if !goStmt && filepath.Base(f) != "eval_order.go" {
 			out = append(out, program{name: "m1a/" + filepath.Base(f), file: f})
 		}
 	}
