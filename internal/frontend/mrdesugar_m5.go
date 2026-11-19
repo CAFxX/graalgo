@@ -707,10 +707,14 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/cipher", "NewGCM", "", "__newGCM", "", "newGCMAEADPair", []string{"aead", "err"}},
 	{"crypto/cipher", "NewGCMWithNonceSize", "", "__newGCMWithNonceSize", "", "newGCMAEADPair", []string{"aead", "err"}},
 	{"crypto/cipher", "NewGCMWithTagSize", "", "__newGCMWithTagSize", "", "newGCMAEADPair", []string{"aead", "err"}},
+	{"crypto/cipher", "NewGCMWithRandomNonce", "", "__newGCMWithRandomNonce", "", "newGCMAEADPair", []string{"aead", "err"}},
 	{"crypto/cipher", "Open", "AEAD", "__aeadOpen", "", "aeadOpenPair", []string{"out", "err"}},
 	// P3-M8b: gcmFallback.Open concrete form (method-table lookup uses the
 	// concrete receiver type name; the helper takes AEAD and asserts OpenSingle).
 	{"crypto/cipher", "Open", "gcmFallback", "__aeadOpen", "", "aeadOpenPair", []string{"out", "err"}},
+	// P3-M8 (rev-1118-14): gcmWithRandomNonce.Open concrete form, same
+	// pattern as gcmFallback above.
+	{"crypto/cipher", "Open", "gcmWithRandomNonce", "__aeadOpen", "", "aeadOpenPair", []string{"out", "err"}},
 	// crypto/cipher: StreamReader.Read, StreamWriter.Write (need io desugar).
 	{"crypto/cipher", "Read", "StreamReader", "__streamReaderRead", "", "streamReaderReadPair", []string{"n", "err"}},
 	{"crypto/cipher", "Write", "StreamWriter", "__streamWriterWrite", "", "streamWriterWritePair", []string{"n", "err"}},

@@ -13,6 +13,11 @@ const syntheticCipherGcmSource = `
 // fast-paths to avoid the cipher->aes import cycle; the generic fallback is
 // algorithm-identical under purego).
 // KAT: differential vs gc (AES-GCM test vectors).
+// NewGCMWithRandomNonce is REAL (P3-M8, rev-1118-14): entropy from the
+// graalgo.os.getrandom intrinsic (SecureRandom-backed) via //go:linkname.
+// Deliberate divergence from gc: gc requires *aes.Block; the synthetic
+// accepts any 128-bit Block (the cipher->aes import cycle forbids the
+// assert). The AES path is byte-identical in wire format.
 
 const (
 	gcmBlockSize         = 16
@@ -86,9 +91,140 @@ func newGCMPair(cipher Block, nonceSize, tagSize int) newGCMAEADPair {
 // NewGCMWithRandomNonce returns the given 128-bit, block cipher wrapped in
 // Galois Counter Mode with a random nonce.
 //
-// P3-M8: fail-fast at construction (no entropy; re-test: syscall entropy).
+// P3-M8: fail-fast stub (exact gc signature). Real callers go through the
+// mrM8 desugar to __newGCMWithRandomNonce.
 func NewGCMWithRandomNonce(cipher Block) (AEAD, error) {
-	panic("crypto/cipher: NewGCMWithRandomNonce: no entropy (re-test: syscall entropy)")
+	panic("crypto/cipher: NewGCMWithRandomNonce: multi-result call needs the mrM8 desugar (re-test: WS D)")
+}
+
+// __newGCMWithRandomNonce serves NewGCMWithRandomNonce through the mrM8
+// desugar. Deliberate divergence from gc: gc requires *aes.Block
+// ("cipher: NewGCMWithRandomNonce requires aes.Block"); the synthetic
+// cipher cannot assert that (cipher->aes import cycle), so any 128-bit
+// Block is accepted via newGCMPair. The AES path is byte-identical in
+// wire format.
+func __newGCMWithRandomNonce(cipher Block) newGCMAEADPair {
+	p := newGCMPair(cipher, gcmStandardNonceSize, gcmTagSize)
+	if p.err != nil {
+		return p
+	}
+	inner, ok := p.aead.(*gcmFallback)
+	if !ok {
+		panic("crypto/cipher: NewGCMWithRandomNonce: unexpected AEAD implementation")
+	}
+	return newGCMAEADPair{&gcmWithRandomNonce{inner: inner}, nil}
+}
+
+// gcmWithRandomNonce is gc's crypto/cipher.gcmWithRandomNonce: an AEAD
+// whose Seal prepends a fresh 12-byte random nonce and whose Open extracts
+// it. NonceSize is 0, Overhead is 28 (12 nonce + 16 tag). Entropy comes
+// from the graalgo.os.getrandom intrinsic (SecureRandom-backed) via the
+// //go:linkname below.
+type gcmWithRandomNonce struct {
+	inner *gcmFallback
+}
+
+func (g *gcmWithRandomNonce) NonceSize() int { return 0 }
+func (g *gcmWithRandomNonce) Overhead() int  { return gcmStandardNonceSize + gcmTagSize }
+
+//go:linkname graalgoOsGetrandom graalgo.os.getrandom
+func graalgoOsGetrandom(b []byte) int64
+
+// Seal encrypts and authenticates plaintext, authenticates additionalData,
+// and prepends a fresh random 12-byte nonce to the output.
+func (g *gcmWithRandomNonce) Seal(dst, nonce, plaintext, additionalData []byte) []byte {
+	if len(nonce) != 0 {
+		panic("crypto/cipher: non-empty nonce passed to GCMWithRandomNonce")
+	}
+
+	// P3-M8b: sliceForAppend is multi-result (WS D); use the
+	// single-result __-helper intra-package.
+	q := __sliceForAppend(dst, gcmStandardNonceSize+len(plaintext)+g.inner.tagSize)
+	ret, out := q.head, q.tail
+	if inexactOverlap(out, plaintext) {
+		panic("crypto/cipher: invalid buffer overlap of output and input")
+	}
+	if anyOverlap(out, additionalData) {
+		panic("crypto/cipher: invalid buffer overlap of output and additional data")
+	}
+	randomNonce := out[:gcmStandardNonceSize]
+	ciphertext := out[gcmStandardNonceSize:]
+
+	// gc's memmove for dst aliasing plaintext. The overlap stubs report
+	// no overlap, so this branch is currently unreachable; kept for
+	// structural fidelity to gc (re-test: D5 byte-addressed value model).
+	if anyOverlap(out, plaintext) {
+		copy(ciphertext, plaintext)
+		plaintext = ciphertext[:len(plaintext)]
+	}
+
+	// Fill the random nonce from the getrandom intrinsic; panic on a
+	// short fill (unreachable: SecureRandom always fills).
+	if graalgoOsGetrandom(randomNonce) != gcmStandardNonceSize {
+		panic("crypto/cipher: failed to read random nonce")
+	}
+
+	// Delegate the counter-crypt + tag to the inner fallback: dst is the
+	// zero-length ciphertext region with exactly the remaining capacity,
+	// so the inner Seal writes into the same backing array; return the
+	// outer head.
+	g.inner.Seal(ciphertext[:0], randomNonce, plaintext, additionalData)
+	return ret
+}
+
+// Open decrypts and authenticates ciphertext, authenticates additionalData.
+// The nonce is extracted from the first 12 bytes of the ciphertext.
+func (g *gcmWithRandomNonce) Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error) {
+	panic("crypto/cipher: Open: multi-result call needs the mrM8 desugar (re-test: WS D)")
+}
+
+func (g *gcmWithRandomNonce) OpenSingle(dst, nonce, ciphertext, additionalData []byte) aeadOpenPair {
+	return g.open(dst, nonce, ciphertext, additionalData)
+}
+
+// P3-M8b: open returns the pair directly (WS D: the multi-result form
+// cannot be called from OpenSingle).
+func (g *gcmWithRandomNonce) open(dst, nonce, ciphertext, additionalData []byte) aeadOpenPair {
+	if len(nonce) != 0 {
+		panic("crypto/cipher: non-empty nonce passed to GCMWithRandomNonce")
+	}
+	if len(ciphertext) < gcmStandardNonceSize+gcmTagSize {
+		return aeadOpenPair{nil, errOpen}
+	}
+
+	// P3-M8b: sliceForAppend is multi-result (WS D); use the
+	// single-result __-helper intra-package.
+	q := __sliceForAppend(dst, len(ciphertext)-gcmStandardNonceSize-gcmTagSize)
+	ret, out := q.head, q.tail
+	if inexactOverlap(out, ciphertext) {
+		panic("crypto/cipher: invalid buffer overlap of output and input")
+	}
+	if anyOverlap(out, additionalData) {
+		panic("crypto/cipher: invalid buffer overlap of output and additional data")
+	}
+
+	// Extract the nonce; the memmove mirrors gc for dst aliasing
+	// ciphertext (unreachable while the overlap stubs report no overlap;
+	// kept for structural fidelity, re-test: D5).
+	var nonceBuf [gcmStandardNonceSize]byte
+	ct := ciphertext[gcmStandardNonceSize:]
+	if anyOverlap(out, ciphertext) {
+		copy(nonceBuf[:], ciphertext)
+		copy(out[:len(ciphertext)], ct)
+		ct = out[:len(ciphertext)-gcmStandardNonceSize]
+	} else {
+		copy(nonceBuf[:], ciphertext[:gcmStandardNonceSize])
+	}
+
+	// Delegate to the inner fallback on the zero-length out region. The
+	// inner pair's head is a subslice of ret, so keep the outer ret on
+	// success (gc discards the inner return the same way); on failure
+	// the inner pair already carries errOpen and zeroes out.
+	p := g.inner.open(out[:0], nonceBuf[:], ct, additionalData)
+	if p.err != nil {
+		return aeadOpenPair{nil, p.err}
+	}
+	return aeadOpenPair{ret, nil}
 }
 
 // P3-M8b: newGCMFallback's body now lives in newGCMPair above (single-result).
