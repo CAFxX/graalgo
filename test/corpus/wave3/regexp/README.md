@@ -12,4 +12,5 @@ Compile/MatchString/FindAllString/ReplaceAll/Split, submatches and named groups;
 
 ## Retest trigger
 
-regexp/syntax gains a dedicated corpus program of its own.
+Any change to regexp or regexp/syntax matching semantics (new syntax flags,
+submatch/named-group behavior, or Simplify/Compile output).

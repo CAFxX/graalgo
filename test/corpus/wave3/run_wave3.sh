@@ -34,7 +34,8 @@
 # package dir when omitted (nested dirs like testing/quick are included).
 # Underscore-prefixed dirs (_smoke, infra) run only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
+# The repo root defaults to the repo holding this script (a worktree root
+# when run from a worktree) but can be overridden:
 #   GR=~/workspace/graalgo-m9 run_wave3.sh strings
 set -uo pipefail
 cd "$(dirname "$0")"
@@ -67,6 +68,14 @@ case "${1-all}" in
         for d in */*/; do
             case "$d" in _*/*) continue ;; esac
             # Only nested dirs that actually hold corpus programs.
+            if compgen -G "${d%/}/[0-9][0-9]_*.go" > /dev/null; then
+                dirs+=("${d%/}")
+            fi
+        done
+        for d in */*/*/; do
+            case "$d" in _*/*) continue ;; esac
+            # Only nested dirs that actually hold corpus programs
+            # (depth-3: net/http/httputil, math/rand/v2).
             if compgen -G "${d%/}/[0-9][0-9]_*.go" > /dev/null; then
                 dirs+=("${d%/}")
             fi
