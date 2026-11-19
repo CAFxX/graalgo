@@ -17,7 +17,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "502078c94d6bfe3b";
+    public static final String HASH = "45b87ffeadce82a3";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -38,12 +38,16 @@ public final class IntrinsicTable {
                 return new R_internal_bytealg_IndexString(language);
             case "internal/bytealg.MakeNoZero":
                 return new R_internal_bytealg_MakeNoZero(language);
+            case "internal/reflectlite.Swapper":
+                return new R_internal_reflectlite_Swapper(language);
             case "internal/reflectlite.chanlen":
                 return new R_internal_reflectlite_chanlen(language);
             case "internal/reflectlite.ifaceE2I":
                 return new R_internal_reflectlite_ifaceE2I(language);
             case "internal/reflectlite.maplen":
                 return new R_internal_reflectlite_maplen(language);
+            case "internal/reflectlite.pkgPath":
+                return new R_internal_reflectlite_pkgPath(language);
             case "internal/reflectlite.resolveNameOff":
                 return new R_internal_reflectlite_resolveNameOff(language);
             case "internal/reflectlite.resolveTypeOff":
@@ -396,6 +400,19 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code internal/reflectlite.Swapper}: {@code func(interface {}) func(int, int)}. */
+    static final class R_internal_reflectlite_Swapper extends Root {
+        R_internal_reflectlite_Swapper(GoLanguage language) {
+            super(language, "internal/reflectlite.Swapper");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_Swapper(this, a[1]);
+        }
+    }
+
     /** {@code internal/reflectlite.chanlen}: {@code func(unsafe.Pointer) int}. */
     static final class R_internal_reflectlite_chanlen extends Root {
         R_internal_reflectlite_chanlen(GoLanguage language) {
@@ -433,6 +450,19 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return ReflectliteIntrinsics.internal_reflectlite_maplen(this, a[1]);
+        }
+    }
+
+    /** {@code internal/reflectlite.pkgPath}: {@code func(internal/abi.Name) string}. */
+    static final class R_internal_reflectlite_pkgPath extends Root {
+        R_internal_reflectlite_pkgPath(GoLanguage language) {
+            super(language, "internal/reflectlite.pkgPath");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_pkgPath(this, a[1]);
         }
     }
 

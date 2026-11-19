@@ -6,7 +6,10 @@ with the fixing commit. Every [corpus-exclusions.yaml](../../test/differential/c
 and [srctest-exclusions.yaml](../../test/differential/srctest-exclusions.yaml)
 entry with reason `deferred-parity` names one of these ids (`backend-specific`
 is reserved for behavior gc leaves to the implementation, SPEC §5.6 — a
-graalgo bug is never backend-specific).
+graalgo bug is never backend-specific). A fixed bug's *Retired by* cell
+starts with `fixed` or `closed`; a registry entry marked `TEMPORARY (BUG-NNNN)`
+([registry.txt](../../internal/toolexec/intrinsics/registry.txt)) must cite
+a row that is not (`TestTemporaryEntries` in `internal/toolexec/intrinsics`).
 
 | Id | Bug | Evidence | Retired by |
 |---|---|---|---|
@@ -46,3 +49,4 @@ graalgo bug is never backend-specific).
 | BUG-0034 | no cgo: the launcher forces `CGO_ENABLED=0` ([ADR-0010](adr/ADR-0010-launcher-deviations.md) DV4) and nothing executes cgo's stubs, so `import "C"` programs and `//go:build cgo` files cannot run (cgo is a graalgo gap — GG-0022 requires it through Panama — not backend-specific behavior) | typeparam `issue54765.go`; stdlib-fork exclusion `runtime/cgo` | WP-CGO1/WP-CGO2 ([RECOVERY.md](../arch/RECOVERY.md)), retiring ADR-0010 DV4 |
 | BUG-0035 | `plugin` is not implemented: GG-0051 requires `plugin.Open` in mode (a) and a documented error in (b)/(c); today the package is excluded outright | stdlib-fork exclusion `plugin` | WP-PLG |
 | BUG-0036 | the v1 type switch matches a type-parameter case (`case T`, `case interface{ bar() T }`) by descriptor identity, not by the instantiated type: `T` instantiated to a named type or an interface prints the underlying type (`int` for `T`, `myint` for `barT`) | typeparam `typeswitch1.go`, `typeswitch2.go`, `typeswitch6.go`, `typeswitch7.go` | the new node package (W4), type switches over the GIR type table |
+| BUG-0037 | temporary `replace` intrinsics for `internal/reflectlite.Swapper` and `pkgPath` (registry entries marked `TEMPORARY (BUG-0037)`, `ReflectliteIntrinsics.java`): upstream's bodies need a byte/word view of storage whose leaves are wider scalars (`Swapper` views a `[]float32`, `[]uint16`, `[]uint32`, `[]complex64` or `[]struct{a, b int32}` as `[]int8..[]int64`; `pkgPath` copies an `int32` through a `[4]byte` view), which the one slice shape does not give — the checkptr fatal error before the stop-gap. reflectlite is therefore not verbatim for these two functions (toolexec-design D8 exception) | [test/m1r/programs/reflectlite_views.go](../../test/m1r/programs/reflectlite_views.go) runs them against gc | delete the two intrinsics when the word-view/typed-view solution lands (WP-REFLECTLITE-VIEW, [RECOVERY.md](../arch/RECOVERY.md)) |

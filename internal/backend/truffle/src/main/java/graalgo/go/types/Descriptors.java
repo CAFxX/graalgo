@@ -51,6 +51,9 @@ public final class Descriptors {
         /** The name of the package with import path {@code path}. */
         String packageName(String path);
 
+        /** The defined type {@code path.name} of a package of the program; null if the package is not in it. */
+        GoType namedType(String path, String name);
+
         /** A Go func value {@code func(p, q unsafe.Pointer) bool} comparing two values of type {@code t}. */
         Object equalFunc(GoType t);
 
@@ -137,6 +140,15 @@ public final class Descriptors {
             o = offs.get((int) i);
         }
         return o instanceof GoType t ? image(t) : o;
+    }
+
+    /**
+     * The defined type {@code path.name} of a package of the program, or null when the program
+     * does not link {@code internal/abi} or that package.
+     */
+    public GoType programType(String path, String name) {
+        Host h = host;
+        return h == null ? null : h.namedType(path, name);
     }
 
     /** The descriptor image of {@code t}. */
@@ -322,7 +334,8 @@ public final class Descriptors {
         return t.kind == GoType.NAMED || isBasic(t);
     }
 
-    static int abiKind(GoType t) {
+    /** The {@code internal/abi.Kind} of a type (what a descriptor's {@code Kind_} holds). */
+    public static int abiKind(GoType t) {
         int k = t.u().kind;
         return switch (k) {
             case GoType.STRING -> K_STRING;
