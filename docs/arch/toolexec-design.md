@@ -1405,6 +1405,79 @@ restrictions relative to gc are in [limitations.md](limitations.md). Gate:
   object, with no addressable image behind it yet, so `errors` still stops
   in its initializer; W8a.
 
+**Since the skeleton (M1c slice: `sync`, `internal/bytealg`, W8a, `time`;
+2026-11-19, `wt/m1c/sync-time`):** the parts of the standard library that
+need no descriptor image. Gate: `make test-m1c`
+([test/m1c/run.sh](../../test/m1c/run.sh), not per-push; the m1r
+conventions plus `//m1c:requires <probe>` — a program that needs another
+lane's piece is PENDING until the probe program of that name matches gc, so
+it turns itself on when the piece lands — `//m1c:ldflags` and `//m1c:env`),
+[mutants.sh](../../test/m1c/mutants.sh) (plants the bugs of
+[mutants.py](../../test/m1c/mutants.py), each must turn the gate red), and
+`go test ./syscalls` in `make test-toolexec`.
+
+- *`sync`.* The linker's worklist for a program using every `sync` type was
+  23 symbols (§13's "11" counted a one-`Mutex` program):
+  semaphores, notify lists, `canSpin`/`doSpin`/`nanotime`, `throw`/`fatal`,
+  `procPin`/`procUnpin`, `registerPoolCleanup`, `runtime.rand`/`randn`,
+  `internal/synctest`'s four hooks and `internal/runtime/atomic.StoreReluintptr`.
+  They are registry intrinsics
+  ([SyncIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java))
+  with gc's `runtime/sema.go` algorithms on the existing scheduler: the
+  semaphore word stays in Go memory (CAS), waiters queue per address in 251
+  striped roots with waiter counts, LIFO re-queue and the starving mutex's
+  direct handoff with a yield; notify lists keep gc's tickets in the
+  `notifyList` fields; parks go through `SchedulerCore.parkCurrent` with
+  gc's wait reasons, so deadlock reports name `sync.Mutex.Lock`,
+  `sync.RWMutex.RLock`, `sync.Cond.Wait`, `sync.WaitGroup.Wait`. `Mutex`,
+  `RWMutex`, `WaitGroup` (incl. `Go`), `Once`/`OnceFunc`/`OnceValue(s)`,
+  `Cond` and `Pool` run from upstream's source (9 programs = gc).
+  `sync.Map` links but stops in `HashTrieMap.init` (`abi.TypeOf(m).MapType()`
+  reads a descriptor image: W9a) — PENDING.
+- *`internal/bytealg`.* `purego` does not change it (files are selected by
+  GOARCH): eight body-less functions on amd64 plus `runtime.cmpstring`
+  ([BytealgIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/BytealgIntrinsics.java),
+  over `Slice.byt`/`Str{b,off,len}`; `MakeNoZero` has gc's size-class
+  capacity). Tested through `//go:linkname` pulls against gc's assembly
+  (`strings`/`bytes` import `errors`). Found: the shared size-class table
+  (`SizeToSizeClass128`) was two entries short, so growing any slice to
+  32,641–32,760 bytes threw `ArrayIndexOutOfBoundsException` on both paths
+  (fixed, `SliceGrowthTest`). Not reproduced: gc's 32-byte stack buffer for
+  the first appends to a non-escaping local slice (its `cap` is observable).
+- *W8a, the syscall executor.*
+  [graalgo/syscall/](../../internal/backend/truffle/src/main/java/graalgo/syscall/):
+  `internal/runtime/syscall/linux.Syscall6` is one Panama downcall to libc
+  `syscall(2)` with `errno` captured; pointer words are W13 handles
+  resolved to (object, offset), copied through a call-scoped arena and
+  bounded by the Go object; may-block entries release the slot
+  (`ioEnter`/`ioExit`) and run on an off-pool platform thread while the
+  goroutine's virtual thread waits unmounted (GG-SCHED-0006); the
+  `entersyscall`/`exitsyscall` bracket is therefore empty. The role table
+  [table.txt](../../internal/toolexec/syscalls/table.txt) (7 numbers:
+  `read`, `write`, `close`, `lseek`, `getpid`, `openat`, `unlinkat`)
+  generates `SyscallTable.java`; the R15 gate (`syscalls.Check` over
+  `syscalls.Scan`, the sysscan prototype moved into the product module)
+  checks every entry against every call site in the standard library —
+  roles per position, each `bytes` role tied to `uintptr(len(b))` of the
+  same slice, no undeclared pointer, the `SYS_` name, at least one site —
+  with the fork/exec glue exempted per function (`afterfork`) only while no
+  fork number is in the table; 10 planted wrong entries turn it red. On its
+  first run it flagged the fork glue's typed-value writes and `readlen`'s
+  `*byte` buffer (a `*byte` parameter is now `byteptr-param`, a buffer, not
+  a C string). Role kinds `struct`/`array` and nested pointers stay W8b.
+- *`time`.* `Sleep` parks on a `TimerHeap` sleep entry; `newTimer`/
+  `stopTimer`/`resetTimer` arm heap callbacks that start a runtime
+  goroutine to run `sendTime`/`goFunc` (Go 1.23 semantics: stop/reset drain
+  and bump a sequence under the timer's lock, an unreceived value counts as
+  pending); `runtimeNano`/`runtimeNow` read `CLOCK_MONOTONIC`/the wall
+  clock; `syscall.runtime_envs`, `Getpagesize`, `runtime.GOROOT`
+  ([TimeIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/TimeIntrinsics.java),
+  [SyscallIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyscallIntrinsics.java)).
+  The linker's worklist for the two `time` programs (timers; zones through
+  the executor with `TZ=Europe/Rome`) is now exactly
+  `internal/reflectlite.resolveNameOff`/`resolveTypeOff` — `time` imports
+  `errors` — so both are PENDING on the `descriptors` probe (W9a).
+
 ## 14. Amendments (2026-11-18)
 
 Applied from the owner's decisions of 2026-11-18 and

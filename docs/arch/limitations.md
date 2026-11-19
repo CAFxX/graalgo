@@ -39,6 +39,24 @@ of [SyncIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go
 
 - Re-test trigger: `testing/synctest` support (M2, `testing`).
 
+## `time` and the syscall executor (`-toolexec` path)
+
+- A timer channel (`Timer.C`, `Ticker.C`) holds a fired value in its
+  one-slot buffer until it is received, so `len(t.C)` can be 1; gc reports
+  0 for timer channels and sends only when a receiver arrives. `Stop` and
+  `Reset` behave as gc's (no stale value afterwards; an unreceived value
+  counts as pending).
+- `runtime.GOROOT()` is `$GOROOT` when set and otherwise `""`; gc falls
+  back to the GOROOT recorded at link time.
+- `syscall.runtime_envs` reads `/proc/self/environ`: the JVM's environment,
+  which is the program's as long as the launcher adds nothing.
+- System calls: only the numbers of
+  [table.txt](../../internal/toolexec/syscalls/table.txt) execute; any other
+  number is a fatal error naming it (W8b adds `os`'s). A may-block call
+  costs a hand-off to a platform thread.
+
+- Re-test trigger: W8b (role table for `os`), M2 (`testing/synctest`).
+
 ## `unsafe` on the flat value model (`-toolexec` path; SPEC §3.4, GG-0062)
 
 Pointers never leave their referent, and every access goes through the
