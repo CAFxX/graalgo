@@ -301,10 +301,12 @@ public final class LifecycleTest {
 
     /**
      * Tearing down a scheduler that is not the installed one (an
-     * embedder's finished context) must not set the fast-path exit flag
-     * the RUNNING program's polls read: pre-fix terminate() set the static
-     * flag unconditionally, sending every poll of the other program down
-     * the slow path for good.
+     * embedder's finished context) must not send the RUNNING program's
+     * polls down the slow path for good: pre-fix terminate() set a static
+     * exit flag unconditionally. The fast path now compares a per-thread
+     * copy of the exit epoch, so only a bump costs a full poll: an exit
+     * bumps the epoch once, while install and the teardown of an exited
+     * scheduler never do.
      */
     public void testTerminatingOtherSchedulerLeavesFastPathClear() throws Exception {
         SchedulerCore running = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
@@ -313,17 +315,82 @@ public final class LifecycleTest {
         try {
             SchedulerCore old = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
             old.start();
+            int e0 = SchedulerCore.exitEpoch();
             old.requestExit(0);
+            int e1 = SchedulerCore.exitEpoch();
+            assertTrue(e1 != e0, "an exit bumps the epoch");
             assertTrue(old.terminate(1000).isEmpty(), "old scheduler torn down");
-            assertTrue(!SchedulerCore.exitPending(), "fast-path exit flag set by another scheduler");
+            assertEquals(e1, SchedulerCore.exitEpoch(), "teardown of an exited scheduler leaves the epoch alone");
+            SchedulerCore.install(prev);
+            SchedulerCore.install(running);
+            assertEquals(e1, SchedulerCore.exitEpoch(), "install leaves the epoch alone");
             running.requestExit(0);
-            assertTrue(SchedulerCore.exitPending(), "installed scheduler's exit sets the flag");
+            assertTrue(SchedulerCore.exitEpoch() != e1, "installed scheduler's exit bumps the epoch");
         } finally {
             SchedulerCore.install(prev);
             running.terminate(1000);
         }
-        assertTrue(!SchedulerCore.exitPending() || prev != null && prev.isExiting(),
-                "install mirrors the newly installed scheduler");
+    }
+
+    /**
+     * The exit freeze holds at the very next poll for a goroutine whose
+     * scheduler is no longer installed when it polls (deterministic form
+     * of the CI flake of testExitFreezesAtNextStridedPoll: there
+     * {@link #run} reinstalls the previous scheduler as soon as the exit
+     * code is in, and a spinner descheduled until then ran 117 polls).
+     * Pre-fix the strided fast path read a flag mirroring only the
+     * INSTALLED scheduler, cleared by install(): {@code next} null is the
+     * harness's uninstall, non-null a later program; both let the 117
+     * polls left in the stride through.
+     */
+    public void testExitFreezesAfterUninstall() throws Exception {
+        exitFreezesAfterUninstall(false);
+    }
+
+    /** {@link #testExitFreezesAfterUninstall} with a later program installed. */
+    public void testExitFreezesWithLaterSchedulerInstalled() throws Exception {
+        exitFreezesAfterUninstall(true);
+    }
+
+    private static void exitFreezesAfterUninstall(boolean installNext) throws Exception {
+        SchedulerCore s = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        s.start();
+        SchedulerCore prev = SchedulerCore.install(s);
+        SchedulerCore next = null;
+        java.util.concurrent.atomic.AtomicLong after = new java.util.concurrent.atomic.AtomicLong();
+        CountDownLatch ready = new CountDownLatch(1);
+        AtomicBoolean go = new AtomicBoolean();
+        try {
+            s.spawn(() -> {
+                for (int i = 0; i < 11; i++) {
+                    graalgo.safepoint.Safepoint.poll(); // countdown mid-stride
+                }
+                ready.countDown();
+                while (!go.get()) {
+                    Thread.onSpinWait(); // no polls while waiting
+                }
+                for (;;) {
+                    graalgo.safepoint.Safepoint.poll();
+                    after.incrementAndGet();
+                }
+            });
+            assertTrue(ready.await(10, TimeUnit.SECONDS), "spinner admitted");
+            s.requestExit(0);
+            if (installNext) {
+                next = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+                next.start();
+            }
+            SchedulerCore.install(next); // the exited scheduler is gone
+            go.set(true);
+            Thread.sleep(200); // give a non-frozen spinner time to run on
+            assertEquals(0L, after.get(), "polls completed after exit was requested");
+        } finally {
+            SchedulerCore.install(prev);
+            assertTrue(s.terminate(3000).isEmpty(), "spinner unwound");
+            if (next != null) {
+                next.terminate(1000);
+            }
+        }
     }
 
     /**

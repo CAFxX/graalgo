@@ -96,8 +96,6 @@ public final class SchedulerCore {
         synchronized (SchedulerCore.class) {
             SchedulerCore prev = installed;
             installed = next;
-            // The fast-path exit flag mirrors the INSTALLED scheduler.
-            exitPending = next != null && next.exiting;
             return prev;
         }
     }
@@ -134,19 +132,26 @@ public final class SchedulerCore {
      * Static entry for the replacement {@code Safepoint.poll()}: no-op
      * when no scheduler is installed (Phase-1 parity for scheduler-less
      * runs), otherwise the quantum check for the current vthread.
+     *
+     * @return true when the calling goroutine's own scheduler is exiting
+     *         and the poll returned without freezing (pin section, fatal
+     *         reporter): the caller's next poll must be a full one again
+     *         ({@link #exitEpoch}).
      */
-    public static void pollCurrentThreadStatic() {
+    public static boolean pollCurrentThreadStatic() {
         // Common case first: a goroutine of the installed scheduler (one
         // ThreadLocal lookup, as before). Only a thread that is not one
         // pays the second lookup for its own scheduler.
         SchedulerCore sc = installed;
         if (sc != null && sc.pollIfGoroutine()) {
-            return;
+            return sc.exiting;
         }
         SchedulerCore own = GOROUTINE_SCHEDULER.get();
         if (own != null && own != sc) {
             own.pollCurrentThread();
+            return own.exiting;
         }
+        return false;
     }
 
     /**
@@ -801,31 +806,45 @@ public final class SchedulerCore {
     /** Set once the process is exiting: admissions stop, safepoints freeze. */
     private volatile boolean exiting;
     /**
-     * Mirror of the INSTALLED scheduler's {@link #exiting} for the strided
-     * {@code Safepoint.poll()} fast path (one static volatile read per
-     * poll): the poll countdown skips the full quantum check for up to
-     * {@code STRIDE - 1} polls, but a pending exit must still freeze a
+     * Exit epoch for the strided {@code Safepoint.poll()} fast path (one
+     * static volatile read per poll): bumped whenever ANY scheduler begins
+     * process exit. A poll skips the full quantum check for up to
+     * {@code STRIDE - 1} polls only while the epoch equals the one its
+     * thread saw at its last full poll, so a pending exit freezes a
      * running goroutine at its very next safepoint (no extra output after
-     * exit/fatal begins). Written only under the class lock, by
-     * {@link #install} and by the installed scheduler's exit — so tearing
-     * down or exiting some other scheduler (an embedder's finished
-     * context) never sends the running program's polls down the slow
-     * path, and a newly installed scheduler starts clear. A goroutine of a
-     * non-installed scheduler still freezes, at its next full poll.
+     * exit/fatal begins) — whichever scheduler it belongs to and whether
+     * or not that scheduler is still installed. Pre-fix this was a flag
+     * mirroring only the INSTALLED scheduler's {@link #exiting}, cleared
+     * by {@link #install}: a goroutine whose scheduler exited and was then
+     * uninstalled (a test harness, an embedder's finished context) ran up
+     * to {@code STRIDE - 1} more polls (LifecycleTest
+     * testExitFreezesAfterUninstall). Another scheduler's exit costs a
+     * running program's threads one full poll each, never the slow path
+     * for good; a thread whose own scheduler is exiting but whose poll
+     * returned (pin section, fatal reporter) re-polls in full every time
+     * ({@link #pollCurrentThreadStatic}'s result). Written under the class
+     * lock, so concurrent exits never lose a bump.
      */
-    private static volatile boolean exitPending;
+    private static volatile int exitEpoch;
 
-    /** True once the installed scheduler began process exit. */
-    public static boolean exitPending() {
-        return exitPending;
+    /** The current exit epoch (see the field). */
+    public static int exitEpoch() {
+        return exitEpoch;
     }
 
-    /** Sets {@link #exiting}, mirroring it to the fast-path flag if installed. */
+    /**
+     * Sets {@link #exiting}, then bumps the fast-path {@link #exitEpoch} —
+     * once per scheduler: later calls (teardown of an exited scheduler)
+     * leave the epoch, and so every other thread's fast path, alone.
+     */
     private void markExiting() {
-        exiting = true;
+        if (exiting) {
+            return;
+        }
         synchronized (SchedulerCore.class) {
-            if (installed == this) {
-                exitPending = true;
+            if (!exiting) {
+                exiting = true;
+                exitEpoch++;
             }
         }
     }
