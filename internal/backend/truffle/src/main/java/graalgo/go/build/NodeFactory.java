@@ -55,9 +55,17 @@ import java.util.function.Supplier;
  * argument, an interface, a channel, a map key) the factory inserts a copy unless the
  * expression is known to yield a fresh object ({@link #fresh}).
  *
- * <p>Evaluation order: an assignment whose operands have side effects evaluates the operands
- * of its targets into temporaries first, then the right-hand sides, then stores (Go spec,
- * "Order of evaluation"); pure assignments skip the temporaries.
+ * <p>Evaluation order is gc's where the Go spec leaves it open (cmd/compile's order pass,
+ * walk/order.go): within a statement the operations gc copies to a temporary — calls,
+ * receives, {@code append}, {@code copy}, {@code len}/{@code cap}, slice expressions,
+ * conversions of a string to a slice, type assertions to a non-pointer type, and a
+ * {@code &&}/{@code ||} whose right operand contains one — are evaluated first, in lexical
+ * order ({@link #hoist}); every other operand (a variable, field, element or pointer load,
+ * arithmetic, {@code string(b)}, a map index) is read afterwards, when the statement itself
+ * executes. So {@code a, b := x, f()} and {@code println(x, f())} see the {@code x} that
+ * {@code f} left. A statement without a side-effecting operation needs none of this and is
+ * built as written. An assignment evaluates the operands of its targets into temporaries, then
+ * the right-hand sides, then stores (Go spec, "Order of evaluation").
  */
 public final class NodeFactory {
     /** Thrown for a construct this lane does not build yet; surfaces as an internal error. */
@@ -106,6 +114,17 @@ public final class NodeFactory {
     private final int[] slots;
     private final GoType[] ltypes;
     private final boolean[] boxed;
+    /**
+     * The operations of the statement being built that gc evaluates ahead of it, as writes of
+     * temporaries in lexical order; null while no ordering is needed (the statement has no
+     * side-effecting operation, or is a compound statement, whose expressions are ordered in
+     * place by {@link #inPlace}).
+     */
+    private List<Stmt> hoist;
+    /** Side-effecting operations of the statement that start lexically after the build position. */
+    private int impureAhead;
+    /** The expression that may stay in place although gc would copy it: nothing follows it. */
+    private Gir.Expr exempt;
     /** The frame's scratch slots for the offsets of dynamic locations; null until needed. */
     private Mem.Aux aux;
     private final ArrayDeque<Target> targets = new ArrayDeque<>();
@@ -619,6 +638,18 @@ public final class NodeFactory {
     /** An operand evaluated once: directly when no spill is requested or it is constant. */
     private Supplier<Expr> operand(Gir.Expr e, List<Stmt> pre) {
         if (pre == null || constant(e)) {
+            if (hoist != null && !pure(e)) {
+                // Its hoisted operations take their place in the statement's order now.
+                Expr[] built = {expr(e)};
+                return () -> {
+                    Expr n = built[0];
+                    if (n == null) {
+                        throw new IllegalStateException("an ordered operand is used twice");
+                    }
+                    built[0] = null;
+                    return n;
+                };
+            }
             return () -> expr(e);
         }
         GoType t = ty(e);
@@ -855,11 +886,238 @@ public final class NodeFactory {
         return asI64(expr(e));
     }
 
+    /** A condition: ordered where it stands (it may run more than once, or not at all). */
     private Bool bool(Gir.Expr e) {
-        return asBool(expr(e));
+        return asBool(inPlace(e));
+    }
+
+    // ---------------------------------------------------------------- gc's order of evaluation
+
+    private static void kids(Gir.Expr e, Consumer<Gir.Expr> f) {
+        switch (e) {
+            case Gir.Expr.Unary x -> f.accept(x.x());
+            case Gir.Expr.Binary x -> {
+                f.accept(x.x());
+                f.accept(x.y());
+            }
+            case Gir.Expr.Deref x -> f.accept(x.x());
+            case Gir.Expr.Addr x -> f.accept(x.x());
+            case Gir.Expr.Recv x -> f.accept(x.ch());
+            case Gir.Expr.Field x -> f.accept(x.x());
+            case Gir.Expr.Index x -> {
+                f.accept(x.x());
+                f.accept(x.index());
+            }
+            case Gir.Expr.Slice x -> {
+                f.accept(x.x());
+                f.accept(x.lo());
+                f.accept(x.hi());
+                f.accept(x.max());
+            }
+            case Gir.Expr.TypeAssert x -> f.accept(x.x());
+            case Gir.Expr.Convert x -> f.accept(x.x());
+            case Gir.Expr.TupleConvert x -> f.accept(x.x());
+            case Gir.Expr.Call x -> {
+                f.accept(x.fn());
+                for (Gir.Expr a : x.args()) {
+                    f.accept(a);
+                }
+            }
+            case Gir.Expr.MethodCall x -> {
+                f.accept(x.recv());
+                for (Gir.Expr a : x.args()) {
+                    f.accept(a);
+                }
+            }
+            case Gir.Expr.IfaceCall x -> {
+                f.accept(x.recv());
+                for (Gir.Expr a : x.args()) {
+                    f.accept(a);
+                }
+            }
+            case Gir.Expr.BuiltinCall x -> {
+                for (Gir.Expr a : x.args()) {
+                    f.accept(a);
+                }
+            }
+            case Gir.Expr.MethodVal x -> f.accept(x.recv());
+            case Gir.Expr.IfaceMethodVal x -> f.accept(x.recv());
+            case Gir.Expr.StructLit x -> {
+                for (Gir.FieldInit i : x.fields()) {
+                    f.accept(i.value());
+                }
+            }
+            case Gir.Expr.ArrayLit x -> {
+                for (Gir.Elem i : x.elems()) {
+                    f.accept(i.value());
+                }
+            }
+            case Gir.Expr.MapLit x -> {
+                for (Gir.MapEntry i : x.entries()) {
+                    f.accept(i.key());
+                    f.accept(i.value());
+                }
+            }
+            default -> {
+                // Leaves; a function literal's body runs when the function is called.
+            }
+        }
+    }
+
+    private static boolean shortCircuit(Gir.Expr e) {
+        return e instanceof Gir.Expr.Binary b && (b.op() == Gir.BinOp.LAND || b.op() == Gir.BinOp.LOR);
+    }
+
+    /** Is {@code e} itself an operation with a side effect another operand could observe? */
+    private static boolean impureOp(Gir.Expr e) {
+        return switch (e) {
+            case Gir.Expr.Call x -> true;
+            case Gir.Expr.MethodCall x -> true;
+            case Gir.Expr.IfaceCall x -> true;
+            case Gir.Expr.Recv x -> true;
+            case Gir.Expr.BuiltinCall x -> x.builtin() == Gir.Builtin.APPEND || x.builtin() == Gir.Builtin.COPY
+                    || x.builtin() == Gir.Builtin.RECOVER;
+            default -> false;
+        };
+    }
+
+    /**
+     * The side-effecting operations {@code e} evaluates, counted as they are ordered: a
+     * {@code &&}/{@code ||} whose right operand has one is itself one (the operand runs, or
+     * not, at that point).
+     */
+    private static int countImpure(Gir.Expr e) {
+        if (e == null) {
+            return 0;
+        }
+        if (shortCircuit(e)) {
+            Gir.Expr.Binary b = (Gir.Expr.Binary) e;
+            return countImpure(b.x()) + (countImpure(b.y()) > 0 ? 1 : 0);
+        }
+        int[] n = {impureOp(e) ? 1 : 0};
+        kids(e, k -> n[0] += countImpure(k));
+        return n[0];
+    }
+
+    private static int countImpure(Gir.Expr[] es) {
+        int n = 0;
+        for (Gir.Expr e : es) {
+            n += countImpure(e);
+        }
+        return n;
+    }
+
+    /** The side-effecting operations a simple statement evaluates; -1 for a compound statement. */
+    private static int countImpure(Gir.Stmt s) {
+        return switch (s) {
+            case Gir.Stmt.Expr x -> countImpure(x.x());
+            case Gir.Stmt.Assign x -> countImpure(x.lhs()) + countImpure(x.rhs());
+            case Gir.Stmt.Define x -> countImpure(x.lhs()) + countImpure(x.rhs());
+            case Gir.Stmt.Var x -> countImpure(x.values());
+            case Gir.Stmt.IncDec x -> countImpure(x.x());
+            case Gir.Stmt.Send x -> countImpure(x.ch()) + countImpure(x.value());
+            case Gir.Stmt.Go x -> countOperands(x.call());
+            case Gir.Stmt.Defer x -> countOperands(x.call());
+            case Gir.Stmt.Return x -> countImpure(x.results());
+            default -> -1;
+        };
+    }
+
+    /** The operands of a go/defer call: the call itself runs later. */
+    private static int countOperands(Gir.Expr call) {
+        int[] n = {0};
+        kids(call, k -> n[0] += countImpure(k));
+        return n[0];
+    }
+
+    /**
+     * Does gc's order pass copy {@code e} to a temporary where it stands (walk/order.go,
+     * expr1)? A type assertion to a pointer-shaped type and everything not listed is evaluated
+     * with the statement.
+     */
+    private boolean early(Gir.Expr e) {
+        return switch (e) {
+            case Gir.Expr.Call x -> true;
+            case Gir.Expr.MethodCall x -> true;
+            case Gir.Expr.IfaceCall x -> true;
+            case Gir.Expr.Recv x -> true;
+            case Gir.Expr.Slice x -> true;
+            case Gir.Expr.TypeAssert x -> !ty(x.target()).isPointerShaped();
+            case Gir.Expr.Convert x -> ty(x.type()).u().kind == GoType.SLICE && ty(x.x()).u().kind == GoType.STRING;
+            case Gir.Expr.BuiltinCall x -> switch (x.builtin()) {
+                case Gir.Builtin.LEN, Gir.Builtin.CAP, Gir.Builtin.COMPLEX, Gir.Builtin.COPY, Gir.Builtin.IMAG,
+                        Gir.Builtin.REAL, Gir.Builtin.MAKE, Gir.Builtin.MAX, Gir.Builtin.MIN, Gir.Builtin.NEW,
+                        Gir.Builtin.RECOVER, Gir.Builtin.APPEND -> true;
+                default -> false;
+            };
+            default -> false;
+        };
+    }
+
+    /** {@code e} at a place where nothing of the statement is evaluated before or after it. */
+    private Expr rootExpr(Gir.Expr e) {
+        exempt = e;
+        return expr(e);
+    }
+
+    /**
+     * {@code e} ordered where it stands: its hoisted operations run each time, and only when,
+     * the expression is evaluated (a condition, the right operand of {@code &&}).
+     */
+    private Expr inPlace(Gir.Expr e) {
+        int n = countImpure(e);
+        List<Stmt> savedHoist = hoist;
+        int savedAhead = impureAhead;
+        Gir.Expr savedExempt = exempt;
+        hoist = n == 0 ? null : new ArrayList<>();
+        impureAhead = n;
+        exempt = e;
+        Expr node = expr(e);
+        List<Stmt> ordered = hoist;
+        hoist = savedHoist;
+        impureAhead = savedAhead;
+        exempt = savedExempt;
+        if (ordered == null || ordered.isEmpty()) {
+            return node;
+        }
+        return typed(ty(e), new N.Seq(ordered.toArray(new Stmt[0]), node));
     }
 
     private Expr expr(Gir.Expr e) {
+        if (hoist == null) {
+            return expr0(e);
+        }
+        boolean root = e == exempt;
+        exempt = null;
+        if (shortCircuit(e) && countImpure(((Gir.Expr.Binary) e).y()) > 0) {
+            // The left operand is ordered with the statement; the right one runs, or not, here.
+            Gir.Expr.Binary b = (Gir.Expr.Binary) e;
+            Bool x = asBool(expr(b.x()));
+            impureAhead--;
+            Bool y = asBool(inPlace(b.y()));
+            Bool n = b.op() == Gir.BinOp.LAND ? new Arith.AndAnd(x, y) : new Arith.OrOr(x, y);
+            return root ? n : hoisted(ty(e), n);
+        }
+        boolean impure = impureOp(e);
+        if (impure) {
+            impureAhead--;
+        }
+        Expr n = expr0(e);
+        if (root || !early(e) || !impure && impureAhead <= 0) {
+            // In place: nothing follows it, gc reads it late, or no later side effect can tell.
+            return n;
+        }
+        return hoisted(ty(e), n);
+    }
+
+    /** Evaluates {@code n} ahead of the statement, in order; the result reads the temporary. */
+    private Expr hoisted(GoType t, Expr n) {
+        int slot = temp(t);
+        hoist.add(writeSlot(slot, t, n));
+        return readSlot(slot, t);
+    }
+
+    private Expr expr0(Gir.Expr e) {
         switch (e) {
             case Gir.Expr.Const c:
                 return constant(ty(c.type()), c.value());
@@ -1211,8 +1469,13 @@ public final class NodeFactory {
 
     private Expr addr(Gir.Expr.Addr a) {
         Gir.Expr x = a.x();
-        if (x instanceof Gir.Expr.StructLit || x instanceof Gir.Expr.ArrayLit) {
-            return expr(x);
+        if (x instanceof Gir.Expr.StructLit || x instanceof Gir.Expr.ArrayLit || x instanceof Gir.Expr.MapLit) {
+            GoType t = ty(x);
+            if (t.carrier() == GoType.C_FLAT) {
+                return expr(x); // a struct or array literal is a fresh object: its own address
+            }
+            // &[]T{...}, &map[K]V{...}: a new variable of the slice or map type holding the value.
+            return new Data.FlatLit(t, new Data.Init[] {init(t, 0, 0, 0, expr(x))});
         }
         if (x instanceof Gir.Expr.Local l) {
             int i = l.local();
@@ -1247,6 +1510,9 @@ public final class NodeFactory {
 
     private Expr slice(Gir.Expr.Slice s) {
         GoType xt = ty(s.x()).u();
+        // The operand first, then the indexes: the order their hoisted operations run in.
+        Expr x = xt.kind == GoType.STRING || xt.kind == GoType.SLICE ? expr(s.x()) : null;
+        LocMk base = x == null ? structBase(s.x(), null) : null;
         I64 lo = s.lo() == null ? null : i64(s.lo());
         I64 hi = s.hi() == null ? null : i64(s.hi());
         I64 max = s.max() == null ? null : i64(s.max());
@@ -1254,12 +1520,11 @@ public final class NodeFactory {
                 | (unsignedIndex(s.max()) ? Data.UNSIGNED_MAX : 0);
         switch (xt.kind) {
             case GoType.STRING:
-                return new Data.StrSlice(expr(s.x()), lo, hi, unsigned);
+                return new Data.StrSlice(x, lo, hi, unsigned);
             case GoType.SLICE:
-                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem, unsigned);
+                return new Data.SliceOfSlice(x, lo, hi, max, xt.elem, unsigned);
             default: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
-                LocMk base = structBase(s.x(), null);
                 return new Data.SliceOfArray(base.make(0, 0, 0), at.len, lo, hi, max, at.elem, unsigned);
             }
         }
@@ -1485,11 +1750,11 @@ public final class NodeFactory {
         GoType sig = ty(c.fn());
         GoType result = ty(c.type());
         FunctionUnit.Instance callee = staticCallee(c.fn());
-        Expr[] a = args(c.args(), sig, c.spread());
         if (callee != null) {
-            return typed(result, new Calls.Call(callee, a, wrapper));
+            return typed(result, new Calls.Call(callee, args(c.args(), sig, c.spread()), wrapper));
         }
-        return typed(result, new Calls.CallClosure(expr(c.fn()), a));
+        Expr fn = expr(c.fn());
+        return typed(result, new Calls.CallClosure(fn, args(c.args(), sig, c.spread())));
     }
 
     private static String methodKey(String name, String pkgPath) {
@@ -1520,14 +1785,16 @@ public final class NodeFactory {
         String key = methodKey(pkg.str(ic.name()), pkg.str(ic.pkg()));
         if (rt.isInterface()) {
             int index = methodIndex(rt, key);
+            Expr recv = expr(ic.recv());
             Expr[] a = args(ic.args(), rt.u().imethods[index].sig, ic.spread());
-            return typed(result, new Calls.IfaceCall(expr(ic.recv()), rt, index, a, wrapper));
+            return typed(result, new Calls.IfaceCall(recv, rt, index, a, wrapper));
         }
         // A type parameter instantiated with a concrete type: the method is known now (D6).
         Method m = methodOf(rt, key);
         GoType sig = dynamicSig(rt, key, ic.args().length);
+        Expr recv = expr(ic.recv());
         Expr[] a = sig == null ? plainArgs(ic.args()) : args(ic.args(), sig, ic.spread());
-        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, expr(ic.recv())), a), wrapper));
+        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, recv), a), wrapper));
     }
 
     /** No signature is recorded for a method reached through a type parameter. */
@@ -1927,8 +2194,9 @@ public final class NodeFactory {
                 return new Chans.Close(a0.get());
             case Gir.Builtin.DELETE: {
                 GoType kt = ty(a[0]).u().mapKey;
+                Expr m = a0.get();
                 Expr k = given != null ? given[1] : expr(a[1]);
-                return primKey(kt) ? new Data.MapDeleteI(a0.get(), raw(kt, k)) : new Data.MapDeleteG(a0.get(), k);
+                return primKey(kt) ? new Data.MapDeleteI(m, raw(kt, k)) : new Data.MapDeleteG(m, k);
             }
             case Gir.Builtin.CLEAR: {
                 GoType t = ty(a[0]).u();
@@ -1975,7 +2243,28 @@ public final class NodeFactory {
         return ss.size() == 1 ? ss.get(0) : new Ctl.Block(ss.toArray(new Stmt[0]));
     }
 
+    /** One statement, with the operations gc evaluates ahead of it ({@link #hoist}). */
     private Stmt stmt(Gir.Stmt s) {
+        List<Stmt> savedHoist = hoist;
+        int savedAhead = impureAhead;
+        Gir.Expr savedExempt = exempt;
+        int n = countImpure(s);
+        hoist = n > 0 ? new ArrayList<>() : null;
+        impureAhead = n;
+        exempt = null;
+        Stmt body = stmt0(s);
+        List<Stmt> ordered = hoist;
+        hoist = savedHoist;
+        impureAhead = savedAhead;
+        exempt = savedExempt;
+        if (ordered == null || ordered.isEmpty()) {
+            return body;
+        }
+        ordered.add(body);
+        return new Ctl.Block(ordered.toArray(new Stmt[0]));
+    }
+
+    private Stmt stmt0(Gir.Stmt s) {
         switch (s) {
             case Gir.Stmt.Expr x: {
                 if (x.x() instanceof Gir.Expr.BuiltinCall bc) {
@@ -1984,7 +2273,7 @@ public final class NodeFactory {
                         return b;
                     }
                 }
-                return new N.ExprStmt(expr(x.x()));
+                return new N.ExprStmt(rootExpr(x.x()));
             }
             case Gir.Stmt.Assign a:
                 return assign(a);
@@ -2163,9 +2452,13 @@ public final class NodeFactory {
                     || lhs[0] instanceof Gir.Expr.Blank;
             List<Stmt> pre = simple ? null : out;
             if (lhs[0] instanceof Gir.Expr.Local l && contains(fresh, l.local())) {
+                exempt = rhs[0];
                 out.add(declare(l.local(), value(rhs[0])));
             } else {
                 LV lv = lvalue(lhs[0], pre);
+                if (out.isEmpty()) {
+                    exempt = rhs[0]; // no operand of the target is read before the value
+                }
                 out.add(lv.store(storedValue(lhs[0], rhs[0])));
             }
             return seq(out);
@@ -2180,6 +2473,9 @@ public final class NodeFactory {
                 lvs.add(l instanceof Gir.Expr.Local x && contains(fresh, x.local()) ? null : lvalue(l, out));
             }
             int slot = tempObject();
+            if (out.isEmpty()) {
+                exempt = rhs[0];
+            }
             out.add(new N.WriteRef(slot, expr(rhs[0])));
             for (int i = 0; i < lhs.length; i++) {
                 GoType et = tupleElem(tuple, i);
@@ -2237,12 +2533,15 @@ public final class NodeFactory {
             }
         } else if (values.length == locals.length) {
             for (int i = 0; i < locals.length; i++) {
+                if (locals.length == 1) {
+                    exempt = values[0];
+                }
                 out.add(declare(locals[i], value(values[i])));
             }
         } else {
             GoType tuple = ty(values[0]);
             int slot = tempObject();
-            out.add(new N.WriteRef(slot, expr(values[0])));
+            out.add(new N.WriteRef(slot, rootExpr(values[0])));
             for (int i = 0; i < locals.length; i++) {
                 GoType et = tupleElem(tuple, i);
                 Expr get = new Calls.TupleGet(new N.ReadRef(slot), i);
@@ -2257,11 +2556,11 @@ public final class NodeFactory {
         Gir.Expr[] xs = r.results();
         List<Stmt> out = new ArrayList<>();
         if (xs.length == 1 && rs.length == 1) {
-            out.add(assignLocal(rs[0], expr(xs[0])));
+            out.add(assignLocal(rs[0], rootExpr(xs[0])));
         } else if (xs.length == 1 && rs.length > 1) {
             GoType tuple = ty(xs[0]);
             int slot = tempObject();
-            out.add(new N.WriteRef(slot, expr(xs[0])));
+            out.add(new N.WriteRef(slot, rootExpr(xs[0])));
             for (int i = 0; i < rs.length; i++) {
                 out.add(assignLocal(rs[i], typed(tupleElem(tuple, i), new Calls.TupleGet(new N.ReadRef(slot), i))));
             }
@@ -2285,10 +2584,12 @@ public final class NodeFactory {
         switch (call) {
             case Gir.Expr.Call c: {
                 GoType sig = ty(c.fn());
-                Expr[] a = args(c.args(), sig, c.spread());
                 FunctionUnit.Instance callee = staticCallee(c.fn());
-                return callee != null ? new Calls.PrepStatic(targetSlot, callee, a)
-                        : new Calls.PrepClosure(targetSlot, expr(c.fn()), a);
+                if (callee != null) {
+                    return new Calls.PrepStatic(targetSlot, callee, args(c.args(), sig, c.spread()));
+                }
+                Expr fn = expr(c.fn());
+                return new Calls.PrepClosure(targetSlot, fn, args(c.args(), sig, c.spread()));
             }
             case Gir.Expr.MethodCall mc:
                 return new Calls.PrepStatic(targetSlot, methodInstance(mc.method(), mc.recvType(), mc.targs()),
@@ -2351,7 +2652,7 @@ public final class NodeFactory {
         int tagSlot = -1;
         if (sw.tag() != null) {
             tagSlot = temp(tagT);
-            out.add(writeSlot(tagSlot, tagT, expr(sw.tag())));
+            out.add(writeSlot(tagSlot, tagT, inPlace(sw.tag())));
         }
         Gir.CaseClause[] cs = sw.clauses();
         Stmt chain = null;
@@ -2371,7 +2672,7 @@ public final class NodeFactory {
                     one = bool(e);
                 } else {
                     int slot = tagSlot;
-                    one = equal(tagT, ty(e), sw.tag(), e, () -> readSlot(slot, tagT), () -> expr(e));
+                    one = equal(tagT, ty(e), sw.tag(), e, () -> readSlot(slot, tagT), () -> inPlace(e));
                 }
                 cond = cond == null ? one : new Arith.OrOr(cond, one);
             }
@@ -2397,7 +2698,7 @@ public final class NodeFactory {
             throw new Unsupported("type switch on a type-parameter operand");
         }
         int slot = tempObject();
-        out.add(new N.WriteRef(slot, expr(ts.x())));
+        out.add(new N.WriteRef(slot, inPlace(ts.x())));
         Gir.TypeClause[] cs = ts.clauses();
         Stmt chain = null;
         for (Gir.TypeClause c : cs) {
@@ -2602,7 +2903,7 @@ public final class NodeFactory {
         rangeFuncDepth--;
         RootCallTarget yield = new graalgo.go.nodes.RangeFunc.YieldRoot(lang, name + "-range" + (++rangeCount),
                 seq(body), keySlot, valueSlot, target.brk, target.cont).getCallTarget();
-        return new graalgo.go.nodes.RangeFunc(expr(r.x()), yield, defers[0] ? rangeDeferSlot : -1);
+        return new graalgo.go.nodes.RangeFunc(inPlace(r.x()), yield, defers[0] ? rangeDeferSlot : -1);
     }
 
     /** A yield argument from its slot: a struct/array value is copied into the variable. */
@@ -2624,7 +2925,7 @@ public final class NodeFactory {
             case GoType.SLICE: {
                 int s = tempObject();
                 int len = tempLong();
-                out.add(new N.WriteRef(s, expr(r.x())));
+                out.add(new N.WriteRef(s, inPlace(r.x())));
                 out.add(new N.WriteI64(len, new Data.SliceLen(new N.ReadRef(s))));
                 out.add(new N.WriteI64(idx, new N.ConstI64(0)));
                 if (used(r.key())) {
@@ -2644,7 +2945,7 @@ public final class NodeFactory {
                 boolean needValue = used(r.value());
                 if (needValue || !pure(r.x())) {
                     // Ranging over an array value iterates over a copy of it.
-                    out.add(new N.WriteRef(a, xt.kind == GoType.ARRAY ? new Mem.Copy(expr(r.x())) : expr(r.x())));
+                    out.add(new N.WriteRef(a, xt.kind == GoType.ARRAY ? new Mem.Copy(inPlace(r.x())) : inPlace(r.x())));
                 }
                 out.add(new N.WriteI64(idx, new N.ConstI64(0)));
                 if (used(r.key())) {
@@ -2664,7 +2965,7 @@ public final class NodeFactory {
                 int s = tempObject();
                 int d = tempLong();
                 int next = tempLong();
-                out.add(new N.WriteRef(s, expr(r.x())));
+                out.add(new N.WriteRef(s, inPlace(r.x())));
                 out.add(new N.WriteI64(idx, new N.ConstI64(0)));
                 pre.add(new N.WriteI64(d, new Data.StrDecode(new N.ReadRef(s), readIdx.get())));
                 pre.add(new N.WriteI64(next, ArithFactory.AddI64NodeGen.create(readIdx.get(),
@@ -2683,7 +2984,7 @@ public final class NodeFactory {
             case GoType.MAP: {
                 int m = tempObject();
                 int it = tempObject();
-                out.add(new N.WriteRef(m, expr(r.x())));
+                out.add(new N.WriteRef(m, inPlace(r.x())));
                 out.add(new N.WriteRef(it, new Data.MapIter(new N.ReadRef(m))));
                 Bool cond = ArithFactory.GeI64NodeGen.create(new N.TeeI64(idx, new Data.MapNext(new N.ReadRef(it))),
                         new N.ConstI64(0));
@@ -2712,7 +3013,7 @@ public final class NodeFactory {
             case GoType.CHAN: {
                 int c = tempObject();
                 int v = tempObject();
-                out.add(new N.WriteRef(c, expr(r.x())));
+                out.add(new N.WriteRef(c, inPlace(r.x())));
                 if (used(r.key())) {
                     Expr e = new N.ReadRef(v);
                     pre.add(rangeVar(r, r.key(),
@@ -2728,7 +3029,7 @@ public final class NodeFactory {
                     throw new Unsupported("range over " + xt.key);
                 }
                 int n = tempLong();
-                out.add(new N.WriteI64(n, i64(r.x())));
+                out.add(new N.WriteI64(n, asI64(inPlace(r.x()))));
                 out.add(new N.WriteI64(idx, new N.ConstI64(0)));
                 if (used(r.key())) {
                     pre.add(rangeVar(r, r.key(), readIdx.get()));
