@@ -17,7 +17,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "502078c94d6bfe3b";
+    public static final String HASH = "885d4c1747e38c90";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -104,6 +104,28 @@ public final class IntrinsicTable {
                 return new R_math_archMin(language);
             case "math.archTrunc":
                 return new R_math_archTrunc(language);
+            case "math.sqrt":
+                return new R_math_sqrt(language);
+            case "math/bits.Len32":
+                return new R_math_bits_Len32(language);
+            case "math/bits.Len64":
+                return new R_math_bits_Len64(language);
+            case "math/bits.OnesCount32":
+                return new R_math_bits_OnesCount32(language);
+            case "math/bits.OnesCount64":
+                return new R_math_bits_OnesCount64(language);
+            case "math/bits.ReverseBytes32":
+                return new R_math_bits_ReverseBytes32(language);
+            case "math/bits.ReverseBytes64":
+                return new R_math_bits_ReverseBytes64(language);
+            case "math/bits.RotateLeft32":
+                return new R_math_bits_RotateLeft32(language);
+            case "math/bits.RotateLeft64":
+                return new R_math_bits_RotateLeft64(language);
+            case "math/bits.TrailingZeros32":
+                return new R_math_bits_TrailingZeros32(language);
+            case "math/bits.TrailingZeros64":
+                return new R_math_bits_TrailingZeros64(language);
             case "runtime.(*Func).Name":
                 return new R_runtime___Func__Name(language);
             case "runtime.Caller":
@@ -828,6 +850,149 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return MathIntrinsics.math_archTrunc(this, (double) a[1]);
+        }
+    }
+
+    /** {@code math.sqrt}: {@code func(float64) float64}. */
+    static final class R_math_sqrt extends Root {
+        R_math_sqrt(GoLanguage language) {
+            super(language, "math.sqrt");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return MathIntrinsics.math_sqrt(this, (double) a[1]);
+        }
+    }
+
+    /** {@code math/bits.Len32}: {@code func(uint32) int}. */
+    static final class R_math_bits_Len32 extends Root {
+        R_math_bits_Len32(GoLanguage language) {
+            super(language, "math/bits.Len32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_Len32(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.Len64}: {@code func(uint64) int}. */
+    static final class R_math_bits_Len64 extends Root {
+        R_math_bits_Len64(GoLanguage language) {
+            super(language, "math/bits.Len64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_Len64(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.OnesCount32}: {@code func(uint32) int}. */
+    static final class R_math_bits_OnesCount32 extends Root {
+        R_math_bits_OnesCount32(GoLanguage language) {
+            super(language, "math/bits.OnesCount32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_OnesCount32(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.OnesCount64}: {@code func(uint64) int}. */
+    static final class R_math_bits_OnesCount64 extends Root {
+        R_math_bits_OnesCount64(GoLanguage language) {
+            super(language, "math/bits.OnesCount64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_OnesCount64(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.ReverseBytes32}: {@code func(uint32) uint32}. */
+    static final class R_math_bits_ReverseBytes32 extends Root {
+        R_math_bits_ReverseBytes32(GoLanguage language) {
+            super(language, "math/bits.ReverseBytes32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_ReverseBytes32(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.ReverseBytes64}: {@code func(uint64) uint64}. */
+    static final class R_math_bits_ReverseBytes64 extends Root {
+        R_math_bits_ReverseBytes64(GoLanguage language) {
+            super(language, "math/bits.ReverseBytes64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_ReverseBytes64(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.RotateLeft32}: {@code func(uint32, int) uint32}. */
+    static final class R_math_bits_RotateLeft32 extends Root {
+        R_math_bits_RotateLeft32(GoLanguage language) {
+            super(language, "math/bits.RotateLeft32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_RotateLeft32(this, (long) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code math/bits.RotateLeft64}: {@code func(uint64, int) uint64}. */
+    static final class R_math_bits_RotateLeft64 extends Root {
+        R_math_bits_RotateLeft64(GoLanguage language) {
+            super(language, "math/bits.RotateLeft64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_RotateLeft64(this, (long) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code math/bits.TrailingZeros32}: {@code func(uint32) int}. */
+    static final class R_math_bits_TrailingZeros32 extends Root {
+        R_math_bits_TrailingZeros32(GoLanguage language) {
+            super(language, "math/bits.TrailingZeros32");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_TrailingZeros32(this, (long) a[1]);
+        }
+    }
+
+    /** {@code math/bits.TrailingZeros64}: {@code func(uint64) int}. */
+    static final class R_math_bits_TrailingZeros64 extends Root {
+        R_math_bits_TrailingZeros64(GoLanguage language) {
+            super(language, "math/bits.TrailingZeros64");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BitsIntrinsics.math_bits_TrailingZeros64(this, (long) a[1]);
         }
     }
 

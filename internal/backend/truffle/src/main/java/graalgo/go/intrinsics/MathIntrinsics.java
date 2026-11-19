@@ -180,4 +180,9 @@ final class MathIntrinsics {
     static double math_Float32frombits(Node node, long b) {
         return Float.intBitsToFloat((int) b);
     }
+
+    // math.sqrt: gc emits SQRTSD; Math.sqrt is the same correctly rounded IEEE square root.
+    static double math_sqrt(Node node, double x) {
+        return Math.sqrt(x);
+    }
 }
