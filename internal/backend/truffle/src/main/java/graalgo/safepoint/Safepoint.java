@@ -29,9 +29,10 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
  * expired parks at most {@code STRIDE - 1} polls later than before —
  * a few microseconds of extra preemption latency in compiled code, well
  * inside the GG-SCHED-0001 quantum (exact preemption timing is not an
- * observable, SPEC §7.2). Process exit is not strided: once
- * {@code SchedulerCore.exitPending()} is set every poll takes the full
- * path, so the exit freeze still happens at the next safepoint.
+ * observable, SPEC §7.2). Process exit is not strided: a poll takes
+ * the full path whenever {@code SchedulerCore.exitEpoch()} moved since the
+ * thread's last full poll, and every poll does while the thread's own
+ * scheduler is exiting, so the exit freeze happens at the next safepoint.
  */
 public final class Safepoint {
     private Safepoint() {}
@@ -47,6 +48,8 @@ public final class Safepoint {
     /** Per-thread poll countdown (one per goroutine vthread). */
     private static final class Countdown {
         int remaining;
+        /** {@code SchedulerCore.exitEpoch()} at this thread's last full poll. */
+        int exitEpoch;
     }
 
     private static final ThreadLocal<Countdown> COUNTDOWN = ThreadLocal.withInitial(Countdown::new);
@@ -77,16 +80,19 @@ public final class Safepoint {
             return;
         }
         graalgo.language.GoThreadSlot slot = lang.threadSlot();
-        if (--slot.pollCountdown > 0 && !graalgo.sched.SchedulerCore.exitPending()) {
+        int epoch = graalgo.sched.SchedulerCore.exitEpoch();
+        if (--slot.pollCountdown > 0 && slot.exitEpoch == epoch) {
             return;
         }
-        slot.pollCountdown = STRIDE;
-        pollFull();
+        // The epoch is read BEFORE the full check: an exit that begins
+        // during it bumps the epoch again, so the next poll is full too.
+        slot.exitEpoch = epoch;
+        slot.pollCountdown = pollFull() ? 1 : STRIDE;
     }
 
     @TruffleBoundary(allowInlining = false)
-    private static void pollFull() {
-        graalgo.sched.SchedulerCore.pollCurrentThreadStatic();
+    private static boolean pollFull() {
+        return graalgo.sched.SchedulerCore.pollCurrentThreadStatic();
     }
 
     @TruffleBoundary(allowInlining = false)
@@ -94,11 +100,16 @@ public final class Safepoint {
         Countdown c = COUNTDOWN.get();
         // A pending process exit bypasses the stride: the exit/fatal
         // freeze must happen at the next safepoint (SchedulerCore
-        // #freezeForExit), not up to STRIDE-1 polls later.
-        if (--c.remaining > 0 && !graalgo.sched.SchedulerCore.exitPending()) {
+        // #freezeForExit), not up to STRIDE-1 polls later. The epoch is
+        // read before the full check (an exit beginning during it bumps
+        // the epoch again); while the thread's own scheduler is exiting
+        // and the poll returned (pin section, fatal reporter), every poll
+        // stays full.
+        int epoch = graalgo.sched.SchedulerCore.exitEpoch();
+        if (--c.remaining > 0 && c.exitEpoch == epoch) {
             return;
         }
-        c.remaining = STRIDE;
-        graalgo.sched.SchedulerCore.pollCurrentThreadStatic();
+        c.exitEpoch = epoch;
+        c.remaining = graalgo.sched.SchedulerCore.pollCurrentThreadStatic() ? 1 : STRIDE;
     }
 }
