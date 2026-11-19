@@ -764,6 +764,23 @@ func (e *emitter) methodSet(t types.Type) []ir.MsetEntry {
 		if p, ok := recv.(*types.Pointer); ok {
 			recv = p.Elem()
 		}
+		if n, ok := types.Unalias(recv).(*types.Named); ok && m.Signature().RecvTypeParams().Len() > 0 {
+			// A generic type's own method: go/types writes its receiver
+			// with the method's receiver type parameters (func (p Pair[K,
+			// V]) declares its own K and V). The entry belongs to the
+			// type's definition, whose environment binds the type's
+			// parameters: name the receiver with those.
+			o := n.Origin()
+			targs := make([]types.Type, o.TypeParams().Len())
+			for k := range targs {
+				targs[k] = o.TypeParams().At(k)
+			}
+			inst, err := types.Instantiate(nil, o, targs, false)
+			if err != nil {
+				panic(fmt.Sprintf("emit: receiver of %s: %v", m.FullName(), err))
+			}
+			recv = inst
+		}
 		ent.RecvType = e.typeID(recv)
 		if !types.IsInterface(recv) {
 			ent.Method = int32(e.methodSym(m))
