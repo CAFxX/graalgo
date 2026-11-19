@@ -3,7 +3,7 @@
 **Status:** spike report, 2026-11-18, lane `wt/recovery/abi-spike`. The
 owner accepted its proposals the same day: §3 is applied to
 [toolexec-design.md](toolexec-design.md) (its §14), and §4's decisions are
-SPEC amendments (GG-0061–GG-0064, recorded in
+SPEC amendments (`GG-0061`, since re-issued as GG-0072, and GG-0062–GG-0064, recorded in
 [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md)). Requirement IDs
 quoted below in code font are the ones in force when the report was written.
 It answers the two prototype questions of
@@ -583,7 +583,7 @@ test/spikes/abi/sysexec/run.sh /some/scratch/dir [bench]            # §2.4, ~30
    poller over raw fds in the runtime (§2.5 option 1, recommended), or fork
    the lower half of `net`/`os`/`internal/poll` onto NIO channels. SPEC
    wording changes either way.
-2. **SPEC §3.4 wording (decided: GG-0061, GG-0062):** make "(object identity + field offset)" precise as
+2. **SPEC §3.4 wording (decided: `GG-0061`, re-issued as GG-0072; GG-0062):** make "(object identity + field offset)" precise as
    *gc byte offset*, and state that `uintptr` values are range-allocated
    handles on which in-object arithmetic is defined (today: "arithmetic
    escaping the object traps" — unchanged, but in-object arithmetic becomes

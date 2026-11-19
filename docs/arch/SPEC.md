@@ -314,7 +314,7 @@ spike 6's re-test triggers (current-LLVM Sulong support, a maintained
 full-language Go→LLVM frontend, or precise-GC/threading/signal primitives in
 Sulong). `[DECIDED]`.
 
-### 3.4 Value model: Java objects throughout (GG-0061, GG-0062)
+### 3.4 Value model: Java objects throughout (GG-0072, GG-0062)
 
 Go values live as Java objects `[DECIDED]`: descriptor-based structs (per-type
 descriptor + flat `long[]` for scalars + `Object[]` for references + a typed
@@ -324,7 +324,7 @@ closed-world images). Structs and arrays are **flat**: nested struct and array
 fields are inlined into the enclosing value's `long[]`/`Object[]`, and a per-type
 **leaf table** derived from the gc layout maps each gc byte offset to its slot;
 one Java object per nested struct is not carried into the toolexec backend
-(GG-0061) `[DECIDED]` 2026-11-18. **One-byte leaves** (`uint8`, `int8`, `bool`, as
+(GG-0072 — the re-issue of `GG-0061` for the byte region and the slice shape below; the requirement text is a draft `[PROPOSAL]` until the owner locks it) `[DECIDED]` 2026-11-18. **One-byte leaves** (`uint8`, `int8`, `bool`, as
 fields and as array elements alike) live in a typed `byte[]` region of each flat
 object, indexed through the same leaf table; every other scalar leaf stays a
 `long`/`double` slot (`[DECIDED]` 2026-11-18, [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)
@@ -1368,7 +1368,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | `GG-0012` | Verbatim frontend vendoring — superseded by `GG-0066`, then GG-0069 | — |
 | GG-0013 | No language pinning | §3.2 |
 | GG-0014 | One Truffle AST | §3.3 |
-| `GG-0015` | Java-object value model — superseded by GG-0061 | — |
+| `GG-0015` | Java-object value model — superseded by `GG-0061`, then GG-0072 | — |
 | `GG-0016` | unsafe.Pointer v1 semantics — superseded by GG-0062 | — |
 | GG-0017 | Goroutines on virtual threads with user-space scheduler | §3.5 |
 | `GG-0018` | Netpoller deletion — superseded by GG-0063 | — |
@@ -1414,7 +1414,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0058 | MM-0017 gate on FFI | §3.7 |
 | GG-0059 | Interface freeze | §4.1, §4.2 |
 | GG-0060 | Mode selection | §2.5 |
-| GG-0061 | Flat Java-object value model | §3.4 |
+| `GG-0061` | Flat Java-object value model — superseded by GG-0072 (ADR-0015: byte region, one slice shape) | — |
 | GG-0062 | unsafe.Pointer and uintptr semantics | §3.4 (§7.3 closure) |
 | GG-0063 | Runtime epoll poller over raw fds | §3.5 (§7.4 closure) |
 | GG-0064 | Process creation via a spawn helper | §3.8 |
@@ -1425,6 +1425,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0069 | Frontend: go/parser + go/types of the tracked release, unmodified (locked 2026-11-18) | §3.2 |
 | GG-0070 | Panic/defer/recover/Goexit semantics and caller frames exactly as gc (locked 2026-11-18) | §3.5; [traceback-normalization.md](traceback-normalization.md) |
 | GG-0071 | Defer mechanism: open-coded up to a fixed limit, per-goroutine chain otherwise (locked 2026-11-18) | §3.5 |
+| GG-0072 | Flat Java-object value model with a byte region (draft, awaiting owner sign-off; supersedes `GG-0061`) | §3.4 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |

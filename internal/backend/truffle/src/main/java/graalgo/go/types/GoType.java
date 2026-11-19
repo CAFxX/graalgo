@@ -15,7 +15,7 @@ import java.util.function.Supplier;
  * {@link #NAMED} and resolves its underlying type and method sets lazily from the declaring
  * package's TYPEDEFS; every other descriptor is structural.
  *
- * <p>The descriptor also owns the flat layout of its values (GG-0061): how many scalar and
+ * <p>The descriptor also owns the flat layout of its values (GG-0072): how many scalar and
  * reference slots a value occupies and at which slot offsets each struct field starts.
  */
 public final class GoType {

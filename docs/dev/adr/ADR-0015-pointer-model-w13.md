@@ -3,8 +3,10 @@
 **Date:** 2026-11-18
 **Status:** **accepted by the owner 2026-11-18** (all four decisions). It
 decides how toolexec work package W13 is built in the node package and
-amends [SPEC.md](../../arch/SPEC.md) §3.4's wording (decision 3). No
-requirement changes: GG-0061 and GG-0062 stay as they are.
+amends [SPEC.md](../../arch/SPEC.md) §3.4's wording (decision 3). Requirements:
+GG-0062 stays as it is; `GG-0061`'s locked text became
+false under decisions 1–3 and is superseded by the draft GG-0072 (owner
+sign-off pending, 2026-11-19).
 **Scope:** [toolexec-design.md](../../arch/toolexec-design.md) §3.4, §5.6,
 §9 (W13, W9a, W8a); [truffle-design.md](../../arch/truffle-design.md) §15
 (rows "Pointers", "Slices", "Complex");

@@ -14,7 +14,7 @@ import java.lang.invoke.VarHandle;
  * {@code atomic.Pointer[T]}, ...) are upstream's Go code on top of them.
  *
  * <p>The addressed word is a slot of the referent's scalar or reference array (SPEC §3.4,
- * GG-0061/GG-0062): a pointer is the {@link Flat} itself or a {@link Ptr} with slot offsets, and
+ * GG-0072/GG-0062): a pointer is the {@link Flat} itself or a {@link Ptr} with slot offsets, and
  * the operation is a {@link VarHandle} access to that array element. Integers are stored in
  * canonical extended form (truffle-design §15), so the 32-bit additions re-normalize in a
  * compare-and-set loop; every other operation preserves the form.

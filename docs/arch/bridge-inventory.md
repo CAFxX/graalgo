@@ -191,7 +191,7 @@ real Go source run instead.
 | Package | LOC | Stands in for | Root-cause retirement |
 |---|---:|---|---|
 | `graalgo.p3reflect` | 8449 | `reflect`, `internal/abi` | verbatim `reflect` over gc-layout descriptor views ([abi-spike.md](abi-spike.md) P1, toolexec M2) |
-| `graalgo.p3unsafe` | 2914 | `unsafe` pointer views | flat value model with `(object, byte offset)` pointers (SPEC §3.4, GG-0061/0062) |
+| `graalgo.p3unsafe` | 2914 | `unsafe` pointer views | flat value model with `(object, byte offset)` pointers (SPEC §3.4, GG-0072/0062) |
 | `graalgo.p3net` (incl. `GoNetpoll`) | 2120 | `net`, `net/http`, v1 netpoller | real `net` over the syscall executor + runtime epoll poller (GG-0063, toolexec W8/M4) |
 | `graalgo.p3sync` | 2024 | `sync`, `sync/atomic` | real `sync` over the runtime facade's semaphore/atomic intrinsics (toolexec runtime facade) |
 | `graalgo.p3os` | 1806 | `os`, `syscall` | real `os`/`syscall` over the Panama syscall table ([abi-spike.md](abi-spike.md) P2, ADR-0009) |

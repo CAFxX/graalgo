@@ -148,7 +148,7 @@ public final class GoConvert {
      * Go {@code unsafe.Pointer → uintptr} (PKG-007): yields the handle
      * itself as an integer <em>identity token</em>.
      *
-     * <p>D5 has no observable address (v1; GG-0061), but it does have an
+     * <p>D5 has no observable address (v1; GG-0072), but it does have an
      * identity: {@link UnsafeHandles} interning (P3-M10) assigns the same
      * handle to the same storage location, never reuses a handle value,
      * and reserves 0 for the nil pointer — and {@code ==} on

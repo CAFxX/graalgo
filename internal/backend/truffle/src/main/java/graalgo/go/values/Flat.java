@@ -4,7 +4,7 @@ import graalgo.go.types.GoType;
 import java.util.Arrays;
 
 /**
- * A flat Go memory object (SPEC §3.4, GG-0061): scalar leaves in {@code prims} (integers
+ * A flat Go memory object (SPEC §3.4, GG-0072): scalar leaves in {@code prims} (integers
  * sign/zero-extended, floats as raw {@code double} bits, booleans 0/1), reference leaves in
  * {@code refs}. Nested structs and arrays are inlined; the owning {@link GoType}'s layout maps a
  * field or element to its (prim, ref) slot offsets.

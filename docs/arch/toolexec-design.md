@@ -433,7 +433,7 @@ programs gc rejects are rejected here too.
   `Name`, …) comes from the same table applied to `internal/abi`; **the
   backend hard-codes no descriptor offset**, so a Go release that moves a
   field needs no backend change.
-- **Pointer model** (SPEC §3.4, GG-0061/GG-0062). Values are flat: a
+- **Pointer model** (SPEC §3.4, GG-0072/GG-0062). Values are flat: a
   struct or array is one `long[]` of scalar leaves plus one `Object[]` of
   reference leaves, with nested structs and arrays inlined; a per-type
   **leaf table** derived from the gc layout maps a gc byte offset to a slot.
@@ -1367,7 +1367,7 @@ Applied from the owner's decisions of 2026-11-18 and
 | P1 answered: `internal/abi`/`internal/reflectlite` verbatim, `reflect` verbatim except 4 call-path functions; the 150–200-function fallback and "37–200 intrinsics" removed [1] | D8, §5.6, R1, §12 |
 | Patched list without `internal/abi`, `internal/reflectlite`, `sync` (pool); P5 expected verbatim [2] | §5.1, §5.5, §5.6, §12 |
 | Descriptor facts for every type; no hard-coded descriptor offset [3] | §3.2, §3.4 |
-| Pointer model: `(object, gc byte offset)`, leaf tables, range-allocated `uintptr` handles; flat values, no nested `GoStruct` (SPEC §3.4, GG-0061/GG-0062) [4] | §3.4, §5.6 `unsafe` |
+| Pointer model: `(object, gc byte offset)`, leaf tables, range-allocated `uintptr` handles; flat values, no nested `GoStruct` (SPEC §3.4, GG-0072/GG-0062) [4] | §3.4, §5.6 `unsafe` |
 | Syscall table → role model; measured counts 148/70/47; R2 → low [5] | §5.6, R2, §12 |
 | Readiness: runtime epoll poller through the executor (SPEC §3.5, GG-0063) replaces the blocking-NIO contract [6] | §5.6, M4 |
 | fork/exec: `posix_spawn` + helper under `$GRAALGO_HOME/libexec` (SPEC §3.8, GG-0064) [7] | §5.6, M4, W8 |

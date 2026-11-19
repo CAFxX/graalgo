@@ -1,6 +1,6 @@
 # graalgo.values
 
-The v1 Go value model (PLAN.md D5 [DECIDED]; superseded by GG-0061, flat
+The v1 Go value model (PLAN.md D5 [DECIDED]; superseded by GG-0072, flat
 values, for the toolexec backend — this package is deleted at M3). Every Go value lives as
 a Java object (or unboxed primitive) in its D5 carrier:
 

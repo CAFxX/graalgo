@@ -4,7 +4,7 @@
 **Status:** accepted 2026-11-18 (program owner).
 **Scope:** [SPEC.md](../../arch/SPEC.md) §1.3, §2.4, §2.7, §3.4, §3.5, §3.6,
 §3.8, §3.9, §4.3, §7.3, §7.4, §10.1, Appendix B; requirements `GG-0015`, `GG-0016`,
-`GG-0018` (superseded), GG-0061–GG-0064 (new, locked);
+`GG-0018` (superseded), `GG-0061`–GG-0064 (new, locked);
 [toolexec-design.md](../../arch/toolexec-design.md) §14;
 [truffle-design.md](../../arch/truffle-design.md) §14.
 **Evidence:** [abi-spike.md](../../arch/abi-spike.md) (P1, P2: both GO);
@@ -20,7 +20,7 @@ under-specified, and two where the SPEC may not be achievable in image modes.
 
 ## Decisions
 
-1. **Flat value model (`GG-0015` → GG-0061).** Structs and arrays are flat
+1. **Flat value model (`GG-0015` → `GG-0061`).** Structs and arrays are flat
    (`long[]` + `Object[]`, nested fields inlined) with per-type leaf tables
    from the gc layout; a pointer is (referent, gc byte offset). v1's nested
    `GoStruct` is not carried over: it caused 20 of the 50 reflect-probe

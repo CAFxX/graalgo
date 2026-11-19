@@ -6,7 +6,7 @@ package graalgo.go.values;
  * whose element type has {@code np} prim and {@code nr} ref slots lives at
  * {@code base.prims[prim + i*np ..]} / {@code base.refs[ref + i*nr ..]}; the element layout is
  * static, so it is a constant of the accessing node, not a field here. A slice of an array
- * shares the array's {@link Flat} (GG-0061: arrays are inlined in their enclosing object).
+ * shares the array's {@link Flat} (GG-0072: arrays are inlined in their enclosing object).
  */
 public final class Slice {
     public static final Slice NIL = new Slice(null, 0, 0, 0, 0);

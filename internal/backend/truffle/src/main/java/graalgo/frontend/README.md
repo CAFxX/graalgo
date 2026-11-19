@@ -111,7 +111,7 @@ stored on the node and exposed via `getSourceSection()` override.
   differential vs stock gc — the oracle injects `println(vars...)` and the
   test asserts frame-slot reads are bit-identical. Run via `make test`.
 - `src/test/java/graalgo/frontend/ArithmeticCorpusTest.java`
-  (`// verifies: GG-0061`, the flat value model): 17-program corpus
+  (formerly annotated `// verifies: GG-0061`, since re-issued as GG-0072; the annotation was removed 2026-11-19 because the test exercises the v1 model): 17-program corpus
   (`phases/phase1/corpus/arithmetic/`, conventions in its [README.md](README.md)),
   differential vs stock gc with a type-aware oracle (ints decimal, floats
   by `math.Float32/64bits`, strings hex) and per-kind frame-slot reads.
@@ -134,7 +134,7 @@ stored on the node and exposed via `getSourceSection()` override.
 ## GG status (history)
 
 The ids below are this package's history: `GG-0012`, `GG-0015` and
-`GG-0019` are superseded (by GG-0069, GG-0061 and GG-0070/GG-0071
+`GG-0019` are superseded (by GG-0069, GG-0072 and GG-0070/GG-0071
 respectively; see [requirements/](../../../../../../../../requirements/)). Current
 annotations are listed under Tests above.
 
@@ -143,7 +143,7 @@ annotations are listed under Tests above.
 end-to-end via `graalgo-run`, verified then by `StraightLineCorpusTest`
 (differential vs stock gc). GG-0013/GG-0044 stay **locked** per PLAN.md.
 
-**`GG-0015` active** (2026-10-04, M3; superseded by GG-0061 on 2026-11-18): the D5 value model
+**`GG-0015` active** (2026-10-04, M3; superseded by GG-0072 on 2026-11-18): the D5 value model
 (`graalgo.values`) and the complete expression surface
 (`BinaryOpNode`/`UnaryOpNode`/`ConstNode`/`ConvertNode` at every Go kind)
 are differential-green on the arithmetic corpus, verified then by
