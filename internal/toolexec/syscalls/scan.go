@@ -37,6 +37,18 @@ type Site struct {
 	Buf, Len []string
 }
 
+// The analysis is defined by three packages of the tracked release: the one
+// whose entry points every raw system call outside the runtime goes through,
+// the pseudo-package without source, and the runtime family the facade
+// replaces.
+const (
+	entryPkg    = "syscall"
+	unsafePkg   = "unsafe"
+	runtimePkg  = "runtime"
+	runtimeTree = runtimePkg + "/"
+	runtimeInt  = "internal/" + runtimeTree
+)
+
 // The functions through which every raw system call outside the runtime
 // enters (package syscall).
 var entries = map[string]bool{
@@ -73,7 +85,7 @@ func Scan(goCmd string) ([]Site, error) {
 				continue
 			}
 			for _, imp := range f[1:] {
-				if imp == "syscall" || f[0] == "syscall" {
+				if imp == entryPkg || f[0] == entryPkg {
 					roots = append(roots, f[0])
 					break
 				}
@@ -97,7 +109,7 @@ func Scan(goCmd string) ([]Site, error) {
 		} else if err != nil {
 			return nil, err
 		}
-		if p.ImportPath == "unsafe" {
+		if p.ImportPath == unsafePkg {
 			continue
 		}
 		if err := w.load(p); err != nil {
@@ -109,7 +121,7 @@ func Scan(goCmd string) ([]Site, error) {
 }
 
 func runtimeFamily(path string) bool {
-	return path == "runtime" || strings.HasPrefix(path, "internal/runtime/") || strings.HasPrefix(path, "runtime/")
+	return path == runtimePkg || strings.HasPrefix(path, runtimeInt) || strings.HasPrefix(path, runtimeTree)
 }
 
 type world struct {
@@ -125,7 +137,7 @@ type mapImporter struct {
 }
 
 func (m mapImporter) Import(path string) (*types.Package, error) {
-	if path == "unsafe" {
+	if path == unsafePkg {
 		return types.Unsafe, nil
 	}
 	if r, ok := m.im[path]; ok {
