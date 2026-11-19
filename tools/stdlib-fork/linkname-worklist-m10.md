@@ -167,7 +167,7 @@ that is what the per-release workflow is for.
    [internal/frontend/synth_regexpsyntax.go](../../internal/frontend/synth_regexpsyntax.go)
    contains a second `import "strconv"` block (line 445, from vendored
    stringer output), so `parser.ParseFile` fails and the frontend's
-   `buildSyntheticPackage` would **panic** on any program importing
+   `buildSyntheticPackage` would **fail with an error** on any program importing
    `regexp/syntax`. The trial surfaces this under
    `synthetic_parse_errors` instead of dying. Fix (out of this lane's
    scope): strip/merge the duplicate import in the generator

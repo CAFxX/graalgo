@@ -343,20 +343,49 @@ var syntheticSources = map[string]string{
 // The same *types.Package instance is returned to every importer, so
 // *types.Func/*types.TypeName objects are identical between the user's
 // type-check and the synthetic sources' own.
-func getSyntheticPackage(path string) *syntheticPackage {
+// getSyntheticPackage builds (or returns the cached) synthetic package
+// for path. A build failure is returned as an error and is NOT cached:
+// the next call re-attempts the build, so a repaired source (or a
+// transient failure) is picked up without a restart. Callers on a
+// primary error path propagate the error; the multi-result classifiers
+// (mrdesugar_m5.go), which have no error channel, use
+// syntheticPackageOrNil and treat the failure as "cannot classify".
+// (review-1804-p1-synth-panic: buildSyntheticPackage used to panic on
+// missing source / parse error / type error, crashing any user compile
+// that imported the broken package.)
+func getSyntheticPackage(path string) (*syntheticPackage, error) {
 	synthMu.Lock()
 	if sp, ok := synthCache[path]; ok {
 		synthMu.Unlock()
-		return sp
+		return sp, nil
 	}
 	synthMu.Unlock()
-	sp := buildSyntheticPackage(path)
+	sp, err := buildSyntheticPackage(path)
+	if err != nil {
+		return nil, err
+	}
 	synthMu.Lock()
 	defer synthMu.Unlock()
 	if prev, ok := synthCache[path]; ok {
-		return prev
+		return prev, nil
 	}
 	synthCache[path] = sp
+	return sp, nil
+}
+
+// syntheticPackageOrNil returns the built synthetic package for path, or
+// nil if it cannot be built. For the multi-result classifiers only:
+// they return nil for "no plan", and a synthetic package that fails to
+// build is already reported on the primary error paths (overlayImporter
+// during type-check, importSyntheticByPath during export) before any
+// classifier runs, so nil here only ever means "cannot classify". The
+// ExportFiles recover backstop converts any residual failure into a
+// returned error.
+func syntheticPackageOrNil(path string) *syntheticPackage {
+	sp, err := getSyntheticPackage(path)
+	if err != nil {
+		return nil
+	}
 	return sp
 }
 
@@ -833,10 +862,10 @@ func importSpecPath(spec string) string {
 	return spec[i : i+1+j+1]
 }
 
-func buildSyntheticPackage(path string) *syntheticPackage {
+func buildSyntheticPackage(path string) (*syntheticPackage, error) {
 	src, ok := syntheticSources[path]
 	if !ok {
-		panic("gofrontend: no synthetic source for " + path)
+		return nil, fmt.Errorf("gofrontend: no synthetic source for %s", path)
 	}
 	// General generator-damage repair (any synthetic package, never
 	// package-specific):
@@ -859,7 +888,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	// the exporter's linkname scan (ADR-0004 D1); matches ExportFile.
 	file, err := parser.ParseFile(fset, path+".go", src, parser.AllErrors|parser.ParseComments)
 	if err != nil {
-		panic("gofrontend: synthetic " + path + " parse error: " + err.Error())
+		return nil, fmt.Errorf("gofrontend: synthetic %s parse error: %w", path, err)
 	}
 	info := &types.Info{
 		Types:      make(map[ast.Expr]types.TypeAndValue),
@@ -872,7 +901,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	conf := types.Config{Importer: overlayImporter{}}
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
-		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
+		return nil, fmt.Errorf("gofrontend: synthetic %s type error: %w", path, err)
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
@@ -881,7 +910,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
 		raw: []byte(src),
-	}
+	}, nil
 }
 
 // timeIntrinsicNames are the synthetic time package's clock/timer entry
@@ -942,6 +971,19 @@ type synthGroup struct {
 	fis []*funcDeclInfo
 }
 
+// importSyntheticByPath builds (or reuses the cached) synthetic
+// package for path and merges it into the document. It is the single
+// error-propagating entry point for the ~100 direct-import sites that
+// used to evaluate getSyntheticPackage as an argument (where a build
+// failure panicked before importSyntheticPackage ever saw it).
+func (e *exporter) importSyntheticByPath(path string) error {
+	sp, err := getSyntheticPackage(path)
+	if err != nil {
+		return err
+	}
+	return e.importSyntheticPackage(sp)
+}
+
 // importSyntheticPackage merges a synthetic package's real-Go
 // declarations into the document: package vars become globals (emitted
 // immediately, in source order — they cannot depend on user vars),
@@ -980,7 +1022,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	for _, imp := range sp.pkg.Imports() {
 		ip := imp.Path()
 		if _, ok := syntheticSources[ip]; ok {
-			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
+			if err := e.importSyntheticByPath(ip); err != nil {
 				return err
 			}
 			continue

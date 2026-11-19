@@ -63,18 +63,15 @@ func main() {
 			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic: no synthetic source for %q\n", path)
 			os.Exit(2)
 		}
-		// Build the synthetic package. getSyntheticPackage panics on
-		// parse/type errors; recover and report as a clean failure.
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, r)
-					os.Exit(2)
-				}
-			}()
-			sp := getSyntheticPackage(path)
-			fmt.Printf("ok %s (%d decls)\n", path, sp.pkg.Scope().Len())
-		}()
+		// Build the synthetic package. getSyntheticPackage returns
+		// build failures as errors (review-1804-p1-synth-panic); report
+		// them in the same stderr format as before, exit 2.
+		sp, err := getSyntheticPackage(path)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic %q: %v\n", path, err)
+			os.Exit(2)
+		}
+		fmt.Printf("ok %s (%d decls)\n", path, sp.pkg.Scope().Len())
 		return
 	}
 	out, err := ExportFiles(rest, testPackageDir)
