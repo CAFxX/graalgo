@@ -18,7 +18,7 @@
 #   `make all` = generate build snapshot-check check test-v2 test-toolexec
 #                test-gir test-p3frontend test-ci test-java-fast
 #                test-regression test-m1a pe-check-m1a test-m1w13
-#                test-imgcheck:
+#                test-imgcheck test-m1r test-m1c:
 #     generate  rebuilds the gofrontend binary + overlay.json, the 18
 #               generated synth_*.go, and the GIR Go/Java codecs
 #     build     compiles both backend modules (javac, -Werror)
@@ -75,6 +75,13 @@
 #               the way internal/reflectlite reads them; the walker is
 #               checked against gc's reflect, and five seeded builder
 #               errors must each be detected ([test/imgcheck/](test/imgcheck/))
+#     test-m1r  the standard-library differential gate (~15 s): programs
+#               importing std packages (upstream's source on graalgo's
+#               fork) through graalgo-tool on the node package vs live gc
+#               ([test/m1r/](test/m1r/))
+#     test-m1c  the M1c gate (~15 s): sync's semaphores, internal/bytealg,
+#               time and the syscall executor, the same way
+#               ([test/m1c/](test/m1c/))
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
 #   `make test` — the full differential suite (graalgo.test.Runner,
@@ -178,7 +185,7 @@ GO ?= $(HOME)/tools/go/bin/go
 
 .PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1c test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
 
-all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck
+all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -404,7 +411,7 @@ pe-check-m1a: build
 	GO="$(GO)" test/m1a/bench.sh --pe-check $(M1A_BENCH)
 M1A_BENCH ?=
 
-# Toolexec milestone M1r/M1b differential gate (not per-push yet): programs
+# Toolexec milestone M1r/M1b differential gate (per-push in `make all`): programs
 # that import standard-library packages, built through graalgo-tool against
 # graalgo's fork ([stdlib/](stdlib/): facade runtime, everything else
 # upstream's source) and run on the node package, compared with gc. See
@@ -413,7 +420,7 @@ test-m1r: build
 	GO="$(GO)" test/m1r/run.sh $(M1R_PROGRAMS)
 M1R_PROGRAMS ?=
 
-# The M1c gate (not per-push yet): sync's semaphores and notify lists,
+# The M1c gate (per-push in `make all`): sync's semaphores and notify lists,
 # internal/bytealg, time on the runtime timer heap and the syscall executor,
 # through graalgo-tool on the node package against gc; programs that need
 # another lane's piece are PENDING until their probe passes. See

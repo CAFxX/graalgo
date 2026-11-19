@@ -1408,7 +1408,8 @@ restrictions relative to gc are in [limitations.md](limitations.md). Gate:
 **Since the skeleton (M1c slice: `sync`, `internal/bytealg`, W8a, `time`;
 2026-11-19, `wt/m1c/sync-time`):** the parts of the standard library that
 need no descriptor image. Gate: `make test-m1c`
-([test/m1c/run.sh](../../test/m1c/run.sh), not per-push; the m1r
+([test/m1c/run.sh](../../test/m1c/run.sh), per-push in `make all` since
+2026-11-19 together with `make test-m1r` — ~15 s each; the m1r
 conventions plus `//m1c:requires <probe>` — a program that needs another
 lane's piece is PENDING until the probe program of that name matches gc, so
 it turns itself on when the piece lands — `//m1c:ldflags` and `//m1c:env`),

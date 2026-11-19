@@ -293,12 +293,12 @@ Related: [Makefile](../Makefile) (root build entry point),
     and the standard-library fork overlay for runners of the `-toolexec`
     path.
   - [m1r/](../test/m1r/) — the differential gate of the standard library
-    through the `-toolexec` path (`make test-m1r`, not per-push):
+    through the `-toolexec` path (`make test-m1r`, ~15 s, per-push in `make all`):
     [run.sh](../test/m1r/run.sh) builds each program of
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
     compares stdout, normalized stderr and exit status with gc.
-  - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, not per-push):
+  - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r
     conventions; [programs/](../test/m1c/programs/) marked
