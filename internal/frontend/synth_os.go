@@ -608,6 +608,11 @@ type hostnamePair struct {
 	err error
 }
 
+type shellNamePair struct {
+	name string
+	w    int
+}
+
 type lookupEnvPair struct {
 	s  string
 	ok bool
@@ -2005,12 +2010,63 @@ func Environ() []string {
 
 // Expand replaces ${var} or $var in the string based on the mapping function.
 func Expand(s string, mapping func(string) string) string {
-	panic("os.Expand: not in M8 scope (needs multi-result getShellName; re-test: WS D)")
+	var buf []byte
+	// ${} is all ASCII, so bytes are fine for this operation.
+	i := 0
+	for j := 0; j < len(s); j++ {
+		if s[j] == '$' && j+1 < len(s) {
+			if buf == nil {
+				buf = make([]byte, 0, 2*len(s))
+			}
+			buf = append(buf, s[i:j]...)
+			p := __getShellName(s[j+1:])
+			if p.name == "" && p.w > 0 {
+				// Encountered invalid syntax; eat the characters.
+			} else if p.name == "" {
+				// Valid syntax, but $ was not followed by a name. Leave
+				// the dollar character untouched.
+				buf = append(buf, s[j])
+			} else {
+				buf = append(buf, mapping(p.name)...)
+			}
+			j += p.w
+			i = j + 1
+		}
+	}
+	if buf == nil {
+		return s
+	}
+	return string(buf) + s[i:]
 }
 
-// getShellName returns the name of the shell variable for s.
-func getShellName(s string) (string, int) {
-	panic("os.getShellName: not in M8 scope (multi-result; re-test: WS D)")
+// __getShellName is the single-result form of gc's getShellName:
+// the name that begins s and the number of bytes consumed to extract
+// it. If the name is enclosed in {}, two more bytes are needed than
+// the length of the name.
+func __getShellName(s string) shellNamePair {
+	switch {
+	case s[0] == '{':
+		if len(s) > 2 && isShellSpecialVar(s[1]) && s[2] == '}' {
+			return shellNamePair{s[1:2], 3}
+		}
+		// Scan to closing brace
+		for i := 1; i < len(s); i++ {
+			if s[i] == '}' {
+				if i == 1 {
+					return shellNamePair{"", 2} // Bad syntax; eat "${}"
+				}
+				return shellNamePair{s[1:i], i + 1}
+			}
+		}
+		return shellNamePair{"", 1} // Bad syntax; eat "${"
+	case isShellSpecialVar(s[0]):
+		return shellNamePair{s[0:1], 1}
+	}
+	// Scan alphanumerics.
+	var i int
+	for i = 0; i < len(s) && isAlphaNum(s[i]); i++ {
+	}
+	return shellNamePair{s[:i], i}
 }
 
 func isShellSpecialVar(c uint8) bool {
