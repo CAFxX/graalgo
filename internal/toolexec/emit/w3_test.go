@@ -149,13 +149,13 @@ func M() any { type U int; return U(1) }
 type R[E any] struct{}
 func (R[E]) Meth() any { type V struct{ e E }; return V{} }
 `)
-	for _, want := range []string{"p.T·L·0[$p.L.0]", "p.U·M·0", "p.V·R.Meth·0[$p.R.Meth.0]"} {
+	for _, want := range []string{"p.T·1[$p.L.0]", "p.U·2", "p.V·3[$p.R.Meth.0]"} {
 		if !hasKey(f, want) {
 			t.Errorf("no type key %q; have %v", want, keysContaining(f, "·"))
 		}
 	}
 	for _, td := range f.TypeDefs {
-		if typeKey(f, td.Type) == "p.T·L·0[$p.L.0]" && len(td.Tparams) != 1 {
+		if typeKey(f, td.Type) == "p.T·1[$p.L.0]" && len(td.Tparams) != 1 {
 			t.Errorf("local type T in L: typedef tparams %v, want the function's", td.Tparams)
 		}
 	}

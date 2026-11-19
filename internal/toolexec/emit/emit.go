@@ -872,19 +872,46 @@ func (e *emitter) scanLinknames() {
 }
 
 // nameLocalTypes gives every type declared inside a function a package-
-// unique name: Name·Func·N, N counting local type declarations of the
-// enclosing top-level function in source order (design §3.4).
+// unique name, which is gc's own: Name·N, N counting from 1 the defined
+// (non-alias) types declared in function bodies over the package's files in
+// compile order (cmd/compile/internal/noder collectDecls). gc's link string
+// of the type, and with it the Hash of its type descriptor, is built from
+// that name (design §3.4).
 func (e *emitter) nameLocalTypes() {
+	gen := map[*ast.TypeSpec]int{}
+	typegen := 0
+	for _, f := range e.cfg.Files {
+		var stack []ast.Node
+		blocks := 0
+		ast.Inspect(f, func(node ast.Node) bool {
+			if node == nil {
+				if _, ok := stack[len(stack)-1].(*ast.BlockStmt); ok {
+					blocks--
+				}
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			stack = append(stack, node)
+			switch n := node.(type) {
+			case *ast.BlockStmt:
+				blocks++
+			case *ast.TypeSpec:
+				if blocks > 0 && !n.Assign.IsValid() {
+					typegen++
+					gen[n] = typegen
+				}
+			}
+			return true
+		})
+	}
 	for _, f := range e.cfg.Files {
 		for _, d := range f.Decls {
 			fd, ok := d.(*ast.FuncDecl)
 			if !ok || fd.Body == nil {
 				continue
 			}
-			owner := fd.Name.Name
 			var tparams []types.Type
 			if obj, ok := e.cfg.Info.Defs[fd.Name].(*types.Func); ok {
-				owner = symbolName(obj)
 				e.registerFunc(obj)
 				sig := obj.Signature()
 				for _, l := range []*types.TypeParamList{sig.RecvTypeParams(), sig.TypeParams()} {
@@ -893,18 +920,16 @@ func (e *emitter) nameLocalTypes() {
 					}
 				}
 			}
-			n := 0
 			ast.Inspect(fd.Body, func(node ast.Node) bool {
 				ts, ok := node.(*ast.TypeSpec)
 				if !ok {
 					return true
 				}
-				if tn, ok := e.cfg.Info.Defs[ts.Name].(*types.TypeName); ok {
-					e.localTypes[tn] = tn.Name() + "·" + owner + "·" + strconv.Itoa(n)
+				if tn, ok := e.cfg.Info.Defs[ts.Name].(*types.TypeName); ok && !ts.Assign.IsValid() {
+					e.localTypes[tn] = tn.Name() + "·" + strconv.Itoa(gen[ts])
 					if len(tparams) > 0 {
 						e.localTargs[tn] = tparams
 					}
-					n++
 				}
 				return true
 			})
