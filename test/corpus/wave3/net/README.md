@@ -21,6 +21,9 @@ semantics, the shared-runner model).
 - `05_parse_addr.go` — `ParseIP`/`ParseCIDR`/`ParseMAC`,
   `JoinHostPort`/`SplitHostPort`, `ResolveTCPAddr`/`ResolveUDPAddr`
   (IP literals only, no DNS). Pure Go.
+- `06_parse_cidr.go` — `ParseCIDR` gc fidelity (review-1616 P0-1):
+  valid/invalid IPv4+IPv6 CIDRs — 16-byte IPs, `*ParseError` values,
+  zones/`+` masks/4-in-6 bit lengths. Pure Go.
 
 ## Scope limits
 

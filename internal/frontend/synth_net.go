@@ -351,6 +351,14 @@ func ipToString(ip IP) string {
 	if len(ip) == 4 {
 		return itoa(int(ip[0])) + "." + itoa(int(ip[1])) + "." + itoa(int(ip[2])) + "." + itoa(int(ip[3]))
 	}
+	// IPv4-mapped IPv6 (gc net/ip.go IP.appendTo renders via To4 first):
+	// dotted form, not hex groups. The check is the strict mapped
+	// prefix (first 10 bytes zero, bytes 10-11 0xff), NOT the broader
+	// synth To4 (which also accepts the all-zero prefix): "::c000:200"
+	// stays hex, "::ffff:192.0.2.0" prints dotted, as in gc.
+	if __isV4InV6Prefix(ip[:12]) {
+		return itoa(int(ip[12])) + "." + itoa(int(ip[13])) + "." + itoa(int(ip[14])) + "." + itoa(int(ip[15]))
+	}
 	// IPv6: gc-parity form with "::" zero compression (the longest run of
 	// zero 16-bit groups, first run wins ties; a single zero group is not
 	// compressed).
@@ -631,7 +639,9 @@ type IPMask []byte
 // RFC 4291.
 // ParseCIDR parses s as a CIDR notation IP address and prefix length,
 // like "192.0.2.0/24" or "2001:db8::/32", as defined in RFC 4632 and RFC 4291.
-// M9: fail-fast (needs netip.ParsePrefix multi-result desugar).
+// Desugar target: __parseCIDR below (mrdesugar_m5.go m9MultiResultFuncs);
+// this body is unreachable when the desugar fires (verified by
+// test/corpus/wave3/net/06_parse_cidr.go, run_wave3.sh net).
 func ParseCIDR(s string) (IP, *IPNet, error) {
 	panic("net.ParseCIDR: not supported in frontend/v1 scope (M9)")
 }
@@ -1020,6 +1030,25 @@ func (e *AddrError) Error() string {
 
 func (e *AddrError) Timeout() bool   { return false }
 func (e *AddrError) Temporary() bool { return false }
+
+// ParseError is the error type returned by ParseCIDR (gc 1.27.1
+// net/net.go exact): Error() is "invalid CIDR address: <text>".
+// Added for ParseCIDR gc fidelity (review-1616 P0-1); the previous
+// __parseCIDR returned *AddrError ("invalid CIDR address (<text>)"),
+// which differs from gc in both type and message.
+type ParseError struct {
+	// Type is the type of string that was expected, such as
+	// "IP address", "CIDR address".
+	Type string
+
+	// Text is the malformed text string.
+	Text string
+}
+
+func (e *ParseError) Error() string { return "invalid " + e.Type + ": " + e.Text }
+
+func (e *ParseError) Timeout() bool   { return false }
+func (e *ParseError) Temporary() bool { return false }
 
 // ---------------------------------------------------------------------------
 // Socket trap bindings.
@@ -1999,41 +2028,65 @@ func hexVal(c byte) parseHexBytePair {
 
 // __parseCIDR is the real desugar target for ParseCIDR (replaces the M9
 // fail-fast): parses "192.0.2.0/24" or "2001:db8::/32".
+// gc-faithful (go1.27.1 net/ip.go ParseCIDR): cut on the FIRST '/', reject
+// zones, parse the mask with dtoi semantics (digits only, whole string,
+// no sign), bit length 32 for IPv4 / 128 for IPv6 (including 4-in-6
+// forms such as ::ffff:192.0.2.0), returned IP always 16 bytes, network
+// address via IP.Mask, failures are *ParseError.
+// Deliberately NOT routed through IP.To4: synth To4 also accepts the
+// all-zero 4-in-6 prefix, which would wrongly cap ::192.0.2.0/120 at 32
+// bits and wrongly shrink the returned IP to 4 bytes.
 func __parseCIDR(s string) parseCIDRPair {
-	i := strings.LastIndexByte(s, '/')
+	fail := func() parseCIDRPair {
+		return parseCIDRPair{nil, nil, &ParseError{Type: "CIDR address", Text: s}}
+	}
+	i := strings.IndexByte(s, '/')
 	if i < 0 {
-		return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+		return fail()
 	}
 	addr, mask := s[:i], s[i+1:]
-	ip := ParseIP(addr)
-	if ip == nil {
-		return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+	if strings.IndexByte(addr, '%') != -1 {
+		return fail() // gc rejects zones in CIDR addresses
 	}
-	n, err := strconv.Atoi(mask)
-	if err != nil {
-		return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
-	}
-	var m IPMask
-	if ip4 := ip.To4(); ip4 != nil {
-		if n < 0 || n > 32 {
-			return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
-		}
-		m = CIDRMask(n, 32)
-		ip = ip4
+	var ip IP
+	var bits int
+	if ip4 := parseIPv4(addr); ip4 != nil {
+		ip = ip4.To16()
+		bits = 32
+	} else if ip6 := parseIPv6(addr); ip6 != nil {
+		ip = ip6
+		bits = 128
 	} else {
-		if n < 0 || n > 128 {
-			return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+		return fail()
+	}
+	n, ok := __parseCIDRdtoi(mask)
+	if !ok || n < 0 || n > bits {
+		return fail()
+	}
+	m := CIDRMask(n, bits)
+	return parseCIDRPair{ip, &IPNet{IP: ip.Mask(m), Mask: m}, nil}
+}
+
+// __parseCIDRdtoi parses a decimal prefix length the way gc's dtoi does
+// (net/parse.go): digits only, no sign, no spaces, whole string
+// consumed, and fails past big (0xFFFFFF). strconv.Atoi is NOT a
+// substitute: it accepts a leading '+' ("192.0.2.0/+24" is an error
+// in gc but parses under Atoi).
+func __parseCIDRdtoi(s string) (int, bool) {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return 0, false
 		}
-		m = CIDRMask(n, 128)
-		ip = ip.To16()
+		n = n*10 + int(s[i]-'0')
+		if n >= 0xFFFFFF {
+			return 0, false
+		}
 	}
-	// Mask the IP to get the network address.
-	masked := make(IP, len(ip))
-	for i := range ip {
-		masked[i] = ip[i] & m[i]
+	if len(s) == 0 {
+		return 0, false
 	}
-	ipnet := &IPNet{IP: masked, Mask: m}
-	return parseCIDRPair{ip, ipnet, nil}
+	return n, true
 }
 
 // IPv4Mask returns the IP mask (in 4-byte form) of the IPv4 mask
@@ -2089,8 +2142,15 @@ func (n *IPNet) String() string {
 	if n == nil {
 		return "<nil>"
 	}
-	__tmpMS := __ipMaskSize(n.Mask)
-	return n.IP.String() + "/" + itoa(__tmpMS.ones)
+	nn, m := networkNumberAndMask(n)
+	if nn == nil || m == nil {
+		return "<nil>"
+	}
+	l := __simpleMaskLength(m)
+	if l == -1 {
+		return nn.String() + "/" + m.String()
+	}
+	return nn.String() + "/" + itoa(l)
 }
 
 type maskSizePair struct {
@@ -2117,6 +2177,35 @@ func __ipMaskSize(m IPMask) maskSizePair {
 		break
 	}
 	return maskSizePair{ones, len(m) * 8}
+}
+
+// __simpleMaskLength is gc's simpleMaskLength (net/ip.go): the number of
+// leading one bits, or -1 when the mask is not all ones followed by
+// zeros. Needed by IPNet.String for the non-canonical-mask fallback.
+func __simpleMaskLength(m IPMask) int {
+	n := 0
+	for i, v := range m {
+		if v == 0xff {
+			n += 8
+			continue
+		}
+		// found non-ff byte; count 1 bits
+		for v&0x80 != 0 {
+			n++
+			v <<= 1
+		}
+		// rest must be 0 bits
+		if v != 0 {
+			return -1
+		}
+		for i++; i < len(m); i++ {
+			if m[i] != 0 {
+				return -1
+			}
+		}
+		break
+	}
+	return n
 }
 
 // String returns the hexadecimal form of m (gc 1.27.1 net/ip.go exact).
