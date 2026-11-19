@@ -387,7 +387,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 	}
 
 	// Run the batch: one JVM for all graalgo invocations in this job.
-	batchOut := runGraalgoBatch(cfg, alt, batchPath, workRoot)
+	batchOut, batchErr := runGraalgoBatch(cfg, alt, batchPath, workRoot)
 
 	// Now do the gc backend work and combine with batch results.
 	for k, idx := range mine {
@@ -410,7 +410,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 		bAlt = scrubOutcome(bAlt, workRoot, ref, alt)
 		if !ok {
 			c.Same, c.Infra = false, true
-			c.Reasons = append(c.Reasons, "infra: no graalgo batch result (batch JVM failed or output unparsable)")
+			c.Reasons = append(c.Reasons, "infra: no graalgo batch result (batch JVM failed or output unparsable): "+batchErr)
 			continue
 		}
 
@@ -569,8 +569,11 @@ type batchResult struct {
 // runGraalgoBatch invokes graalgo-run --batch and returns outcomes keyed by
 // batchKey(mode, src). The graalgo backend's build command is
 // {GRAALGO_RUN} --check {SRC}; we replace it with --batch for the whole job.
-func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workRoot string) map[string]harness.Outcome {
-	out := make(map[string]harness.Outcome)
+//
+// failure describes why the batch produced no (or partial) results, for the
+// INFRA reasons ("" on success).
+func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workRoot string) (out map[string]harness.Outcome, failure string) {
+	out = make(map[string]harness.Outcome)
 	// Render the batch command from the backend's build template, replacing
 	// the per-file invocation with --batch.
 	// The build template is [{GRAALGO_RUN} --check {SRC}]; for batch we want
@@ -597,7 +600,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 	// --check {SRC} with --batch <file>.
 	buildCmd := alt.RenderBuild("/tmp/placeholder-src", "/tmp/placeholder-bin")
 	if len(buildCmd) == 0 {
-		return out
+		return out, "backend has no build command"
 	}
 	// Replace the args: [launcher --check src] -> [launcher --batch=batchfile]
 	batchCmd := []string{buildCmd[0], "--batch=" + batchPath}
@@ -612,7 +615,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 	if err := cmd.Run(); err != nil {
 		// Batch failed entirely: every entry is an infrastructure failure
 		// (absent from the map -> runBatched marks it Infra).
-		return out
+		return out, fmt.Sprintf("%v; stderr: %s", err, lastLines(stderr.String(), 3))
 	}
 	// Parse JSON array. Results are in the same order as the batch file
 	// lines (the Java batch processor outputs sequentially).
@@ -623,7 +626,7 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		Stderr string `json:"stderr"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
-		return out
+		return out, fmt.Sprintf("unparsable batch output (%v); stdout ends: %s", err, lastLines(stdout.String(), 2))
 	}
 	// Map results by (mode, src) using positional matching: the Nth
 	// non-empty batch line corresponds to the Nth result.
@@ -675,7 +678,21 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		}
 		out[batchKey(mode, src)] = oc
 	}
-	return out
+	return out, ""
+}
+
+// lastLines returns the last n non-empty lines of s, joined by " | ".
+func lastLines(s string, n int) string {
+	var keep []string
+	for _, l := range strings.Split(strings.TrimSpace(s), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			keep = append(keep, l)
+		}
+	}
+	if len(keep) > n {
+		keep = keep[len(keep)-n:]
+	}
+	return strings.Join(keep, " | ")
 }
 
 // scrubOutcome replaces the run's temporary work root with "{WORK}" and

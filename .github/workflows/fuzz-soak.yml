@@ -19,11 +19,13 @@ on:
   workflow_dispatch:
     inputs:
       hours:
-        # <= 5: the job's 360-minute timeout must also cover setup, build
-        # and triage (a 6-hour soak was killed by the timeout every night).
-        description: 'Soak duration in hours (max 5)'
+        # <= 4: the job's 360-minute limit must also cover setup, the last
+        # soak batch's overrun past the deadline, the native fuzzing step
+        # and the report upload. 5 h did not fit (cancelled every night,
+        # 2026-11-16..18); larger values are clamped to 4 below.
+        description: 'Soak duration in hours (max 4)'
         required: false
-        default: '5'
+        default: '4'
 
 jobs:
   fuzz-soak:
@@ -51,18 +53,28 @@ jobs:
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
       - name: Layer 4a — generative soak (seeded programs, differential)
+        # Step budget: <= 4 h of batches + the last batch's overrun (the
+        # deadline is checked between batches). A hung batch fails this
+        # step instead of cancelling the whole job, so 4b and the report
+        # upload still run.
+        timeout-minutes: 285
         env:
           GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
           JAVA_BIN: "${{ env.JAVA_HOME }}/bin/java"
           JOBS: "4"
+          HOURS_IN: "${{ inputs.hours || '4' }}"
         run: |
           mkdir -p "$GO_BIN_DIR"
           ln -sf "$(which go)" "$GO_BIN_DIR/go"
+          HOURS="$(awk -v h="$HOURS_IN" 'BEGIN { if (h + 0 > 4 || h + 0 <= 0) h = 4; print h }')"
           ./tools/fuzz-soak/run_soak.sh \
-            --hours "${{ inputs.hours || '5' }}" \
+            --hours "$HOURS" \
             --out "$GITHUB_WORKSPACE/fuzz-soak-out"
 
       - name: Layer 4b — native testing.F differential fuzzing
+        # 8 targets x 120 s of fuzzing + the replay differential.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 45
         env:
           GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
           JOBS: "4"

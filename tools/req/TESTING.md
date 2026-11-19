@@ -83,6 +83,7 @@ change (see below).
 | RG4 | `mintID`: `max+1` → `max` (off-by-one, reuses the max ID) | `TestMintID_Empty`, `TestMintID_GapNotFilled`, `TestMintID_NeverReusesRetired`, `TestCmdAdd_Monotonic`, `TestSupersede_ZeroHits` | green |
 | RG5 | `absRefPath` returns the repo-relative path unchanged (no `--root` anchoring — the old buggy behavior) | `TestAbsRefPath`, `TestPlanFileEdits_RootAnchored`, `TestSupersede_WithHits_InteractiveUpdate` | green |
 | RG6 | lint rule (e) disabled (`textSumProblems` result dropped in `cmdLint`) | 11 tests in [textsum_test.go](textsum_test.go): every rule-(e) failure case (`TestLint_RuleE_*`, `TestCmdLock_RecordsSum`); the positive cases (`TestLint_RuleE_DraftEditable`, `TestLint_RuleE_LifecycleFieldsNotHashed`) still passed | green |
+| RG7 | lint rule (f) disabled (`baselineCheck` problems dropped in `cmdLint`, 2026-11-18) | 5 tests in [baseline_test.go](baseline_test.go): `TestRuleF_LockedToDraftRegressionFails`, `TestRuleF_ActiveToLockedRegressionFails`, `TestRuleF_ResealedTextFails`, `TestRuleF_DeletedRequirementFails`, `TestRuleF_GateBaseOverridesMergeBase`; the positive cases still passed | green |
 
 ## Failure injection
 

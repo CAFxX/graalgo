@@ -8,6 +8,12 @@ unless its path matches an entry of the allowlist
 (.github/scripts/large_files_allowlist.txt: one glob per line, then
 `#` and the reason; a line without a reason is rejected).
 
+It also caps run-log debris per tree: the tracked log files
+(LOG_SUFFIXES) under any 3-component directory (e.g. docs/arch/spikes)
+may total at most TREE_LOG_CAP (1.5 MiB) — 298 spike logs (19.8 MB) had
+accumulated one small file at a time under the per-file limit. Logs a
+report cites stay; the rest live in history and in commit messages.
+
 Binaries, archives, recordings and multi-MB logs are build outputs or
 debris: they belong in commit messages, scratch, or a download step, never
 in git (AGENTS.md §7).
@@ -21,6 +27,8 @@ import sys
 from pathlib import Path
 
 LIMIT = 1024 * 1024
+TREE_LOG_CAP = 1536 * 1024
+LOG_SUFFIXES = (".log", ".wraplog", ".out", ".jfr")
 BANNED_SUFFIXES = (".so", ".pyc")
 ALLOWLIST = Path(".github/scripts/large_files_allowlist.txt")
 
@@ -72,6 +80,16 @@ def scan(root, files=None):
                 used.update(allowed)
             else:
                 errors.append(f"{rel}: {', '.join(why)}")
+    trees = {}
+    for rel in (files if files is not None else tracked(root)):
+        p = root / rel
+        if rel.endswith(LOG_SUFFIXES) and p.is_file() and not p.is_symlink():
+            tree = "/".join(rel.split("/")[:3]) if rel.count("/") >= 3 else "/".join(rel.split("/")[:-1]) or "."
+            trees[tree] = trees.get(tree, 0) + p.stat().st_size
+    for tree, total in sorted(trees.items()):
+        if total > TREE_LOG_CAP:
+            errors.append(f"{tree}/: tracked logs total {total} bytes > {TREE_LOG_CAP} "
+                          f"(prune what no report cites; history keeps it)")
     for g in globs:
         if g not in used:
             errors.append(f"{ALLOWLIST}: stale entry '{g}' matches no offending tracked file")
@@ -82,7 +100,7 @@ def main(argv):
     root = Path(argv[1]) if len(argv) > 1 else Path(__file__).resolve().parents[2]
     errors = scan(root)
     if errors:
-        print("TRACKED-FILE GATE FAILED (size > 1 MiB, ELF, .so or .pyc; allowlist: "
+        print("TRACKED-FILE GATE FAILED (size > 1 MiB, ELF, .so, .pyc or a tree's logs over the cap; allowlist: "
               f"{ALLOWLIST}):")
         for e in errors:
             print("  " + e)

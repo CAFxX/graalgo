@@ -853,7 +853,7 @@ function containing `defer` is built as a `GoDeferFuncRootNode`:
   `if (bits & (1 << i)) != 0 { clear bit; call }`. A deferred call to a
   statically known function is a `DirectCallNode` and inlines:
   `defer mu.Unlock()` compiles to the unlock.
-- **Fallback, the explicit per-goroutine defer chain** (`GG-0019`'s mechanism,
+- **Fallback, the explicit per-goroutine defer chain** (the mechanism of the superseded `GG-0019`,
   retained): a function with a `defer` in a loop, over the limit, in a
   range-over-func body or otherwise not statically lowerable appends records
   to the goroutine's chain (reached through `G`, §2.5) and drains its own
@@ -863,7 +863,7 @@ function containing `defer` is built as a `GoDeferFuncRootNode`:
   its records on the chain — with `G`'s panic state (current panic,
   recovered flag, `Goexit` flag) as the single source of truth for `recover`
   and nested panics. The chain is not the unwinding path of open-coded
-  frames (`GG-0067`'s "the chain SHALL also be the unwinding path" said
+  frames (the superseded `GG-0067`'s "the chain SHALL also be the unwinding path" said
   otherwise; GG-0071 corrects it).
 - The root wraps the body in `try { … } catch (PanicException p)`; on panic it
   marks `G.panicking`, runs the exit sequence with recovery enabled, and

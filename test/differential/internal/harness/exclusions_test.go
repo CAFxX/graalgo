@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -52,5 +53,89 @@ func TestDiffSignatureStableAndDistinct(t *testing.T) {
 	a, b := DiffSignature("stdout differs at line 1"), DiffSignature("exitCode: want=0 got=2")
 	if len(a) != 16 || a == b || a != DiffSignature("stdout differs at line 1") {
 		t.Fatalf("signatures: %q %q", a, b)
+	}
+}
+
+func TestRegisterProblems(t *testing.T) {
+	bugs := map[string]bool{"BUG-0001": true}
+	_, ex, err := ParseReviewedExclusions("t", `version: 1
+reason_codes:
+- code: CGO
+  description: skipped by this parser
+  class: deferred-parity
+exclusions:
+- file: ok.go
+  reason: deferred-parity
+  detail: BUG-0001: pinned
+  signature: 0123456789abcdef
+- file: marker.go
+  reason: deferred-parity
+  detail: BUG-0001: timings
+  signature: unpinned (timings)
+- file: nobug.go
+  reason: deferred-parity
+  detail: no id here
+  signature: 0123456789abcdef
+- file: unknownbug.go
+  reason: unspecified-behavior
+  detail: BUG-0999 cited but not registered
+- file: nosig.go
+  reason: deferred-parity
+  detail: BUG-0001
+- file: emptymarker.go
+  reason: deferred-parity
+  detail: BUG-0001
+  signature: unpinned ()
+- file: spec.go
+  reason: unspecified-behavior
+  detail: map order
+groups:
+- group: g
+  reason: deferred-parity
+  expires: M3
+  detail: BUG-0001: group needs no signature
+  files: g1.go
+- group: h
+  reason: deferred-parity
+  expires: M3
+  detail: group without a bug id
+  files: h1.go
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(RegisterProblems("t", ex, bugs, true), "\n")
+	for _, want := range []string{"nobug.go: deferred-parity entry cites no BUG id", "unknownbug.go: cites BUG-0999",
+		"nosig.go: deferred-parity entry pins no signature", "emptymarker.go: deferred-parity entry pins no signature",
+		"h1.go: deferred-parity entry cites no BUG id"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing problem %q in:\n%s", want, got)
+		}
+	}
+	for _, clean := range []string{"ok.go", "marker.go", "spec.go", "g1.go"} {
+		if strings.Contains(got, "t: "+clean+":") {
+			t.Errorf("%s must be clean:\n%s", clean, got)
+		}
+	}
+	// Unsigned registers (never run) need the bug id only.
+	if s := strings.Join(RegisterProblems("t", ex, bugs, false), "\n"); strings.Contains(s, "nosig.go") {
+		t.Errorf("unsigned register must not require a signature:\n%s", s)
+	}
+}
+
+func TestIsPinned(t *testing.T) {
+	if !IsPinned("0123456789abcdef") || IsPinned("unpinned (x)") || IsPinned("") || IsPinned("0123") {
+		t.Fatal("IsPinned")
+	}
+}
+
+func TestLoadBugIDs(t *testing.T) {
+	p := t.TempDir() + "/bugs.md"
+	if err := os.WriteFile(p, []byte("| Id | Bug |\n|---|---|\n| BUG-0001 | x |\nprose BUG-0002\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ids, err := LoadBugIDs(p)
+	if err != nil || !ids["BUG-0001"] || ids["BUG-0002"] {
+		t.Fatalf("ids %v err %v", ids, err)
 	}
 }

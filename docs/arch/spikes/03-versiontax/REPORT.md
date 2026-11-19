@@ -431,3 +431,14 @@ against the go.dev-published SHA256 before extraction.
   `toolexec-126/main.go` (1.26-format wrapper variant, F8)
 - `bin/` — `api_dump`, `gotest126.exe`, `named126/compile` (built artifacts,
   reproducible via `run.sh --full`)
+
+## Pruned run logs (2026-11-18)
+
+61 raw run logs that this report does not cite were removed from git
+(debris gate: per-tree log-size cap in `check_tracked_files.py`), from
+`logs/`, `logs/stock126/`, `logs/wraplogs126/`, `logs/wrapped126/`. They remain in history:
+`git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
+--name-only 228dd7ab docs/arch/spikes/03-versiontax` lists them). To regenerate,
+re-run `run.sh` / `run_matrix126.sh` in this directory on the pinned toolchains (docs/dev/ENV.md); every log
+this report cites is kept.
+

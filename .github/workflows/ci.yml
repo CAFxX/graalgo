@@ -19,10 +19,14 @@
 #                               changes — GOROOT/test language suite
 #                               (`conformance.yml`, paths-filtered)
 #   layer 3 (stdlib+scripts):   per-release gate — wave corpora differential
-#                               (`stdlib-gate.yml`: weekly + manual dispatch)
+#                               (`stdlib-gate.yml`: manual dispatch only —
+#                               its weekly schedule is DISABLED until the
+#                               wave corpora are triaged, BUG-0033 in
+#                               docs/dev/bugs.md; it was red 5/5)
 #   layer 4 (fuzz soak):        overnight per release — generative
 #                               differential fuzzing (`fuzz-soak.yml`:
-#                               nightly + manual dispatch)
+#                               nightly + manual dispatch; soak <= 4 h so
+#                               the job fits GitHub's 360-min limit)
 # The full differential suite (`make test`, 30+ min) is excluded from
 # per-push CI by design — it runs in local verification and the weekly
 # full-suite job. This is documented, not skipped.
@@ -40,12 +44,20 @@ jobs:
   build-and-check:
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    env:
+      # The base of every "only moves forward" gate: the push's `before`
+      # sha or the PR's base sha. The no-bridges gate diffs GATE_BASE...HEAD
+      # (a fast-forward of N commits is checked whole, not just HEAD~1);
+      # the ratchet gate refuses budgets above the base's; `req lint` rule
+      # (f) refuses changed/removed LOCKED-TEXT.sum lines and status
+      # regressions. Used by the step below and by `make check` (make all).
+      GATE_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (fast-forward merge of a lane branch + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # Full history: the no-bridges gate needs GATE_BASE (and,
+          # for its fallbacks, HEAD~1) — a shallow checkout has neither and
+          # the gate would fail loudly instead of inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)

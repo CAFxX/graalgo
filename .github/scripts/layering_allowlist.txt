@@ -1,0 +1,44 @@
+# Layering gate allow-list (check_layering.py): v1 dependencies reachable
+# from the new node package (graalgo.go.*) that predate the gate.
+# SHRINK-ONLY: a new edge fails the gate, and an edge that no longer occurs
+# fails until its line is removed. Each line: <from> -> <to>  # owner: plan.
+# Split plan and order: docs/arch/RECOVERY.md "Layering debt".
+
+graalgo.language.GoContext -> graalgo.frontend.NodeFactory  # T2 language shell (TR-1): the v1 build path (NodeFactory/WireKindRegistrar/FrontendException) moves behind a v1-only builder the new path never loads; deleted at M3
+graalgo.language.GoLanguage -> graalgo.frontend.FrontendException  # T2 language shell (TR-1): the v1 build path (NodeFactory/WireKindRegistrar/FrontendException) moves behind a v1-only builder the new path never loads; deleted at M3
+graalgo.language.GoLanguage -> graalgo.frontend.NodeFactory  # T2 language shell (TR-1): the v1 build path (NodeFactory/WireKindRegistrar/FrontendException) moves behind a v1-only builder the new path never loads; deleted at M3
+graalgo.language.GoProgramBuilder -> graalgo.frontend.NodeFactory  # T2 language shell (TR-1): the v1 build path (NodeFactory/WireKindRegistrar/FrontendException) moves behind a v1-only builder the new path never loads; deleted at M3
+graalgo.language.GoProgramBuilder -> graalgo.frontend.WireKindRegistrar  # T2 language shell (TR-1): the v1 build path (NodeFactory/WireKindRegistrar/FrontendException) moves behind a v1-only builder the new path never loads; deleted at M3
+graalgo.language.GoProgramRootNode -> graalgo.frontend.NodeFactory  # T2 language shell (TR-1): the v1 build path (NodeFactory/WireKindRegistrar/FrontendException) moves behind a v1-only builder the new path never loads; deleted at M3
+graalgo.runtime.BuiltinPrint -> graalgo.values.GoComplex32  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.BuiltinPrint -> graalgo.values.GoComplex64  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.BuiltinPrint -> graalgo.values.GoKind  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.BuiltinPrint -> graalgo.values.GoSlice  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.BuiltinPrint -> graalgo.values.GoString  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.DeferredCall -> graalgo.values.CallSiteProbes  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.DeferredCall -> graalgo.values.GoFunc  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.DeferredCall -> graalgo.values.GoKind  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.GoCalls -> graalgo.values.GoFunc  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.GoStrings -> graalgo.values.GoString  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.frontend.Boxing  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.frontend.FrontendException  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoComplex32  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoComplex64  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoKind  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoMap  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoSlice  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoStructDescriptor  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Intrinsics -> graalgo.values.GoTypeDescriptor  # T2 runtime: v1 intrinsic surface over values.*; the new path uses graalgo.go.runtime; split the shared entry points out, rest deleted at M3
+graalgo.runtime.Panic -> graalgo.values.GoInterface  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.Panic -> graalgo.values.GoKind  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.Panic -> graalgo.values.GoString  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.Panic -> graalgo.values.GoTypeDescriptor  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.PanicRendering -> graalgo.values.GoKind  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.PanicRendering -> graalgo.values.GoString  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.PanicRendering -> graalgo.values.GoTypeDescriptor  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.RuntimeErrorTypes -> graalgo.values.GoKind  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.runtime.RuntimeErrorTypes -> graalgo.values.GoTypeDescriptor  # T2 runtime: shared helper typed on the v1 value model; split a v1-free core (graalgo.go.values) from a v1 adapter, adapter deleted at M3
+graalgo.sched.SchedulerCore -> graalgo.values.GoFunc  # T2 scheduler: SchedulerCore spawns/renders v1 values (GoFunc, GoString, descriptors); move those entry points to a v1 adapter, deleted at M3
+graalgo.sched.SchedulerCore -> graalgo.values.GoKind  # T2 scheduler: SchedulerCore spawns/renders v1 values (GoFunc, GoString, descriptors); move those entry points to a v1 adapter, deleted at M3
+graalgo.sched.SchedulerCore -> graalgo.values.GoString  # T2 scheduler: SchedulerCore spawns/renders v1 values (GoFunc, GoString, descriptors); move those entry points to a v1 adapter, deleted at M3
+graalgo.sched.SchedulerCore -> graalgo.values.GoTypeDescriptor  # T2 scheduler: SchedulerCore spawns/renders v1 values (GoFunc, GoString, descriptors); move those entry points to a v1 adapter, deleted at M3

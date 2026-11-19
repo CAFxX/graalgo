@@ -483,7 +483,7 @@ shift-double-add sequence; uint64→float32 correctly rounded (0 mismatches
   additive-only per §8's versioning rule — still `"frontend": "v1"`.
 - New doc: [docs/freeze-stub.md](../../../spec/freeze-stub.md) (frozen `graalgo.safepoint.poll()`
   signature + call sites).
-- [src/main/java/graalgo/nodes/README.md](../../../../internal/backend/truffle/src/main/java/graalgo/nodes/README.md): reserved for WS E/F
+- `src/main/java/graalgo/nodes/README.md` (deleted 2026-11-18: the package stayed empty): reserved for WS E/F
   control-flow nodes; expression nodes stay in `graalgo.frontend`.
 - D6 specialization budget: no PICs anywhere in M3 (only the
   `InterfaceDispatchProbes` hooks); typed execute methods keep all

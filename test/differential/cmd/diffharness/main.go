@@ -21,6 +21,13 @@
 //	          behavior on the corpus, or check a backend (graalgo) against
 //	          the recorded gc snapshot (fails on unexpected divergence, on a
 //	          stale expected-divergence entry, exits 3 on infra failure).
+//
+//	registers static gate over the exclusion registers (no programs run):
+//	          every file parses, every deferred-parity entry cites a
+//	          docs/dev/bugs.md id (and every cited id exists), and every
+//	          deferred-parity entry of a differential register pins a
+//	          signature. `-unsigned FILE` names a register whose entries are
+//	          never run (no divergence text to pin).
 package main
 
 import (
@@ -58,6 +65,8 @@ func main() {
 		err = cmdSnapshot(os.Args[2:])
 	case "srctest":
 		err = cmdSrctest(os.Args[2:])
+	case "registers":
+		err = cmdRegisters(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -72,7 +81,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|srctest> [flags]
+	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|srctest|registers> [flags]
 
   run      -config PATH -corpus DIR -out PATH [-timeout SEC]
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
@@ -485,6 +494,7 @@ func cmdTypeparamRun(args []string) error {
 	refName := fs.String("ref", "gc-a", "reference backend name")
 	altName := fs.String("alt", "graalgo", "alternate backend name")
 	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
+	only := fs.String("files", "", "comma-separated file names: compare only these (a partial run for triage/pinning; stale entries are only judged for the files compared)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -511,6 +521,12 @@ func cmdTypeparamRun(args []string) error {
 	if err != nil {
 		return err
 	}
+	if *only != "" {
+		files, err = srctest.Select(files, strings.Split(*only, ","))
+		if err != nil {
+			return err
+		}
+	}
 	comps, err := typeparam.Run(cfg, files, *refName, *altName, *jobs)
 	if err != nil {
 		return err
@@ -530,6 +546,9 @@ func cmdTypeparamRun(args []string) error {
 		}
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
+		}
+		if v != "STALE" && v != "INFRA" {
+			fmt.Printf("\n           = signature %s", harness.DiffSignature(strings.Join(c.Reasons, "\n")))
 		}
 		fmt.Println()
 	}
@@ -666,6 +685,9 @@ func cmdSrctestRun(args []string) error {
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
 		}
+		if v != "STALE" && v != "INFRA" {
+			fmt.Printf("\n           = signature %s", harness.DiffSignature(strings.Join(c.Reasons, "\n")))
+		}
 		fmt.Println()
 	}
 	notrun := 0
@@ -700,7 +722,7 @@ func srctestVerdict(c typeparam.Comparison) string {
 		return "STALE"
 	case c.Same:
 		return "MATCH"
-	case c.Expected != "" && c.ExpectedSig != "" && c.ExpectedSig != harness.DiffSignature(strings.Join(c.Reasons, "\n")):
+	case c.Expected != "" && harness.IsPinned(c.ExpectedSig) && c.ExpectedSig != harness.DiffSignature(strings.Join(c.Reasons, "\n")):
 		return "DIVERGE"
 	case c.Expected != "":
 		return "EXPECTED"
@@ -750,4 +772,43 @@ func writeJSON(path string, v any) error {
 		return err
 	}
 	return os.WriteFile(path, append(data, '\n'), 0o644)
+}
+
+// cmdRegisters is the exclusion-register gate (see the package comment).
+func cmdRegisters(args []string) error {
+	fs := flag.NewFlagSet("registers", flag.ExitOnError)
+	bugsPath := fs.String("bugs", "", "bug register (docs/dev/bugs.md)")
+	var unsigned []string
+	fs.Func("unsigned", "register whose entries are never run: no signature required (repeatable)", func(v string) error {
+		unsigned = append(unsigned, v)
+		return nil
+	})
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	files := append(fs.Args(), unsigned...)
+	if *bugsPath == "" || len(files) == 0 {
+		return fmt.Errorf("usage: registers -bugs docs/dev/bugs.md [-unsigned FILE]... FILE...")
+	}
+	bugs, err := harness.LoadBugIDs(*bugsPath)
+	if err != nil {
+		return err
+	}
+	var problems []string
+	for i, f := range files {
+		_, excl, err := harness.LoadReviewedExclusions(f)
+		if err != nil {
+			problems = append(problems, err.Error())
+			continue
+		}
+		problems = append(problems, harness.RegisterProblems(f, excl, bugs, i < len(fs.Args()))...)
+	}
+	for _, p := range problems {
+		fmt.Println(p)
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%d register problem(s)", len(problems))
+	}
+	fmt.Printf("registers: %d file(s) clean\n", len(files))
+	return nil
 }

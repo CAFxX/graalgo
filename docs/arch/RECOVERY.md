@@ -25,7 +25,9 @@ verified by running programs, not by reading docs).
 
 ## State (2026-11-18)
 
-Integration branch: `wt/recovery/integration`.
+Integration branch: `master` in `~/dev/graalgo` (fast-forward only; lanes
+work in worktrees, [AGENTS.md](../../AGENTS.md) §4). The `wt/recovery/*`
+branches below are history.
 
 | Lane | State |
 |---|---|
@@ -39,6 +41,8 @@ Integration branch: `wt/recovery/integration`.
 | T0.D + TR-0 + TR-1 backend structure (`wt/recovery/backend-structure`) | landed |
 | toolexec W3 emitter (all GIR node kinds; girinterp reference interpreter) | landed 2026-11-18 (`wt/m1a/nodes-fix2`); the M1a close-out added GIR `FuncLit.wrapper` |
 | toolexec W4 new node package ([graalgo/go/](../../internal/backend/truffle/src/main/java/graalgo/go/), [truffle-design.md](truffle-design.md) §15) | landed 2026-11-18; M1a close-out (`wt/m1a/closeout`): Goexit, recover through wrappers, range-over-func, the open-coding limit pinned; `make test-m1a` 173/173 programs vs gc (+ [defer_path.sh](../../test/m1a/defer_path.sh)), per-push in `make all`; per-node T1–T4 tests waived ([ADR-0014](../dev/adr/ADR-0014-node-tests-waived-m1a.md), WP-NODETEST) |
+| srctest v4 (`wt/ci/green`): conformance triage of every GOROOT/test result on the product launcher | landed 2026-11-18 (`c14b63d0`): adapter honors action lines, stable divergence texts, every entry bug-id'd and signature-pinned ([srctest-exclusions.yaml](../../test/differential/srctest-exclusions.yaml) v4; v5 adds gc2.go, BUG-0032) |
+| Debt paydown round 2 (`wt/ci/green2`) | 2026-11-18: StackDepthLimit flake fixed at the root (call-path holder warm-up); layering, forward-only (ratchet, locked-text, statuses), exclusion-register, quarantine owner/expiry, superseded-id, per-tree log-size gates; no-bridges gate over whole pushes; typeparam adapter un-broken (un-quarantined); fuzz-soak fits the job limit; stdlib-gate manual-only (BUG-0033); M3 delete inventory (toolexec-design §9.1) |
 | Spec reconciliation (`wt/spec/reconcile`): global spec-conformance review items | done 2026-11-18 ([ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md), [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md), coverage below) |
 | toolexec M1r, first slice (`wt/m1r/facade`): W5 fork tooling + facade `runtime`, W6 intrinsic registry + link-time resolution and reachability | landed 2026-11-18: upstream's std source runs on the node package for 18 importable packages — those that at run time need no `internal/reflectlite` descriptor read, no semaphore and no system call (`make test-m1r` 11/11; [toolexec-design.md](toolexec-design.md) §13); all of std compiles against the facade. **Open in M1r:** W13 pointer model ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted by the owner 2026-11-18, **ACTIVE: owner lane `w13`** — also a soundness gate: `unsafe.Pointer` conversions are an unchecked identity until it lands), W9a descriptor images + `reflectlite` intrinsics (gate for `errors` and everything above it), W8a syscalls; then `sync`'s semaphores (11 symbols) |
 
@@ -226,6 +230,38 @@ toolexec M0–M5 and TR-0–TR-13. Superseded requirements (`GG-0012`,
 `GG-0015`, `GG-0016`, `GG-0018`, `GG-0055`, `GG-SCHED-0004`, and the
 re-issued `GG-0065`, `GG-0066`, `GG-0067`, `GG-SCHED-0005`) are covered
 through their successors.
+
+## Layering debt
+
+The new path (`graalgo.go.*`, and `internal/toolexec`) must not depend on
+v1 code, which is deleted at M3. [check_layering.py](../../.github/scripts/check_layering.py)
+(`make check`) follows every reference transitively from `graalgo.go.*`
+through the shared code and fails on any edge into `graalgo.frontend`,
+`graalgo.values`, `graalgo.p3*`, `graalgo.iface`, `graalgo.rtstack` or
+`graalgo.rtmemstats`, and on any `internal/toolexec` import of
+`internal/{frontend,driver,vet}`. The 38 edges present when the gate landed
+(2026-11-18) are grandfathered, shrink-only, in
+[layering_allowlist.txt](../../.github/scripts/layering_allowlist.txt);
+`PanicNilError` was split off then (its v1 descriptor moved to
+`RuntimeErrorTypes`). The rest is not a mechanical split and is left to the
+owning lanes, in this order:
+
+1. `graalgo.language` (`GoLanguage`, `GoContext`, `GoProgramBuilder`,
+   `GoProgramRootNode` → `frontend.NodeFactory`, `WireKindRegistrar`,
+   `FrontendException`): the language shell serves both paths; the v1 wire
+   build moves behind a v1-only builder interface that the bundle path never
+   loads (T2, with the m1a-closeout/m1r-facade lanes, which edit this code
+   now). Deleted at M3 otherwise.
+2. `graalgo.runtime.Intrinsics` (→ `values.GoMap/GoSlice/GoKind/
+   GoTypeDescriptor/GoStructDescriptor/GoComplex*`, `frontend.Boxing`,
+   `FrontendException`): the v1 intrinsic surface; the new path has
+   `graalgo.go.runtime`. Split the entry points the new path reaches, the
+   rest goes at M3.
+3. `graalgo.runtime` helpers (`Panic`, `PanicRendering`, `RuntimeErrorTypes`,
+   `BuiltinPrint`, `DeferredCall`, `GoCalls`, `GoStrings`) and
+   `graalgo.sched.SchedulerCore` (→ `values.GoFunc`, `GoString`,
+   `GoTypeDescriptor`, `GoKind`): typed on the v1 value model; each splits
+   into a v1-free core and a v1 adapter deleted at M3 (T2 runtime/scheduler).
 
 ## Working rules
 

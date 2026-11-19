@@ -277,12 +277,12 @@ work; M1 must not invent its own vendored copy.
 - `TestBuildTagFiltering` (`verifies: GG-0023`): synthetic corpus +
   real `src/os`, `src/strings` — our `SelectFiles` must equal the
   `go/build` oracle file-for-file.
-- `TestImportCycle` (`verifies: GG-0012`): a↔b and self-import cycles →
+- `TestImportCycle` (history: annotated for `GG-0012`, superseded by GG-0069): a↔b and self-import cycles →
   error contains `import cycle`; wall-clock timeout proves fail-fast.
-- `TestSyntheticBootstrapRetained` (`verifies: GG-0012`): single-file
+- `TestSyntheticBootstrapRetained` (history: annotated for `GG-0012`, superseded by GG-0069): single-file
   dir importing `runtime`+`fmt` — `ExportDir` doc deep-equals
   `ExportFile` on the same file (modulo `package.files` basenames).
-- `TestTwoPackageDifferential` (`verifies: GG-0012`): `testdata/twopkg`
+- `TestTwoPackageDifferential` (history: annotated for `GG-0012`, superseded by GG-0069): `testdata/twopkg`
   (`main` + two-file `helper` with linux-tagged and windows-excluded
   files; `main` also carries a `T` colliding with `helper.T` and a
   package-level `Counter` shadowing `helper.Counter`) — a built gc binary

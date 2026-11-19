@@ -19,7 +19,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   overlay, the 18 generated `synth_*.go`, the GIR Go/Java codecs), `build`
   (truffle + interop Java modules), `snapshot-check`, `check`, the module
   tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
-  `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`. CI
+  `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
+  and the new path's gates `test-m1a` (import-free corpus vs gc through
+  the `-toolexec` path) and `pe-check-m1a`. CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).
 - `make check` — the static gates: pinned-jar checksums; placeholder,
@@ -28,16 +30,28 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   duplicate-FQN; dead-path; MR-table subset; repo gates (tracked-file
   size/binary gate, doc-path existence, GG-id existence, Makefile
   `.PHONY`/header consistency, generated-files list, placeholder/TODO and
-  runtime-`unimplemented` ratchets — each with its own planted-violation
-  test); every `.github/scripts/test_*.py`; `tools/req lint`; and the
-  gofrontend `build.sh check` (gofmt/vet/tests, vendoring diff, wire-format
-  validator).
-- `make test-java-slow` — the slow Java classes (nightly/weekly). Known
+  stub ratchets (`unimplemented`, new-path `Unsupported`/`unsupportedf`),
+  the new-path/v1 layering gate, the no-bridges gate — each with its own
+  planted-violation test); every `.github/scripts/test_*.py`; `tools/req
+  lint` (rules (a)–(f)); and the gofrontend `build.sh check`
+  (gofmt/vet/tests, vendoring diff, wire-format validator).
+- **Forward-only gates** compare against a base: `$GATE_BASE` (CI: the
+  push's `before` sha or the PR base), else the merge-base with
+  `origin/master`. The no-bridges gate inspects every commit since the
+  base; ratchet budgets may not rise above the base's; `LOCKED-TEXT.sum`
+  lines are only added and requirement statuses never move back (`req
+  lint` rule (f)); `req seal` is one-shot.
+- `make test-java-slow` — the slow Java classes (the weekly CI
+  `full-suite` job, Mondays). Known
   failures are listed in [test/java/quarantine.txt](test/java/quarantine.txt)
-  (class, reason, owner, expiry milestone); the target fails on any failure
+  (class, reason, owner — a RECOVERY.md track/work-package id or
+  `lane:<name>` —, expiry — a future date or a RECOVERY.md milestone —;
+  validated by `make java-test-lists-check`); the target fails on any failure
   outside the quarantine **and** on a quarantined class that now passes.
 - `make test` — the full differential suite (30+ minutes): never per-push,
-  never on a shared host without asking; nightly CI runs it.
+  never on a shared host without asking; the weekly CI `full-suite` job
+  runs it. (Nightly: `mutation.yml` and `fuzz-soak.yml`; the layer-3
+  `stdlib-gate.yml` is manual-only until BUG-0033 is triaged.)
 - Per-module Go tests: `go test ./...` inside the module's own directory
   (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its
   own `go.mod`).
@@ -60,6 +74,12 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   bugs. **Never run
   `make snapshot` to silence graalgo** — it cannot (it records gc), and an
   exclusion without review is the same lie.
+- `make check` enforces the register rules (`diffharness registers`):
+  every `deferred-parity` entry cites a `BUG-NNNN` row of bugs.md, every
+  cited id exists, and every individual entry of a differential register
+  pins its `signature:` — or says `signature: unpinned (<why>)` when the
+  divergence text is not reproducible (timings, timestamps) or the file
+  never runs.
 - The same rules hold for
   [srctest-exclusions.yaml](test/differential/srctest-exclusions.yaml),
   [typeparam-exclusions.yaml](test/differential/typeparam-exclusions.yaml)
@@ -105,7 +125,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   [internal/frontend/](internal/frontend/) and the Java std
   reimplementations in [internal/backend/interop/](internal/backend/interop/)
   are frozen and are **all deleted at M3** with the v1 pipeline
-  ([toolexec-design.md](docs/arch/toolexec-design.md) D11/D12). The frozen
+  ([toolexec-design.md](docs/arch/toolexec-design.md) D11/D12). That is the
+  whole interop module (every package in it is a v1 stand-in), not the
+  runtime library the new path shares; the complete list of what M3
+  deletes and what stays is toolexec-design §9.1. The frozen
   inventory is [docs/arch/bridge-inventory.md](docs/arch/bridge-inventory.md);
   the no-bridges gate
   ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py))

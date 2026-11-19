@@ -77,7 +77,7 @@ public final class Panic {
             if (gi.isNil()) {
                 if (!panicNilOldBehavior) {
                     v = PanicNilError.INSTANCE;
-                    d = PanicNilError.descriptor();
+                    d = RuntimeErrorTypes.panicNilDescriptor();
                 } else {
                     // Pre-1.21: panic of a nil interface value is a nil
                     // panic (like untyped panic(nil)); recover() returns
@@ -92,7 +92,7 @@ public final class Panic {
         }
         if (v == null && !panicNilOldBehavior) {
             v = PanicNilError.INSTANCE;
-            d = PanicNilError.descriptor();
+            d = RuntimeErrorTypes.panicNilDescriptor();
         }
         // fix-redmaster-r43 (bug-019): a GoErrorValue (runtime panic like
         // "comparing uncomparable type") thrown without a descriptor needs

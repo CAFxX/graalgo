@@ -55,7 +55,8 @@ agent-hour upgrade bound.
 ## 3. Matrix results
 
 52 scripts × 2 modes = 104 runs ([logs/matrix_results.jsonl](logs/matrix_results.jsonl); per-script
-logs in [logs/stock/](logs/stock/), [logs/wrapped/](logs/wrapped/); wrapper logs in [logs/wraplogs/](logs/wraplogs/)).
+logs were in `logs/stock/` and `logs/wrapped/` and wrapper logs in `logs/wraplogs/` — pruned
+2026-11-18 except the cited `cgo_long_cmd.v4.wraplog`; see "Pruned run logs" below).
 
 - **Stock mode: 52/52 pass.**
 - **Wrapped mode (v1): 51/52 pass.** The single divergence was
@@ -263,7 +264,7 @@ follow-up).
 - [scripts/analyze_trace.py](scripts/analyze_trace.py) — `-x` trace diff tool
 - [run_matrix.sh](run_matrix.sh), [launch_matrix.py](launch_matrix.py) — checkpointed/resumable runner +
   double-fork launcher
-- [logs/matrix_results.jsonl](logs/matrix_results.jsonl), `[logs/](logs/){stock,wrapped}/`, [logs/wraplogs/](logs/wraplogs/) —
+- [logs/matrix_results.jsonl](logs/matrix_results.jsonl), [logs/wraplogs/](logs/wraplogs/) (the per-script `stock`/`wrapped` logs are pruned, see below) —
   raw results (incl. `cgo_long_cmd.v4.log`, `.v4.wraplog` for the fix
   verification)
 - `probes/` — probe workspaces, `-x` traces (`trace-stock.txt`,
@@ -287,3 +288,14 @@ was never modified at any point.
 ## Removed artifacts
 
 The compiled `src/toolexec-log/toolexec-log` binary and the two 4.7 MB `logs/{stock,wrapped}/vet_flags.log` captures were removed from the repo 2026-11-18 (size/binary gate); rebuild the binary with `go build` in [src/toolexec-log/](src/toolexec-log/) and regenerate the logs with [run_matrix.sh](run_matrix.sh).
+
+## Pruned run logs (2026-11-18)
+
+152 raw run logs that this report does not cite were removed from git
+(debris gate: per-tree log-size cap in `check_tracked_files.py`), from
+`logs/stock/`, `logs/trial/`, `logs/wraplogs/`, `logs/wrapped/`. They remain in history:
+`git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
+--name-only 228dd7ab docs/arch/spikes/05-cmdgo` lists them). To regenerate,
+re-run `run_matrix.sh` in this directory on the pinned toolchains (docs/dev/ENV.md); every log
+this report cites is kept.
+
