@@ -19,6 +19,8 @@
 #                (default: ~/tools/graalvm-jdk-25)
 #   GOROOT_TEST  GOROOT/test directory override (default: $(go env GOROOT)/test)
 #   JOBS         parallel programs (default: 4)
+#   GRAALGO_JAVA_OPTS  extra launcher JVM options; the runner always appends
+#                the fixed heap -Xms2g -Xmx2g (later flags win), see below
 #
 # Runnable from a clean checkout by any agent/CI: needs a Go toolchain with
 # a full GOROOT/test tree (actions/setup-go provides it; the VM's
@@ -61,6 +63,13 @@ if [ ! -d "$GRAALGO_BACKEND_DIR/interop/out/classes" ]; then
   echo "conformance: backend classes not built; run 'make build' at the repo root first" >&2
   exit 3
 fi
+
+# A fixed JVM heap (initial = max) on every host. graalgo's heap growth
+# follows the JVM's sizing, not GOGC (BUG-0025), and runtime.MemStats.Sys
+# reports committed memory: with only -Xmx pinned the initial heap is still
+# 1/64 of RAM, so how far the heap grows (init1.go asserts Sys grows by
+# less than the 1000 MB of garbage it makes) depended on the host's RAM.
+export GRAALGO_JAVA_OPTS="${GRAALGO_JAVA_OPTS:-} -Xms2g -Xmx2g"
 
 JOBS="${JOBS:-4}"
 OUTDIR="${OUTDIR:-$HERE/.tmp/conformance}"
