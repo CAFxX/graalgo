@@ -26,6 +26,10 @@ const (
 	Val Kind = iota
 	CStr
 	Bytes
+	// Struct: a pointer to one pointer-free Go value of a named type and a
+	// fixed size (an Rlimit, a Timespec): copied in, and back after a
+	// successful call when the kernel writes it.
+	Struct
 )
 
 // Dir is the direction of a buffer.
@@ -44,12 +48,22 @@ type Role struct {
 	LenArg       int
 	Dir          Dir
 	FilledResult bool
+	// Struct: the pointee type as the scan names it ("syscall.Rlimit") and
+	// its size in bytes; Dir is the direction.
+	Type string
+	Size int64
 }
 
 func (r Role) String() string {
 	switch r.Kind {
 	case CStr:
 		return "cstr"
+	case Struct:
+		d := "in"
+		if r.Dir == Out {
+			d = "out"
+		}
+		return fmt.Sprintf("struct(%s,%d,%s)", r.Type, r.Size, d)
 	case Bytes:
 		if r.Dir == In {
 			return fmt.Sprintf("bytes(%d,in)", r.LenArg+1)
@@ -163,6 +177,25 @@ func parseRole(s string) (Role, error) {
 		return Role{Kind: Val}, nil
 	case "cstr":
 		return Role{Kind: CStr}, nil
+	}
+	if strings.HasPrefix(s, "struct(") && strings.HasSuffix(s, ")") {
+		p := strings.Split(s[len("struct("):len(s)-1], ",")
+		if len(p) != 3 || p[0] == "" || strings.ContainsAny(p[0], " ()") {
+			return Role{}, fmt.Errorf("%s: want struct(TYPE,SIZE,in) or struct(TYPE,SIZE,out)", s)
+		}
+		n, err := strconv.ParseInt(p[1], 10, 64)
+		if err != nil || n < 1 || n > 4096 {
+			return Role{}, fmt.Errorf("%s: bad size", s)
+		}
+		r := Role{Kind: Struct, Type: p[0], Size: n}
+		switch p[2] {
+		case "in":
+		case "out":
+			r.Dir = Out
+		default:
+			return Role{}, fmt.Errorf("%s: want struct(TYPE,SIZE,in) or struct(TYPE,SIZE,out)", s)
+		}
+		return r, nil
 	}
 	if !strings.HasPrefix(s, "bytes(") || !strings.HasSuffix(s, ")") {
 		return Role{}, fmt.Errorf("unknown role %q", s)

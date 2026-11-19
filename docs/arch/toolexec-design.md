@@ -1465,6 +1465,25 @@ it turns itself on when the piece lands — `//m1c:ldflags` and `//m1c:env`),
   first run it flagged the fork glue's typed-value writes and `readlen`'s
   `*byte` buffer (a `*byte` parameter is now `byteptr-param`, a buffer, not
   a C string). Role kinds `struct`/`array` and nested pointers stay W8b.
+  *Follow-up (2026-11-19, lane m1r/reflectlite-temp):* `make test-m1c` was
+  red on master — `syscall`'s package init raises `RLIMIT_NOFILE` through
+  `prlimit64` (302), which the table lacked, so every program importing
+  `syscall` (all of `time`) stopped. The table now has 8 numbers; `prlimit64`
+  needs the minimal struct role `struct(TYPE,SIZE,in|out)`: a pointer to one
+  pointer-free value of a named type, copied in (and back for `out`) as
+  exactly SIZE bytes, nil as NULL. The gate checks the site passes
+  `uintptr(unsafe.Pointer(x))` with `x` of type `*TYPE`, that TYPE holds no
+  pointer and that SIZE is its gc linux/amd64 size (`types.SizesFor`);
+  5 more planted entries (wrong size, wrong type, declared `val`, an
+  undeclared struct pointer, a struct with pointers) turn it red, and two
+  m1c mutants (no copy-back, half size) are killed by
+  [syscall_rlimit.go](../../test/m1c/programs/syscall_rlimit.go). Struct
+  roles with nested pointers and arrays stay W8b. Also found by the now
+  running `time_format_zone.go`: `runtimeNow` returned its monotonic
+  reading relative to the JVM's start while `runtimeNano` was absolute, so
+  `time.Until` of a future monotonic time was negative on a host whose
+  `CLOCK_MONOTONIC` exceeded the offset (fixed: both are `nanotime()`, as
+  gc's `time_now`).
 - *`time`.* `Sleep` parks on a `TimerHeap` sleep entry; `newTimer`/
   `stopTimer`/`resetTimer` arm heap callbacks that start a runtime
   goroutine to run `sendTime`/`goFunc` (Go 1.23 semantics: stop/reset drain

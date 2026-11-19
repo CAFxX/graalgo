@@ -41,6 +41,8 @@ func (t *Table) Java() string {
 				roles = append(roles, "Role.CSTR")
 			case Bytes:
 				roles = append(roles, fmt.Sprintf("Role.bytes(%d, %t, %t)", r.LenArg, r.Dir == Out, r.FilledResult))
+			case Struct:
+				roles = append(roles, fmt.Sprintf("Role.struct(%d, %t)", r.Size, r.Dir == Out))
 			}
 		}
 		p("        BY_NR[%d] = new Entry(%d, %q, %t, new Role[] {%s});\n", e.Nr, e.Nr, e.Name, e.MayBlock, strings.Join(roles, ", "))

@@ -14,6 +14,7 @@ BYTEALG = J + "go/intrinsics/BytealgIntrinsics.java"
 KERNELS = ["test/m1c/programs/bytealg_kernels.go"]
 EXEC = J + "syscall/Executor.java"
 RAW = ["test/m1c/programs/syscall_raw.go"]
+RLIMIT = ["test/m1c/programs/syscall_rlimit.go"]
 
 MUTANTS = [
     # (name, file, anchor, replacement, programs that must fail)
@@ -71,6 +72,14 @@ MUTANTS = [
      "                long off = Unsafe.offset(p);",
      "                long off = 0;",
      RAW),
+    ("exec-struct-not-copied-back", EXEC,
+     "if (segs[i] == null || r.kind == Role.K_VAL || r.kind == Role.K_CSTR || !r.out) {",
+     "if (segs[i] == null || r.kind != Role.K_BYTES || !r.out) {",
+     RLIMIT),
+    ("exec-struct-half-size", EXEC,
+     "long n = r.kind == Role.K_STRUCT ? r.size : a[r.lenArg];",
+     "long n = r.kind == Role.K_STRUCT ? r.size / 2 : a[r.lenArg];",
+     RLIMIT),
     ("exec-loses-errno", EXEC,
      "                return new Raw(-1, (int) ERRNO.get(state, 0L));",
      "                return new Raw(-1, 0);",

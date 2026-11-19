@@ -117,7 +117,7 @@ public final class Executor {
                 if (r.kind == Role.K_CSTR) {
                     b = cString(node, e, i, obj, off, room);
                 } else {
-                    long n = a[r.lenArg];
+                    long n = r.kind == Role.K_STRUCT ? r.size : a[r.lenArg];
                     if (n < 0 || n > room) {
                         throw fail(node, e, i, "is a buffer of " + n + " bytes in a Go object with " + room
                                 + " bytes left");
@@ -138,7 +138,7 @@ public final class Executor {
             if (raw.errno == 0) {
                 for (int i = 0; i < roles.length; i++) {
                     Role r = roles[i];
-                    if (segs[i] == null || r.kind != Role.K_BYTES || !r.out) {
+                    if (segs[i] == null || r.kind == Role.K_VAL || r.kind == Role.K_CSTR || !r.out) {
                         continue;
                     }
                     int n = data[i].length;

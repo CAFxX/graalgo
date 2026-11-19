@@ -39,9 +39,6 @@ import java.util.WeakHashMap;
 final class TimeIntrinsics {
     private TimeIntrinsics() {}
 
-    /** gc's {@code startNano}: the monotonic origin of {@code Time}'s {@code m=} reading. */
-    private static final long START_NANO = System.nanoTime() - 1;
-
     // ------------------------------------------------------------------ clocks
 
     /** {@code nanotime()}: CLOCK_MONOTONIC, as {@link System#nanoTime} on Linux. */
@@ -49,11 +46,15 @@ final class TimeIntrinsics {
         return System.nanoTime();
     }
 
-    /** {@code time.now}: wall clock (CLOCK_REALTIME) and the monotonic reading since start. */
+    /**
+     * {@code time.now} (runtime/timestub.go): wall clock (CLOCK_REALTIME) and {@code nanotime()}
+     * itself — the same clock as {@link #time_runtimeNano}; package time subtracts its own
+     * {@code startNano} from both.
+     */
     @TruffleBoundary
     static Object time_runtimeNow(Node node) {
         Instant now = Instant.now();
-        return new Object[] {now.getEpochSecond(), (long) now.getNano(), System.nanoTime() - START_NANO};
+        return new Object[] {now.getEpochSecond(), (long) now.getNano(), System.nanoTime()};
     }
 
     /** No synctest bubbles (see SyncIntrinsics). */
