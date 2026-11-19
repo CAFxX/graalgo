@@ -177,6 +177,28 @@ index 00000000..59d7cefb
 +// Synthetic foo package.
 """
 
+# A new synthetic EXPORT TEST file (Rule 1 must exempt test files,
+# like Rules 2 and 5): synth_os_expand_test.go pins the wire doc of
+# the grandfathered synthetic os package; it ships no new synthetic
+# package. (os-expand F1, 2026-11-19: CI run 44492959677 failed the
+# pre-fix gate with this exact false positive.)
+NEW_SYNTH_TEST_FILE = """\
+diff --git a/internal/frontend/synth_os_expand_test.go b/internal/frontend/synth_os_expand_test.go
+new file mode 100644
+index 00000000..59d7cefb
+--- /dev/null
++++ b/internal/frontend/synth_os_expand_test.go
+@@ -0,0 +1,8 @@
++package frontend
++
++import (
++\t"testing"
++)
++
++func TestSyntheticOsExpand(t *testing.T) {
++}
+"""
+
 # A package-name conditional in a test file was already exempt under
 # Rule 2; pin that the exemption still holds.
 TEST_FILE_CONDITIONAL = """\
@@ -305,6 +327,9 @@ class TestNoBridgesGate(unittest.TestCase):
     def test_new_synth_file_flagged(self):
         errs = cnb.check_no_bridges(NEW_SYNTH_FILE)
         self.assertTrue(any("NEW SYNTHETIC FILE" in e for e in errs), errs)
+
+    def test_new_synth_test_file_not_flagged(self):
+        self.assertEqual(cnb.check_no_bridges(NEW_SYNTH_TEST_FILE), [])
 
     def test_non_case_lines_not_flagged(self):
         self.assertEqual(cnb.check_no_bridges(NON_CASE_LINES), [])

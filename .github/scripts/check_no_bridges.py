@@ -26,6 +26,12 @@ Both are pinned by .github/scripts/test_check_no_bridges.py (fixtures
 taken from the p3fmt-stub branch diff, 16547f17, which the old script
 failed with 3 false positives).
 
+Test files are exempt wherever a pattern is only meaningful in shipped
+code (Rules 1, 2, 5 share _is_test_file): a *_test.go file can pin a
+synthetic package's wire doc but can never ship as one. (Rule 1
+exemption added 2026-11-19: the os-expand F1 test file
+synth_os_expand_test.go failed CI run 44492959677 as a false positive.)
+
 Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
@@ -157,6 +163,12 @@ def check_no_bridges(diff):
         elif line.startswith("--- "):
             prev_was_devnull = False
     for f in new_synth:
+        # Test files are never shipped code: a synth_*_test.go export
+        # test (e.g. synth_os_expand_test.go) pins the wire doc of a
+        # grandfathered synthetic package; it adds no synthetic package.
+        # Same exemption as Rules 2 and 5.
+        if _is_test_file(f):
+            continue
         errors.append(f"NEW SYNTHETIC FILE: {f} — synthetic stdlib packages are banned")
 
     # 2. Package-name conditionals (stdlib names)
