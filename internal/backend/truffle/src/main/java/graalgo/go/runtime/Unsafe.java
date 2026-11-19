@@ -476,6 +476,56 @@ public final class Unsafe {
         }
     }
 
+    /**
+     * Copies the {@code len} gc bytes at {@code off} of {@code obj} into {@code dst} (the syscall
+     * executor's copy-in, graalgo.syscall): one array copy when they are byte leaves, else leaf by
+     * leaf as an {@code unsafe} reinterpretation reads them. A range past the object is the
+     * checkptr fatal error.
+     */
+    @TruffleBoundary
+    public static void readBytes(Node n, Flat obj, long off, byte[] dst, int len) {
+        if (len == 0) {
+            return;
+        }
+        checkRange(n, obj, off, len);
+        Leaf first = byteRun(obj, off, len);
+        if (first != null) {
+            System.arraycopy(obj.bytes, first.byt, dst, 0, len);
+            return;
+        }
+        for (int i = 0; i < len;) {
+            int k = Math.min(8, len - i);
+            long v = loadBits(n, obj, off + i, k);
+            for (int j = 0; j < k; j++) {
+                dst[i + j] = (byte) (v >>> (8 * j));
+            }
+            i += k;
+        }
+    }
+
+    /** The inverse of {@link #readBytes}: stores {@code len} bytes of {@code src} at {@code off}. */
+    @TruffleBoundary
+    public static void writeBytes(Node n, Flat obj, long off, byte[] src, int len) {
+        if (len == 0) {
+            return;
+        }
+        checkRange(n, obj, off, len);
+        Leaf first = byteRun(obj, off, len);
+        if (first != null) {
+            System.arraycopy(src, 0, obj.bytes, first.byt, len);
+            return;
+        }
+        for (int i = 0; i < len;) {
+            int k = Math.min(8, len - i);
+            long v = 0;
+            for (int j = 0; j < k; j++) {
+                v |= (src[i + j] & 0xFFL) << (8 * j);
+            }
+            storeBits(n, obj, off + i, k, v);
+            i += k;
+        }
+    }
+
     /** A scalar of type {@code t} at byte {@code off}, in slot form (what a typed load of the slot yields). */
     @TruffleBoundary
     public static long loadScalar(Node n, Flat obj, long off, GoType t) {

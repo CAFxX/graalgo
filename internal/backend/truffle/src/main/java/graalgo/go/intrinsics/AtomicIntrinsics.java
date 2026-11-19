@@ -100,6 +100,11 @@ final class AtomicIntrinsics {
     static void sync_atomic_runtime_procUnpin(Node node) {
     }
 
+    /** {@code internal/runtime/atomic.StoreReluintptr}: on amd64 a plain store is a release store. */
+    static void internal_runtime_atomic_StoreReluintptr(Node node, Object addr, long v) {
+        sync_atomic_StoreUintptr(node, addr, v);
+    }
+
     private static long[] prims(Node node, Object addr) {
         if (addr instanceof Ptr p) {
             return p.obj.prims;

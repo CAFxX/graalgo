@@ -146,3 +146,88 @@ intrinsic internal/reflectlite.maplen         ReflectliteIntrinsics func(unsafe.
 intrinsic runtime.Caller       RuntimeIntrinsics func(int) (uintptr, string, int, bool)
 intrinsic runtime.FuncForPC    RuntimeIntrinsics func(uintptr) *runtime.Func
 method    runtime.(*Func).Name RuntimeIntrinsics func() string
+
+# ============================================================================
+# M1c lane (wt/m1c): sync semaphores and notify lists, internal/bytealg,
+# time and the W8a syscalls. Kept as one delimited block so that concurrent
+# lanes' sections (w9a: descriptor images / reflectlite) merge cleanly.
+# ============================================================================
+
+# --- sync, internal/sync: semaphores and notify lists the runtime provides
+# by //go:linkname (upstream runtime/sema.go). Goroutines park through the
+# scheduler (SchedulerCore.parkCurrent) with gc's wait reasons; no JVM
+# blocking primitive is involved (GG-SCHED-0006). ----------------------------
+intrinsic sync.runtime_Semacquire           SyncIntrinsics func(*uint32)
+intrinsic sync.runtime_SemacquireWaitGroup  SyncIntrinsics func(*uint32, bool)
+intrinsic sync.runtime_SemacquireRWMutexR   SyncIntrinsics func(*uint32, bool, int)
+intrinsic sync.runtime_SemacquireRWMutex    SyncIntrinsics func(*uint32, bool, int)
+intrinsic sync.runtime_Semrelease           SyncIntrinsics func(*uint32, bool, int)
+intrinsic internal/sync.runtime_SemacquireMutex SyncIntrinsics func(*uint32, bool, int)
+intrinsic internal/sync.runtime_Semrelease  SyncIntrinsics func(*uint32, bool, int)
+intrinsic sync.runtime_notifyListAdd        SyncIntrinsics func(*sync.notifyList) uint32
+intrinsic sync.runtime_notifyListWait       SyncIntrinsics func(*sync.notifyList, uint32)
+intrinsic sync.runtime_notifyListNotifyAll  SyncIntrinsics func(*sync.notifyList)
+intrinsic sync.runtime_notifyListNotifyOne  SyncIntrinsics func(*sync.notifyList)
+intrinsic sync.runtime_notifyListCheck      SyncIntrinsics func(uintptr)
+# --- sync, internal/sync: spinning, clocks, fatal errors (runtime/proc.go,
+# runtime/panic.go, runtime/sema.go) -------------------------------------------
+intrinsic internal/sync.runtime_canSpin     SyncIntrinsics func(int) bool
+intrinsic internal/sync.runtime_doSpin      SyncIntrinsics func()
+intrinsic internal/sync.runtime_nanotime    SyncIntrinsics func() int64
+intrinsic internal/sync.throw               SyncIntrinsics func(string)
+intrinsic internal/sync.fatal               SyncIntrinsics func(string)
+intrinsic sync.throw                        SyncIntrinsics func(string)
+intrinsic sync.fatal                        SyncIntrinsics func(string)
+# --- sync.Pool: per-P pinning and the GC-time cleanup hook (runtime/proc.go
+# procPin, runtime/mgc.go poolcleanup); random numbers (runtime/rand.go) ------
+intrinsic sync.runtime_procPin              SyncIntrinsics func() int
+intrinsic sync.runtime_procUnpin            SyncIntrinsics func()
+intrinsic sync.runtime_registerPoolCleanup  SyncIntrinsics func(func())
+intrinsic runtime.randn                     SyncIntrinsics func(uint32) uint32
+intrinsic runtime.rand                      SyncIntrinsics func() uint64
+# --- internal/synctest: synctest bubbles are not supported
+# (docs/arch/limitations.md); no goroutine is ever in a bubble -------------
+intrinsic internal/synctest.IsInBubble      SyncIntrinsics func() bool
+intrinsic internal/synctest.associate       SyncIntrinsics func(unsafe.Pointer) int
+intrinsic internal/synctest.disassociate    SyncIntrinsics func(unsafe.Pointer)
+intrinsic internal/synctest.isAssociated    SyncIntrinsics func(unsafe.Pointer) bool
+# --- internal/bytealg: the amd64 assembly functions (compare_native.go,
+# count_native.go, index_native.go, indexbyte_native.go) over the byte
+# region, and MakeNoZero, which the runtime provides by //go:linkname
+# (runtime/slice.go) -----------------------------------------------------------
+intrinsic internal/bytealg.Compare          BytealgIntrinsics func([]uint8, []uint8) int
+intrinsic internal/bytealg.IndexByte        BytealgIntrinsics func([]uint8, uint8) int
+intrinsic internal/bytealg.IndexByteString  BytealgIntrinsics func(string, uint8) int
+intrinsic internal/bytealg.Count            BytealgIntrinsics func([]uint8, uint8) int
+intrinsic internal/bytealg.CountString      BytealgIntrinsics func(string, uint8) int
+intrinsic internal/bytealg.Index            BytealgIntrinsics func([]uint8, []uint8) int
+intrinsic internal/bytealg.IndexString      BytealgIntrinsics func(string, string) int
+intrinsic internal/bytealg.MakeNoZero       BytealgIntrinsics func(int) []uint8
+# runtime.cmpstring: the assembly's string compare (compare_amd64.s), which
+# bytealg.CompareString calls through its abigen //go:linkname declaration
+intrinsic runtime.cmpstring                 BytealgIntrinsics func(string, string) int
+# --- internal/runtime/atomic: the assembly store-release sync.Pool uses
+# (atomic_amd64.s; a plain store is a release store on amd64) ---------------
+intrinsic internal/runtime/atomic.StoreReluintptr AtomicIntrinsics func(*uintptr, uintptr)
+
+# --- syscall: the raw entry under syscall.Syscall/RawSyscall (upstream
+# internal/runtime/syscall/linux/asm_linux_amd64.s), executed through the
+# role table (internal/toolexec/syscalls/table.txt) by graalgo.syscall;
+# the runtime's bracket and the runtime-provided values (runtime/proc.go,
+# runtime/runtime.go, runtime/extern.go) -----------------------------------
+intrinsic internal/runtime/syscall/linux.Syscall6 SyscallIntrinsics func(uintptr, uintptr, uintptr, uintptr, uintptr, uintptr, uintptr) (uintptr, uintptr, uintptr)
+intrinsic runtime.entersyscall              SyscallIntrinsics func()
+intrinsic runtime.exitsyscall               SyscallIntrinsics func()
+intrinsic syscall.Getpagesize               SyscallIntrinsics func() int
+intrinsic syscall.runtime_envs              SyscallIntrinsics func() []string
+intrinsic runtime.GOROOT                    SyscallIntrinsics func() string
+
+# --- time: clocks, sleep and timers the runtime provides by //go:linkname
+# (runtime/time.go), on the scheduler's timer heap -----------------------------
+intrinsic time.runtimeNano                  TimeIntrinsics func() int64
+intrinsic time.runtimeNow                   TimeIntrinsics func() (int64, int32, int64)
+intrinsic time.runtimeIsBubbled             TimeIntrinsics func() bool
+intrinsic time.Sleep                        TimeIntrinsics func(time.Duration)
+intrinsic time.newTimer                     TimeIntrinsics func(int64, int64, func(interface {}, uintptr, int64), interface {}, unsafe.Pointer) *time.Timer
+intrinsic time.stopTimer                    TimeIntrinsics func(*time.Timer) bool
+intrinsic time.resetTimer                   TimeIntrinsics func(*time.Timer, int64, int64) bool
