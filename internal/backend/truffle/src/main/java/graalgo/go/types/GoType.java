@@ -39,6 +39,9 @@ public final class GoType {
         public final String tag;
         public int primOff;
         public int refOff;
+        public int byteOff;
+        /** gc's byte offset of the field inside the struct ({@code unsafe.Offsetof}). */
+        public long gcOff;
 
         public Field(String name, String pkg, GoType type, boolean embedded, String tag) {
             this.name = name;
@@ -88,6 +91,14 @@ public final class GoType {
     private volatile boolean laidOut;
     private int nPrim;
     private int nRef;
+    private int nByte;
+    /** gc's size and alignment of a value in bytes (linux/amd64), computed with the layout. */
+    private long gcSize;
+    private long gcAlign;
+    /** The frontend's gc layout facts for a defined type, checked against ours once. */
+    private long[] expectedLayout;
+    /** A defined type's alignment as the frontend records it; 0: none recorded. */
+    private long declaredAlign;
     private Object[] zeroRefs;
     private volatile String str;
     private final ConcurrentHashMap<GoType, Object> itabs = new ConcurrentHashMap<>();
@@ -226,15 +237,85 @@ public final class GoType {
         return nRef;
     }
 
+    /** The number of byte-sized leaves of a value (the byte region, ADR-0015 decision 3). */
+    public int nByte() {
+        layout();
+        return nByte;
+    }
+
     private void layout() {
         if (kind == NAMED) {
             GoType t = u();
             nPrim = t.nPrim();
             nRef = t.nRef();
+            gcSize = t.gcSize;
+            gcAlign = declaredAlign > 0 ? declaredAlign : t.gcAlign;
+            if (expectedLayout != null) {
+                checkExpectedLayout(t);
+            }
             return;
         }
         if (!laidOut) {
             computeLayout();
+        }
+    }
+
+    /**
+     * Records gc's own layout of a defined type as the frontend computed it
+     * ({@code types.SizesFor("gc", GOARCH)}: size, alignment, field offsets of a struct). The
+     * backend derives every layout from the type's structure (it has to: instantiated and
+     * unnamed types have no record); the first layout of this type checks the two against each
+     * other, so a divergence of the backend's rules from gc's stops the program at once.
+     *
+     * <p>The recorded alignment is authoritative: gc gives some zero-size types of its own
+     * library a larger alignment than their structure has (the 64-bit alignment marker of
+     * {@code sync/atomic}), which no structural rule can know. For a type with a size the
+     * recorded and the computed alignment must agree.
+     */
+    public void expectLayout(long size, long align, long[] offsets) {
+        synchronized (lock) {
+            if (expectedLayout == null) {
+                long[] e = new long[2 + offsets.length];
+                e[0] = size;
+                e[1] = align;
+                System.arraycopy(offsets, 0, e, 2, offsets.length);
+                expectedLayout = e;
+                declaredAlign = align;
+            }
+        }
+    }
+
+    @TruffleBoundary
+    private void checkExpectedLayout(GoType t) {
+        long[] e;
+        synchronized (lock) {
+            e = expectedLayout;
+            expectedLayout = null;
+        }
+        if (e == null) {
+            return;
+        }
+        boolean ok = e[0] == t.gcSize && (e[1] == t.gcAlign || e[0] == 0);
+        if (t.kind == STRUCT) {
+            ok &= e.length - 2 == t.fields.length;
+            for (int i = 0; ok && i < t.fields.length; i++) {
+                ok = t.fields[i].gcOff == e[2 + i];
+            }
+        }
+        if (!ok) {
+            StringBuilder sb = new StringBuilder("gc layout of " + key + ": the frontend records size " + e[0]
+                    + " align " + e[1] + " offsets");
+            for (int i = 2; i < e.length; i++) {
+                sb.append(' ').append(e[i]);
+            }
+            sb.append("; the backend computes size ").append(t.gcSize).append(" align ").append(t.gcAlign)
+                    .append(" offsets");
+            if (t.kind == STRUCT) {
+                for (Field f : t.fields) {
+                    sb.append(' ').append(f.gcOff);
+                }
+            }
+            throw new IllegalStateException(sb.toString());
         }
     }
 
@@ -245,31 +326,93 @@ public final class GoType {
         }
     }
 
+    private static long roundUp(long n, long align) {
+        return (n + align - 1) / align * align;
+    }
+
+    /**
+     * The slot layout and, with it, gc's layout (cmd/compile's CalcSize, which
+     * {@code go/types.SizesFor("gc", "amd64")} mirrors): fields at their alignment, the size
+     * rounded up to the alignment, and one byte of padding after a zero-size last field of a
+     * struct that is not itself zero-size.
+     */
     private void computeLayoutLocked() {
         if (laidOut) {
             return;
         }
         int p = 0;
         int r = 0;
-        switch (carrier()) {
-            case C_I64, C_F64, C_BOOL -> p = 1;
-            case C_REF -> r = 1;
-            default -> {
-                if (kind == ARRAY) {
-                    p = Math.toIntExact(len * elem.nPrim());
-                    r = Math.toIntExact(len * elem.nRef());
-                } else {
-                    for (Field f : fields) {
-                        f.primOff = p;
-                        f.refOff = r;
-                        p += f.type.nPrim();
-                        r += f.type.nRef();
-                    }
+        long size;
+        long align;
+        switch (kind) {
+            case BOOL, INT8, UINT8 -> {
+                p = 1;
+                size = align = 1;
+            }
+            case INT16, UINT16 -> {
+                p = 1;
+                size = align = 2;
+            }
+            case INT32, UINT32, FLOAT32 -> {
+                p = 1;
+                size = align = 4;
+            }
+            case INT, INT64, UINT, UINT64, UINTPTR, FLOAT64 -> {
+                p = 1;
+                size = align = 8;
+            }
+            case COMPLEX64 -> {
+                r = 1;
+                size = 8;
+                align = 4;
+            }
+            case COMPLEX128, STRING, INTERFACE -> {
+                r = 1;
+                size = 16;
+                align = 8;
+            }
+            case SLICE -> {
+                r = 1;
+                size = 24;
+                align = 8;
+            }
+            case ARRAY -> {
+                p = Math.toIntExact(len * elem.nPrim());
+                r = Math.toIntExact(len * elem.nRef());
+                size = Math.multiplyExact(len, elem.gcSize);
+                align = elem.gcAlign;
+            }
+            case STRUCT -> {
+                long off = 0;
+                align = 1;
+                long last = 0;
+                for (Field f : fields) {
+                    f.primOff = p;
+                    f.refOff = r;
+                    p += f.type.nPrim();
+                    r += f.type.nRef();
+                    long a = f.type.gcAlign;
+                    off = roundUp(off, a);
+                    f.gcOff = off;
+                    last = f.type.gcSize;
+                    off += last;
+                    align = Math.max(align, a);
                 }
+                if (fields.length > 0 && last == 0 && off > 0) {
+                    off++;
+                }
+                size = roundUp(off, align);
+            }
+            default -> {
+                // Pointer-shaped: pointers, maps, channels, functions, unsafe.Pointer.
+                r = 1;
+                size = align = 8;
             }
         }
         nPrim = p;
         nRef = r;
+        gcSize = size;
+        gcAlign = align;
         laidOut = true;
     }
 
@@ -350,55 +493,146 @@ public final class GoType {
 
     // ---------------------------------------------------------------- gc layout facts
 
-    /** gc's size of a value in bytes (amd64); feeds the slice growth size classes. */
-    @TruffleBoundary
+    /** gc's size of a value in bytes ({@code unsafe.Sizeof}). */
     public long gcSize() {
-        GoType t = u();
-        switch (t.kind) {
-            case BOOL, INT8, UINT8:
-                return 1;
-            case INT16, UINT16:
-                return 2;
-            case INT32, UINT32, FLOAT32:
-                return 4;
-            case COMPLEX128, STRING, INTERFACE:
-                return 16;
-            case SLICE:
-                return 24;
-            case ARRAY:
-                return t.len * t.elem.gcSize();
-            case STRUCT: {
-                long off = 0;
-                long align = 1;
-                for (Field f : t.fields) {
-                    long a = f.type.gcAlign();
-                    off = (off + a - 1) / a * a + f.type.gcSize();
-                    align = Math.max(align, a);
-                }
-                return (off + align - 1) / align * align;
-            }
-            default:
-                return 8;
+        layout();
+        return gcSize;
+    }
+
+    /** gc's alignment of a value in bytes ({@code unsafe.Alignof} of a variable). */
+    public long gcAlign() {
+        layout();
+        return gcAlign;
+    }
+
+    // ---------------------------------------------------------------- leaf table
+
+    /**
+     * A leaf of a flat value: one scalar or one reference slot, with the gc bytes it stands
+     * for. {@code type} is the leaf's own (underlying) type: an integer, float or boolean
+     * type for a scalar slot; for a reference slot a pointer-shaped type (one gc word), a
+     * string or interface type (two words), a slice type (three words) or a complex type.
+     */
+    public static final class Leaf {
+        public final GoType type;
+        /** gc byte offset of the leaf's first byte, relative to the value the table is of. */
+        public final long gcOff;
+        /** The leaf's index among the leaves of the value, in layout order. */
+        public final int index;
+        /** The slot offsets of the leaf's position; the one of its {@link #region} is its slot. */
+        public final int prim;
+        public final int ref;
+        public final int byt;
+
+        Leaf(GoType type, long gcOff, int prim, int ref, int byt) {
+            this.type = type;
+            this.gcOff = gcOff;
+            this.index = prim + ref + byt;
+            this.prim = prim;
+            this.ref = ref;
+            this.byt = byt;
+        }
+
+        /** gc's size of the leaf in bytes. */
+        public long size() {
+            return type.gcSize();
+        }
+
+        /** Which array of the object holds the leaf: {@link #R_PRIM}, {@link #R_REF}, {@link #R_BYTE}. */
+        public int region() {
+            return type.nRef() == 1 ? R_REF : type.nByte() == 1 ? R_BYTE : R_PRIM;
+        }
+
+        /** The leaf's index in the array of its region. */
+        public int slot() {
+            return switch (region()) {
+                case R_REF -> ref;
+                case R_BYTE -> byt;
+                default -> prim;
+            };
         }
     }
 
+    /** Regions of a flat object: scalar slots, reference slots, byte-sized leaves. */
+    public static final int R_PRIM = 0, R_REF = 1, R_BYTE = 2;
+
+    /** The number of leaves (scalar plus reference slots) of a value. */
+    public int nLeaves() {
+        return nPrim() + nRef() + nByte();
+    }
+
+    /**
+     * The leaf table, forward direction (SPEC §3.4, GG-0061): the leaf that holds gc byte
+     * {@code off} of a value of this type, or null when the byte is padding or outside the
+     * value. Structural, so an array of any length costs one division per level.
+     */
     @TruffleBoundary
-    public long gcAlign() {
+    public Leaf leafAt(long off) {
+        return leafAt(off, 0, 0, 0, 0);
+    }
+
+    private Leaf leafAt(long off, long base, int p, int r, int b) {
         GoType t = u();
+        if (off < 0 || off >= t.gcSize()) {
+            return null;
+        }
         switch (t.kind) {
-            case ARRAY:
-                return t.elem.gcAlign();
-            case STRUCT: {
-                long align = 1;
-                for (Field f : t.fields) {
-                    align = Math.max(align, f.type.gcAlign());
-                }
-                return align;
+            case ARRAY: {
+                long es = t.elem.gcSize();
+                long i = off / es;
+                return t.elem.leafAt(off - i * es, base + i * es, p + (int) i * t.elem.nPrim(),
+                        r + (int) i * t.elem.nRef(), b + (int) i * t.elem.nByte());
             }
-            case COMPLEX64:
-                return 4;
+            case STRUCT:
+                for (int k = t.fields.length - 1; k >= 0; k--) {
+                    Field f = t.fields[k];
+                    if (off >= f.gcOff) {
+                        // The last field that starts at or before the byte; past its end: padding.
+                        if (f.type.gcSize() == 0 && k > 0) {
+                            continue;
+                        }
+                        return f.type.leafAt(off - f.gcOff, base + f.gcOff, p + f.primOff, r + f.refOff,
+                                b + f.byteOff);
+                    }
+                }
+                return null;
             default:
-                return Math.min(8, Math.max(1, t.gcSize()));
+                return new Leaf(t, base, p, r, b);
+        }
+    }
+
+    /**
+     * The leaf table, inverse direction: gc's byte offset of the position that {@code k} leaves
+     * precede — a pointer's slot offsets name it, {@code k} being their sum, since every leaf
+     * is in exactly one region. {@code k == nLeaves()} is the end of the value.
+     */
+    @TruffleBoundary
+    public long gcOffOfLeaf(int k) {
+        GoType t = u();
+        int n = t.nLeaves();
+        if (k < 0 || k > n) {
+            throw new IllegalArgumentException("leaf " + k + " of " + key);
+        }
+        if (k == n) {
+            return k == 0 ? 0 : t.gcSize();
+        }
+        switch (t.kind) {
+            case ARRAY: {
+                int en = t.elem.nLeaves();
+                int i = k / en;
+                return i * t.elem.gcSize() + t.elem.gcOffOfLeaf(k - i * en);
+            }
+            case STRUCT:
+                for (int f = t.fields.length - 1; f >= 0; f--) {
+                    Field fld = t.fields[f];
+                    int start = fld.primOff + fld.refOff + fld.byteOff;
+                    if (k >= start && fld.type.nLeaves() > 0) {
+                        return fld.gcOff + fld.type.gcOffOfLeaf(k - start);
+                    }
+                }
+                throw new IllegalStateException("leaf " + k + " of " + key);
+            default:
+                return 0;
         }
     }
 

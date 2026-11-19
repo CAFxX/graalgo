@@ -1,0 +1,300 @@
+{u8 i64 u8} 24 8 0:uint 8:int 16:uint
+{i32 {}} 8 4 0:int
+{{} i32} 4 4 0:int
+{u16 [0]i64} 16 8 0:uint
+{b c64 u8 c128} 32 8 0:bool 4:complex 12:uint 16:complex
+{[3]u8 str b} 32 8 0:uint 1:uint 2:uint 8:string 24:bool
+{if sl ptr f32} 56 8 0:iface 16:slice 40:pointer 48:float
+{[2]{u8 u32}} 16 4 0:uint 4:uint 8:uint 12:uint
+{{f64} [1]i32 [1]b} 16 8 0:float 8:int 12:bool
+{[0]sl [2]c128 u16 u64} 48 8 0:complex 16:complex 32:uint 40:uint
+{u16 u32 u8} 12 4 0:uint 4:uint 8:uint
+{{f32 [2]u32 u16} c128 i32 {u64} {i8 i64} i64} 72 8 0:float 4:uint 8:uint 12:uint 16:complex 32:int 40:uint 48:int 56:int 64:int
+{{u16} [3]{i8 {sl u64 u8} u64} ptr {f64 [1]u32} i8} 208 8 0:uint 8:int 16:slice 40:uint 48:uint 56:uint 64:int 72:slice 96:uint 104:uint 112:uint 120:int 128:slice 152:uint 160:uint 168:uint 176:pointer 184:float 192:uint 200:int
+{i8 {{{i64 u8 u32 c64} [3]f32} [0][2]f32 i64 u8} i32 {} [2][3]{i8}} 80 8 0:int 8:int 16:uint 20:uint 24:complex 32:float 36:float 40:float 48:int 56:uint 64:int 68:int 69:int 70:int 71:int 72:int 73:int
+{i32 u64 sl u64} 48 8 0:int 8:uint 16:slice 40:uint
+{b i64 {u8} [3]u8} 24 8 0:bool 8:int 16:uint 17:uint 18:uint 19:uint
+{b} 1 1 0:bool
+{u32 u32 {} {u16 i16 {{f32 u16}}} [3]i64 i8} 56 8 0:uint 4:uint 8:uint 10:int 12:float 16:uint 24:int 32:int 40:int 48:int
+{u16 i8 {b if u8 b}} 40 8 0:uint 2:int 8:bool 16:iface 32:uint 33:bool
+{{[1]i64}} 8 8 0:int
+{str i64 {} i8 [1]str} 48 8 0:string 16:int 24:int 32:string
+{f32 [2]{[0]b [2]f64} u8} 48 8 0:float 8:float 16:float 24:float 32:float 40:uint
+{sl c64} 32 8 0:slice 24:complex
+{i8 [2]i8 u64} 16 8 0:int 1:int 2:int 8:uint
+{i16 {[2]{i64} if {str} u8}} 64 8 0:int 8:int 16:int 24:iface 40:string 56:uint
+{[3]{sl {u16 i32 b f32} [3]c128} u32 f32} 272 8 0:slice 24:uint 28:int 32:bool 36:float 40:complex 56:complex 72:complex 88:slice 112:uint 116:int 120:bool 124:float 128:complex 144:complex 160:complex 176:slice 200:uint 204:int 208:bool 212:float 216:complex 232:complex 248:complex 264:uint 268:float
+{u32 [1]{[0]u8 u64 {} i64} {[3]f64 u64 [3]{i16 u16 sl u16} c128} {u64 u16} u64 [1]i32} 224 8 0:uint 8:uint 16:int 24:float 32:float 40:float 48:uint 56:int 58:uint 64:slice 88:uint 96:int 98:uint 104:slice 128:uint 136:int 138:uint 144:slice 168:uint 176:complex 192:uint 200:uint 208:uint 216:int
+{b} 1 1 0:bool
+{i64 i64 u8 i16} 24 8 0:int 8:int 16:uint 18:int
+{f64 {} f64 {[3]f32 ptr [3]{c128 u64 u16} f32} i32} 152 8 0:float 8:float 16:float 20:float 24:float 32:pointer 40:complex 56:uint 64:uint 72:complex 88:uint 96:uint 104:complex 120:uint 128:uint 136:float 144:int
+{u32 {u8}} 8 4 0:uint 4:uint
+{[1]u32 {{}} [1][1]i32 c64 u8 if} 40 8 0:uint 4:int 8:complex 16:uint 24:iface
+{[0]{} i32 c128 [3]{{c64 f32} {f32}} [0]str} 80 8 0:int 8:complex 24:complex 32:float 36:float 40:complex 48:float 52:float 56:complex 64:float 68:float
+{[1]i16 [3]i8 i64} 16 8 0:int 2:int 3:int 4:int 8:int
+{c64 u16 {[3][0]if i16} [1]f32 i64} 40 8 0:complex 8:uint 16:int 24:float 32:int
+{[3][2]{i16 i32} f32 i8} 56 4 0:int 4:int 8:int 12:int 16:int 20:int 24:int 28:int 32:int 36:int 40:int 44:int 48:float 52:int
+{i16 u32 {i8} i8 f64} 24 8 0:int 4:uint 8:int 9:int 16:float
+{u8 i8 [0]i16 [3]str} 56 8 0:uint 1:int 8:string 24:string 40:string
+{[1][3][2]i8 u32 i16 u64 [1]i64} 32 8 0:int 1:int 2:int 3:int 4:int 5:int 8:uint 12:int 16:uint 24:int
+{[3]{u8} {} i16 f64} 16 8 0:uint 1:uint 2:uint 4:int 8:float
+{{[3][3]i16 [0][3]i64 b u32} i16 u8 u32 {u16 [0][0]c64 u32}} 48 8 0:int 2:int 4:int 6:int 8:int 10:int 12:int 14:int 16:int 24:bool 28:uint 32:int 34:uint 36:uint 40:uint 44:uint
+{b i64 [0][0]{i8} i8 c128 i16} 48 8 0:bool 8:int 16:int 24:complex 40:int
+{f64 [1]sl {c64 i64 i32 i32} i8 i64 f32} 80 8 0:float 8:slice 32:complex 40:int 48:int 52:int 56:int 64:int 72:float
+{b [3]c64 sl {}} 64 8 0:bool 4:complex 12:complex 20:complex 32:slice
+{u32 u64 ptr b i64 [2]{[3]u16 [2]u8 u8}} 64 8 0:uint 8:uint 16:pointer 24:bool 32:int 40:uint 42:uint 44:uint 46:uint 47:uint 48:uint 50:uint 52:uint 54:uint 56:uint 57:uint 58:uint
+{u8} 1 1 0:uint
+{str i32 u16 i16 b} 32 8 0:string 16:int 20:uint 22:int 24:bool
+{b f64 b [3]if} 72 8 0:bool 8:float 16:bool 24:iface 40:iface 56:iface
+{f64} 8 8 0:float
+{[1][2]f32 f64} 16 8 0:float 4:float 8:float
+{u16 {f32 [2]u32 f64 [0]f32} {} c64} 48 8 0:uint 8:float 12:uint 16:uint 24:float 40:complex
+{{b i32} {c128 b} u16 u8 [1][2]f64 {i32 b}} 64 8 0:bool 4:int 8:complex 24:bool 32:uint 34:uint 40:float 48:float 56:int 60:bool
+{{[1]{sl f32 c128 str}}} 64 8 0:slice 24:float 32:complex 48:string
+{u8 c128 {}} 32 8 0:uint 8:complex
+{i16 f64 u8 f32} 24 8 0:int 8:float 16:uint 20:float
+{{[1][1]u32 [0]b {f64}} [2]i16 i8 {i32 [2]i8} u8 sl} 64 8 0:uint 8:float 16:int 18:int 20:int 24:int 28:int 29:int 32:uint 40:slice
+{{[2]{c128 i32 u32 c128} sl i32 [1][3]f64}} 136 8 0:complex 16:int 20:uint 24:complex 40:complex 56:int 60:uint 64:complex 80:slice 104:int 112:float 120:float 128:float
+{i8 if {[1]u16 i32 {if u64}} i8 {}} 64 8 0:int 8:iface 24:uint 28:int 32:iface 48:uint 56:int
+{str u64} 24 8 0:string 16:uint
+{b [0][3]b i16} 4 2 0:bool 2:int
+{i32} 4 4 0:int
+{if b} 24 8 0:iface 16:bool
+{i32} 4 4 0:int
+{c128 c64} 24 8 0:complex 16:complex
+{[3]i16 u64 sl} 40 8 0:int 2:int 4:int 8:uint 16:slice
+{f32} 4 4 0:float
+{i64} 8 8 0:int
+{{} u64 [0]c128} 16 8 0:uint
+{b sl u64 {u8 if {{u16 u8 u32 str}}} b u32} 96 8 0:bool 8:slice 32:uint 40:uint 48:iface 64:uint 66:uint 68:uint 72:string 88:bool 92:uint
+{i8 u8 i64 str} 32 8 0:int 1:uint 8:int 16:string
+{{[3][0]i64 f64} {u16 u32 [0]i32 i32} [2][3]i16 [3]{} u16 {u16 {} f64}} 56 8 0:float 8:uint 12:uint 16:int 20:int 22:int 24:int 26:int 28:int 30:int 32:uint 40:uint 48:float
+{i8 {{{u32} {i32 u16} u32 f64}} u16 i8 [0]u16} 40 8 0:int 8:uint 12:int 16:uint 20:uint 24:float 32:uint 34:int
+{c64} 8 4 0:complex
+{u64 i64 [1]{{b u32} u32 [3]i32 u16} u64 [2][2]c64} 88 8 0:uint 8:int 16:bool 20:uint 24:uint 28:int 32:int 36:int 40:uint 48:uint 56:complex 64:complex 72:complex 80:complex
+{c64 f64 b [0]c128 f32} 32 8 0:complex 8:float 16:bool 24:float
+{[0]i64 i64 {[0]u16} f64} 16 8 0:int 8:float
+{u8 [2]u32} 12 4 0:uint 4:uint 8:uint
+{i32 b [1]c64 str f64 u32} 48 8 0:int 4:bool 8:complex 16:string 32:float 40:uint
+{sl f32 u64 f64 {i16 {{str}}} {[2]f32 [3]{if i64} [3][0]c64}} 160 8 0:slice 24:float 32:uint 40:float 48:int 56:string 72:float 76:float 80:iface 96:int 104:iface 120:int 128:iface 144:int
+{i16 {} [3][3]i16 [1]{}} 22 2 0:int 2:int 4:int 6:int 8:int 10:int 12:int 14:int 16:int 18:int
+{{ptr i32} sl u32 i8 {c128}} 64 8 0:pointer 8:int 16:slice 40:uint 44:int 48:complex
+{u64 u32 u32 {b [0]{f64 f64} b} sl ptr} 64 8 0:uint 8:uint 12:uint 16:bool 24:bool 32:slice 56:pointer
+{{}} 0 1
+{[3][0]c64 [3]{{i32 f32 if u16} b i8 [3]u8}} 120 8 0:int 4:float 8:iface 24:uint 32:bool 33:int 34:uint 35:uint 36:uint 40:int 44:float 48:iface 64:uint 72:bool 73:int 74:uint 75:uint 76:uint 80:int 84:float 88:iface 104:uint 112:bool 113:int 114:uint 115:uint 116:uint
+{{u16 u16}} 4 2 0:uint 2:uint
+{i32 str f32} 32 8 0:int 8:string 24:float
+{i16 f64 [3]b} 24 8 0:int 8:float 16:bool 17:bool 18:bool
+{[3]u16 {i64 {i16 i64 i32} f32 f64} b i64 ptr} 80 8 0:uint 2:uint 4:uint 8:int 16:int 24:int 32:int 40:float 48:float 56:bool 64:int 72:pointer
+{{[1]i16}} 2 2 0:int
+{{c128 u32 u64 f32}} 40 8 0:complex 16:uint 24:uint 32:float
+{u64 f32} 16 8 0:uint 8:float
+{[0]{u16} i16} 2 2 0:int
+{{{{i16}} i8 u16 {{i32 i64} [2]i16 c128 i16}} {[2]{u8 u16 f32 f32}} {u16 u16 u64 b} i16} 112 8 0:int 2:int 4:uint 8:int 16:int 24:int 26:int 32:complex 48:int 56:uint 58:uint 60:float 64:float 68:uint 70:uint 72:float 76:float 80:uint 82:uint 88:uint 96:bool 104:int
+{{{{c128 i16 f32 u64} f64}} i16 {} u64 [0]{u16}} 64 8 0:complex 16:int 20:float 24:uint 32:float 40:int 48:uint
+{[0][0]{f64 if u32 sl} f32} 8 8 0:float
+{{} i32 [3]i8 u16} 12 4 0:int 4:int 5:int 6:int 8:uint
+{{i16 f32} i64} 16 8 0:int 4:float 8:int
+{i8 [2][1]u32 i32 i8 b} 20 4 0:int 4:uint 8:uint 12:int 16:int 17:bool
+{if c64 i16} 32 8 0:iface 16:complex 24:int
+{u8 if f32 str i8} 56 8 0:uint 8:iface 24:float 32:string 48:int
+{[2]{f32 i32 i16 i64}} 48 8 0:float 4:int 8:int 16:int 24:float 28:int 32:int 40:int
+{str {{f64 u16} b u64 {u16}} [1]{i32 [1]i16}} 64 8 0:string 16:float 24:uint 32:bool 40:uint 48:uint 56:int 60:int
+{i16 i32 i8 i8 u64 u16} 32 8 0:int 4:int 8:int 9:int 16:uint 24:uint
+{u16 {} {} i32 i64} 16 8 0:uint 4:int 8:int
+{f32 {[1]i16 {str} [0]f32 ptr} i16 {u32 {[0]b} u32} {{u32} [1]sl i32 u64} i64} 112 8 0:float 8:int 16:string 32:pointer 40:int 44:uint 48:uint 56:uint 64:slice 88:int 96:uint 104:int
+{b u8 u64} 16 8 0:bool 1:uint 8:uint
+{u8} 1 1 0:uint
+{{u8 i32} f64 b [1]{{b} i32}} 32 8 0:uint 4:int 8:float 16:bool 20:bool 24:int
+{[0]i32 [1]b {} {} [2]i8 u64} 16 8 0:bool 1:int 2:int 8:uint
+{b} 1 1 0:bool
+{i8} 1 1 0:int
+{i64 sl u64 u8} 48 8 0:int 8:slice 32:uint 40:uint
+{[2]f64 i8} 24 8 0:float 8:float 16:int
+{[0][0]i32 [2][2]{c128 u32 if} [3]b u16 i16 i64} 176 8 0:complex 16:uint 24:iface 40:complex 56:uint 64:iface 80:complex 96:uint 104:iface 120:complex 136:uint 144:iface 160:bool 161:bool 162:bool 164:uint 166:int 168:int
+{[0][1]{f64 sl i16 f32} i32 u32 i8 f64 b} 32 8 0:int 4:uint 8:int 16:float 24:bool
+{u32 {u8 {sl {}} if u32} u32 u8 i16} 80 8 0:uint 8:uint 16:slice 48:iface 64:uint 72:uint 76:uint 78:int
+{u64} 8 8 0:uint
+{u8 {u16} i16 {u8 sl str} u16} 64 8 0:uint 2:uint 4:int 8:uint 16:slice 40:string 56:uint
+{sl} 24 8 0:slice
+{{i8} u64 b sl u8} 56 8 0:int 8:uint 16:bool 24:slice 48:uint
+{{c64 u32} c128 f32 [2][2]if i8 ptr} 120 8 0:complex 8:uint 16:complex 32:float 40:iface 56:iface 72:iface 88:iface 104:int 112:pointer
+{[2]str [1]{} [3]{i8}} 40 8 0:string 16:string 32:int 33:int 34:int
+{i64 ptr} 16 8 0:int 8:pointer
+{i8 {u32 b ptr f64}} 32 8 0:int 8:uint 12:bool 16:pointer 24:float
+{[3]f32 u8} 16 4 0:float 4:float 8:float 12:uint
+{u8 u8} 2 1 0:uint 1:uint
+{if [3]{sl [1]u8 b [1]u64}} 136 8 0:iface 16:slice 40:uint 41:bool 48:uint 56:slice 80:uint 81:bool 88:uint 96:slice 120:uint 121:bool 128:uint
+{{u16} b} 4 2 0:uint 2:bool
+{{u8}} 1 1 0:uint
+{u32 i16 {{u8} ptr} ptr} 32 8 0:uint 4:int 8:uint 16:pointer 24:pointer
+{c64 u16} 12 4 0:complex 8:uint
+{[3]{{} {str ptr u16}} b f64 u16} 120 8 0:string 16:pointer 24:uint 32:string 48:pointer 56:uint 64:string 80:pointer 88:uint 96:bool 104:float 112:uint
+{[2]f64 b u16 {i32 [1]i8} [0]{[2]u16 {f32 c64 ptr u8} {f64 f64}} [3][0]c64} 40 8 0:float 8:float 16:bool 18:uint 20:int 24:int
+{{i32 {{u32 i16 f64 u64} {u16 u64} [1]u64 str}}} 72 8 0:int 8:uint 12:int 16:float 24:uint 32:uint 40:uint 48:uint 56:string
+{[1]{i8 u16 if} [2]f64 f32 i32 i64} 56 8 0:int 2:uint 8:iface 24:float 32:float 40:float 44:int 48:int
+{if i16 f32 f32 c128} 48 8 0:iface 16:int 20:float 24:float 32:complex
+{c64 str [3]i16 u16} 32 8 0:complex 8:string 24:int 26:int 28:int 30:uint
+{u16 i32 [2]{[0]f32 i16 u16 u64} u8 {i8 i16 u16}} 48 8 0:uint 4:int 8:int 10:uint 16:uint 24:int 26:uint 32:uint 40:uint 42:int 44:int 46:uint
+{{} c64} 8 4 0:complex
+{{i8 [3]u16 f32} [3]i32 i32 {} f32} 32 4 0:int 2:uint 4:uint 6:uint 8:float 12:int 16:int 20:int 24:int 28:float
+{{[0]{u16 c64 b b}} [2]c64 [2]i64} 32 8 0:complex 8:complex 16:int 24:int
+{[1]{[3]u32 i64 [3]u64 u8} i16 {f32} i64} 72 8 0:uint 4:uint 8:uint 16:int 24:uint 32:uint 40:uint 48:uint 56:int 60:float 64:int
+{u64 {i16 i32 f32} {[1][2]i32} {u8}} 32 8 0:uint 8:int 12:int 16:float 20:int 24:int 28:uint
+{sl f64 {u8 {{u32 u16 u16 i64} u16} [0]c64 u16}} 72 8 0:slice 24:float 32:uint 40:uint 44:uint 46:uint 48:int 56:uint 64:uint
+{{{{if i32} c64 sl}} {{} i64 [0]{i32 u8 c128}} b u64 u8 i32} 96 8 0:iface 16:int 24:complex 32:slice 56:int 72:bool 80:uint 88:uint 92:int
+{u32} 4 4 0:uint
+{u16 {i64 [2]i64 if} f64 i32 {i64 f32 i16} [3][1]i32} 96 8 0:uint 8:int 16:int 24:int 32:iface 48:float 56:int 64:int 72:float 76:int 80:int 84:int 88:int
+{[3][0]c64 str {} u32} 24 8 0:string 16:uint
+{f64 u8 i32} 16 8 0:float 8:uint 12:int
+{{ptr} i16 i64 {i8}} 32 8 0:pointer 8:int 16:int 24:int
+{i16 i16} 4 2 0:int 2:int
+{{{} [2]str str} f32 f64} 64 8 0:string 16:string 32:string 48:float 56:float
+{sl c128 {[2]{u16 u32 str str} c64 i16} {if i64 if}} 176 8 0:slice 24:complex 40:uint 44:uint 48:string 64:string 80:uint 84:uint 88:string 104:string 120:complex 128:int 136:iface 152:int 160:iface
+{sl i8 [0][0]{i16 str u8 i8} {} b [0][2]{i64}} 48 8 0:slice 24:int 32:bool
+{[0]u64 c128 [1]f32 i8 {}} 24 8 0:complex 16:float 20:int
+{{[0]{i32 sl i16} if} {[2]{u64} i32 [0][2]sl [3][3]i16}} 64 8 0:iface 16:uint 24:uint 32:int 40:int 42:int 44:int 46:int 48:int 50:int 52:int 54:int 56:int
+{u8 [0]if i64 i32 b u16} 24 8 0:uint 8:int 16:int 20:bool 22:uint
+{[2]f64} 16 8 0:float 8:float
+{f64 [0]{if} f32 u16} 16 8 0:float 8:float 12:uint
+{i32 f64 {[2]i16 {[1]f32} c64} u32 {} {[3]u8 u64 i16 u8}} 64 8 0:int 8:float 16:int 18:int 20:float 24:complex 32:uint 40:uint 41:uint 42:uint 48:uint 56:int 58:uint
+{i64 [2][1]c64} 24 8 0:int 8:complex 16:complex
+{{{i8 i32 u16} i64 sl} {}} 56 8 0:int 4:int 8:uint 16:int 24:slice
+{str} 16 8 0:string
+{u64 {sl i16} b {sl} [0]u8 f32} 80 8 0:uint 8:slice 32:int 40:bool 48:slice 72:float
+{f32 {f64 i8} [3][3]i32 [1]{f64 [1]c128} u32 i16} 96 8 0:float 8:float 16:int 24:int 28:int 32:int 36:int 40:int 44:int 48:int 52:int 56:int 64:float 72:complex 88:uint 92:int
+{b [2][3]i32 {{[1]u32 [1]if i64} i32 u64 u64} str c128} 120 8 0:bool 4:int 8:int 12:int 16:int 20:int 24:int 32:uint 40:iface 56:int 64:int 72:uint 80:uint 88:string 104:complex
+{f64 c128 {} u64 u16 b} 40 8 0:float 8:complex 24:uint 32:uint 34:bool
+{ptr b f64 u16 [1]f32 u64} 40 8 0:pointer 8:bool 16:float 24:uint 28:float 32:uint
+{{i64 b} f64} 24 8 0:int 8:bool 16:float
+{sl f64 b f32 i8 u16} 48 8 0:slice 24:float 32:bool 36:float 40:int 42:uint
+{[0]u32 u32 f32} 8 4 0:uint 4:float
+{str u8 [1]{{sl c128 u32 i16} ptr i32 [1]f32} f64} 96 8 0:string 16:uint 24:slice 48:complex 64:uint 68:int 72:pointer 80:int 84:float 88:float
+{i8 i16} 4 2 0:int 2:int
+{sl [0]u64 f64} 32 8 0:slice 24:float
+{u32 u16} 8 4 0:uint 4:uint
+{i32} 4 4 0:int
+{f32 {c128 {[0]sl {c128 u8 f32}} u32 {ptr f64 ptr}} {u8 {u32 [3]u8 sl {}} i16} [0]if u64 {[3][1]f64 u8 u8}} 176 8 0:float 8:complex 24:complex 40:uint 44:float 48:uint 56:pointer 64:float 72:pointer 80:uint 88:uint 92:uint 93:uint 94:uint 96:slice 128:int 136:uint 144:float 152:float 160:float 168:uint 169:uint
+{{u16 {} [3]i64} str u16 b u64 i8} 72 8 0:uint 8:int 16:int 24:int 32:string 48:uint 50:bool 56:uint 64:int
+{{u16 {b {b} [2]f64} f64}} 40 8 0:uint 8:bool 9:bool 16:float 24:float 32:float
+{c128 u8} 24 8 0:complex 16:uint
+{u8 str u16 [3]c128 b {b i8}} 88 8 0:uint 8:string 24:uint 32:complex 48:complex 64:complex 80:bool 81:bool 82:int
+{u64 [2][2]c128 str i32 {sl i32}} 128 8 0:uint 8:complex 24:complex 40:complex 56:complex 72:string 88:int 96:slice 120:int
+{u32 [1]i8} 8 4 0:uint 4:int
+{[3]u16 u64 c128 {u8 {}} c64 [3][1]i16} 56 8 0:uint 2:uint 4:uint 8:uint 16:complex 32:uint 36:complex 44:int 46:int 48:int
+{b [0]i16 i8 u32 ptr} 16 8 0:bool 2:int 4:uint 8:pointer
+{[3]c64} 24 4 0:complex 8:complex 16:complex
+{f32 [3]i32} 16 4 0:float 4:int 8:int 12:int
+{{{c64 {} u16 u64} [3]{f64 u8 ptr i8} [0]{i32 i16}}} 128 8 0:complex 8:uint 16:uint 24:float 32:uint 40:pointer 48:int 56:float 64:uint 72:pointer 80:int 88:float 96:uint 104:pointer 112:int
+{{} f64 i8 {u16}} 16 8 0:float 8:int 10:uint
+{u32 i8 u8 str {[2][0]i64 b} b} 40 8 0:uint 4:int 5:uint 8:string 24:bool 32:bool
+{{{c64 u64} i32} b [0]{} i16} 32 8 0:complex 8:uint 16:int 24:bool 26:int
+{b} 1 1 0:bool
+{{i32} i32 [1][1]i8 {i32 {b u64 {b b i64 b} if} [1]i32}} 88 8 0:int 4:int 8:int 16:int 24:bool 32:uint 40:bool 41:bool 48:int 56:bool 64:iface 80:int
+{i32 u8 i16} 8 4 0:int 4:uint 6:int
+{{i32 {[0]f64 u32 [1]u16}} f64 {}} 32 8 0:int 8:uint 12:uint 16:float
+{u16} 2 2 0:uint
+{{} c64 [2]i8} 12 4 0:complex 8:int 9:int
+{{u32 f64 f32 [3][2]i8} i8 [1]sl [3]u8 {u64 [3]{i64} [1]{i32 u8 i32} i16} {u32 [0]u8}} 128 8 0:uint 8:float 16:float 20:int 21:int 22:int 23:int 24:int 25:int 32:int 40:slice 64:uint 65:uint 66:uint 72:uint 80:int 88:int 96:int 104:int 108:uint 112:int 116:int 120:uint
+{i64 {[0]str [2]f32} u8 {i32 if c128} [2]{i8 u64}} 96 8 0:int 8:float 12:float 16:uint 24:int 32:iface 48:complex 64:int 72:uint 80:int 88:uint
+{b {u16 u16 {}} u16 f32 i16} 20 4 0:bool 2:uint 4:uint 8:uint 12:float 16:int
+{sl u16 u32 sl [3][0][2]ptr} 64 8 0:slice 24:uint 28:uint 32:slice
+{[2][1]{u8} {c128 {}} {i16} [0]sl} 48 8 0:uint 1:uint 8:complex 32:int
+{u64} 8 8 0:uint
+{f64 i32 u16 u8} 16 8 0:float 8:int 12:uint 14:uint
+{i16 b i8} 4 2 0:int 2:bool 3:int
+{b sl {u64 {}} {u64 {{c64} [0]i16 [3]str} i16 {i8 f32 [1]i32}}} 128 8 0:bool 8:slice 32:uint 48:uint 56:complex 64:string 80:string 96:string 112:int 116:int 120:float 124:int
+{u32 f64 {f32 if} u64} 48 8 0:uint 8:float 16:float 24:iface 40:uint
+{{i64} f32} 16 8 0:int 8:float
+{u16 u64 f32 u32 i8} 32 8 0:uint 8:uint 16:float 20:uint 24:int
+{{{f64 {u64 u16} f64} {} f64 u16} i32 f64 {[3]u32} str} 96 8 0:float 8:uint 16:uint 24:float 32:float 40:uint 48:int 56:float 64:uint 68:uint 72:uint 80:string
+{{c64 {i64 [2]i8 {} {u16 u64}} {}} [2]{{f32 u64 sl} {f32}} i32 i8 [0]c128 ptr} 160 8 0:complex 8:int 16:int 17:int 24:uint 32:uint 48:float 56:uint 64:slice 88:float 96:float 104:uint 112:slice 136:float 144:int 148:int 152:pointer
+{[2][1]if {b u8 c128 u8} {i8} i16 [1]{}} 72 8 0:iface 16:iface 32:bool 33:uint 40:complex 56:uint 64:int 66:int
+{i64 b u16 i8 {{u16} i64 i32 [3]u32} {{u16} i64}} 64 8 0:int 8:bool 10:uint 12:int 16:uint 24:int 32:int 36:uint 40:uint 44:uint 48:uint 56:int
+{i64 u8 f64} 24 8 0:int 8:uint 16:float
+{if {[0]u16 i32 {c64 u32}} {b [0]u64 i8 f64}} 56 8 0:iface 16:int 20:complex 28:uint 32:bool 40:int 48:float
+{c128 u16} 24 8 0:complex 16:uint
+{[3]f64 ptr [3]i8} 40 8 0:float 8:float 16:float 24:pointer 32:int 33:int 34:int
+{[1]i8 i8 [2]u16 u32 i16} 16 4 0:int 1:int 2:uint 4:uint 8:uint 12:int
+{f64 i64 f64 sl {u32 [1]f32} {i8}} 64 8 0:float 8:int 16:float 24:slice 48:uint 52:float 56:int
+{{f64} i8 u16 i16 {sl c128}} 56 8 0:float 8:int 10:uint 12:int 16:slice 40:complex
+{i64 u16 {u8 i64} u32 u8 i32} 48 8 0:int 8:uint 16:uint 24:int 32:uint 36:uint 40:int
+{u64 i16} 16 8 0:uint 8:int
+{u32} 4 4 0:uint
+{{c128} {} u8 i64 i64 [2]{{i32 i32 u32} u16 i64}} 88 8 0:complex 16:uint 24:int 32:int 40:int 44:int 48:uint 52:uint 56:int 64:int 68:int 72:uint 76:uint 80:int
+{u16} 2 2 0:uint
+{{{sl c128 {u16 i32 u8 u16} u16} {}} {{f64 u16 {f64 str f32}} {{} [1]i32 i16 u32}} u16 {[0]u8 c128} if} 168 8 0:slice 24:complex 40:uint 44:int 48:uint 50:uint 52:uint 64:float 72:uint 80:float 88:string 104:float 112:int 116:int 120:uint 128:uint 136:complex 152:iface
+{b [2]sl u64 [1][1]i64} 72 8 0:bool 8:slice 32:slice 56:uint 64:int
+{c64 [2]u64 u16 i64} 40 8 0:complex 8:uint 16:uint 24:uint 32:int
+{u8 f32 [0]{} {}} 12 4 0:uint 4:float
+{[3][2]c128 u32 u32 {{} [3]u64} i32} 136 8 0:complex 16:complex 32:complex 48:complex 64:complex 80:complex 96:uint 100:uint 104:uint 112:uint 120:uint 128:int
+{u64 {u32 [2]i8 [2]f32 {[0]u16 [3]i32 str}} {} i16 i16} 64 8 0:uint 8:uint 12:int 13:int 16:float 20:float 24:int 28:int 32:int 40:string 56:int 58:int
+{c128 u64 [0]b [3]{i32} [0]b {}} 40 8 0:complex 16:uint 24:int 28:int 32:int
+{i32 f64 u32} 24 8 0:int 8:float 16:uint
+{i8 f32 {i16 i32 i8 i16} f64} 32 8 0:int 4:float 8:int 12:int 16:int 18:int 24:float
+{u64 {if i16}} 32 8 0:uint 8:iface 24:int
+{[3]{f32} {ptr b b}} 32 8 0:float 4:float 8:float 16:pointer 24:bool 25:bool
+{u64} 8 8 0:uint
+{{u8 [3][2]if} [2]i64} 120 8 0:uint 8:iface 24:iface 40:iface 56:iface 72:iface 88:iface 104:int 112:int
+{[2]{if {} i16 [2]ptr} {{} u16 [3]b} i64 i16 sl u8} 136 8 0:iface 16:int 24:pointer 32:pointer 40:iface 56:int 64:pointer 72:pointer 80:uint 82:bool 83:bool 84:bool 88:int 96:int 104:slice 128:uint
+{f32 c64 [1]u8 i64 u16} 32 8 0:float 4:complex 12:uint 16:int 24:uint
+{i32 [1]{[3]f64 i64 str} u8 [1]{} {}} 64 8 0:int 8:float 16:float 24:float 32:int 40:string 56:uint
+{if [2][0]i16} 24 8 0:iface
+{u64 [2]{{i32 i16} {i16 b} [0]str f64}} 56 8 0:uint 8:int 12:int 16:int 18:bool 24:float 32:int 36:int 40:int 42:bool 48:float
+{[0]{[2]if} i16} 8 8 0:int
+{i64 u8 {} f32 i64} 24 8 0:int 8:uint 12:float 16:int
+{f32 u64 [2]i16 {} f64 u16} 40 8 0:float 8:uint 16:int 18:int 24:float 32:uint
+{{}} 0 1
+{b i8 u64 {sl i32 {u32 [1]u64 [3]u16 {i64 sl}} f64} str} 128 8 0:bool 1:int 8:uint 16:slice 40:int 48:uint 56:uint 64:uint 66:uint 68:uint 72:int 80:slice 104:float 112:string
+{{} ptr {{[1]sl if i32} b f64} i16} 80 8 0:pointer 8:slice 32:iface 48:int 56:bool 64:float 72:int
+{{[1]ptr} [2]i8 b u8 f64} 24 8 0:pointer 8:int 9:int 10:bool 11:uint 16:float
+{[0]i32 u64 {} i8} 16 8 0:uint 8:int
+{[1]f32 u16 b u64 u8 f64} 32 8 0:float 4:uint 6:bool 8:uint 16:uint 24:float
+{[3]f64 u8 [3]f64} 56 8 0:float 8:float 16:float 24:uint 32:float 40:float 48:float
+{[1]{} {} i8 [0]i32} 8 4 0:int
+{[0]u64 sl u8 [0]f64 sl} 56 8 0:slice 24:uint 32:slice
+{i16 u64 i16 [2]{u8 [0]b} i16 {i8 {u64 {}} {{c64 u32} ptr {}}}} 80 8 0:int 8:uint 16:int 18:uint 20:uint 22:int 24:int 32:uint 48:complex 56:uint 64:pointer
+{f32 {c128 {f32 {if ptr i8} {}} {sl i16 {}} i8} i16 ptr i16 u16} 136 8 0:float 8:complex 24:float 32:iface 48:pointer 56:int 72:slice 96:int 104:int 112:int 120:pointer 128:int 130:uint
+{sl [3]i16 i8 {[1][1]i8 b} {{[2]u64 b {u32 i16 b f64}}} [1]u32} 88 8 0:slice 24:int 26:int 28:int 30:int 31:int 32:bool 40:uint 48:uint 56:bool 64:uint 68:int 70:bool 72:float 80:uint
+{{{i64} u8 i16} str [0][2]sl u16} 40 8 0:int 8:uint 10:int 16:string 32:uint
+{i16 {u8 i16 b} [0][0]i16} 10 2 0:int 2:uint 4:int 6:bool
+{ptr [1]{} ptr {} i64} 24 8 0:pointer 8:pointer 16:int
+{{i64 {u16 if {i8 i8 sl}}} u32 {b [0]{i8 i32 b} u8 i64} [0]i16 b} 96 8 0:int 8:uint 16:iface 32:int 33:int 40:slice 64:uint 72:bool 76:uint 80:int 88:bool
+{u64 c64 i64 u32 i32} 32 8 0:uint 8:complex 16:int 24:uint 28:int
+{c64 f64 i8} 24 8 0:complex 8:float 16:int
+{f64 i32} 16 8 0:float 8:int
+{i8 {[1][0]b u64} f32 {u8 [0]i16 [0][2]b i16} {c128} {if i8}} 64 8 0:int 8:uint 16:float 20:uint 22:int 24:complex 40:iface 56:int
+{{i8 {u16 {} b} i8} {} f64 {} {{u16 [1]i16 u64} {ptr i8 {i64 u16 i64 u16}} [1]{} [1][0]i8}} 88 8 0:int 2:uint 4:bool 6:int 8:float 16:uint 18:int 24:uint 32:pointer 40:int 48:int 56:uint 64:int 72:uint
+{{u8} sl} 32 8 0:uint 8:slice
+{{[2]f32 sl} u16 i16} 40 8 0:float 4:float 8:slice 32:uint 34:int
+{[3]{sl} {[1]{f64 u64 u16 f32}} u64 [0][2]{i32 u16 b u8}} 112 8 0:slice 24:slice 48:slice 72:float 80:uint 88:uint 92:float 96:uint
+{i64 f32} 16 8 0:int 8:float
+{{[1]{u16 u64} u64} u32 i16 if} 48 8 0:uint 8:uint 16:uint 24:uint 28:int 32:iface
+{{}} 0 1
+{{} {f32 if {str}} [1]i8 b c64} 56 8 0:float 8:iface 24:string 40:int 41:bool 44:complex
+{i64 i64 u32 u64} 32 8 0:int 8:int 16:uint 24:uint
+{i32 if [2][1]sl [1]u8} 80 8 0:int 8:iface 24:slice 48:slice 72:uint
+{b u16} 4 2 0:bool 2:uint
+{i32} 4 4 0:int
+{i32 u8 sl [2]i8} 40 8 0:int 4:uint 8:slice 32:int 33:int
+{i64 u8} 16 8 0:int 8:uint
+{str i8 i8 u16} 24 8 0:string 16:int 17:int 18:uint
+{b {} {[3]b} f32 sl} 32 8 0:bool 1:bool 2:bool 3:bool 4:float 8:slice
+{{i64 u8} {u8 {}}} 24 8 0:int 8:uint 16:uint
+{{i64 {[1]u8 c64 f32 f64}} {[2]i8 i64 {u8 i64 i8 {u32}} u64} [3]{ptr} i32} 112 8 0:int 8:uint 12:complex 20:float 24:float 32:int 33:int 40:int 48:uint 56:int 64:int 68:uint 72:uint 80:pointer 88:pointer 96:pointer 104:int
+{u32} 4 4 0:uint
+{u64 [3]{u64 [1]ptr f32 [3]u8}} 80 8 0:uint 8:uint 16:pointer 24:float 28:uint 29:uint 30:uint 32:uint 40:pointer 48:float 52:uint 53:uint 54:uint 56:uint 64:pointer 72:float 76:uint 77:uint 78:uint
+{u16 u32 u16 i64 c128} 40 8 0:uint 4:uint 8:uint 16:int 24:complex
+{u64 c64 [3][0]{i64 i8}} 24 8 0:uint 8:complex
+{[1][1]{i16 u32} u64 ptr} 24 8 0:int 4:uint 8:uint 16:pointer
+{sl i8 f64 [0]{[2]f64 [3]f32} b} 48 8 0:slice 24:int 32:float 40:bool
+{[2]i8 ptr} 16 8 0:int 1:int 8:pointer
+{[1]i64 {[3]{u16 str} i32 i8} {{u32 u8 [2]u16} [0]if {[0]sl f64 sl} u16} {} i8 i32} 152 8 0:int 8:uint 16:string 32:uint 40:string 56:uint 64:string 80:int 84:int 88:uint 92:uint 94:uint 96:uint 104:float 112:slice 136:uint 144:int 148:int
+{u16 u64 i32 [2]f32 {} u64} 40 8 0:uint 8:uint 16:int 20:float 24:float 32:uint
+{{f32 {f64 f64}} {{[2]f32 u16} [0]{u16 c128 f32 str} str} i32} 64 8 0:float 8:float 16:float 24:float 28:float 32:uint 40:string 56:int
+{i64 i32 i32 sl i32 b} 48 8 0:int 8:int 12:int 16:slice 40:int 44:bool
+{[0]f32 ptr [2]i32 {} b} 24 8 0:pointer 8:int 12:int 16:bool
+{{i16 f64 i64} {[1][2]c64 [2]{b u16 f32 str} {{} {}}} {} {u8 u64 u16} [0]if i32} 128 8 0:int 8:float 16:int 24:complex 32:complex 40:bool 42:uint 44:float 48:string 64:bool 66:uint 68:float 72:string 96:uint 104:uint 112:uint 120:int
+{u8} 1 1 0:uint
+{{} f64 str u32 {{{} {f32 i16 f32} c128 i8}}} 72 8 0:float 8:string 24:uint 32:float 36:int 40:float 48:complex 64:int
+{[0]f32} 0 4

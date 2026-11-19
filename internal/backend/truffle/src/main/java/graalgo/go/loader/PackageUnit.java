@@ -296,6 +296,10 @@ public final class PackageUnit {
                 () -> decl.methodSet(typeName, self[0], targs, true));
         self[0] = t;
         table.setPackageName(t, decl.name);
+        Gir.TypeDef td = decl.typeDefs.get(typeName);
+        if (td != null && td.size() >= 0 && td.tparams().length == 0) {
+            t.expectLayout(td.size(), td.align(), td.offsets());
+        }
         return t;
     }
 
