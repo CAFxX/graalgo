@@ -399,8 +399,8 @@ programs gc rejects are rejected here too.
 
 - Every type has a **canonical key**: a string in gc's link-name form with
   full import paths (`map[string]*net/http.Request`), type arguments
-  included, local types suffixed with their enclosing function and
-  declaration index. The key is computed by the frontend and stored once per
+  included, local types suffixed as gc suffixes them (`Name·N`, *N*
+  counting the defined types declared in function bodies over the package). The key is computed by the frontend and stored once per
   type-table entry.
 - At load the backend interns one descriptor per key in a process-wide
   table. Two packages that both mention `[]io.Reader` get the same
@@ -946,7 +946,7 @@ paths; new code lives in new directories, including the new node package
 | W6 | Intrinsic registry and link-time resolution/reachability (§5.3) — **in M1r** (2–4), because `internal/reflectlite` and `syscall` are reached by M1b's packages; then atomics, bytealg, math, sync semaphores, time (M1b) | W4 for execution; registry format independent | W5 |
 | W7 | Linker: bundle, manifest, init order, `-X`, ELF stub + build-ID patch (§2.4, §4.2) | W2 | W3, W4 |
 | W8 | Syscall executor (§5.6), in two parts. **W8a (M1r, 3–4; after W13, whose byte region ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted) lets the `Bytes` role work on `byte[]` directly):** executor in the backend incl. slot release (GG-SCHED-0006), `EINTR`, errno; raw entry; role-table entries for `openat`, `read`, `lseek`, `close` from the generated sysscan skeleton with the table-vs-source gate on them. **W8b (M1c/M4, 7–11):** the remaining entries of the 148 numbers + gate (2–3, M1c), `AllThreads*`, raw-fd epoll poller, GG-0063 (2–3); spawn helper + `forkExec` patch, GG-0064 (3–4); foreign memory for `mmap`, signals glue (1–2). **10–15 agent-days** in total | W6, W13 | W9 |
-| W9 | `reflect`/`abi` (§5.6), in two parts. **W9a (M1r, 4–6; on the pointer model of W13, [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md) accepted):** descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); the `internal/reflectlite` intrinsics over the pointer model — `resolveNameOff`/`resolveTypeOff`, `unsafe_New`, `typedmemmove`, `ifaceE2I`, `chanlen`/`maplen` (1–2). **W9b (M1d, 6–9):** the remaining runtime intrinsics — `typedmemmove` family, `unsafe_New*`, `addReflectOff`, `typelinks`, map/chan helpers (2–3); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–15 agent-days**, 14–21 with W13 | W4, W13 | W8 |
+| W9 | `reflect`/`abi` (§5.6), in two parts. **W9a — landed 2026-11-19 on `wt/w9a/descriptors` (§13) — (M1r, 4–6; on the pointer model of W13, [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md) accepted):** descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); the `internal/reflectlite` intrinsics over the pointer model — `resolveNameOff`/`resolveTypeOff`, `unsafe_New`, `typedmemmove`, `ifaceE2I`, `chanlen`/`maplen` (1–2). **W9b (M1d, 6–9):** the remaining runtime intrinsics — `typedmemmove` family, `unsafe_New*`, `addReflectOff`, `typelinks`, map/chan helpers (2–3); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–15 agent-days**, 14–21 with W13 | W4, W13 | W8 |
 | W13 | **ACTIVE (owner lane `w13`); decided by [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted by the owner 2026-11-18.** Pointer model (§3.4), scheduled **once, in M1r, before W8a, W9a and every M1b package** (4–6): checked `(*T)(unsafe.Pointer)` conversions with view pointers as the fallback, offset → slot leaf tables (and the inverse), a byte region for one-byte leaves (one slice shape), header views through the holding slot with replace-on-store, range-allocating `uintptr` handle table, `checkptr` traps. Part of the new node package | W4 | W5, W6 |
 | W10 | Test infrastructure for the new path: corpus runner through the launcher, package-splitting transform, compile-only std gate, std-test runner with exclusion list | W1 | all |
 | W11 | Cutover and deletion (M3) | M2 | — |
@@ -1104,7 +1104,7 @@ emitter:
 | W2 approximation | W3 lowering |
 |---|---|
 | method sets of unnamed struct types with promoted methods not emitted | a `TYPEDEFS` entry (underlying 0) for every unnamed struct type in the type table whose value or pointer method set is non-empty, keyed by the struct's type entry |
-| keys of local types in generic functions lack the instantiation | a type declared in a generic function or method is keyed and represented as a generic type instantiated with the enclosing type parameters (receiver's first): `p.T·F·0[$p.F.0]`; its `TYPEDEFS` entry declares them as `tparams`. gc makes it a distinct type per instantiation even when it does not mention them (measured) |
+| keys of local types in generic functions lack the instantiation | a type declared in a generic function or method is keyed and represented as a generic type instantiated with the enclosing type parameters (receiver's first): `p.T·1[$p.F.0]` (the suffix is gc's own numbering since W9a; it was `·F·0`); its `TYPEDEFS` entry declares them as `tparams`. gc makes it a distinct type per instantiation even when it does not mention them (measured) |
 | constraint-interface keys flatten embedded type sets | keys and `Interface.embeddeds` encode the normalized type set as go/types defines identity ([ir/typeset.go](../../internal/toolexec/ir/typeset.go)): `comparable` flag, term list (intersection of embedded elements, overlapping terms merged), methods; key equality == `types.Identical` (`TestConstraintKeys`) |
 | `for k, v = range` into interface-typed variables unconverted | lowered to `for k', v' := range x { k, v = T(k'), T(v'); body }` |
 | `Const` nodes may be untyped | no expression has an untyped type (asserted over all of std): default type for `print`/`println` arguments, conditions and comparison results; `uint` for constant shift counts; the type parameter for a constant converted to one (materialized per instantiation; go/types records the default type, which may not hold the value); typed `nil` for `T(nil)` and `case nil` |
@@ -1404,6 +1404,92 @@ restrictions relative to gc are in [limitations.md](limitations.md). Gate:
   intrinsics, imgcheck) — an interface's type word is the type descriptor
   object, with no addressable image behind it yet, so `errors` still stops
   in its initializer; W8a.
+
+**Since the skeleton (W9a, descriptor images, 2026-11-19):** `errors`
+initializes and runs from upstream's source, and with it `strconv` and
+`sort.Slice`. As built it is recorded in
+[truffle-design.md §15](truffle-design.md) (row "Type descriptors"); the
+restrictions are in [limitations.md](limitations.md). Gates: `make
+test-imgcheck` ([test/imgcheck/run.sh](../../test/imgcheck/run.sh),
+per-push), `make test-m1r` 15/15, `make test-m1w13` 16/16.
+
+- *Images.* [Descriptors.java](../../internal/backend/truffle/src/main/java/graalgo/go/types/Descriptors.java)
+  ports [descview](../../test/spikes/abi/descview/)'s builder into the node
+  package: per type, gc's descriptor as one `Flat` whose layout type is a
+  struct of the bundle's own `internal/abi` types, each field written at the
+  offset `internal/abi` gives its name (§3.4: no descriptor offset in the
+  backend). Unlike the spike's separate blobs, the field, interface-method
+  and parameter arrays are inside the descriptor object, where
+  `reflectdata.writeType` puts them. No emitter change was needed for sizes,
+  offsets and method sets (W13's layout, `TYPEDEFS`' method sets with their
+  signatures); two things the frontend delivered wrongly were fixed there,
+  below.
+- *Type word.* An interface value keeps its `GoType`; the image is what the
+  header's type word reads as through a view, and the way back is one
+  reference slot of the image. Typed dispatch does not touch images:
+  `pe-check-m1a` 0 failed compilations, `bench-m1a` unchanged against
+  master built and run side by side on the same loaded host (`fib` 2.5–2.7
+  vs 2.7–2.9 ms, `iface` 7.2–7.5 vs 7.0–8.1, `structs` 4.2 vs 4.5,
+  `slicesum` 5.6 vs 5.4, `loop` 16.4 vs 14.7, `maps` 6.6 vs 5.2; one run
+  each, noise of that order between two runs of one build).
+- *imgcheck.* One Go program walks every descriptor reachable from a
+  generated corpus — 860 root types, **1,802 descriptors, 10,409 facts** —
+  as `internal/reflectlite` would, and prints every fact. Built by gc, an
+  oracle file checks each fact the walker read against package `reflect`
+  (0 mismatches); through graalgo-tool it reads the images. The outputs are
+  **identical**: the 24 scalar bytes of `abi.Type` (`Hash` included, for
+  local types and instantiations too) byte for byte, GC masks, names,
+  uncommon sections, method tables, fields, interface methods, parameters,
+  map group layout and flags, results of the equality functions. Five
+  seeded builder errors (kind, size, field offset, name offset, method
+  order) are each detected. Not compared, being code or link-dependent in
+  gc: `Method.Ifn`/`Tfn`, `MapType.Hasher`, an unexported method's type,
+  `PtrToThis` of types that are not defined.
+- *Intrinsics.* The seven body-less functions of `internal/reflectlite`
+  (`resolveNameOff`, `resolveTypeOff`, `unsafe_New`, `typedmemmove`,
+  `ifaceE2I`, `chanlen`, `maplen`) are registry entries;
+  `internal/reflectlite` and `internal/abi` are upstream's source. Also
+  registered, because `reflectlite`'s panic messages reach them:
+  `runtime.Caller`, `runtime.FuncForPC`, `(*runtime.Func).Name` — with gc's
+  answers for a pc it cannot attribute, until the node package records call
+  positions. The registry has `method` entries (receiver first; the linker
+  checks method-ness); 72 entries.
+- *gc's rule for `(*[N]T)(p)[lo:hi:max]`.* checkptr sizes that conversion by
+  the slice bounds; `internal/abi` reaches method and parameter arrays
+  through `*[1<<16]T`. The factory marks a conversion that is a slice
+  operand; any other oversized conversion stays W13's fatal error.
+- *Found in the frontend and fixed (each with a program that failed):*
+  (1) `T(nil)` was a bare `Nil`, which interface contexts retyped —
+  `any((*T)(nil))` was the nil interface, the first thing `errors`'
+  initializer evaluates; it is `Convert(Nil)` now
+  ([typed_nil_iface.go](../../test/m1a/programs/typed_nil_iface.go)).
+  (2) A generic type's method-set entries named the receiver with the
+  *method's* receiver type parameters, which the type definition's
+  environment does not bind: the first interface conversion of any
+  instantiated type with methods stopped the program
+  ([generic_mset_iface.go](../../test/m1a/programs/generic_mset_iface.go)).
+  (3) Local types are keyed with gc's own `Name·N`, so that the backend
+  computes gc's link string and `Hash` for them.
+- *Open, found by this lane* (both pinned in
+  [test/m1w13/restricted/](../../test/m1w13/restricted/)): two functions of
+  `internal/reflectlite` need a byte or word view of other leaves, which
+  W13's one slice shape does not give — `Swapper` (`sort.Slice` on
+  `[]uint16`, `[]uint32`, `[]float32` and on several-leaf elements of 2, 4
+  or 8 bytes is a `checkptr` fatal error; every other element type works)
+  and `pkgPath` (an unexported method of an unnamed interface type). The
+  decision is the owner's: a word-view slice shape, or a two-function patch
+  in [stdlib/patches/](../../stdlib/patches/) (D8 says `reflectlite` is
+  verbatim).
+- *The worklist now* (undefined reachable symbols of a one-call program):
+  `errors` 0, `strconv` 0 (`Unquote` and `QuotedPrefix` reach
+  `internal/bytealg.IndexByteString`), `sort` 0, `sync` 9 (`internal/sync`
+  7, `sync` 2), `strings` and `bytes` 16 each (`internal/sync` 7, `sync` 4,
+  `internal/bytealg` 3, `runtime` 1, `internal/runtime/atomic` 1), `time`
+  23, `os` 47, `fmt` 71 (`runtime` 15, `reflect` 14). The semaphores,
+  `internal/bytealg` and the `time` system calls are lane m1c's.
+- *Not in this lane:* W9b — package `reflect` (the 14 symbols above, the
+  call path, descriptors made at run time, method code offsets, the map
+  hasher, itab words).
 
 ## 14. Amendments (2026-11-18)
 

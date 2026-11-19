@@ -37,6 +37,20 @@ in gc's `checkptr` wording (exit status 2) — never a wrong result:
   does `unsafe.String` (it copies when the bytes are not byte leaves; a
   string is immutable). This is the price of one slice shape; the first std
   package that needs a byte view of words decides what replaces it.
+  Two functions of `internal/reflectlite` are such idioms (found by W9a,
+  pinned in `restricted/`; the decision what replaces the restriction — a
+  word-view slice shape, or two patched functions — is open):
+  `reflectlite.Swapper` (`sort.Slice`, `SliceStable`) swaps pointer-free
+  elements of size 1, 2, 4, 8 through `[]int8`/`[]int16`/`[]int32`/`[]int64`
+  views of the slice, which works for any one-byte element, `int16`,
+  `int32` and any single 8-byte scalar, and is the fatal error for
+  `[]uint16`, `[]uint32`, `[]float32` and for structs or arrays of several
+  leaves in 2, 4 or 8 bytes (`[]struct{ a, b int32 }`); every other element
+  type (anything with a pointer, a string, or wider than 8 bytes) goes
+  through `typedmemmove` and works. `reflectlite.pkgPath` copies a name's
+  package offset into an `int32` through a `[]byte` over the variable; it
+  is reached for an unexported method of an unnamed interface type
+  (`errors.As` to such a target).
 - **gc's checkptr conditions always apply**, not only in instrumented
   builds: a converted pointer whose pointee reaches past the object, a
   misaligned pointer to a type with pointers, arithmetic that leaves the
@@ -56,6 +70,11 @@ in gc's `checkptr` wording (exit status 2) — never a wrong result:
 - An interface header written word by word holds its two words as they are
   until they form a value; typed code reading it in between would read
   what gc calls a corrupt interface.
+
+- **`(*[N]T)(p)[lo:hi:max]` is sized by the slice bounds**, as gc's
+  checkptr does (the array type may overrun the object: `internal/abi`'s
+  `(*[1 << 16]Method)(p)[:n:n]`); the same conversion not sliced on the
+  spot is the fatal error.
 
 - Gate: [test/m1w13/](../../test/m1w13/) (`make test-m1w13`):
   `restricted/` pins each restriction with its fatal text, `checkptr/`
@@ -88,3 +107,19 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   remaining message/exit-code divergence). The v1 graalgo-run check
   (`MainTest.testDeepRecursionReportsCleanStackOverflow`, exit 2) is
   quarantined with the rest of MainTest until M3.
+
+## Type descriptors and `runtime.Caller` (`-toolexec` path; toolexec W9a)
+
+- **Descriptors are data, not code, so far**: a type descriptor read
+  through `unsafe` has gc's layout and content
+  ([truffle-design.md](truffle-design.md) §15, gate `make test-imgcheck`)
+  except the words that are code in gc — `abi.Method.Ifn`/`Tfn` hold gc's
+  "unreachable method" value -1 and `abi.MapType.Hasher` is nil — and
+  `PtrToThis`, which is set for defined types and types with pointer
+  methods only (gc also sets it when its linker kept the pointer type). The
+  first word of a non-empty interface header reads as the dynamic type's
+  descriptor, not as an itab. All of this is W9b's (package `reflect`).
+- **`runtime.Caller` reports `ok == false`, `runtime.FuncForPC` nil**: the
+  node package records no call positions yet. `internal/reflectlite` uses
+  them only for the method name in its `ValueError` panics, which therefore
+  read `unknown method`.

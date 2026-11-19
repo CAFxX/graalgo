@@ -130,6 +130,8 @@
 # by `make all` (run it by hand when its input changes):
 #   - internal/frontend/p3frontend/zz_asm_inventory_gen.go
 #     <- tools/stdlib-fork/gen-asm-inventory.py (input: the vendored stdlib)
+#   - test/imgcheck/corpus.go
+#     <- test/imgcheck/gen.py | gofmt (test/imgcheck/run.sh fails when stale)
 # check_makefile.py fails if a tracked file carrying a "Code generated ...
 # DO NOT EDIT" header is in neither list.
 GENERATED := internal/frontend/gofrontend internal/frontend/overlay.json
@@ -157,7 +159,8 @@ GENERATED += internal/toolexec/ir/gir_gen.go \
 	internal/backend/gir/src/main/java/graalgo/gir/Gir.java \
 	internal/backend/gir/src/main/java/graalgo/gir/GirCodec.java \
 	internal/backend/truffle/src/main/java/graalgo/go/intrinsics/IntrinsicTable.java
-GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go
+GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
+	test/imgcheck/corpus.go
 # NOTE: [test/snapshots/](test/snapshots/)/go<VERSION>.json are also generated
 # and committed, but their generator is `make snapshot` (gc's behavior on
 # the corpus: re-record when a corpus program changes or on a toolchain

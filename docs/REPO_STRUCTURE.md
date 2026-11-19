@@ -322,6 +322,15 @@ Related: [Makefile](../Makefile) (root build entry point),
     `make test-ci`). [run_pe_check.sh](../test/jit/run_pe_check.sh)
     (`make pe-check`, TR-0) runs the whole benchmark set with
     `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
+  - [imgcheck/](../test/imgcheck/) — the descriptor-image gate (`make
+    test-imgcheck`, per-push; toolexec W9a): [main.go](../test/imgcheck/main.go)
+    walks the type descriptors of the generated corpus
+    ([gen.py](../test/imgcheck/gen.py) → [corpus.go](../test/imgcheck/corpus.go))
+    as `internal/reflectlite` reads them and prints every fact;
+    [run.sh](../test/imgcheck/run.sh) compares the run built by gc (where
+    [oracle_gc.go](../test/imgcheck/oracle_gc.go) checks the walker against
+    package `reflect`) with the run on the node package, then requires five
+    seeded builder errors to be detected.
   - [m1w13/](../test/m1w13/) — the pointer-model gate (`make test-m1w13`,
     ~1.5 min, per-push in `make all`; toolexec W13, SPEC §3.4,
     GG-0072/GG-0062): [run.sh](../test/m1w13/run.sh) runs programs that use
