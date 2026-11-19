@@ -3,8 +3,8 @@ package main
 // strconv from upstream's source: it imports errors (ErrRange, ErrSyntax
 // and *NumError wrap them), whose initializer needs descriptor images
 // (toolexec W9a), and unicode/utf8 for quoting. Unquote and QuotedPrefix
-// are not here: they reach internal/bytealg.IndexByteString, an assembly
-// function whose intrinsic belongs to the M1b bytealg set.
+// reach internal/bytealg.IndexByteString, an assembly function (the M1c
+// bytealg intrinsics).
 
 import (
 	"errors"
@@ -93,6 +93,14 @@ func main() {
 	println(strconv.QuoteRune('☺'), strconv.QuoteRuneToASCII('☺'), strconv.QuoteRune('\n'), strconv.QuoteRune(utf8.RuneError), strconv.QuoteRune(0x10FFFF+1))
 	r, multibyte, tail, err := strconv.UnquoteChar(`☺bc`, '"')
 	println(r, multibyte, tail, err == nil)
+	for _, q := range []string{`"plain"`, `"tab\there"`, `"\u263a\U0001F600\x41\101"`, "`raw\\n`", `'x'`, `'\n'`, `"unterminated`, `"bad\q"`, `'ab'`, "\"nl\n\"", `""`, "``", `"\xff"`, "'\u00e9'"} {
+		u, err := strconv.Unquote(q)
+		println(u, err == nil, err == strconv.ErrSyntax)
+	}
+	for _, q := range []string{`"head" tail`, "`raw` rest", `'c'd`, `"open`, `x"y"`, `"esc\"aped" z`} {
+		p, err := strconv.QuotedPrefix(q)
+		println(p, err == nil)
+	}
 	println(strconv.IsPrint('a'), strconv.IsPrint('­'), strconv.IsGraphic('　'), strconv.IsPrint('　'))
 
 	// Append forms.
