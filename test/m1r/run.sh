@@ -23,10 +23,6 @@
 # path (math.Exp).
 #
 # Programs: test/m1r/programs/*.go, one `package main` file each.
-# test/m1r/quarantine/ holds programs that are right when they finish but
-# trip a runtime defect outside this gate's subject; each says which at its
-# top. They are not run by default (name one on the command line to run it)
-# and return to programs/ with the fix.
 #
 # Usage: test/m1r/run.sh [-v] [PROGRAM.go]...
 #   -v   print the diff of every failing program

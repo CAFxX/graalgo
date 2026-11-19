@@ -20,8 +20,24 @@ done
 # has its virtual-thread stack frozen into one heap chunk; with G1's default
 # region size (1 MB under -Xmx2g) a chunk over half a region is refused
 # ("StackOverflowError: Humongous stack chunk") at a depth gc handles easily.
+#
+# -Djava.lang.invoke.MethodHandle.CUSTOMIZE_THRESHOLD=-1 (no LambdaForm
+# customization): Truffle's virtual-thread mount hook
+# (HotSpotThreadLocalHandshake.setPendingFlagForVirtualThread) reads the
+# carrier thread through a MethodHandle (polyglot JDKSupport
+# .currentCarrierThread). The JDK customizes a handle on its 128th inexact
+# invocation (MethodHandle.customize); when that invocation is the mount
+# hook's, the customization re-enters the mount hook, which invokes the same
+# handle, which is still uncustomized and customizes again: the goroutine's
+# virtual thread ends 128 hooks deep inside MethodHandle.customize, mounted,
+# using no CPU, and the program hangs (measured 12 hangs in 60 runs of
+# test/m1r/programs/atomic_contention.go on 4 CPUs, 0 in 45 with the flag;
+# docs/arch/toolexec-design.md §13 finding 4). The flag removes the trigger;
+# the defect is the runtime's and the flag goes when a GraalVM pin has it
+# fixed.
 # shellcheck disable=SC2086
-exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m -XX:-UsePerfData -XX:G1HeapRegionSize=32m ${GRAALGO_JAVA_OPTS:-} \
+exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m -XX:-UsePerfData -XX:G1HeapRegionSize=32m \
+  -Djava.lang.invoke.MethodHandle.CUSTOMIZE_THRESHOLD=-1 ${GRAALGO_JAVA_OPTS:-} \
   --sun-misc-unsafe-memory-access=allow \
   -Djava.io.tmpdir="${TMPDIR:-/tmp}" \
   -cp "$CP" graalgo.launcher.BundleMain "$@"

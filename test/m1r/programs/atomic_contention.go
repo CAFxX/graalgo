@@ -1,14 +1,9 @@
-// Quarantined (not run by test/m1r/run.sh): eight goroutines hammering
-// sync/atomic words. The results are correct whenever the program
-// finishes, but about one run in six hangs at startup, before the
-// goroutines have run long: thread dumps show goroutines parked in
-// SchedulerCore.quantumPark/awaitAck while others sit unmounted inside JDK
-// and Truffle internals (lambda spinning, compiler-thread creation, a
-// 128-deep HotSpotThreadLocalHandshake mount-hook / MethodHandle.customize
-// recursion) with idle carriers. That is a scheduler / virtual-thread
-// interaction of the runtime (compare ADR-0013's findings), not of the
-// intrinsics; this program is its reproducer and returns to programs/ when
-// the hang is fixed.
+// Eight goroutines hammering sync/atomic words, then a lock-free stack on
+// atomic.Pointer. Also the reproducer of a startup hang (about one run in
+// six) that was the runtime's, not the intrinsics': Truffle's virtual-thread
+// mount hook re-entering MethodHandle.customize (see
+// internal/backend/graalgo-bundle-run for the cause and the flag that removes
+// the trigger).
 package main
 
 import (

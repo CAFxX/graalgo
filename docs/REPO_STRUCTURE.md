@@ -289,9 +289,6 @@ Related: [Makefile](../Makefile) (root build entry point),
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
     compares stdout, normalized stderr and exit status with gc.
-    [quarantine/](../test/m1r/quarantine/) holds reproducers of runtime
-    defects the gate found outside its subject (not run by default; each
-    file states the defect).
   - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
     runs named backend unit-test classes with per-test timing
     (`make test-java-fast` / `test-java-slow`);
@@ -325,6 +322,20 @@ Related: [Makefile](../Makefile) (root build entry point),
     `make test-ci`). [run_pe_check.sh](../test/jit/run_pe_check.sh)
     (`make pe-check`, TR-0) runs the whole benchmark set with
     `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
+  - [m1w13/](../test/m1w13/) — the pointer-model gate (`make test-m1w13`,
+    ~1.5 min, per-push in `make all`; toolexec W13, SPEC §3.4,
+    GG-0061/GG-0062): [run.sh](../test/m1w13/run.sh) runs programs that use
+    package `unsafe` through graalgo-tool on the node package against gc.
+    [gen.py](../test/m1w13/gen.py) generates a corpus of struct types and
+    from it the layout program whose gc output is
+    [layout_corpus.txt](../test/m1w13/layout_corpus.txt) (the fixture of the
+    backend's `LeafTableTest`) and the access program (loads and stores at
+    every byte offset, per addressable kind);
+    [programs/](../test/m1w13/programs/) holds unsafe idioms of real code,
+    [checkptr/](../test/m1w13/checkptr/) programs gc's `-d=checkptr` stops
+    (same fatal text), [restricted/](../test/m1w13/restricted/) programs gc
+    runs and the flat value model stops
+    ([limitations.md](arch/limitations.md)).
   - [m1a/](../test/m1a/) — the differential gate of toolexec milestone M1a
     (`make test-m1a`, ~2.5 min, per-push in `make all`): [run.sh](../test/m1a/run.sh)
     builds every corpus program that imports nothing with the stock

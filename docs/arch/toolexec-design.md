@@ -1308,7 +1308,7 @@ gc reads plain variables after the calls of the same expression list
 (`println(f(&x), x)` prints the updated `x`), the node package strictly
 left to right; (4) an eight-goroutine program hangs at startup about one
 run in six with goroutines unmounted inside JDK/Truffle internals and idle
-carriers ([quarantine/](../../test/m1r/quarantine/)).
+carriers. All four are closed by W13's lane, below.
 
 *The worklist the linker now prints* (undefined reachable symbols of a
 one-call program, same build): `errors` 2 (`internal/reflectlite`
@@ -1321,6 +1321,55 @@ initializer calls `reflectlite.TypeOf`, which reads an interface header and
 a type descriptor through `unsafe` — W13 and W9a, the next rung, on which
 `strconv`, `strings`, `bytes`, `sort.Slice`, `sync.Map` and `time` all
 stand.
+
+**Since the skeleton (W13, the pointer model, 2026-11-19;
+[ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md) accepted):** the node
+package implements §3.4's pointer model. As built it is recorded in
+[truffle-design.md §15](truffle-design.md) (rows "Value model", "Pointers",
+"Memory access nodes", "Slices", "Strings", "Order of evaluation"); the
+restrictions relative to gc are in [limitations.md](limitations.md). Gate:
+`make test-m1w13` ([test/m1w13/run.sh](../../test/m1w13/run.sh), per-push).
+
+- *Layout.* Every type computes gc's size, alignment and field offsets from
+  its structure; the frontend's `TypeDef` record of a defined type is checked
+  against it at the type's first layout (it found gc's name-keyed alignment
+  of `sync/atomic.align64` at once: for zero-size defined types the record is
+  authoritative). "Descriptor facts for every type" (§3.4) therefore needs no
+  emitter change for sizes and offsets of unnamed and instantiated types.
+- *Byte region.* Byte-sized leaves live in `Flat.bytes`; one slice shape;
+  `Str` is (bytes, offset, length). `string` ↔ `[]byte` round trips of 2 kB:
+  35.5 → 7.5 ms (gc 20.0 ms). Typed paths, best of 400 rounds, before → after
+  the whole lane: `structs` 1.007 → 1.07 ms (an interior pointer grew from 24
+  to 32 bytes and `&ps[i]` is allocated per iteration), `slicesum` 4.52 →
+  4.43, `iface` 3.44 → 3.6, `maps`/`fib`/`loop` unchanged.
+- *Checked conversions, views, headers, handles, checkptr* as §3.4 states;
+  `unsafe` builtins are node kinds; `Sizeof`/`Alignof`/`Offsetof` of
+  instantiated types are constants from the layout. `atomic.Value` runs from
+  upstream's source (registry: `sync/atomic.runtime_procPin`/`procUnpin`,
+  no-ops, 62 entries). The four `replace` entries of the `math` bit casts
+  stay as optimizations; their Go bodies' shape runs in
+  [unsafe_basic.go](../../test/m1w13/programs/unsafe_basic.go).
+- *Findings 2–4 of the M1r slice.* (2) `&T{}` for slice and map types boxes
+  the value. (3) Operand order is gc's (cmd/compile's order pass: the
+  operations gc copies to temporaries run first, in lexical order; plain
+  operands are read with the statement), pinned by a 60-case probe
+  ([eval_order.go](../../test/m1a/programs/eval_order.go)). (4) The startup
+  hang is not graalgo's scheduler: Truffle's virtual-thread mount hook reads
+  the carrier through a `MethodHandle`, the JDK customizes a handle on its
+  128th inexact invocation, and when that invocation is the hook's, the
+  customization re-enters the hook, which invokes the same, still
+  uncustomized handle — the virtual thread ends 128 hooks deep in
+  `MethodHandle.customize`, mounted and idle. 12 hangs in 60 runs of the
+  reproducer on 4 CPUs; 0 in 85 with
+  `-Djava.lang.invoke.MethodHandle.CUSTOMIZE_THRESHOLD=-1`, which
+  [graalgo-bundle-run](../../internal/backend/graalgo-bundle-run) now passes
+  (no measurable cost on the benchmarks). The reproducer is back in
+  [test/m1r/programs/](../../test/m1r/programs/). To report upstream
+  (GraalVM 25.0.4 / JDK 25); the v1 launchers do not pass the flag.
+- *Not in this lane:* W9a (descriptor images, the `internal/reflectlite`
+  intrinsics, imgcheck) — an interface's type word is the type descriptor
+  object, with no addressable image behind it yet, so `errors` still stops
+  in its initializer; W8a.
 
 ## 14. Amendments (2026-11-18)
 

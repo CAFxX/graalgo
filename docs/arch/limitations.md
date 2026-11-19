@@ -20,6 +20,49 @@ legs with `GODEBUG=cpu.all=off`.
   reports the host's features; the intrinsic then reads `math.useFMA` as
   the assembly does.
 
+## `unsafe` on the flat value model (`-toolexec` path; SPEC §3.4, GG-0062)
+
+Pointers never leave their referent, and every access goes through the
+referent's leaf table ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md),
+[truffle-design.md](truffle-design.md) §15). Where gc without `-d=checkptr`
+runs a program that this model cannot, graalgo stops with a Go fatal error
+in gc's `checkptr` wording (exit status 2) — never a wrong result:
+
+- **A slice shares storage, so its elements must be leaves of the referent.**
+  `unsafe.Slice((*byte)(unsafe.Pointer(&ints[0])), n)` — a `[]byte` over
+  wider scalars — and slicing `(*[N]T)(p)[:]` when `T`'s leaves are not the
+  referent's are `checkptr: unsafe.Slice result straddles multiple
+  allocations` / `converted pointer straddles multiple allocations`. Scalar
+  loads and stores through the same pointer (`*(*uint64)(p)`) work, and so
+  does `unsafe.String` (it copies when the bytes are not byte leaves; a
+  string is immutable). This is the price of one slice shape; the first std
+  package that needs a byte view of words decides what replaces it.
+- **gc's checkptr conditions always apply**, not only in instrumented
+  builds: a converted pointer whose pointee reaches past the object, a
+  misaligned pointer to a type with pointers, arithmetic that leaves the
+  object (its end is allowed; a load through the end pointer is not), an
+  integer that names no live object.
+- **Padding has no storage**: a load reads 0, a store is dropped (gc leaves
+  padding undefined — a stack variable's trailing padding holds whatever
+  the stack held).
+- **`uintptr(p)` is a handle**, not an address: stable for the object's
+  life, ordered within an object, meaningless across objects; it does not
+  keep the object alive (as in gc), and an integer whose object is gone
+  converts to nothing.
+- **A word addressed through a view is not lock-free**: `sync/atomic` on it
+  (an `int32` operated on as `uint32`, the words of an interface header in
+  `atomic.Value`) goes through the referent's monitor — atomic, but a
+  monitor.
+- An interface header written word by word holds its two words as they are
+  until they form a value; typed code reading it in between would read
+  what gc calls a corrupt interface.
+
+- Gate: [test/m1w13/](../../test/m1w13/) (`make test-m1w13`):
+  `restricted/` pins each restriction with its fatal text, `checkptr/`
+  compares with gc built with `-d=checkptr`.
+- Re-test trigger: W9a/W8a (descriptor images, syscall `Bytes` roles) and
+  every std package admitted to `make test-m1r`.
+
 ## Stack depth (M10 self-attack)
 
 Guest-language recursion burns host (JVM) stack: each Go call frame costs
