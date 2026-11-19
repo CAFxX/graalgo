@@ -324,7 +324,7 @@ closed-world images). Structs and arrays are **flat**: nested struct and array
 fields are inlined into the enclosing value's `long[]`/`Object[]`, and a per-type
 **leaf table** derived from the gc layout maps each gc byte offset to its slot;
 one Java object per nested struct is not carried into the toolexec backend
-(GG-0072 — the re-issue of `GG-0061` for the byte region and the slice shape below; the requirement text is a draft `[PROPOSAL]` until the owner locks it) `[DECIDED]` 2026-11-18. **One-byte leaves** (`uint8`, `int8`, `bool`, as
+(GG-0072 — the re-issue of `GG-0061` for the byte region and the slice shape below; locked by the owner 2026-11-19) `[DECIDED]` 2026-11-18. **One-byte leaves** (`uint8`, `int8`, `bool`, as
 fields and as array elements alike) live in a typed `byte[]` region of each flat
 object, indexed through the same leaf table; every other scalar leaf stays a
 `long`/`double` slot (`[DECIDED]` 2026-11-18, [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)
@@ -1425,7 +1425,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0069 | Frontend: go/parser + go/types of the tracked release, unmodified (locked 2026-11-18) | §3.2 |
 | GG-0070 | Panic/defer/recover/Goexit semantics and caller frames exactly as gc (locked 2026-11-18) | §3.5; [traceback-normalization.md](traceback-normalization.md) |
 | GG-0071 | Defer mechanism: open-coded up to a fixed limit, per-goroutine chain otherwise (locked 2026-11-18) | §3.5 |
-| GG-0072 | Flat Java-object value model with a byte region (draft, awaiting owner sign-off; supersedes `GG-0061`) | §3.4 |
+| GG-0072 | Flat Java-object value model with a byte region (locked 2026-11-19; supersedes `GG-0061`) | §3.4 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |
