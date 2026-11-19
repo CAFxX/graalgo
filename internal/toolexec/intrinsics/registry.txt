@@ -176,6 +176,31 @@ intrinsic internal/bytealg.CountString      BytealgIntrinsics func(string, uint8
 intrinsic internal/bytealg.Index            BytealgIntrinsics func([]uint8, []uint8) int
 intrinsic internal/bytealg.IndexString      BytealgIntrinsics func(string, string) int
 intrinsic internal/bytealg.MakeNoZero       BytealgIntrinsics func(int) []uint8
+# runtime.cmpstring: the assembly's string compare (compare_amd64.s), which
+# bytealg.CompareString calls through its abigen //go:linkname declaration
+intrinsic runtime.cmpstring                 BytealgIntrinsics func(string, string) int
 # --- internal/runtime/atomic: the assembly store-release sync.Pool uses
 # (atomic_amd64.s; a plain store is a release store on amd64) ---------------
 intrinsic internal/runtime/atomic.StoreReluintptr AtomicIntrinsics func(*uintptr, uintptr)
+
+# --- syscall: the raw entry under syscall.Syscall/RawSyscall (upstream
+# internal/runtime/syscall/linux/asm_linux_amd64.s), executed through the
+# role table (internal/toolexec/syscalls/table.txt) by graalgo.syscall;
+# the runtime's bracket and the runtime-provided values (runtime/proc.go,
+# runtime/runtime.go, runtime/extern.go) -----------------------------------
+intrinsic internal/runtime/syscall/linux.Syscall6 SyscallIntrinsics func(uintptr, uintptr, uintptr, uintptr, uintptr, uintptr, uintptr) (uintptr, uintptr, uintptr)
+intrinsic runtime.entersyscall              SyscallIntrinsics func()
+intrinsic runtime.exitsyscall               SyscallIntrinsics func()
+intrinsic syscall.Getpagesize               SyscallIntrinsics func() int
+intrinsic syscall.runtime_envs              SyscallIntrinsics func() []string
+intrinsic runtime.GOROOT                    SyscallIntrinsics func() string
+
+# --- time: clocks, sleep and timers the runtime provides by //go:linkname
+# (runtime/time.go), on the scheduler's timer heap -----------------------------
+intrinsic time.runtimeNano                  TimeIntrinsics func() int64
+intrinsic time.runtimeNow                   TimeIntrinsics func() (int64, int32, int64)
+intrinsic time.runtimeIsBubbled             TimeIntrinsics func() bool
+intrinsic time.Sleep                        TimeIntrinsics func(time.Duration)
+intrinsic time.newTimer                     TimeIntrinsics func(int64, int64, func(interface {}, uintptr, int64), interface {}, unsafe.Pointer) *time.Timer
+intrinsic time.stopTimer                    TimeIntrinsics func(*time.Timer) bool
+intrinsic time.resetTimer                   TimeIntrinsics func(*time.Timer, int64, int64) bool

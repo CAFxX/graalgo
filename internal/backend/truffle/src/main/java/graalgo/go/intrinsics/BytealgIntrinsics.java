@@ -42,6 +42,12 @@ final class BytealgIntrinsics {
         return Integer.signum(Arrays.compareUnsigned(arr(x), x.byt, x.byt + x.len, arr(y), y.byt, y.byt + y.len));
     }
 
+    /** {@code runtime.cmpstring} (assembly in {@code internal/bytealg}): as {@code Compare}. */
+    @TruffleBoundary
+    static long runtime_cmpstring(Node node, Str a, Str b) {
+        return Integer.signum(Arrays.compareUnsigned(a.b, a.off, a.off + a.len, b.b, b.off, b.off + b.len));
+    }
+
     @TruffleBoundary
     static long internal_bytealg_IndexByte(Node node, Object b, long c) {
         Slice s = (Slice) b;

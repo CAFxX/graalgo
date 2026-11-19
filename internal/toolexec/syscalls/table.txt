@@ -1,0 +1,52 @@
+# The syscall role table: what each argument word of a raw system call is,
+# so that the executor (graalgo.syscall.Executor) can turn the uintptr
+# handles of Go pointers into native memory and back (docs/arch/
+# toolexec-design.md §5.6, abi-spike.md §2.3; W8a). linux/amd64.
+#
+# A wrong entry is memory-unsafe (risk R15): a pointer declared as a value
+# hands a handle integer to the kernel as an address; a buffer declared
+# shorter than the kernel writes corrupts the JVM. So the table is checked
+# against the standard library's own call sites at every `go test
+# ./syscalls` (internal/toolexec): every std site of a listed number must
+# pass, at every position, what the entry declares (a value, a C string, a
+# byte buffer whose length is the declared argument), every pointer a site
+# passes must be declared, and every entry must have a site
+# (syscalls.Check, over syscalls.Scan's source-derived roles).
+#
+# The Java table (graalgo/syscall/SyscallTable.java) is generated from this
+# file by `go generate ./syscalls`; a test fails when it is stale.
+#
+# Grammar (one declaration per line, '#' starts a comment):
+#   NR NAME BLOCK ROLE...
+#   afterfork FUNC         (see the end of the file)
+# NR     the linux/amd64 number (it must equal syscall.SYS_<NAME>)
+# NAME   gc's SYS_ constant, lower case
+# BLOCK  "block" when the call may block indefinitely (the executor releases
+#        the goroutine's scheduler slot and runs the downcall off the
+#        carrier pool, GG-SCHED-0006), "-" otherwise
+# ROLE   one per argument word that the call uses, a1 first:
+#          val                    an integer
+#          cstr                   pointer to NUL-terminated bytes (in)
+#          bytes(LEN,in)          pointer to a[LEN] bytes, read by the kernel
+#          bytes(LEN,out,result)  ... written by the kernel; the result
+#                                 (r1) is the count filled
+#          bytes(LEN,out,all)     ... written by the kernel, all of them
+#        LEN is the 1-based index of the length argument.
+#        (struct/array roles with nested pointers: W8b.)
+
+0   read    block  val bytes(3,out,result) val
+1   write   block  val bytes(3,in) val
+3   close   -      val
+8   lseek   -      val val val
+39  getpid  -
+257 openat  block  val cstr val val
+263 unlinkat block val cstr val
+
+# afterfork FUNC: a function of syscall's fork/exec glue (which GG-0064
+# replaces by posix_spawn of a helper, W8b) whose system calls all run after
+# a fork has succeeded — in the child, or in the parent once the child
+# exists. Their sites are not checked. Sound while the table has no fork
+# entry (Check enforces it): the fork itself (rawVforkSyscall's clone) is
+# not in the table and fails loudly, so these sites are unreachable.
+afterfork syscall.forkAndExecInChild    # parent, after forkAndExecInChild1 forked
+afterfork syscall.forkAndExecInChild1   # the vfork child

@@ -34,6 +34,9 @@ func index(a, b []byte) int
 //go:linkname indexString internal/bytealg.IndexString
 func indexString(a, b string) int
 
+//go:linkname compareString runtime.cmpstring
+func compareString(a, b string) int
+
 //go:linkname makeNoZero internal/bytealg.MakeNoZero
 func makeNoZero(n int) []byte
 
@@ -88,10 +91,13 @@ func main() {
 				}
 				b := append([]byte(nil), a...)
 				cmp.add(compare(a, b))
+				cmp.add(compareString(s, string(b)))
 				if n > 0 {
 					b[rnd()%uint32(n)] ^= 0x80
 					cmp.add(compare(a, b))
 					cmp.add(compare(b, a))
+					cmp.add(compareString(string(b), s))
+					cmp.add(compareString(s[:n-1], string(b)))
 					cmp.add(compare(a, b[:n-1]))
 					cmp.add(compare(a[:n-1], b))
 				}

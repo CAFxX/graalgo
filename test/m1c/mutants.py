@@ -12,6 +12,8 @@ J = "internal/backend/truffle/src/main/java/graalgo/"
 SYNC = J + "go/intrinsics/SyncIntrinsics.java"
 BYTEALG = J + "go/intrinsics/BytealgIntrinsics.java"
 KERNELS = ["test/m1c/programs/bytealg_kernels.go"]
+EXEC = J + "syscall/Executor.java"
+RAW = ["test/m1c/programs/syscall_raw.go"]
 
 MUTANTS = [
     # (name, file, anchor, replacement, programs that must fail)
@@ -55,6 +57,24 @@ MUTANTS = [
      "int cap = n == 0 ? 0 : graalgo.runtime.Intrinsics.nextSliceCap((int) n, 0, 1, false);",
      "int cap = (int) n;",
      KERNELS),
+    # (Copying back an out buffer's unfilled tail is an equivalent mutant: the
+    # executor copies out buffers in first, so the tail reads back unchanged.)
+    ("exec-skips-copy-back", EXEC,
+     "                    Unsafe.writeBytes(node, objs[i], offs[i], data[i], filled);",
+     "",
+     RAW),
+    ("exec-read-fills-from-start-of-object", EXEC,
+     "                    Unsafe.writeBytes(node, objs[i], offs[i], data[i], filled);",
+     "                    Unsafe.writeBytes(node, objs[i], 0, data[i], filled);",
+     RAW),
+    ("exec-ignores-pointer-offset", EXEC,
+     "                long off = Unsafe.offset(p);",
+     "                long off = 0;",
+     RAW),
+    ("exec-loses-errno", EXEC,
+     "                return new Raw(-1, (int) ERRNO.get(state, 0L));",
+     "                return new Raw(-1, 0);",
+     RAW),
 ]
 
 

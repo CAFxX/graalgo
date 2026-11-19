@@ -1,0 +1,98 @@
+package graalgo.go.intrinsics;
+
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.nodes.Node;
+import graalgo.go.runtime.GoProcess;
+import graalgo.go.types.GoType;
+import graalgo.go.values.Flat;
+import graalgo.go.values.Slice;
+import graalgo.go.values.Str;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * The runtime side of package {@code syscall}: the raw entry {@code linux.Syscall6} under every
+ * {@code syscall.Syscall}/{@code RawSyscall} (executed by {@link graalgo.syscall.Executor}),
+ * the {@code entersyscall}/{@code exitsyscall} bracket, the environment and the page size;
+ * registered in {@code internal/toolexec/intrinsics/registry.txt}. {@code syscall} itself is
+ * upstream's source.
+ */
+final class SyscallIntrinsics {
+    private SyscallIntrinsics() {}
+
+    /** {@code internal/runtime/syscall/linux.Syscall6}: see {@link graalgo.syscall.Executor}. */
+    static Object internal_runtime_syscall_linux_Syscall6(Node node, long nr, long a1, long a2, long a3, long a4,
+            long a5, long a6) {
+        return graalgo.syscall.Executor.syscall6(node, nr, a1, a2, a3, a4, a5, a6);
+    }
+
+    /**
+     * gc's {@code entersyscall}/{@code exitsyscall} release and re-acquire the P around every
+     * {@code syscall.Syscall}. Here the executor brackets by the role table's may-block bit
+     * (slot released, carrier left; GG-SCHED-0006), which covers the calls that can block and
+     * spares the ones that cannot, so the bracket itself has nothing to do.
+     */
+    static void runtime_entersyscall(Node node) {
+    }
+
+    static void runtime_exitsyscall(Node node) {
+    }
+
+    /** {@code syscall.Getpagesize}: linux/amd64's page size. */
+    static long syscall_Getpagesize(Node node) {
+        return 4096;
+    }
+
+    /**
+     * {@code syscall.runtime_envs}: the process environment in the order the kernel gave it
+     * (gc reads it from the initial stack; here from {@code /proc/self/environ}).
+     */
+    @TruffleBoundary
+    static Object syscall_runtime_envs(Node node) {
+        List<byte[]> envs = new ArrayList<>();
+        try {
+            byte[] all = Files.readAllBytes(Path.of("/proc/self/environ"));
+            int start = 0;
+            for (int i = 0; i < all.length; i++) {
+                if (all[i] == 0) {
+                    if (i > start) {
+                        envs.add(java.util.Arrays.copyOfRange(all, start, i));
+                    }
+                    start = i + 1;
+                }
+            }
+        } catch (IOException e) {
+            for (Map.Entry<String, String> kv : System.getenv().entrySet()) {
+                envs.add((kv.getKey() + "=" + kv.getValue()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            }
+        }
+        return stringSlice(node, envs);
+    }
+
+    private static Slice stringSlice(Node node, List<byte[]> elems) {
+        GoType st = GoProcess.get(node).types.basic(GoType.STRING);
+        if (st.nRef() != 1 || st.nPrim() != 0 || st.nByte() != 0) {
+            throw new IllegalStateException("string is not one reference slot");
+        }
+        int n = elems.size();
+        Object[] refs = new Object[n];
+        for (int i = 0; i < n; i++) {
+            refs[i] = elems.get(i).length == 0 ? Str.EMPTY : new Str(elems.get(i));
+        }
+        return new Slice(new Flat(st.backing(), Flat.NO_PRIMS, refs, Flat.NO_BYTES), 0, 0, 0, n, n);
+    }
+
+    /**
+     * {@code runtime.GOROOT}: {@code $GOROOT} when set. gc falls back to the GOROOT recorded at
+     * link time; graalgo does not record it yet and returns "" (docs/arch/limitations.md).
+     */
+    @TruffleBoundary
+    static Str runtime_GOROOT(Node node) {
+        String s = System.getenv("GOROOT");
+        return s == null || s.isEmpty() ? Str.EMPTY : Str.of(s);
+    }
+}

@@ -17,7 +17,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "39506eea1eaaccf4";
+    public static final String HASH = "2654e63e57e8c3ea";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -40,6 +40,8 @@ public final class IntrinsicTable {
                 return new R_internal_bytealg_MakeNoZero(language);
             case "internal/runtime/atomic.StoreReluintptr":
                 return new R_internal_runtime_atomic_StoreReluintptr(language);
+            case "internal/runtime/syscall/linux.Syscall6":
+                return new R_internal_runtime_syscall_linux_Syscall6(language);
             case "internal/sync.fatal":
                 return new R_internal_sync_fatal(language);
             case "internal/sync.runtime_SemacquireMutex":
@@ -92,12 +94,20 @@ public final class IntrinsicTable {
                 return new R_runtime_GC(language);
             case "runtime.GOMAXPROCS":
                 return new R_runtime_GOMAXPROCS(language);
+            case "runtime.GOROOT":
+                return new R_runtime_GOROOT(language);
             case "runtime.Goexit":
                 return new R_runtime_Goexit(language);
             case "runtime.Gosched":
                 return new R_runtime_Gosched(language);
             case "runtime.NumCPU":
                 return new R_runtime_NumCPU(language);
+            case "runtime.cmpstring":
+                return new R_runtime_cmpstring(language);
+            case "runtime.entersyscall":
+                return new R_runtime_entersyscall(language);
+            case "runtime.exitsyscall":
+                return new R_runtime_exitsyscall(language);
             case "runtime.nanotime":
                 return new R_runtime_nanotime(language);
             case "runtime.rand":
@@ -220,6 +230,24 @@ public final class IntrinsicTable {
                 return new R_sync_atomic_runtime_procUnpin(language);
             case "syscall.Exit":
                 return new R_syscall_Exit(language);
+            case "syscall.Getpagesize":
+                return new R_syscall_Getpagesize(language);
+            case "syscall.runtime_envs":
+                return new R_syscall_runtime_envs(language);
+            case "time.Sleep":
+                return new R_time_Sleep(language);
+            case "time.newTimer":
+                return new R_time_newTimer(language);
+            case "time.resetTimer":
+                return new R_time_resetTimer(language);
+            case "time.runtimeIsBubbled":
+                return new R_time_runtimeIsBubbled(language);
+            case "time.runtimeNano":
+                return new R_time_runtimeNano(language);
+            case "time.runtimeNow":
+                return new R_time_runtimeNow(language);
+            case "time.stopTimer":
+                return new R_time_stopTimer(language);
             default:
                 return null;
         }
@@ -359,6 +387,19 @@ public final class IntrinsicTable {
             Object[] a = frame.getArguments();
             AtomicIntrinsics.internal_runtime_atomic_StoreReluintptr(this, a[1], (long) a[2]);
             return null;
+        }
+    }
+
+    /** {@code internal/runtime/syscall/linux.Syscall6}: {@code func(uintptr, uintptr, uintptr, uintptr, uintptr, uintptr, uintptr) (uintptr, uintptr, uintptr)}. */
+    static final class R_internal_runtime_syscall_linux_Syscall6 extends Root {
+        R_internal_runtime_syscall_linux_Syscall6(GoLanguage language) {
+            super(language, "internal/runtime/syscall/linux.Syscall6");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyscallIntrinsics.internal_runtime_syscall_linux_Syscall6(this, (long) a[1], (long) a[2], (long) a[3], (long) a[4], (long) a[5], (long) a[6], (long) a[7]);
         }
     }
 
@@ -703,6 +744,18 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.GOROOT}: {@code func() string}. */
+    static final class R_runtime_GOROOT extends Root {
+        R_runtime_GOROOT(GoLanguage language) {
+            super(language, "runtime.GOROOT");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyscallIntrinsics.runtime_GOROOT(this);
+        }
+    }
+
     /** {@code runtime.Goexit}: {@code func()}. */
     static final class R_runtime_Goexit extends Root {
         R_runtime_Goexit(GoLanguage language) {
@@ -738,6 +791,45 @@ public final class IntrinsicTable {
         @Override
         public Object execute(VirtualFrame frame) {
             return RuntimeIntrinsics.runtime_NumCPU(this);
+        }
+    }
+
+    /** {@code runtime.cmpstring}: {@code func(string, string) int}. */
+    static final class R_runtime_cmpstring extends Root {
+        R_runtime_cmpstring(GoLanguage language) {
+            super(language, "runtime.cmpstring");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BytealgIntrinsics.runtime_cmpstring(this, (Str) a[1], (Str) a[2]);
+        }
+    }
+
+    /** {@code runtime.entersyscall}: {@code func()}. */
+    static final class R_runtime_entersyscall extends Root {
+        R_runtime_entersyscall(GoLanguage language) {
+            super(language, "runtime.entersyscall");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            SyscallIntrinsics.runtime_entersyscall(this);
+            return null;
+        }
+    }
+
+    /** {@code runtime.exitsyscall}: {@code func()}. */
+    static final class R_runtime_exitsyscall extends Root {
+        R_runtime_exitsyscall(GoLanguage language) {
+            super(language, "runtime.exitsyscall");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            SyscallIntrinsics.runtime_exitsyscall(this);
+            return null;
         }
     }
 
@@ -1546,6 +1638,119 @@ public final class IntrinsicTable {
             Object[] a = frame.getArguments();
             RuntimeIntrinsics.syscall_Exit(this, (long) a[1]);
             return null;
+        }
+    }
+
+    /** {@code syscall.Getpagesize}: {@code func() int}. */
+    static final class R_syscall_Getpagesize extends Root {
+        R_syscall_Getpagesize(GoLanguage language) {
+            super(language, "syscall.Getpagesize");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyscallIntrinsics.syscall_Getpagesize(this);
+        }
+    }
+
+    /** {@code syscall.runtime_envs}: {@code func() []string}. */
+    static final class R_syscall_runtime_envs extends Root {
+        R_syscall_runtime_envs(GoLanguage language) {
+            super(language, "syscall.runtime_envs");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyscallIntrinsics.syscall_runtime_envs(this);
+        }
+    }
+
+    /** {@code time.Sleep}: {@code func(time.Duration)}. */
+    static final class R_time_Sleep extends Root {
+        R_time_Sleep(GoLanguage language) {
+            super(language, "time.Sleep");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            TimeIntrinsics.time_Sleep(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code time.newTimer}: {@code func(int64, int64, func(interface {}, uintptr, int64), interface {}, unsafe.Pointer) *time.Timer}. */
+    static final class R_time_newTimer extends Root {
+        R_time_newTimer(GoLanguage language) {
+            super(language, "time.newTimer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return TimeIntrinsics.time_newTimer(this, (long) a[1], (long) a[2], a[3], a[4], a[5]);
+        }
+    }
+
+    /** {@code time.resetTimer}: {@code func(*time.Timer, int64, int64) bool}. */
+    static final class R_time_resetTimer extends Root {
+        R_time_resetTimer(GoLanguage language) {
+            super(language, "time.resetTimer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return TimeIntrinsics.time_resetTimer(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code time.runtimeIsBubbled}: {@code func() bool}. */
+    static final class R_time_runtimeIsBubbled extends Root {
+        R_time_runtimeIsBubbled(GoLanguage language) {
+            super(language, "time.runtimeIsBubbled");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return TimeIntrinsics.time_runtimeIsBubbled(this);
+        }
+    }
+
+    /** {@code time.runtimeNano}: {@code func() int64}. */
+    static final class R_time_runtimeNano extends Root {
+        R_time_runtimeNano(GoLanguage language) {
+            super(language, "time.runtimeNano");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return TimeIntrinsics.time_runtimeNano(this);
+        }
+    }
+
+    /** {@code time.runtimeNow}: {@code func() (int64, int32, int64)}. */
+    static final class R_time_runtimeNow extends Root {
+        R_time_runtimeNow(GoLanguage language) {
+            super(language, "time.runtimeNow");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return TimeIntrinsics.time_runtimeNow(this);
+        }
+    }
+
+    /** {@code time.stopTimer}: {@code func(*time.Timer) bool}. */
+    static final class R_time_stopTimer extends Root {
+        R_time_stopTimer(GoLanguage language) {
+            super(language, "time.stopTimer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return TimeIntrinsics.time_stopTimer(this, a[1]);
         }
     }
 }

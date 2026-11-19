@@ -31,6 +31,10 @@
 # internal/bytealg's assembly by //go:linkname and needs gc's
 # -checklinkname=0).
 #
+# Environment. Each line
+#     //m1c:env NAME=VALUE
+# in a program's first lines is set for both legs' runs (TZ=Europe/Rome).
+#
 # Usage: test/m1c/run.sh [-v] [PROGRAM.go]...
 #   -v   print the diff of every failing program
 # Env:   GO, GRAALVM_HOME, GRAALGO_TMP (see test/lib/infra.sh),
@@ -76,9 +80,10 @@ else
     programs=("$@")
 fi
 
-run_leg() { # <exe> <stdout> <stderr> -> exit status
-    local status=0
-    ( cd "$(dirname "$1")" && timeout "$TIMEOUT" "$1" >"$2" 2>"$3" </dev/null ) || status=$?
+run_leg() { # <exe> <stdout> <stderr> [NAME=VALUE...] -> exit status
+    local status=0 exe="$1" out="$2" err="$3"
+    shift 3
+    ( cd "$(dirname "$exe")" && env "$@" timeout "$TIMEOUT" "$exe" >"$out" 2>"$err" </dev/null ) || status=$?
     return "$status"
 }
 
@@ -97,10 +102,12 @@ compare() {
     elif ! ( cd "$w/mod" && GOFLAGS="$goflags" toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
     else
+        local envs=()
+        mapfile -t envs < <(head -20 "$src" | sed -n 's|^//m1c:env \([A-Za-z_][A-Za-z0-9_]*=.*\)$|\1|p')
         gc_status=0
-        run_leg "$w/gc.bin" "$w/gc.out" "$w/gc.err" || gc_status=$?
+        run_leg "$w/gc.bin" "$w/gc.out" "$w/gc.err" "${envs[@]}" || gc_status=$?
         gg_status=0
-        TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
+        TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" "${envs[@]}" || gg_status=$?
         infra_check_run "$src" "$gg_status" "$w/gg.err"
         python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
         grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"

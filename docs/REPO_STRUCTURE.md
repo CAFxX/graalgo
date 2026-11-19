@@ -73,7 +73,12 @@ Related: [Makefile](../Makefile) (root build entry point),
     registry — [registry.txt](../internal/toolexec/intrinsics/registry.txt)
     is the single source of truth, from which
     [gen/](../internal/toolexec/intrinsics/gen/) generates the backend's
-    Java dispatch table; [link/](../internal/toolexec/link/) is link-time
+    Java dispatch table; [syscalls/](../internal/toolexec/syscalls/) is the
+    syscall role table of the executor —
+    [table.txt](../internal/toolexec/syscalls/table.txt), the generated Java
+    table, and the R15 gate that checks every entry against the roles
+    derived from the standard library's own call sites (`Scan`, `Check`);
+    [link/](../internal/toolexec/link/) is link-time
     symbol resolution and reachability (toolexec-design §5.3).
     Tested by `make test-toolexec`.
   - [frontend/](../internal/frontend/) — Go source → IR. Moved here from
@@ -172,7 +177,11 @@ Related: [Makefile](../Makefile) (root build entry point),
       [build/](../internal/backend/truffle/src/main/java/graalgo/go/build/)
       (the node factory over decoded GIR) and
       [runtime/](../internal/backend/truffle/src/main/java/graalgo/go/runtime/)
-      (panics, goroutine state, the adapter onto the scheduler). `GoLanguage`
+      (panics, goroutine state, the adapter onto the scheduler);
+      [graalgo/syscall/](../internal/backend/truffle/src/main/java/graalgo/syscall/)
+      is the syscall executor (Panama downcalls to libc `syscall(2)` through
+      the generated role table; the only package the off-heap gate allows to
+      use `java.lang.foreign`). `GoLanguage`
       parses a linked bundle (`application/x-graalgo-bundle`) with it; the
       runner of linked executables is
       [graalgo-bundle-run](../internal/backend/graalgo-bundle-run)
