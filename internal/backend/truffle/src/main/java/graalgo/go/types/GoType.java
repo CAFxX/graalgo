@@ -227,6 +227,15 @@ public final class GoType {
         return C_REF;
     }
 
+    /**
+     * Whether a value is one byte-sized leaf — {@code uint8}, {@code int8}, {@code bool} — and
+     * so lives in the byte region of its object (ADR-0015 decision 3).
+     */
+    public boolean isByteLeaf() {
+        int k = u().kind;
+        return k == BOOL || k == INT8 || k == UINT8;
+    }
+
     public int nPrim() {
         layout();
         return nPrim;
@@ -248,6 +257,7 @@ public final class GoType {
             GoType t = u();
             nPrim = t.nPrim();
             nRef = t.nRef();
+            nByte = t.nByte;
             gcSize = t.gcSize;
             gcAlign = declaredAlign > 0 ? declaredAlign : t.gcAlign;
             if (expectedLayout != null) {
@@ -342,11 +352,12 @@ public final class GoType {
         }
         int p = 0;
         int r = 0;
+        int b = 0;
         long size;
         long align;
         switch (kind) {
             case BOOL, INT8, UINT8 -> {
-                p = 1;
+                b = 1;
                 size = align = 1;
             }
             case INT16, UINT16 -> {
@@ -379,6 +390,7 @@ public final class GoType {
             case ARRAY -> {
                 p = Math.toIntExact(len * elem.nPrim());
                 r = Math.toIntExact(len * elem.nRef());
+                b = Math.toIntExact(len * elem.nByte);
                 size = Math.multiplyExact(len, elem.gcSize);
                 align = elem.gcAlign;
             }
@@ -389,8 +401,10 @@ public final class GoType {
                 for (Field f : fields) {
                     f.primOff = p;
                     f.refOff = r;
+                    f.byteOff = b;
                     p += f.type.nPrim();
                     r += f.type.nRef();
+                    b += f.type.nByte;
                     long a = f.type.gcAlign;
                     off = roundUp(off, a);
                     f.gcOff = off;
@@ -411,6 +425,7 @@ public final class GoType {
         }
         nPrim = p;
         nRef = r;
+        nByte = b;
         gcSize = size;
         gcAlign = align;
         laidOut = true;
@@ -442,7 +457,9 @@ public final class GoType {
     public Flat zeroFlat() {
         Object[] z = zeroRefs();
         int np = nPrim();
-        return new Flat(this, np == 0 ? Flat.NO_PRIMS : new long[np], z.length == 0 ? Flat.NO_REFS : z.clone());
+        int nb = nByte();
+        return new Flat(this, np == 0 ? Flat.NO_PRIMS : new long[np], z.length == 0 ? Flat.NO_REFS : z.clone(),
+                nb == 0 ? Flat.NO_BYTES : new byte[nb]);
     }
 
     /** The reference slots of a zero value (shared template: clone before use). */

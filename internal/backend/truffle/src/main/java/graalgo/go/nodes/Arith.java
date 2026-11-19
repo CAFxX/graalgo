@@ -722,7 +722,7 @@ public final class Arith {
             Flat a = (Flat) l.executeGeneric(frame);
             Flat b = (Flat) r.executeGeneric(frame);
             try {
-                return Values.flatEqual(type, a, 0, 0, b, 0, 0);
+                return Values.flatEqual(type, a, 0, 0, 0, b, 0, 0, 0);
             } catch (Values.Uncomparable u) {
                 uncomparable.enter();
                 throw Panics.uncomparable(this, u.type);

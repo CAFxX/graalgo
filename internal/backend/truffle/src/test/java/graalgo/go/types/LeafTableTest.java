@@ -160,6 +160,17 @@ public final class LeafTableTest {
         }
     }
 
+    /** One-byte leaves live in the byte region (ADR-0015 decision 3); wider scalars do not. */
+    public void testRegions() {
+        check(table.basic(GoType.BOOL).leafAt(0).region() == GoType.R_BYTE, "bool", "region");
+        check(table.basic(GoType.INT8).leafAt(0).region() == GoType.R_BYTE, "int8", "region");
+        check(table.basic(GoType.UINT8).leafAt(0).region() == GoType.R_BYTE, "uint8", "region");
+        check(table.basic(GoType.UINT16).leafAt(0).region() == GoType.R_PRIM, "uint16", "region");
+        check(table.basic(GoType.FLOAT32).leafAt(0).region() == GoType.R_PRIM, "float32", "region");
+        check(table.basic(GoType.STRING).leafAt(0).region() == GoType.R_REF, "string", "region");
+        check(table.basic(GoType.COMPLEX64).leafAt(0).region() == GoType.R_REF, "complex64", "region");
+    }
+
     private static int matching(String line) {
         int depth = 0;
         for (int i = 0; i < line.length(); i++) {

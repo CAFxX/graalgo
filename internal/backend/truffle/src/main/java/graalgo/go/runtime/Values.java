@@ -36,38 +36,54 @@ public final class Values {
     }
 
     /** The value of type {@code t} at a location, boxed in carrier form (a copy for flat types). */
-    public static Object load(GoType t, Flat obj, int p, int r) {
+    public static Object load(GoType t, Flat obj, int p, int r, int b) {
         switch (t.carrier()) {
             case GoType.C_I64:
-                return obj.prims[p];
+                return scalar(t, obj, p, b);
             case GoType.C_F64:
                 return Double.longBitsToDouble(obj.prims[p]);
             case GoType.C_BOOL:
-                return obj.prims[p] != 0;
+                return obj.bytes[b] != 0;
             case GoType.C_REF:
                 return obj.refs[r];
             default:
-                return obj.sub(t, p, t.nPrim(), r, t.nRef());
+                return obj.sub(t, p, t.nPrim(), r, t.nRef(), b, t.nByte());
+        }
+    }
+
+    /** The raw scalar of an integer or boolean leaf of type {@code t}, from its region. */
+    private static long scalar(GoType t, Flat obj, int p, int b) {
+        switch (t.u().kind) {
+            case GoType.INT8:
+                return obj.bytes[b];
+            case GoType.UINT8, GoType.BOOL:
+                return obj.bytes[b] & 0xFFL;
+            default:
+                return obj.prims[p];
         }
     }
 
     /** Stores a boxed carrier value of type {@code t} at a location (flat values are copied in). */
-    public static void store(GoType t, Flat obj, int p, int r, Object v) {
+    public static void store(GoType t, Flat obj, int p, int r, int b, Object v) {
         switch (t.carrier()) {
             case GoType.C_I64:
-                obj.prims[p] = (long) v;
+                if (t.isByteLeaf()) {
+                    obj.bytes[b] = (byte) (long) v;
+                } else {
+                    obj.prims[p] = (long) v;
+                }
                 break;
             case GoType.C_F64:
                 obj.prims[p] = Double.doubleToRawLongBits((double) v);
                 break;
             case GoType.C_BOOL:
-                obj.prims[p] = (boolean) v ? 1 : 0;
+                obj.bytes[b] = (byte) ((boolean) v ? 1 : 0);
                 break;
             case GoType.C_REF:
                 obj.refs[r] = v;
                 break;
             default:
-                obj.store(p, r, (Flat) v);
+                obj.store(p, r, b, (Flat) v);
         }
     }
 
@@ -83,7 +99,7 @@ public final class Values {
             case GoType.INTERFACE:
                 return ifaceEqual(a, b);
             case GoType.STRUCT, GoType.ARRAY:
-                return flatEqual(u, (Flat) a, 0, 0, (Flat) b, 0, 0);
+                return flatEqual(u, (Flat) a, 0, 0, 0, (Flat) b, 0, 0, 0);
             case GoType.POINTER, GoType.UNSAFE_POINTER:
                 return Ptr.same(a, b);
             case GoType.SLICE, GoType.MAP, GoType.FUNC:
@@ -148,13 +164,15 @@ public final class Values {
 
     /** Slot-wise {@code ==} of two values of structural type {@code u} at the given locations. */
     @TruffleBoundary
-    public static boolean flatEqual(GoType u, Flat a, int pa, int ra, Flat b, int pb, int rb) {
+    public static boolean flatEqual(GoType u, Flat a, int pa, int ra, int ba, Flat b, int pb, int rb, int bb) {
         if (u.kind == GoType.ARRAY) {
             GoType e = u.elem;
             int np = e.nPrim();
             int nr = e.nRef();
+            int nb = e.nByte();
             for (int i = 0; i < u.len; i++) {
-                if (!slotEqual(e, a, pa + i * np, ra + i * nr, b, pb + i * np, rb + i * nr)) {
+                if (!slotEqual(e, a, pa + i * np, ra + i * nr, ba + i * nb, b, pb + i * np, rb + i * nr,
+                        bb + i * nb)) {
                     return false;
                 }
             }
@@ -162,25 +180,25 @@ public final class Values {
         }
         u.nPrim();
         for (Field f : u.fields) {
-            if (!f.name.equals("_") && !slotEqual(f.type, a, pa + f.primOff, ra + f.refOff, b, pb + f.primOff,
-                    rb + f.refOff)) {
+            if (!f.name.equals("_") && !slotEqual(f.type, a, pa + f.primOff, ra + f.refOff, ba + f.byteOff, b,
+                    pb + f.primOff, rb + f.refOff, bb + f.byteOff)) {
                 return false;
             }
         }
         return true;
     }
 
-    private static boolean slotEqual(GoType t, Flat a, int pa, int ra, Flat b, int pb, int rb) {
+    private static boolean slotEqual(GoType t, Flat a, int pa, int ra, int ba, Flat b, int pb, int rb, int bb) {
         GoType u = t.u();
         switch (u.carrier()) {
             case GoType.C_I64, GoType.C_BOOL:
-                return a.prims[pa] == b.prims[pb];
+                return u.isByteLeaf() ? a.bytes[ba] == b.bytes[bb] : a.prims[pa] == b.prims[pb];
             case GoType.C_F64:
                 return Double.longBitsToDouble(a.prims[pa]) == Double.longBitsToDouble(b.prims[pb]);
             case GoType.C_REF:
                 return equal(u, a.refs[ra], b.refs[rb]);
             default:
-                return flatEqual(u, a, pa, ra, b, pb, rb);
+                return flatEqual(u, a, pa, ra, ba, b, pb, rb, bb);
         }
     }
 
@@ -202,7 +220,7 @@ public final class Values {
                     throw atInterface(x, i.type);
                 }
             case GoType.STRUCT, GoType.ARRAY:
-                return flatHash(u, (Flat) v, 0, 0);
+                return flatHash(u, (Flat) v, 0, 0, 0);
             case GoType.SLICE, GoType.MAP, GoType.FUNC:
                 throw new Uncomparable(t, true);
             case GoType.POINTER, GoType.UNSAFE_POINTER, GoType.CHAN:
@@ -215,35 +233,35 @@ public final class Values {
         }
     }
 
-    private static int flatHash(GoType u, Flat a, int p, int r) {
+    private static int flatHash(GoType u, Flat a, int p, int r, int b) {
         int h = 17;
         if (u.kind == GoType.ARRAY) {
             GoType e = u.elem;
             for (int i = 0; i < u.len; i++) {
-                h = h * 31 + slotHash(e, a, p + i * e.nPrim(), r + i * e.nRef());
+                h = h * 31 + slotHash(e, a, p + i * e.nPrim(), r + i * e.nRef(), b + i * e.nByte());
             }
             return h;
         }
         u.nPrim();
         for (Field f : u.fields) {
             if (!f.name.equals("_")) {
-                h = h * 31 + slotHash(f.type, a, p + f.primOff, r + f.refOff);
+                h = h * 31 + slotHash(f.type, a, p + f.primOff, r + f.refOff, b + f.byteOff);
             }
         }
         return h;
     }
 
-    private static int slotHash(GoType t, Flat a, int p, int r) {
+    private static int slotHash(GoType t, Flat a, int p, int r, int b) {
         GoType u = t.u();
         switch (u.carrier()) {
             case GoType.C_I64, GoType.C_BOOL:
-                return Long.hashCode(a.prims[p]);
+                return u.isByteLeaf() ? a.bytes[b] : Long.hashCode(a.prims[p]);
             case GoType.C_F64:
                 return hash(u, Double.longBitsToDouble(a.prims[p]));
             case GoType.C_REF:
                 return hash(u, a.refs[r]);
             default:
-                return flatHash(u, a, p, r);
+                return flatHash(u, a, p, r, b);
         }
     }
 
@@ -274,7 +292,7 @@ public final class Values {
         GoType u = t.u();
         switch (u.kind) {
             case GoType.BOOL -> ascii(out, (boolean) v ? "true" : "false");
-            case GoType.STRING -> out.write(((Str) v).b, 0, ((Str) v).b.length);
+            case GoType.STRING -> out.write(((Str) v).b, ((Str) v).off, ((Str) v).len);
             case GoType.FLOAT32 -> ascii(out, GoFloatFmt.formatFloat((float) (double) v, 'g', -1, 32));
             case GoType.FLOAT64 -> ascii(out, GoFloatFmt.formatFloat((double) v, 'g', -1, 64));
             case GoType.COMPLEX64, GoType.COMPLEX128 -> {

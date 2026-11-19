@@ -17,18 +17,18 @@ import graalgo.go.values.Slice;
 
 /**
  * Memory locations of the flat value model (SPEC §3.4, GG-0061/0062): a location is an object
- * plus a scalar-slot and a reference-slot offset. A {@link Loc} node evaluates its operand
- * expressions exactly once in {@link Loc#resolve}, returns the object and makes the two offsets
- * available through {@link Loc#prim}/{@link Loc#ref}: constants for a field path into a known
- * object, otherwise two {@code int} scratch slots of the frame (no allocation in the
+ * plus one offset per region — scalar slots, reference slots, byte-sized leaves (ADR-0015
+ * decision 3). A {@link Loc} node evaluates its operand
+ * expressions exactly once in {@link Loc#resolve}, returns the object and makes the offsets
+ * available through {@link Loc#prim}/{@link Loc#ref}/{@link Loc#byt}: constants for a field path
+ * into a known object, otherwise three {@code int} scratch slots of the frame (no allocation in the
  * interpreter; virtual after partial evaluation). The load, store and address-of nodes are
  * shared by every location shape, and the field offsets of a path are folded into the innermost
  * location by the factory, so {@code p.a.b[i].c} is one pointer location, one index location
  * and one load.
  *
- * <p>Toolexec work package W13 (the pointer model, milestone M1r, GG-0062) hooks in here: a view
- * pointer converted from {@code unsafe.Pointer} becomes one more {@link Ptr} shape whose offsets
- * come from the type's leaf table.
+ * <p>The region of a load or store is chosen by the factory from the static type of the leaf
+ * ({@link LoadI64}/{@link LoadU8}/{@link LoadI8}/{@link LoadRef}); nothing here tests a shape.
  */
 public final class Mem {
     private Mem() {}
@@ -40,16 +40,71 @@ public final class Mem {
         public abstract int prim(VirtualFrame frame);
 
         public abstract int ref(VirtualFrame frame);
+
+        public abstract int byt(VirtualFrame frame);
+
+        /** Region masks for {@link #need}. */
+        public static final int P = 1, R = 2, B = 4, ALL = 7;
+
+        /**
+         * Tells the location which offsets its one consumer reads (called by the consumer's
+         * constructor, before the first execution): a scalar load reads one. The others are
+         * then neither computed nor written to the frame — the scratch slots are real stores
+         * wherever the frame is not virtual (interpreter, OSR-compiled loops).
+         */
+        public void need(int regions) {}
+
+        /**
+         * The pointer to the location ({@code &x}). Shapes that have the three offsets at hand
+         * override this to build the pointer without the scratch slots.
+         */
+        public Object addr(VirtualFrame frame) {
+            Flat o = resolve(frame);
+            return Ptr.make(o, prim(frame), ref(frame), byt(frame));
+        }
+
+        /** The regions a value of type {@code t} occupies. */
+        public static int regionsOf(GoType t) {
+            return (t.nPrim() > 0 ? P : 0) | (t.nRef() > 0 ? R : 0) | (t.nByte() > 0 ? B : 0);
+        }
     }
 
-    /** A location whose offsets live in the frame's two scratch slots. */
+    /** The frame's three scratch slots for the offsets of a dynamic location. */
+    public record Aux(int p, int r, int b) {}
+
+    /** A location whose offsets live in the frame's scratch slots. */
     abstract static class DynLoc extends Loc {
         final int auxP;
         final int auxR;
+        final int auxB;
+        @com.oracle.truffle.api.CompilerDirectives.CompilationFinal int need = ALL;
 
-        DynLoc(int auxP, int auxR) {
-            this.auxP = auxP;
-            this.auxR = auxR;
+        @Override
+        public void need(int regions) {
+            need = regions;
+        }
+
+        DynLoc(Aux aux) {
+            this.auxP = aux.p();
+            this.auxR = aux.r();
+            this.auxB = aux.b();
+        }
+
+        @Override
+        public final int byt(VirtualFrame frame) {
+            return frame.getInt(auxB);
+        }
+
+        final void set(VirtualFrame frame, int p, int r, int b) {
+            if ((need & P) != 0) {
+                frame.setInt(auxP, p);
+            }
+            if ((need & R) != 0) {
+                frame.setInt(auxR, r);
+            }
+            if ((need & B) != 0) {
+                frame.setInt(auxB, b);
+            }
         }
 
         @Override
@@ -68,11 +123,18 @@ public final class Mem {
         @Child private Ref base;
         private final int p;
         private final int r;
+        private final int b;
 
-        public FlatLoc(Ref base, int p, int r) {
+        public FlatLoc(Ref base, int p, int r, int b) {
             this.base = base;
             this.p = p;
             this.r = r;
+            this.b = b;
+        }
+
+        @Override
+        public int byt(VirtualFrame frame) {
+            return b;
         }
 
         @Override
@@ -100,28 +162,41 @@ public final class Mem {
         @Child private Ref ptr;
         private final int p;
         private final int r;
+        private final int b;
         private final BranchProfile interior = BranchProfile.create();
         private final BranchProfile nil = BranchProfile.create();
 
-        public PtrLoc(Ref ptr, int p, int r, int auxP, int auxR) {
-            super(auxP, auxR);
+        public PtrLoc(Ref ptr, int p, int r, int b, Aux aux) {
+            super(aux);
             this.ptr = ptr;
             this.p = p;
             this.r = r;
+            this.b = b;
         }
 
         @Override
         public Flat resolve(VirtualFrame frame) {
             Object o = ptr.executeGeneric(frame);
             if (o instanceof Flat flat) {
-                frame.setInt(auxP, p);
-                frame.setInt(auxR, r);
+                set(frame, p, r, b);
                 return flat;
             } else if (o instanceof Ptr q) {
                 interior.enter();
-                frame.setInt(auxP, q.prim + p);
-                frame.setInt(auxR, q.ref + r);
+                set(frame, q.prim + p, q.ref + r, q.byt + b);
                 return q.obj;
+            }
+            nil.enter();
+            throw Panics.nilDeref(this);
+        }
+
+        @Override
+        public Object addr(VirtualFrame frame) {
+            Object o = ptr.executeGeneric(frame);
+            if (o instanceof Flat flat) {
+                return Ptr.make(flat, p, r, b);
+            } else if (o instanceof Ptr q) {
+                interior.enter();
+                return Ptr.make(q.obj, q.prim + p, q.ref + r, q.byt + b);
             }
             nil.enter();
             throw Panics.nilDeref(this);
@@ -134,21 +209,25 @@ public final class Mem {
         @Child private I64 index;
         private final int np;
         private final int nr;
+        private final int nb;
         private final int p;
         private final int r;
+        private final int b;
         private final BranchProfile outOfRange = BranchProfile.create();
         private final boolean signed;
 
         /** {@code signed}: whether the index's type is signed (the panic's text). */
-        public SliceLoc(Ref slice, I64 index, int np, int nr, int p, int r, int auxP, int auxR, boolean signed) {
-            super(auxP, auxR);
+        public SliceLoc(Ref slice, I64 index, GoType elem, int p, int r, int b, Aux aux, boolean signed) {
+            super(aux);
             this.signed = signed;
             this.slice = slice;
             this.index = index;
-            this.np = np;
-            this.nr = nr;
+            this.np = elem.nPrim();
+            this.nr = elem.nRef();
+            this.nb = elem.nByte();
             this.p = p;
             this.r = r;
+            this.b = b;
         }
 
         @Override
@@ -159,9 +238,19 @@ public final class Mem {
                 outOfRange.enter();
                 throw Panics.index(this, i, s.len, signed);
             }
-            frame.setInt(auxP, s.prim + (int) i * np + p);
-            frame.setInt(auxR, s.ref + (int) i * nr + r);
+            set(frame, s.prim + (int) i * np + p, s.ref + (int) i * nr + r, s.byt + (int) i * nb + b);
             return s.base;
+        }
+
+        @Override
+        public Object addr(VirtualFrame frame) {
+            Slice s = (Slice) slice.executeGeneric(frame);
+            long i = index.executeLong(frame);
+            if (Long.compareUnsigned(i, s.len) >= 0) {
+                outOfRange.enter();
+                throw Panics.index(this, i, s.len, signed);
+            }
+            return Ptr.make(s.base, s.prim + (int) i * np + p, s.ref + (int) i * nr + r, s.byt + (int) i * nb + b);
         }
     }
 
@@ -172,37 +261,46 @@ public final class Mem {
         private final long len;
         private final int np;
         private final int nr;
+        private final int nb;
         private final int p;
         private final int r;
+        private final int b;
         private final BranchProfile outOfRange = BranchProfile.create();
         private final boolean signed;
 
         /** {@code signed}: whether the index's type is signed (the panic's text). */
-        public IndexLoc(Loc parent, I64 index, long len, int np, int nr, int p, int r, int auxP, int auxR,
-                boolean signed) {
-            super(auxP, auxR);
+        public IndexLoc(Loc parent, I64 index, long len, GoType elem, int p, int r, int b, Aux aux, boolean signed) {
+            super(aux);
             this.signed = signed;
             this.parent = parent;
             this.index = index;
             this.len = len;
-            this.np = np;
-            this.nr = nr;
+            this.np = elem.nPrim();
+            this.nr = elem.nRef();
+            this.nb = elem.nByte();
             this.p = p;
             this.r = r;
+            this.b = b;
+        }
+
+        @Override
+        public void need(int regions) {
+            super.need(regions);
+            parent.need(regions);
         }
 
         @Override
         public Flat resolve(VirtualFrame frame) {
             Flat o = parent.resolve(frame);
-            int bp = parent.prim(frame);
-            int br = parent.ref(frame);
+            int bp = (need & P) != 0 ? parent.prim(frame) : 0;
+            int br = (need & R) != 0 ? parent.ref(frame) : 0;
+            int bb = (need & B) != 0 ? parent.byt(frame) : 0;
             long i = index.executeLong(frame);
             if (Long.compareUnsigned(i, len) >= 0) {
                 outOfRange.enter();
                 throw Panics.index(this, i, len, signed);
             }
-            frame.setInt(auxP, bp + (int) i * np + p);
-            frame.setInt(auxR, br + (int) i * nr + r);
+            set(frame, bp + (int) i * np + p, br + (int) i * nr + r, bb + (int) i * nb + b);
             return o;
         }
     }
@@ -217,14 +315,16 @@ public final class Mem {
         private final Flat zero;
         private final int p;
         private final int r;
+        private final int b;
 
-        public MapGetI(Ref map, I64 key, Flat zero, int p, int r, int auxP, int auxR) {
-            super(auxP, auxR);
+        public MapGetI(Ref map, I64 key, Flat zero, int p, int r, int b, Aux aux) {
+            super(aux);
             this.map = map;
             this.key = key;
             this.zero = zero;
             this.p = p;
             this.r = r;
+            this.b = b;
         }
 
         @Override
@@ -233,12 +333,10 @@ public final class Mem {
             long k = key.executeLong(frame);
             int e = m == null ? -1 : m.find(k);
             if (e < 0) {
-                frame.setInt(auxP, p);
-                frame.setInt(auxR, r);
+                set(frame, p, r, b);
                 return zero;
             }
-            frame.setInt(auxP, e * m.vp + p);
-            frame.setInt(auxR, e * m.vr + r);
+            set(frame, e * m.vp + p, e * m.vr + r, e * m.vb + b);
             return m.vals;
         }
     }
@@ -250,14 +348,16 @@ public final class Mem {
         private final Flat zero;
         private final int p;
         private final int r;
+        private final int b;
 
-        public MapGetG(Ref map, Expr key, Flat zero, int p, int r, int auxP, int auxR) {
-            super(auxP, auxR);
+        public MapGetG(Ref map, Expr key, Flat zero, int p, int r, int b, Aux aux) {
+            super(aux);
             this.map = map;
             this.key = key;
             this.zero = zero;
             this.p = p;
             this.r = r;
+            this.b = b;
         }
 
         @Override
@@ -266,12 +366,10 @@ public final class Mem {
             Object k = key.executeGeneric(frame);
             int e = m == null ? -1 : find(m, k);
             if (e < 0) {
-                frame.setInt(auxP, p);
-                frame.setInt(auxR, r);
+                set(frame, p, r, b);
                 return zero;
             }
-            frame.setInt(auxP, e * m.vp + p);
-            frame.setInt(auxR, e * m.vr + r);
+            set(frame, e * m.vp + p, e * m.vr + r, e * m.vb + b);
             return m.vals;
         }
 
@@ -290,8 +388,8 @@ public final class Mem {
         @Child private I64 key;
         private final BranchProfile nil = BranchProfile.create();
 
-        public MapPutI(Ref map, I64 key, int auxP, int auxR) {
-            super(auxP, auxR);
+        public MapPutI(Ref map, I64 key, Aux aux) {
+            super(aux);
             this.map = map;
             this.key = key;
         }
@@ -305,8 +403,7 @@ public final class Mem {
                 throw Panics.nilMap(this);
             }
             int e = m.put(k);
-            frame.setInt(auxP, e * m.vp);
-            frame.setInt(auxR, e * m.vr);
+            set(frame, e * m.vp, e * m.vr, e * m.vb);
             return m.vals;
         }
     }
@@ -317,8 +414,8 @@ public final class Mem {
         @Child private Expr key;
         private final BranchProfile nil = BranchProfile.create();
 
-        public MapPutG(Ref map, Expr key, int auxP, int auxR) {
-            super(auxP, auxR);
+        public MapPutG(Ref map, Expr key, Aux aux) {
+            super(aux);
             this.map = map;
             this.key = key;
         }
@@ -337,8 +434,7 @@ public final class Mem {
             } catch (Values.Uncomparable u) {
                 throw Panics.unhashable(this, u.type);
             }
-            frame.setInt(auxP, e * m.vp);
-            frame.setInt(auxR, e * m.vr);
+            set(frame, e * m.vp, e * m.vr, e * m.vb);
             return m.vals;
         }
     }
@@ -348,8 +444,8 @@ public final class Mem {
         @Child private Ref map;
         @Child private I64 entry;
 
-        public MapEntryLoc(Ref map, I64 entry, int auxP, int auxR) {
-            super(auxP, auxR);
+        public MapEntryLoc(Ref map, I64 entry, Aux aux) {
+            super(aux);
             this.map = map;
             this.entry = entry;
         }
@@ -358,8 +454,7 @@ public final class Mem {
         public Flat resolve(VirtualFrame frame) {
             GoMap m = (GoMap) map.executeGeneric(frame);
             int e = (int) entry.executeLong(frame);
-            frame.setInt(auxP, e * m.vp);
-            frame.setInt(auxR, e * m.vr);
+            set(frame, e * m.vp, e * m.vr, e * m.vb);
             return m.vals;
         }
     }
@@ -372,6 +467,7 @@ public final class Mem {
 
         public LoadI64(Loc loc) {
             this.loc = loc;
+            loc.need(Loc.P);
         }
 
         @Override
@@ -381,11 +477,44 @@ public final class Mem {
         }
     }
 
+    /** A byte-sized leaf, zero-extended ({@code uint8}; {@code bool} through {@code RawBool}). */
+    public static final class LoadU8 extends I64 {
+        @Child private Loc loc;
+
+        public LoadU8(Loc loc) {
+            this.loc = loc;
+            loc.need(Loc.B);
+        }
+
+        @Override
+        public long executeLong(VirtualFrame frame) {
+            Flat o = loc.resolve(frame);
+            return o.bytes[loc.byt(frame)] & 0xFFL;
+        }
+    }
+
+    /** A byte-sized leaf, sign-extended ({@code int8}). */
+    public static final class LoadI8 extends I64 {
+        @Child private Loc loc;
+
+        public LoadI8(Loc loc) {
+            this.loc = loc;
+            loc.need(Loc.B);
+        }
+
+        @Override
+        public long executeLong(VirtualFrame frame) {
+            Flat o = loc.resolve(frame);
+            return o.bytes[loc.byt(frame)];
+        }
+    }
+
     public static final class LoadRef extends Ref {
         @Child private Loc loc;
 
         public LoadRef(Loc loc) {
             this.loc = loc;
+            loc.need(Loc.R);
         }
 
         @Override
@@ -401,18 +530,22 @@ public final class Mem {
         private final GoType type;
         private final int np;
         private final int nr;
+        private final int nb;
 
         public LoadSub(Loc loc, GoType type) {
             this.loc = loc;
             this.type = type;
             this.np = type.nPrim();
             this.nr = type.nRef();
+            this.nb = type.nByte();
+            loc.need(Loc.regionsOf(type));
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Flat o = loc.resolve(frame);
-            return o.sub(type, loc.prim(frame), np, loc.ref(frame), nr);
+            return o.sub(type, np == 0 ? 0 : loc.prim(frame), np, nr == 0 ? 0 : loc.ref(frame), nr,
+                    nb == 0 ? 0 : loc.byt(frame), nb);
         }
     }
 
@@ -424,6 +557,7 @@ public final class Mem {
         public StoreI64(Loc loc, I64 value) {
             this.loc = loc;
             this.value = value;
+            loc.need(Loc.P);
         }
 
         @Override
@@ -434,6 +568,25 @@ public final class Mem {
         }
     }
 
+    /** Stores a byte-sized leaf: the low byte of the raw value (canonical forms truncate to it). */
+    public static final class StoreByte extends Stmt {
+        @Child private Loc loc;
+        @Child private I64 value;
+
+        public StoreByte(Loc loc, I64 value) {
+            this.loc = loc;
+            this.value = value;
+            loc.need(Loc.B);
+        }
+
+        @Override
+        public void executeVoid(VirtualFrame frame) {
+            long v = value.executeLong(frame);
+            Flat o = loc.resolve(frame);
+            o.bytes[loc.byt(frame)] = (byte) v;
+        }
+    }
+
     public static final class StoreRef extends Stmt {
         @Child private Loc loc;
         @Child private Expr value;
@@ -441,6 +594,7 @@ public final class Mem {
         public StoreRef(Loc loc, Expr value) {
             this.loc = loc;
             this.value = value;
+            loc.need(Loc.R);
         }
 
         @Override
@@ -465,7 +619,7 @@ public final class Mem {
         public void executeVoid(VirtualFrame frame) {
             Flat v = (Flat) value.executeGeneric(frame);
             Flat o = loc.resolve(frame);
-            o.store(loc.prim(frame), loc.ref(frame), v);
+            o.store(loc.prim(frame), loc.ref(frame), loc.byt(frame), v);
         }
     }
 
@@ -479,8 +633,7 @@ public final class Mem {
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            Flat o = loc.resolve(frame);
-            return Ptr.make(o, loc.prim(frame), loc.ref(frame));
+            return loc.addr(frame);
         }
     }
 
@@ -502,18 +655,20 @@ public final class Mem {
     public static final class Zero extends Ref {
         private final GoType type;
         private final int np;
+        private final int nb;
         @com.oracle.truffle.api.CompilerDirectives.CompilationFinal(dimensions = 1) private final Object[] zeroRefs;
 
         public Zero(GoType type) {
             this.type = type;
             this.np = type.nPrim();
+            this.nb = type.nByte();
             this.zeroRefs = type.zeroRefs();
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             return new Flat(type, np == 0 ? Flat.NO_PRIMS : new long[np],
-                    zeroRefs.length == 0 ? Flat.NO_REFS : zeroRefs.clone());
+                    zeroRefs.length == 0 ? Flat.NO_REFS : zeroRefs.clone(), nb == 0 ? Flat.NO_BYTES : new byte[nb]);
         }
     }
 

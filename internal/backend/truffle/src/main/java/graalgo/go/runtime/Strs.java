@@ -15,17 +15,20 @@ public final class Strs {
 
     private static final int RUNE_ERROR = 0xFFFD;
 
-    /** Decodes the rune at {@code i}: {@code (width << 32) | rune}. PE-safe (plain loads). */
-    public static long decode(byte[] b, int i) {
+    /**
+     * Decodes the rune at index {@code i} of the bytes ending before {@code end}:
+     * {@code (width << 32) | rune}. PE-safe (plain loads).
+     */
+    public static long decode(byte[] b, int i, int end) {
         int c0 = b[i] & 0xFF;
         if (c0 < 0x80) {
             return (1L << 32) | c0;
         }
-        return decodeMulti(b, i, c0);
+        return decodeMulti(b, i, c0, end);
     }
 
-    private static long decodeMulti(byte[] b, int i, int c0) {
-        int n = b.length - i;
+    private static long decodeMulti(byte[] b, int i, int c0, int end) {
+        int n = end - i;
         long err = (1L << 32) | RUNE_ERROR;
         if (c0 < 0xC2 || c0 > 0xF4 || n < 2) {
             return err;
@@ -90,14 +93,15 @@ public final class Strs {
     /** {@code []rune(string)}. */
     @TruffleBoundary
     public static Slice toRunes(Str s) {
-        long[] tmp = new long[s.b.length];
+        long[] tmp = new long[s.len];
         int n = 0;
-        for (int i = 0; i < s.b.length;) {
-            long d = decode(s.b, i);
+        int end = s.off + s.len;
+        for (int i = s.off; i < end;) {
+            long d = decode(s.b, i, end);
             tmp[n++] = (int) d;
             i += (int) (d >>> 32);
         }
-        return new Slice(new Flat(null, java.util.Arrays.copyOf(tmp, n), Flat.NO_REFS), 0, 0, n, n);
+        return new Slice(new Flat(null, java.util.Arrays.copyOf(tmp, n), Flat.NO_REFS, Flat.NO_BYTES), 0, 0, 0, n, n);
     }
 
     /** {@code string([]byte)}. */
@@ -106,27 +110,17 @@ public final class Strs {
         if (n == 0) {
             return Str.EMPTY;
         }
-        byte[] out = new byte[n];
-        long[] src = s.base.prims;
-        int off = s.prim;
-        for (int i = 0; i < n; i++) {
-            out[i] = (byte) src[off + i];
-        }
-        return new Str(out);
+        return new Str(java.util.Arrays.copyOfRange(s.base.bytes, s.byt, s.byt + n));
     }
 
     /** {@code []byte(string)}. */
     public static Slice toBytes(Str s) {
-        int n = s.b.length;
-        long[] out = new long[n];
-        for (int i = 0; i < n; i++) {
-            out[i] = s.b[i] & 0xFF;
-        }
-        return new Slice(new Flat(null, out, Flat.NO_REFS), 0, 0, n, n);
+        int n = s.len;
+        return new Slice(new Flat(null, Flat.NO_PRIMS, Flat.NO_REFS, s.toBytes()), 0, 0, 0, n, n);
     }
 
-    /** {@code s[lo:hi]} (bounds already checked). */
+    /** {@code s[lo:hi]} (bounds already checked): shares the bytes, as gc does. */
     public static Str slice(Str s, int lo, int hi) {
-        return lo == 0 && hi == s.b.length ? s : new Str(java.util.Arrays.copyOfRange(s.b, lo, hi));
+        return lo == 0 && hi == s.len ? s : lo == hi ? Str.EMPTY : new Str(s.b, s.off + lo, hi - lo);
     }
 }

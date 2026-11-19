@@ -11,8 +11,8 @@ import java.util.concurrent.ThreadLocalRandom;
  * the runtime owns the iterator). Keys of integer and boolean types are stored unboxed in
  * {@code kprims} and found by {@link #find(long)}, a plain probe loop that partial evaluation
  * can inline; every other key kind is stored in carrier form in {@code krefs} and compared with
- * Go's {@code ==} behind a boundary. Values are stored flat, {@code vp} scalar and {@code vr}
- * reference slots per entry, so no value is boxed. The nil map is Java {@code null}.
+ * Go's {@code ==} behind a boundary. Values are stored flat, {@code vp} scalar, {@code vr}
+ * reference and {@code vb} byte slots per entry, so no value is boxed. The nil map is Java {@code null}.
  *
  * <p>Deleted entries leave a tombstone that is squeezed out when the table next grows; a
  * {@link Epoch} chain lets live iterators translate their positions across compactions, which
@@ -29,6 +29,7 @@ public final class GoMap {
     public final GoType valType;
     public final int vp;
     public final int vr;
+    public final int vb;
     private final boolean primKeys;
     private final Object[] zeroVal;
 
@@ -39,7 +40,8 @@ public final class GoMap {
     public Object[] krefs;
     public long[] vprims;
     public Object[] vrefs;
-    /** The value slots as one object: entry {@code e}'s value is at ({@code e*vp}, {@code e*vr}). */
+    public byte[] vbytes;
+    /** The value slots as one object: entry {@code e}'s value is at ({@code e*vp}, {@code e*vr}, {@code e*vb}). */
     public Flat vals;
     private int used;
     private int count;
@@ -50,6 +52,7 @@ public final class GoMap {
         this.valType = valType;
         this.vp = valType.nPrim();
         this.vr = valType.nRef();
+        this.vb = valType.nByte();
         int c = keyType.carrier();
         this.primKeys = c == GoType.C_I64 || c == GoType.C_BOOL;
         this.zeroVal = valType.zeroRefsAreNull() ? null : valType.zeroRefs();
@@ -68,7 +71,8 @@ public final class GoMap {
         krefs = primKeys ? Flat.NO_REFS : new Object[cap];
         vprims = vp == 0 ? Flat.NO_PRIMS : new long[cap * vp];
         vrefs = vr == 0 ? Flat.NO_REFS : new Object[cap * vr];
-        vals = new Flat(null, vprims, vrefs);
+        vbytes = vb == 0 ? Flat.NO_BYTES : new byte[cap * vb];
+        vals = new Flat(null, vprims, vrefs, vbytes);
     }
 
     public int len() {
@@ -162,6 +166,7 @@ public final class GoMap {
         Object[] okr = krefs;
         long[] ovp = vprims;
         Object[] ovr = vrefs;
+        byte[] ovb = vbytes;
         allocate(count * 2 > oh.length ? oh.length * 2 : oh.length);
         int[] remap = new int[oldUsed + 1];
         int n = 0;
@@ -179,6 +184,7 @@ public final class GoMap {
             }
             System.arraycopy(ovp, e * vp, vprims, n * vp, vp);
             System.arraycopy(ovr, e * vr, vrefs, n * vr, vr);
+            System.arraycopy(ovb, e * vb, vbytes, n * vb, vb);
             link(n, oh[e]);
             n++;
         }
@@ -212,6 +218,7 @@ public final class GoMap {
         }
         Arrays.fill(vprims, e * vp, e * vp + vp, 0);
         Arrays.fill(vrefs, e * vr, e * vr + vr, null);
+        Arrays.fill(vbytes, e * vb, e * vb + vb, (byte) 0);
         count--;
     }
 
@@ -238,6 +245,7 @@ public final class GoMap {
             int n = primKeys ? c.insert(hashes[e], kprims[e], null) : c.insert(hashes[e], 0, krefs[e]);
             System.arraycopy(vprims, e * vp, c.vprims, n * vp, vp);
             System.arraycopy(vrefs, e * vr, c.vrefs, n * vr, vr);
+            System.arraycopy(vbytes, e * vb, c.vbytes, n * vb, vb);
         }
         return c;
     }

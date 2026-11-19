@@ -34,6 +34,7 @@ public final class PackageUnit {
     // Globals layout.
     private int[] globalPrim;
     private int[] globalRef;
+    private int[] globalByte;
     private GoType globalsType;
 
     PackageUnit(Program program, int index, String path, GirFile gir) {
@@ -124,6 +125,7 @@ public final class PackageUnit {
         int n = s.objects.length;
         int[] gp = new int[n];
         int[] gr = new int[n];
+        int[] gb = new int[n];
         java.util.List<Field> fields = new java.util.ArrayList<>();
         for (int i = 0; i < n; i++) {
             if (s.objects[i].kind() == Gir.SymKind.VAR) {
@@ -138,11 +140,13 @@ public final class PackageUnit {
             if (s.objects[i].kind() == Gir.SymKind.VAR) {
                 gp[i] = t.fields[k].primOff;
                 gr[i] = t.fields[k].refOff;
+                gb[i] = t.fields[k].byteOff;
                 k++;
             }
         }
         globalsType = t;
         globalRef = gr;
+        globalByte = gb;
         globalPrim = gp;
     }
 
@@ -160,6 +164,11 @@ public final class PackageUnit {
     public int globalRef(int obj) {
         layoutGlobals();
         return globalRef[obj];
+    }
+
+    public int globalByte(int obj) {
+        layoutGlobals();
+        return globalByte[obj];
     }
 
     /** A variable's storage: the package whose globals object holds it and its OBJECTS index. */

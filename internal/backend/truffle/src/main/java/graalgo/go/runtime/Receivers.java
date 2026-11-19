@@ -34,6 +34,7 @@ public final class Receivers {
         Flat obj;
         int p = 0;
         int r = 0;
+        int b = 0;
         if (m.ofPointer) {
             if (data == null) {
                 throw Panics.nilDeref(node);
@@ -41,6 +42,7 @@ public final class Receivers {
                 obj = ptr.obj;
                 p = ptr.prim;
                 r = ptr.ref;
+                b = ptr.byt;
             } else {
                 obj = (Flat) data;
             }
@@ -60,18 +62,21 @@ public final class Receivers {
                     obj = q.obj;
                     p = q.prim;
                     r = q.ref;
+                    b = q.byt;
                 } else {
                     obj = (Flat) ptr;
                     p = 0;
                     r = 0;
+                    b = 0;
                 }
                 cur = ft.elem;
             } else {
                 p += f.primOff;
                 r += f.refOff;
+                b += f.byteOff;
                 cur = f.type;
             }
         }
-        return m.ptrRecv ? Ptr.make(obj, p, r) : Values.load(cur, obj, p, r);
+        return m.ptrRecv ? Ptr.make(obj, p, r, b) : Values.load(cur, obj, p, r, b);
     }
 }

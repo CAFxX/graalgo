@@ -83,7 +83,7 @@ public final class NodeFactory {
 
     /** Builds the location node for a path with trailing constant offsets. */
     private interface LocMk {
-        Loc make(int p, int r);
+        Loc make(int p, int r, int b);
     }
 
     /** An assignable operand. */
@@ -105,8 +105,8 @@ public final class NodeFactory {
     private final int[] slots;
     private final GoType[] ltypes;
     private final boolean[] boxed;
-    private int auxP = -1;
-    private int auxR = -1;
+    /** The frame's scratch slots for the offsets of dynamic locations; null until needed. */
+    private Mem.Aux aux;
     private final ArrayDeque<Target> targets = new ArrayDeque<>();
     private int pendingLabel = -1;
     private final Jump[] gotoJumps;
@@ -329,11 +329,12 @@ public final class NodeFactory {
         };
     }
 
-    private void aux() {
-        if (auxP < 0) {
-            auxP = fdb.addSlot(FrameSlotKind.Int, null, null);
-            auxR = fdb.addSlot(FrameSlotKind.Int, null, null);
+    private Mem.Aux aux() {
+        if (aux == null) {
+            aux = new Mem.Aux(fdb.addSlot(FrameSlotKind.Int, null, null), fdb.addSlot(FrameSlotKind.Int, null, null),
+                    fdb.addSlot(FrameSlotKind.Int, null, null));
         }
+        return aux;
     }
 
     private int temp(GoType t) {
@@ -421,11 +422,13 @@ public final class NodeFactory {
     private static Expr load(GoType t, Loc loc) {
         switch (t.carrier()) {
             case GoType.C_I64:
-                return new Mem.LoadI64(loc);
+                // The region is static: a byte-sized leaf lives in the object's byte region.
+                return !t.isByteLeaf() ? new Mem.LoadI64(loc)
+                        : t.isUnsigned() ? new Mem.LoadU8(loc) : new Mem.LoadI8(loc);
             case GoType.C_F64:
                 return new N.RawF64(new Mem.LoadI64(loc));
             case GoType.C_BOOL:
-                return new N.RawBool(new Mem.LoadI64(loc));
+                return new N.RawBool(new Mem.LoadU8(loc));
             case GoType.C_REF:
                 return new Mem.LoadRef(loc);
             default:
@@ -440,7 +443,7 @@ public final class NodeFactory {
             case GoType.C_FLAT:
                 return new Mem.StoreSub(loc, v);
             default:
-                return new Mem.StoreI64(loc, raw(t, v));
+                return t.isByteLeaf() ? new Mem.StoreByte(loc, raw(t, v)) : new Mem.StoreI64(loc, raw(t, v));
         }
     }
 
@@ -583,7 +586,7 @@ public final class NodeFactory {
 
     private Expr readLocal(int i) {
         if (boxed[i]) {
-            return load(ltypes[i], new Mem.FlatLoc(new N.ReadRef(slots[i]), 0, 0));
+            return load(ltypes[i], new Mem.FlatLoc(new N.ReadRef(slots[i]), 0, 0, 0));
         }
         return readSlot(slots[i], ltypes[i]);
     }
@@ -595,8 +598,7 @@ public final class NodeFactory {
             if (init == null) {
                 return new N.WriteRef(slots[i], new Mem.Zero(t));
             }
-            Data.Init in = t.carrier() == GoType.C_REF ? new Data.InitRef(0, init) : new Data.InitPrim(0, raw(t, init));
-            return new N.WriteRef(slots[i], new Data.FlatLit(t, new Data.Init[] {in}));
+            return new N.WriteRef(slots[i], new Data.FlatLit(t, new Data.Init[] {init(t, 0, 0, 0, init)}));
         }
         return writeSlot(slots[i], t, init == null ? zero(t) : init);
     }
@@ -605,7 +607,7 @@ public final class NodeFactory {
     private Stmt assignLocal(int i, Expr v) {
         GoType t = ltypes[i];
         if (boxed[i] || t.carrier() == GoType.C_FLAT) {
-            return store(t, new Mem.FlatLoc(new N.ReadRef(slots[i]), 0, 0), v);
+            return store(t, new Mem.FlatLoc(new N.ReadRef(slots[i]), 0, 0, 0), v);
         }
         return writeSlot(slots[i], t, v);
     }
@@ -631,7 +633,7 @@ public final class NodeFactory {
                 if (!boxed[i] && ltypes[i].carrier() != GoType.C_FLAT) {
                     return null;
                 }
-                return (p, r) -> new Mem.FlatLoc(new N.ReadRef(slots[i]), p, r);
+                return (p, r, b) -> new Mem.FlatLoc(new N.ReadRef(slots[i]), p, r, b);
             }
             case Gir.Expr.Global g:
                 return globalLoc(pkg, g.obj());
@@ -643,7 +645,7 @@ public final class NodeFactory {
             case Gir.Expr.Deref d: {
                 Supplier<Expr> ptr = operand(d.x(), pre);
                 aux();
-                return (p, r) -> new Mem.PtrLoc(asRef(ptr.get()), p, r, auxP, auxR);
+                return (p, r, b) -> new Mem.PtrLoc(asRef(ptr.get()), p, r, b, aux);
             }
             case Gir.Expr.Field f:
                 return fieldLoc(f, pre);
@@ -655,7 +657,7 @@ public final class NodeFactory {
                     return null;
                 }
                 Supplier<Expr> v = operand(e, pre);
-                return (p, r) -> new Mem.FlatLoc(asRef(v.get()), p, r);
+                return (p, r, b) -> new Mem.FlatLoc(asRef(v.get()), p, r, b);
             }
         }
     }
@@ -667,8 +669,9 @@ public final class NodeFactory {
         PackageUnit.Global g = u.global(obj); // the storage, after //go:linkname unification
         int gp = g.unit().globalPrim(g.obj());
         int gr = g.unit().globalRef(g.obj());
+        int gb = g.unit().globalByte(g.obj());
         int index = g.unit().index;
-        return (p, r) -> new Mem.FlatLoc(new Mem.Globals(index), gp + p, gr + r);
+        return (p, r, b) -> new Mem.FlatLoc(new Mem.Globals(index), gp + p, gr + r, gb + b);
     }
 
     /** The location of a struct-or-pointer-to-struct operand, dereferencing a pointer. */
@@ -677,7 +680,7 @@ public final class NodeFactory {
         if (t.kind == GoType.POINTER) {
             Supplier<Expr> ptr = operand(x, pre);
             aux();
-            return (p, r) -> new Mem.PtrLoc(asRef(ptr.get()), p, r, auxP, auxR);
+            return (p, r, b) -> new Mem.PtrLoc(asRef(ptr.get()), p, r, b, aux);
         }
         LocMk base = locOf(x, pre);
         if (base == null) {
@@ -699,13 +702,14 @@ public final class NodeFactory {
             LocMk parent = cur;
             int fp = fld.primOff;
             int fr = fld.refOff;
-            cur = (p, r) -> parent.make(fp + p, fr + r);
+            int fb = fld.byteOff;
+            cur = (p, r, b) -> parent.make(fp + p, fr + r, fb + b);
             GoType ft = fld.type.u();
             if (k < path.length - 1 && ft.kind == GoType.POINTER) {
                 // Implicit dereference of an embedded pointer.
                 LocMk ptrField = cur;
                 aux();
-                cur = (p, r) -> new Mem.PtrLoc(new Mem.LoadRef(ptrField.make(0, 0)), p, r, auxP, auxR);
+                cur = (p, r, b) -> new Mem.PtrLoc(new Mem.LoadRef(ptrField.make(0, 0, 0)), p, r, b, aux);
                 ft = ft.elem.u();
             }
             t = ft;
@@ -720,20 +724,18 @@ public final class NodeFactory {
             case GoType.SLICE: {
                 Supplier<Expr> s = operand(ix.x(), pre);
                 Supplier<Expr> i = operand(ix.index(), pre);
-                int np = xt.elem.nPrim();
-                int nr = xt.elem.nRef();
+                GoType elem = xt.elem;
                 boolean signed = !ty(ix.index()).u().isUnsigned();
-                return (p, r) -> new Mem.SliceLoc(asRef(s.get()), asI64(i.get()), np, nr, p, r, auxP, auxR, signed);
+                return (p, r, b) -> new Mem.SliceLoc(asRef(s.get()), asI64(i.get()), elem, p, r, b, aux, signed);
             }
             case GoType.ARRAY, GoType.POINTER: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
                 LocMk base = structBase(ix.x(), pre);
                 Supplier<Expr> i = operand(ix.index(), pre);
-                int np = at.elem.nPrim();
-                int nr = at.elem.nRef();
+                GoType elem = at.elem;
                 long len = at.len;
                 boolean signed = !ty(ix.index()).u().isUnsigned();
-                return (p, r) -> new Mem.IndexLoc(base.make(0, 0), asI64(i.get()), len, np, nr, p, r, auxP, auxR,
+                return (p, r, b) -> new Mem.IndexLoc(base.make(0, 0, 0), asI64(i.get()), len, elem, p, r, b, aux,
                         signed);
             }
             case GoType.MAP: {
@@ -742,10 +744,10 @@ public final class NodeFactory {
                 GoType kt = xt.mapKey;
                 GoType vt = xt.elem;
                 if (primKey(kt)) {
-                    return (p, r) -> new Mem.MapGetI(asRef(m.get()), raw(kt, k.get()), vt.zeroFlat(), p, r, auxP,
-                            auxR);
+                    return (p, r, b) -> new Mem.MapGetI(asRef(m.get()), raw(kt, k.get()), vt.zeroFlat(), p, r, b,
+                            aux);
                 }
-                return (p, r) -> new Mem.MapGetG(asRef(m.get()), k.get(), vt.zeroFlat(), p, r, auxP, auxR);
+                return (p, r, b) -> new Mem.MapGetG(asRef(m.get()), k.get(), vt.zeroFlat(), p, r, b, aux);
             }
             default:
                 return null;
@@ -804,15 +806,15 @@ public final class NodeFactory {
                 @Override
                 Expr load() {
                     Loc loc = primKey(kt)
-                            ? new Mem.MapGetI(asRef(m.get()), raw(kt, k.get()), mt.elem.zeroFlat(), 0, 0, auxP, auxR)
-                            : new Mem.MapGetG(asRef(m.get()), k.get(), mt.elem.zeroFlat(), 0, 0, auxP, auxR);
+                            ? new Mem.MapGetI(asRef(m.get()), raw(kt, k.get()), mt.elem.zeroFlat(), 0, 0, 0, aux)
+                            : new Mem.MapGetG(asRef(m.get()), k.get(), mt.elem.zeroFlat(), 0, 0, 0, aux);
                     return NodeFactory.load(t, loc);
                 }
 
                 @Override
                 Stmt store(Expr value) {
-                    Loc loc = primKey(kt) ? new Mem.MapPutI(asRef(m.get()), raw(kt, k.get()), auxP, auxR)
-                            : new Mem.MapPutG(asRef(m.get()), k.get(), auxP, auxR);
+                    Loc loc = primKey(kt) ? new Mem.MapPutI(asRef(m.get()), raw(kt, k.get()), aux)
+                            : new Mem.MapPutG(asRef(m.get()), k.get(), aux);
                     return NodeFactory.store(t, loc, value);
                 }
             };
@@ -824,12 +826,12 @@ public final class NodeFactory {
         return new LV() {
             @Override
             Expr load() {
-                return NodeFactory.load(t, mk.make(0, 0));
+                return NodeFactory.load(t, mk.make(0, 0, 0));
             }
 
             @Override
             Stmt store(Expr value) {
-                return NodeFactory.store(t, mk.make(0, 0), value);
+                return NodeFactory.store(t, mk.make(0, 0, 0), value);
             }
         };
     }
@@ -878,7 +880,7 @@ public final class NodeFactory {
                         ty(b.type()));
             case Gir.Expr.Deref d:
                 aux();
-                return load(ty(d.type()), new Mem.PtrLoc(asRef(expr(d.x())), 0, 0, auxP, auxR));
+                return load(ty(d.type()), new Mem.PtrLoc(asRef(expr(d.x())), 0, 0, 0, aux));
             case Gir.Expr.Addr a:
                 return addr(a);
             case Gir.Expr.Recv r: {
@@ -886,7 +888,7 @@ public final class NodeFactory {
                 return r.commaOk() ? new Chans.RecvOk(ch) : typed(ty(r.type()), new Chans.Recv(ch));
             }
             case Gir.Expr.Field f:
-                return load(ty(f.type()), fieldLoc(f, null).make(0, 0));
+                return load(ty(f.type()), fieldLoc(f, null).make(0, 0, 0));
             case Gir.Expr.Index ix:
                 return index(ix);
             case Gir.Expr.Slice s:
@@ -944,7 +946,7 @@ public final class NodeFactory {
         if (mk == null) {
             throw new IllegalStateException("not a variable: " + u.path + "." + u.str(o.name()));
         }
-        return load(t, mk.make(0, 0));
+        return load(t, mk.make(0, 0, 0));
     }
 
     private Expr constant(GoType t, Gir.ConstValue v) {
@@ -1217,7 +1219,7 @@ public final class NodeFactory {
         if (mk == null) {
             throw new IllegalStateException("address of " + x.getClass().getSimpleName());
         }
-        return new Mem.AddrOf(mk.make(0, 0));
+        return new Mem.AddrOf(mk.make(0, 0, 0));
     }
 
     private Expr index(Gir.Expr.Index ix) {
@@ -1229,7 +1231,7 @@ public final class NodeFactory {
             return new Data.MapGetOk(expr(ix.x()), expr(ix.index()), xt.elem, primKey(xt.mapKey));
         }
         GoType elem = xt.kind == GoType.MAP ? xt.elem : xt.kind == GoType.POINTER ? xt.elem.u().elem : xt.elem;
-        return load(elem, indexLoc(ix, null).make(0, 0));
+        return load(elem, indexLoc(ix, null).make(0, 0, 0));
     }
 
     private boolean unsignedIndex(Gir.Expr index) {
@@ -1247,12 +1249,11 @@ public final class NodeFactory {
             case GoType.STRING:
                 return new Data.StrSlice(expr(s.x()), lo, hi, unsigned);
             case GoType.SLICE:
-                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem.nPrim(), xt.elem.nRef(), unsigned);
+                return new Data.SliceOfSlice(expr(s.x()), lo, hi, max, xt.elem, unsigned);
             default: {
                 GoType at = xt.kind == GoType.POINTER ? xt.elem.u() : xt;
                 LocMk base = structBase(s.x(), null);
-                return new Data.SliceOfArray(base.make(0, 0), at.len, lo, hi, max, at.elem.nPrim(), at.elem.nRef(),
-                        unsigned);
+                return new Data.SliceOfArray(base.make(0, 0, 0), at.len, lo, hi, max, at.elem, unsigned);
             }
         }
     }
@@ -1450,19 +1451,19 @@ public final class NodeFactory {
         }
         Data.Init[] inits = new Data.Init[values.size()];
         for (int i = 0; i < inits.length; i++) {
-            inits[i] = init(elem, i * elem.nPrim(), i * elem.nRef(), values.get(i));
+            inits[i] = init(elem, i * elem.nPrim(), i * elem.nRef(), i * elem.nByte(), values.get(i));
         }
         return new Data.SliceLit(elem, inits.length, inits);
     }
 
-    private static Data.Init init(GoType t, int p, int r, Expr v) {
+    private static Data.Init init(GoType t, int p, int r, int b, Expr v) {
         switch (t.carrier()) {
             case GoType.C_REF:
                 return new Data.InitRef(r, v);
             case GoType.C_FLAT:
-                return new Data.InitSub(p, r, v);
+                return new Data.InitSub(p, r, b, v);
             default:
-                return new Data.InitPrim(p, raw(t, v));
+                return t.isByteLeaf() ? new Data.InitByte(b, raw(t, v)) : new Data.InitPrim(p, raw(t, v));
         }
     }
 
@@ -1657,14 +1658,16 @@ public final class NodeFactory {
             GoType cur = t.u();
             int p = 0;
             int r = 0;
+            int b = 0;
             for (long index : fi.path()) {
                 cur.nPrim();
                 Field f = cur.fields[(int) index];
                 p += f.primOff;
                 r += f.refOff;
+                b += f.byteOff;
                 cur = f.type.u();
             }
-            inits[i] = init(ty(fi.value()), p, r, expr(fi.value()));
+            inits[i] = init(ty(fi.value()), p, r, b, expr(fi.value()));
         }
         return new Data.FlatLit(t, inits);
     }
@@ -1675,12 +1678,13 @@ public final class NodeFactory {
         GoType elem = u.elem;
         int np = elem.nPrim();
         int nr = elem.nRef();
+        int nb = elem.nByte();
         Data.Init[] inits = new Data.Init[al.elems().length];
         long len = 0;
         for (int i = 0; i < inits.length; i++) {
             Gir.Elem e = al.elems()[i];
             int at = (int) e.index();
-            inits[i] = init(elem, at * np, at * nr, expr(e.value()));
+            inits[i] = init(elem, at * np, at * nr, at * nb, expr(e.value()));
             len = Math.max(len, e.index() + 1);
         }
         if (u.kind == GoType.ARRAY) {
@@ -1699,8 +1703,8 @@ public final class NodeFactory {
         aux();
         for (Gir.MapEntry e : ml.entries()) {
             Loc loc = primKey(u.mapKey)
-                    ? new Mem.MapPutI(new N.ReadRef(slot), raw(u.mapKey, expr(e.key())), auxP, auxR)
-                    : new Mem.MapPutG(new N.ReadRef(slot), value(e.key()), auxP, auxR);
+                    ? new Mem.MapPutI(new N.ReadRef(slot), raw(u.mapKey, expr(e.key())), aux)
+                    : new Mem.MapPutG(new N.ReadRef(slot), value(e.key()), aux);
             pre.add(store(u.elem, loc, expr(e.value())));
         }
         return new N.Seq(pre.toArray(new Stmt[0]), new N.ReadRef(slot));
@@ -1767,7 +1771,7 @@ public final class NodeFactory {
                 if (ty(a[1]).u().kind == GoType.STRING) {
                     return new Data.CopyStr(a0.get(), a1.get());
                 }
-                return new Data.CopySlice(a0.get(), a1.get(), dt.elem.nPrim(), dt.elem.nRef());
+                return new Data.CopySlice(a0.get(), a1.get(), dt.elem);
             }
             case Gir.Builtin.COMPLEX: {
                 Expr n = new Arith.MakeComplex(asF64(a0.get()), asF64(a1.get()));
@@ -1795,7 +1799,7 @@ public final class NodeFactory {
                 if (a.length == 0) {
                     return new Mem.Zero(t);
                 }
-                return new Data.FlatLit(t, new Data.Init[] {init(t, 0, 0, a0.get())});
+                return new Data.FlatLit(t, new Data.Init[] {init(t, 0, 0, 0, a0.get())});
             }
             case Gir.Builtin.MIN, Gir.Builtin.MAX: {
                 boolean min = c.builtin() == Gir.Builtin.MIN;
@@ -2572,8 +2576,7 @@ public final class NodeFactory {
                     pre.add(rangeVar(r, r.key(), readIdx.get()));
                 }
                 if (used(r.value())) {
-                    Loc loc = new Mem.SliceLoc(new N.ReadRef(s), readIdx.get(), xt.elem.nPrim(), xt.elem.nRef(), 0, 0,
-                            auxP, auxR, true);
+                    Loc loc = new Mem.SliceLoc(new N.ReadRef(s), readIdx.get(), xt.elem, 0, 0, 0, aux, true);
                     pre.add(rangeVar(r, r.value(), load(xt.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ReadI64(len)), pre,
@@ -2593,10 +2596,9 @@ public final class NodeFactory {
                     pre.add(rangeVar(r, r.key(), readIdx.get()));
                 }
                 if (needValue) {
-                    Loc base = xt.kind == GoType.ARRAY ? new Mem.FlatLoc(new N.ReadRef(a), 0, 0)
-                            : new Mem.PtrLoc(new N.ReadRef(a), 0, 0, auxP, auxR);
-                    Loc loc = new Mem.IndexLoc(base, readIdx.get(), at.len, at.elem.nPrim(), at.elem.nRef(), 0, 0,
-                            auxP, auxR, true);
+                    Loc base = xt.kind == GoType.ARRAY ? new Mem.FlatLoc(new N.ReadRef(a), 0, 0, 0)
+                            : new Mem.PtrLoc(new N.ReadRef(a), 0, 0, 0, aux);
+                    Loc loc = new Mem.IndexLoc(base, readIdx.get(), at.len, at.elem, 0, 0, 0, aux, true);
                     pre.add(rangeVar(r, r.value(), load(at.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ConstI64(at.len)), pre,
@@ -2647,7 +2649,7 @@ public final class NodeFactory {
                 }
                 if (used(r.value())) {
                     pre.add(rangeVar(r, r.value(),
-                            load(xt.elem, new Mem.MapEntryLoc(new N.ReadRef(m), readIdx.get(), auxP, auxR))));
+                            load(xt.elem, new Mem.MapEntryLoc(new N.ReadRef(m), readIdx.get(), aux))));
                 }
                 out.add(loop(target, cond, pre, r.body(), null));
                 return seq(out);
