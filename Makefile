@@ -158,7 +158,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1c test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13
 
@@ -393,6 +393,15 @@ M1A_BENCH ?=
 test-m1r: build
 	GO="$(GO)" test/m1r/run.sh $(M1R_PROGRAMS)
 M1R_PROGRAMS ?=
+
+# The M1c gate (not per-push yet): sync's semaphores and notify lists,
+# internal/bytealg, time on the runtime timer heap and the syscall executor,
+# through graalgo-tool on the node package against gc; programs that need
+# another lane's piece are PENDING until their probe passes. See
+# test/m1c/run.sh. M1C_PROGRAMS narrows the run.
+test-m1c: build
+	GO="$(GO)" test/m1c/run.sh $(M1C_PROGRAMS)
+M1C_PROGRAMS ?=
 
 # The pointer-model gate (toolexec W13; SPEC §3.4, GG-0072/GG-0062, ADR-0015;
 # ~1.5 min, per-push): programs that use package unsafe, through graalgo-tool

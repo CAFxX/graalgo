@@ -289,6 +289,14 @@ Related: [Makefile](../Makefile) (root build entry point),
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
     compares stdout, normalized stderr and exit status with gc.
+  - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, not per-push):
+    `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
+    syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r
+    conventions; [programs/](../test/m1c/programs/) marked
+    `//m1c:requires <probe>` are PENDING until the program of that name in
+    [probes/](../test/m1c/probes/) matches gc (another lane's piece landed);
+    [mutants.sh](../test/m1c/mutants.sh) plants the bugs listed in
+    [mutants.py](../test/m1c/mutants.py) and requires the gate to fail.
   - [java/](../test/java/) — [ClassListRunner.java](../test/java/ClassListRunner.java),
     runs named backend unit-test classes with per-test timing
     (`make test-java-fast` / `test-java-slow`);

@@ -31,6 +31,11 @@ public final class GoProcess {
     public final TypeTable types;
     /** The {@code uintptr} handle table of this process (GG-0062). */
     public final Handles handles = new Handles();
+    /**
+     * {@code sync}'s pool cleanup ({@code runtime_registerPoolCleanup}), run by {@code runtime.GC}
+     * as gc runs it at the start of every collection; null until {@code sync} initializes.
+     */
+    public volatile graalgo.go.values.Closure poolCleanup;
 
     public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
         this.globals = globals;

@@ -119,3 +119,51 @@ intrinsic sync/atomic.StorePointer AtomicIntrinsics func(*unsafe.Pointer, unsafe
 # marker safely, so the pair is a no-op here (procPin's result, the P's id, is unused).
 intrinsic sync/atomic.runtime_procPin   AtomicIntrinsics func() int
 intrinsic sync/atomic.runtime_procUnpin AtomicIntrinsics func()
+
+# ============================================================================
+# M1c lane (wt/m1c): sync semaphores and notify lists, internal/bytealg,
+# time and the W8a syscalls. Kept as one delimited block so that concurrent
+# lanes' sections (w9a: descriptor images / reflectlite) merge cleanly.
+# ============================================================================
+
+# --- sync, internal/sync: semaphores and notify lists the runtime provides
+# by //go:linkname (upstream runtime/sema.go). Goroutines park through the
+# scheduler (SchedulerCore.parkCurrent) with gc's wait reasons; no JVM
+# blocking primitive is involved (GG-SCHED-0006). ----------------------------
+intrinsic sync.runtime_Semacquire           SyncIntrinsics func(*uint32)
+intrinsic sync.runtime_SemacquireWaitGroup  SyncIntrinsics func(*uint32, bool)
+intrinsic sync.runtime_SemacquireRWMutexR   SyncIntrinsics func(*uint32, bool, int)
+intrinsic sync.runtime_SemacquireRWMutex    SyncIntrinsics func(*uint32, bool, int)
+intrinsic sync.runtime_Semrelease           SyncIntrinsics func(*uint32, bool, int)
+intrinsic internal/sync.runtime_SemacquireMutex SyncIntrinsics func(*uint32, bool, int)
+intrinsic internal/sync.runtime_Semrelease  SyncIntrinsics func(*uint32, bool, int)
+intrinsic sync.runtime_notifyListAdd        SyncIntrinsics func(*sync.notifyList) uint32
+intrinsic sync.runtime_notifyListWait       SyncIntrinsics func(*sync.notifyList, uint32)
+intrinsic sync.runtime_notifyListNotifyAll  SyncIntrinsics func(*sync.notifyList)
+intrinsic sync.runtime_notifyListNotifyOne  SyncIntrinsics func(*sync.notifyList)
+intrinsic sync.runtime_notifyListCheck      SyncIntrinsics func(uintptr)
+# --- sync, internal/sync: spinning, clocks, fatal errors (runtime/proc.go,
+# runtime/panic.go, runtime/sema.go) -------------------------------------------
+intrinsic internal/sync.runtime_canSpin     SyncIntrinsics func(int) bool
+intrinsic internal/sync.runtime_doSpin      SyncIntrinsics func()
+intrinsic internal/sync.runtime_nanotime    SyncIntrinsics func() int64
+intrinsic internal/sync.throw               SyncIntrinsics func(string)
+intrinsic internal/sync.fatal               SyncIntrinsics func(string)
+intrinsic sync.throw                        SyncIntrinsics func(string)
+intrinsic sync.fatal                        SyncIntrinsics func(string)
+# --- sync.Pool: per-P pinning and the GC-time cleanup hook (runtime/proc.go
+# procPin, runtime/mgc.go poolcleanup); random numbers (runtime/rand.go) ------
+intrinsic sync.runtime_procPin              SyncIntrinsics func() int
+intrinsic sync.runtime_procUnpin            SyncIntrinsics func()
+intrinsic sync.runtime_registerPoolCleanup  SyncIntrinsics func(func())
+intrinsic runtime.randn                     SyncIntrinsics func(uint32) uint32
+intrinsic runtime.rand                      SyncIntrinsics func() uint64
+# --- internal/synctest: synctest bubbles are not supported
+# (docs/arch/limitations.md); no goroutine is ever in a bubble -------------
+intrinsic internal/synctest.IsInBubble      SyncIntrinsics func() bool
+intrinsic internal/synctest.associate       SyncIntrinsics func(unsafe.Pointer) int
+intrinsic internal/synctest.disassociate    SyncIntrinsics func(unsafe.Pointer)
+intrinsic internal/synctest.isAssociated    SyncIntrinsics func(unsafe.Pointer) bool
+# --- internal/runtime/atomic: the assembly store-release sync.Pool uses
+# (atomic_amd64.s; a plain store is a release store on amd64) ---------------
+intrinsic internal/runtime/atomic.StoreReluintptr AtomicIntrinsics func(*uintptr, uintptr)

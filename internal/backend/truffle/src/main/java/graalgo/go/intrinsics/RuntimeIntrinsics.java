@@ -20,6 +20,18 @@ final class RuntimeIntrinsics {
 
     @TruffleBoundary
     static void runtime_GC(Node node) {
+        // gc clears sync.Pool's caches at the start of a collection, with the world stopped:
+        // every pool field is touched only inside pin sections, so holding the pin lock is
+        // the stopped world for them.
+        graalgo.go.values.Closure cleanup = graalgo.go.runtime.GoProcess.get(node).poolCleanup;
+        if (cleanup != null) {
+            graalgo.runtime.sync.PinLock.LOCK.lock();
+            try {
+                cleanup.target.call(new Object[] {cleanup.env});
+            } finally {
+                graalgo.runtime.sync.PinLock.LOCK.unlock();
+            }
+        }
         System.gc();
     }
 

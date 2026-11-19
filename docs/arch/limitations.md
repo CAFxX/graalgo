@@ -20,6 +20,25 @@ legs with `GODEBUG=cpu.all=off`.
   reports the host's features; the intrinsic then reads `math.useFMA` as
   the assembly does.
 
+## `sync` (`-toolexec` path)
+
+`sync` and `internal/sync` are upstream's source on the runtime intrinsics
+of [SyncIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java)
+(gc's semaphore and notify-list algorithms on the scheduler). Differences:
+
+- `testing/synctest` bubbles are not supported: no goroutine is ever in a
+  bubble (`internal/synctest.IsInBubble` is false), so the bubble checks of
+  `WaitGroup` never fire.
+- `sync.Pool`'s pin sections serialize on one process-wide lock and use one
+  per-P slot (gc: one per P, no lock); `runtime.GC` runs the pool cleanup,
+  so the victim-cache behaviour across collections is gc's.
+- `throw` from `sync` (a corrupted lock word, never reached by correct
+  code) prints like `fatal`: the current goroutine only, where gc dumps all.
+- The mutex and semaphore profiles (`runtime.SetMutexProfileFraction`,
+  block profile) record nothing.
+
+- Re-test trigger: `testing/synctest` support (M2, `testing`).
+
 ## `unsafe` on the flat value model (`-toolexec` path; SPEC §3.4, GG-0062)
 
 Pointers never leave their referent, and every access goes through the

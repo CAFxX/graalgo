@@ -3,6 +3,7 @@ package graalgo.go.intrinsics;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
+import graalgo.go.values.Str;
 import graalgo.language.GoLanguage;
 
 /**
@@ -16,11 +17,35 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "19ba544492df9089";
+    public static final String HASH = "fd4217e86e416140";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
         switch (symbol) {
+            case "internal/runtime/atomic.StoreReluintptr":
+                return new R_internal_runtime_atomic_StoreReluintptr(language);
+            case "internal/sync.fatal":
+                return new R_internal_sync_fatal(language);
+            case "internal/sync.runtime_SemacquireMutex":
+                return new R_internal_sync_runtime_SemacquireMutex(language);
+            case "internal/sync.runtime_Semrelease":
+                return new R_internal_sync_runtime_Semrelease(language);
+            case "internal/sync.runtime_canSpin":
+                return new R_internal_sync_runtime_canSpin(language);
+            case "internal/sync.runtime_doSpin":
+                return new R_internal_sync_runtime_doSpin(language);
+            case "internal/sync.runtime_nanotime":
+                return new R_internal_sync_runtime_nanotime(language);
+            case "internal/sync.throw":
+                return new R_internal_sync_throw(language);
+            case "internal/synctest.IsInBubble":
+                return new R_internal_synctest_IsInBubble(language);
+            case "internal/synctest.associate":
+                return new R_internal_synctest_associate(language);
+            case "internal/synctest.disassociate":
+                return new R_internal_synctest_disassociate(language);
+            case "internal/synctest.isAssociated":
+                return new R_internal_synctest_isAssociated(language);
             case "maps.clone":
                 return new R_maps_clone(language);
             case "math.Float32bits":
@@ -59,8 +84,42 @@ public final class IntrinsicTable {
                 return new R_runtime_NumCPU(language);
             case "runtime.nanotime":
                 return new R_runtime_nanotime(language);
+            case "runtime.rand":
+                return new R_runtime_rand(language);
+            case "runtime.randn":
+                return new R_runtime_randn(language);
             case "runtime.runtimeError":
                 return new R_runtime_runtimeError(language);
+            case "sync.fatal":
+                return new R_sync_fatal(language);
+            case "sync.runtime_Semacquire":
+                return new R_sync_runtime_Semacquire(language);
+            case "sync.runtime_SemacquireRWMutex":
+                return new R_sync_runtime_SemacquireRWMutex(language);
+            case "sync.runtime_SemacquireRWMutexR":
+                return new R_sync_runtime_SemacquireRWMutexR(language);
+            case "sync.runtime_SemacquireWaitGroup":
+                return new R_sync_runtime_SemacquireWaitGroup(language);
+            case "sync.runtime_Semrelease":
+                return new R_sync_runtime_Semrelease(language);
+            case "sync.runtime_notifyListAdd":
+                return new R_sync_runtime_notifyListAdd(language);
+            case "sync.runtime_notifyListCheck":
+                return new R_sync_runtime_notifyListCheck(language);
+            case "sync.runtime_notifyListNotifyAll":
+                return new R_sync_runtime_notifyListNotifyAll(language);
+            case "sync.runtime_notifyListNotifyOne":
+                return new R_sync_runtime_notifyListNotifyOne(language);
+            case "sync.runtime_notifyListWait":
+                return new R_sync_runtime_notifyListWait(language);
+            case "sync.runtime_procPin":
+                return new R_sync_runtime_procPin(language);
+            case "sync.runtime_procUnpin":
+                return new R_sync_runtime_procUnpin(language);
+            case "sync.runtime_registerPoolCleanup":
+                return new R_sync_runtime_registerPoolCleanup(language);
+            case "sync.throw":
+                return new R_sync_throw(language);
             case "sync/atomic.AddInt32":
                 return new R_sync_atomic_AddInt32(language);
             case "sync/atomic.AddInt64":
@@ -166,6 +225,166 @@ public final class IntrinsicTable {
         @Override
         public boolean isInternal() {
             return true;
+        }
+    }
+
+    /** {@code internal/runtime/atomic.StoreReluintptr}: {@code func(*uintptr, uintptr)}. */
+    static final class R_internal_runtime_atomic_StoreReluintptr extends Root {
+        R_internal_runtime_atomic_StoreReluintptr(GoLanguage language) {
+            super(language, "internal/runtime/atomic.StoreReluintptr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            AtomicIntrinsics.internal_runtime_atomic_StoreReluintptr(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code internal/sync.fatal}: {@code func(string)}. */
+    static final class R_internal_sync_fatal extends Root {
+        R_internal_sync_fatal(GoLanguage language) {
+            super(language, "internal/sync.fatal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.internal_sync_fatal(this, (Str) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/sync.runtime_SemacquireMutex}: {@code func(*uint32, bool, int)}. */
+    static final class R_internal_sync_runtime_SemacquireMutex extends Root {
+        R_internal_sync_runtime_SemacquireMutex(GoLanguage language) {
+            super(language, "internal/sync.runtime_SemacquireMutex");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.internal_sync_runtime_SemacquireMutex(this, a[1], (boolean) a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code internal/sync.runtime_Semrelease}: {@code func(*uint32, bool, int)}. */
+    static final class R_internal_sync_runtime_Semrelease extends Root {
+        R_internal_sync_runtime_Semrelease(GoLanguage language) {
+            super(language, "internal/sync.runtime_Semrelease");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.internal_sync_runtime_Semrelease(this, a[1], (boolean) a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code internal/sync.runtime_canSpin}: {@code func(int) bool}. */
+    static final class R_internal_sync_runtime_canSpin extends Root {
+        R_internal_sync_runtime_canSpin(GoLanguage language) {
+            super(language, "internal/sync.runtime_canSpin");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyncIntrinsics.internal_sync_runtime_canSpin(this, (long) a[1]);
+        }
+    }
+
+    /** {@code internal/sync.runtime_doSpin}: {@code func()}. */
+    static final class R_internal_sync_runtime_doSpin extends Root {
+        R_internal_sync_runtime_doSpin(GoLanguage language) {
+            super(language, "internal/sync.runtime_doSpin");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            SyncIntrinsics.internal_sync_runtime_doSpin(this);
+            return null;
+        }
+    }
+
+    /** {@code internal/sync.runtime_nanotime}: {@code func() int64}. */
+    static final class R_internal_sync_runtime_nanotime extends Root {
+        R_internal_sync_runtime_nanotime(GoLanguage language) {
+            super(language, "internal/sync.runtime_nanotime");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyncIntrinsics.internal_sync_runtime_nanotime(this);
+        }
+    }
+
+    /** {@code internal/sync.throw}: {@code func(string)}. */
+    static final class R_internal_sync_throw extends Root {
+        R_internal_sync_throw(GoLanguage language) {
+            super(language, "internal/sync.throw");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.internal_sync_throw(this, (Str) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/synctest.IsInBubble}: {@code func() bool}. */
+    static final class R_internal_synctest_IsInBubble extends Root {
+        R_internal_synctest_IsInBubble(GoLanguage language) {
+            super(language, "internal/synctest.IsInBubble");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyncIntrinsics.internal_synctest_IsInBubble(this);
+        }
+    }
+
+    /** {@code internal/synctest.associate}: {@code func(unsafe.Pointer) int}. */
+    static final class R_internal_synctest_associate extends Root {
+        R_internal_synctest_associate(GoLanguage language) {
+            super(language, "internal/synctest.associate");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyncIntrinsics.internal_synctest_associate(this, a[1]);
+        }
+    }
+
+    /** {@code internal/synctest.disassociate}: {@code func(unsafe.Pointer)}. */
+    static final class R_internal_synctest_disassociate extends Root {
+        R_internal_synctest_disassociate(GoLanguage language) {
+            super(language, "internal/synctest.disassociate");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.internal_synctest_disassociate(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/synctest.isAssociated}: {@code func(unsafe.Pointer) bool}. */
+    static final class R_internal_synctest_isAssociated extends Root {
+        R_internal_synctest_isAssociated(GoLanguage language) {
+            super(language, "internal/synctest.isAssociated");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyncIntrinsics.internal_synctest_isAssociated(this, a[1]);
         }
     }
 
@@ -414,6 +633,31 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.rand}: {@code func() uint64}. */
+    static final class R_runtime_rand extends Root {
+        R_runtime_rand(GoLanguage language) {
+            super(language, "runtime.rand");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyncIntrinsics.runtime_rand(this);
+        }
+    }
+
+    /** {@code runtime.randn}: {@code func(uint32) uint32}. */
+    static final class R_runtime_randn extends Root {
+        R_runtime_randn(GoLanguage language) {
+            super(language, "runtime.randn");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyncIntrinsics.runtime_randn(this, (long) a[1]);
+        }
+    }
+
     /** {@code runtime.runtimeError}: {@code func(int) error}. */
     static final class R_runtime_runtimeError extends Root {
         R_runtime_runtimeError(GoLanguage language) {
@@ -424,6 +668,212 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_runtimeError(this, (long) a[1]);
+        }
+    }
+
+    /** {@code sync.fatal}: {@code func(string)}. */
+    static final class R_sync_fatal extends Root {
+        R_sync_fatal(GoLanguage language) {
+            super(language, "sync.fatal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_fatal(this, (Str) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_Semacquire}: {@code func(*uint32)}. */
+    static final class R_sync_runtime_Semacquire extends Root {
+        R_sync_runtime_Semacquire(GoLanguage language) {
+            super(language, "sync.runtime_Semacquire");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_Semacquire(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_SemacquireRWMutex}: {@code func(*uint32, bool, int)}. */
+    static final class R_sync_runtime_SemacquireRWMutex extends Root {
+        R_sync_runtime_SemacquireRWMutex(GoLanguage language) {
+            super(language, "sync.runtime_SemacquireRWMutex");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_SemacquireRWMutex(this, a[1], (boolean) a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_SemacquireRWMutexR}: {@code func(*uint32, bool, int)}. */
+    static final class R_sync_runtime_SemacquireRWMutexR extends Root {
+        R_sync_runtime_SemacquireRWMutexR(GoLanguage language) {
+            super(language, "sync.runtime_SemacquireRWMutexR");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_SemacquireRWMutexR(this, a[1], (boolean) a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_SemacquireWaitGroup}: {@code func(*uint32, bool)}. */
+    static final class R_sync_runtime_SemacquireWaitGroup extends Root {
+        R_sync_runtime_SemacquireWaitGroup(GoLanguage language) {
+            super(language, "sync.runtime_SemacquireWaitGroup");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_SemacquireWaitGroup(this, a[1], (boolean) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_Semrelease}: {@code func(*uint32, bool, int)}. */
+    static final class R_sync_runtime_Semrelease extends Root {
+        R_sync_runtime_Semrelease(GoLanguage language) {
+            super(language, "sync.runtime_Semrelease");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_Semrelease(this, a[1], (boolean) a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_notifyListAdd}: {@code func(*sync.notifyList) uint32}. */
+    static final class R_sync_runtime_notifyListAdd extends Root {
+        R_sync_runtime_notifyListAdd(GoLanguage language) {
+            super(language, "sync.runtime_notifyListAdd");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyncIntrinsics.sync_runtime_notifyListAdd(this, a[1]);
+        }
+    }
+
+    /** {@code sync.runtime_notifyListCheck}: {@code func(uintptr)}. */
+    static final class R_sync_runtime_notifyListCheck extends Root {
+        R_sync_runtime_notifyListCheck(GoLanguage language) {
+            super(language, "sync.runtime_notifyListCheck");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_notifyListCheck(this, (long) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_notifyListNotifyAll}: {@code func(*sync.notifyList)}. */
+    static final class R_sync_runtime_notifyListNotifyAll extends Root {
+        R_sync_runtime_notifyListNotifyAll(GoLanguage language) {
+            super(language, "sync.runtime_notifyListNotifyAll");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_notifyListNotifyAll(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_notifyListNotifyOne}: {@code func(*sync.notifyList)}. */
+    static final class R_sync_runtime_notifyListNotifyOne extends Root {
+        R_sync_runtime_notifyListNotifyOne(GoLanguage language) {
+            super(language, "sync.runtime_notifyListNotifyOne");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_notifyListNotifyOne(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_notifyListWait}: {@code func(*sync.notifyList, uint32)}. */
+    static final class R_sync_runtime_notifyListWait extends Root {
+        R_sync_runtime_notifyListWait(GoLanguage language) {
+            super(language, "sync.runtime_notifyListWait");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_notifyListWait(this, a[1], (long) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_procPin}: {@code func() int}. */
+    static final class R_sync_runtime_procPin extends Root {
+        R_sync_runtime_procPin(GoLanguage language) {
+            super(language, "sync.runtime_procPin");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return SyncIntrinsics.sync_runtime_procPin(this);
+        }
+    }
+
+    /** {@code sync.runtime_procUnpin}: {@code func()}. */
+    static final class R_sync_runtime_procUnpin extends Root {
+        R_sync_runtime_procUnpin(GoLanguage language) {
+            super(language, "sync.runtime_procUnpin");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            SyncIntrinsics.sync_runtime_procUnpin(this);
+            return null;
+        }
+    }
+
+    /** {@code sync.runtime_registerPoolCleanup}: {@code func(func())}. */
+    static final class R_sync_runtime_registerPoolCleanup extends Root {
+        R_sync_runtime_registerPoolCleanup(GoLanguage language) {
+            super(language, "sync.runtime_registerPoolCleanup");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_runtime_registerPoolCleanup(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code sync.throw}: {@code func(string)}. */
+    static final class R_sync_throw extends Root {
+        R_sync_throw(GoLanguage language) {
+            super(language, "sync.throw");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            SyncIntrinsics.sync_throw(this, (Str) a[1]);
+            return null;
         }
     }
 
