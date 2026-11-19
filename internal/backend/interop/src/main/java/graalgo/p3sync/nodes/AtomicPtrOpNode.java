@@ -70,7 +70,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * ops (the old deref lowering's behavior, kept for load/store;
  * R2315-14-P1-3 extends it to swap/CAS, whose plain-field paths
  * silently succeeded on a nil address reached through the unsafe
- * round-trip {@code (*unsafe.Pointer)(unsafe.Pointer(nil))}).
+ * round-trip {@code (*unsafe.Pointer)(unsafe.Pointer(nil))}). The
+ * panic fires only after the value arguments have been evaluated
+ * (gc's call-argument order): the F1 fixup
+ * (REVIEW-2026-11-19-nilptr-db05e17a) reordered the nil check behind
+ * the value evaluation for swap/store/CAS, so a nil address given as
+ * a nil variable or literal no longer skips the value side effects.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1 change.
@@ -90,14 +95,20 @@ public final class AtomicPtrOpNode extends GoExprNode {
         this.argChildren = argChildren;
     }
 
-    /** The addressed storage, unwrapped to a cell or a plain pointer. */
-    private Object storage(VirtualFrame frame) {
-        Object a = addrChild.executeObject(frame);
-        if (a == null) {
-            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
-            throw new AssertionError("unreachable");
-        }
-        return a;
+    /**
+     * The addressed storage, unwrapped to a cell or a plain pointer.
+     * Returns the raw address object WITHOUT panicking: a nil address
+     * reaches this node in two forms — a Java null (a nil
+     * {@code *unsafe.Pointer} variable or literal) and a nil
+     * {@code GoPointer} (the unsafe round-trip
+     * {@code (*unsafe.Pointer)(unsafe.Pointer(nil))}) — and the nil
+     * check ({@link #requireNonNil}) runs only AFTER the value
+     * arguments have been evaluated, so their side effects are not
+     * skipped (gc evaluates call arguments before the callee panics;
+     * F1 fixup, REVIEW-2026-11-19-nilptr-db05e17a).
+     */
+    private Object addressObject(VirtualFrame frame) {
+        return addrChild.executeObject(frame);
     }
 
     /** Normalizes a stored cell content to its handle value. */
@@ -133,9 +144,20 @@ public final class AtomicPtrOpNode extends GoExprNode {
                 + r.getClass().getName());
     }
 
-    /** Nil-address check for load/store: gc's nil-dereference panic. */
+    /**
+     * Nil-address check for all four ops: gc's nil-dereference panic.
+     * The address reaches this node in two forms — a Java null (a nil
+     * {@code *unsafe.Pointer} variable or literal as the address) and
+     * a nil {@code GoPointer} (the unsafe round-trip
+     * {@code (*unsafe.Pointer)(unsafe.Pointer(nil))}) — and both must
+     * panic. Callers invoke this AFTER evaluating the value
+     * arguments: gc evaluates call arguments before the callee
+     * panics, so a check placed before the value evaluation would
+     * silently skip the value side effects (the R2315-14-P2-4 shape).
+     * A cell address is never nil, so the check is a no-op there.
+     */
     private void requireNonNil(Object s) {
-        if (s instanceof GoPointer p && p.isNil()) {
+        if (s == null || (s instanceof GoPointer p && p.isNil())) {
             Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
             throw new AssertionError("unreachable");
         }
@@ -143,7 +165,7 @@ public final class AtomicPtrOpNode extends GoExprNode {
 
     /** Load: the current handle. Cell reads are volatile; plain-field reads take LOCK. */
     private long loadHandle(VirtualFrame frame) {
-        Object s = storage(frame);
+        Object s = addressObject(frame);
         requireNonNil(s);
         if (s instanceof AtomicReference<?> ar) {
             return toHandle(ar.get());
@@ -190,7 +212,8 @@ public final class AtomicPtrOpNode extends GoExprNode {
      * long-valued handle expression. (R2315-13-P1-1: without this, a nil
      * value argument to store/swap/CAS died with
      * UnsupportedOperationException.) Address arguments never go through
-     * here: a nil address must panic (F1), and {@link #storage} handles it.
+     * here: a nil address must panic (F1), and {@link #requireNonNil}
+     * handles it after the value arguments are evaluated.
      */
     private static long handleArg(GoExprNode arg, VirtualFrame frame) {
         if (arg instanceof NilNode) {
@@ -208,13 +231,13 @@ public final class AtomicPtrOpNode extends GoExprNode {
                 return loadHandle(frame);
             }
             case "store" -> {
-                Object s = storage(frame);
+                Object s = addressObject(frame);
                 long newVal = handleArg(argChildren[0], frame);
                 return storeHandle(s, newVal);
             }
             case "swap" -> {
                 // swap: returns the old handle.
-                Object s = storage(frame);
+                Object s = addressObject(frame);
                 long newVal = handleArg(argChildren[0], frame);
                 // R2315-14-P1-3: a nil address must panic, never
                 // silently succeed. The check sits after the value
@@ -251,7 +274,7 @@ public final class AtomicPtrOpNode extends GoExprNode {
     @Override
     public boolean executeBoolean(VirtualFrame frame) {
         // cas: compares the stored handle against old, stores new on match.
-        Object s = storage(frame);
+        Object s = addressObject(frame);
         long oldVal = handleArg(argChildren[0], frame);
         long newVal = handleArg(argChildren[1], frame);
         // R2315-14-P1-3: nil address panics (see the swap path above

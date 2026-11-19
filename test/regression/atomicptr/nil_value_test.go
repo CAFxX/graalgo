@@ -199,3 +199,134 @@ func TestCompareAndSwapPointerNilAddressEvaluatesValueFirst(t *testing.T) {
 			oldEvaluated, newEvaluated)
 	}
 }
+
+// --- F1 fixup (REVIEW-2026-11-19-nilptr-db05e17a): a nil address given
+// as a nil *unsafe.Pointer VARIABLE or a nil LITERAL evaluates to a
+// Java null, so storage() panicked BEFORE the value argument was
+// evaluated — the value side effect was silently skipped. gc evaluates
+// all call arguments before the callee panics (verified with gc
+// 1.27.1). These six tests FAIL on db05e17a (the evaluated flag stays
+// false: the panic fires first) and PASS with the addressObject +
+// requireNonNil reorder in AtomicPtrOpNode. The round-trip forms
+// above do NOT catch this: there the address is a non-null nil
+// GoPointer, so storage() does not panic and the value is evaluated. ---
+
+// TestSwapPointerNilVarAddressEvaluatesValueFirst: SwapPointer with a
+// nil *unsafe.Pointer variable as the address must evaluate the value
+// argument before panicking.
+func TestSwapPointerNilVarAddressEvaluatesValueFirst(t *testing.T) {
+	evaluated := false
+	valFn := func() unsafe.Pointer {
+		evaluated = true
+		x := 3
+		return unsafe.Pointer(&x)
+	}
+	var addr *unsafe.Pointer
+	expectNilDerefPanic(t, "SwapPointer(nil-var addr, side-effecting value)", func() {
+		atomic.SwapPointer(addr, valFn())
+	})
+	if !evaluated {
+		t.Fatal("SwapPointer(nil-var addr): value arg not evaluated before panic")
+	}
+}
+
+// TestSwapPointerNilLiteralAddressEvaluatesValueFirst: same ordering
+// pin for a nil literal address.
+func TestSwapPointerNilLiteralAddressEvaluatesValueFirst(t *testing.T) {
+	evaluated := false
+	valFn := func() unsafe.Pointer {
+		evaluated = true
+		x := 3
+		return unsafe.Pointer(&x)
+	}
+	expectNilDerefPanic(t, "SwapPointer(nil literal addr, side-effecting value)", func() {
+		atomic.SwapPointer(nil, valFn())
+	})
+	if !evaluated {
+		t.Fatal("SwapPointer(nil literal addr): value arg not evaluated before panic")
+	}
+}
+
+// TestCompareAndSwapPointerNilVarAddressEvaluatesValueFirst: CAS with
+// a nil *unsafe.Pointer variable as the address must evaluate BOTH
+// value arguments before panicking.
+func TestCompareAndSwapPointerNilVarAddressEvaluatesValueFirst(t *testing.T) {
+	oldEvaluated := false
+	newEvaluated := false
+	oldFn := func() unsafe.Pointer {
+		oldEvaluated = true
+		return nil
+	}
+	newFn := func() unsafe.Pointer {
+		newEvaluated = true
+		x := 4
+		return unsafe.Pointer(&x)
+	}
+	var addr *unsafe.Pointer
+	expectNilDerefPanic(t, "CAS(nil-var addr, side-effecting values)", func() {
+		atomic.CompareAndSwapPointer(addr, oldFn(), newFn())
+	})
+	if !oldEvaluated || !newEvaluated {
+		t.Fatalf("CAS(nil-var addr): old evaluated=%v new evaluated=%v, want both true",
+			oldEvaluated, newEvaluated)
+	}
+}
+
+// TestCompareAndSwapPointerNilLiteralAddressEvaluatesValueFirst: same
+// ordering pin for a nil literal address.
+func TestCompareAndSwapPointerNilLiteralAddressEvaluatesValueFirst(t *testing.T) {
+	oldEvaluated := false
+	newEvaluated := false
+	oldFn := func() unsafe.Pointer {
+		oldEvaluated = true
+		return nil
+	}
+	newFn := func() unsafe.Pointer {
+		newEvaluated = true
+		x := 4
+		return unsafe.Pointer(&x)
+	}
+	expectNilDerefPanic(t, "CAS(nil literal addr, side-effecting values)", func() {
+		atomic.CompareAndSwapPointer(nil, oldFn(), newFn())
+	})
+	if !oldEvaluated || !newEvaluated {
+		t.Fatalf("CAS(nil literal addr): old evaluated=%v new evaluated=%v, want both true",
+			oldEvaluated, newEvaluated)
+	}
+}
+
+// TestStorePointerNilVarAddressEvaluatesValueFirst: StorePointer with
+// a nil *unsafe.Pointer variable as the address must evaluate the
+// value argument before panicking.
+func TestStorePointerNilVarAddressEvaluatesValueFirst(t *testing.T) {
+	evaluated := false
+	valFn := func() unsafe.Pointer {
+		evaluated = true
+		x := 5
+		return unsafe.Pointer(&x)
+	}
+	var addr *unsafe.Pointer
+	expectNilDerefPanic(t, "StorePointer(nil-var addr, side-effecting value)", func() {
+		atomic.StorePointer(addr, valFn())
+	})
+	if !evaluated {
+		t.Fatal("StorePointer(nil-var addr): value arg not evaluated before panic")
+	}
+}
+
+// TestStorePointerNilLiteralAddressEvaluatesValueFirst: same ordering
+// pin for a nil literal address.
+func TestStorePointerNilLiteralAddressEvaluatesValueFirst(t *testing.T) {
+	evaluated := false
+	valFn := func() unsafe.Pointer {
+		evaluated = true
+		x := 5
+		return unsafe.Pointer(&x)
+	}
+	expectNilDerefPanic(t, "StorePointer(nil literal addr, side-effecting value)", func() {
+		atomic.StorePointer(nil, valFn())
+	})
+	if !evaluated {
+		t.Fatal("StorePointer(nil literal addr): value arg not evaluated before panic")
+	}
+}

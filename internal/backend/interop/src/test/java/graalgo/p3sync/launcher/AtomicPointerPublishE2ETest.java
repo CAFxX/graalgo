@@ -265,6 +265,77 @@ public final class AtomicPointerPublishE2ETest {
             + "\tfmt.Println(probeCasNilVar())\n"
             + "}\n";
 
+    /**
+     * F1 fixup (REVIEW-2026-11-19-nilptr-db05e17a): a nil address given
+     * as a nil {@code *unsafe.Pointer} variable evaluates to a Java
+     * null, so the old {@code storage()} panicked BEFORE the value
+     * argument was evaluated — the value side effect was silently
+     * skipped. gc evaluates all call arguments before the callee
+     * panics. Each probe's value fn prints a marker line when
+     * evaluated; the expected stdout lists each marker BEFORE its
+     * panic line. On db05e17a the markers are missing (the panic
+     * fires first) and this test fails.
+     *
+     * <p>Expected stdout is gc 1.27.1 output for the same program,
+     * verified by running it under gc.
+     */
+    private static final String PROG_NILADDR_EVALORDER =
+            "package main\n\nimport (\n\t\"fmt\"\n\t\"sync/atomic\"\n\t\"unsafe\"\n)\n\n"
+            + "func valSwap() unsafe.Pointer {\n"
+            + "\tfmt.Println(\"swap-val-evaluated\")\n"
+            + "\tx := 1\n"
+            + "\treturn unsafe.Pointer(&x)\n"
+            + "}\n\n"
+            + "func probeSwapNilVar() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\tvar addr *unsafe.Pointer\n"
+            + "\tatomic.SwapPointer(addr, valSwap())\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func oldCas() unsafe.Pointer {\n"
+            + "\tfmt.Println(\"cas-old-evaluated\")\n"
+            + "\treturn nil\n"
+            + "}\n\n"
+            + "func newCas() unsafe.Pointer {\n"
+            + "\tfmt.Println(\"cas-new-evaluated\")\n"
+            + "\ty := 2\n"
+            + "\treturn unsafe.Pointer(&y)\n"
+            + "}\n\n"
+            + "func probeCasNilVar() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\tvar addr *unsafe.Pointer\n"
+            + "\tatomic.CompareAndSwapPointer(addr, oldCas(), newCas())\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func valStore() unsafe.Pointer {\n"
+            + "\tfmt.Println(\"store-val-evaluated\")\n"
+            + "\tz := 3\n"
+            + "\treturn unsafe.Pointer(&z)\n"
+            + "}\n\n"
+            + "func probeStoreNilVar() (msg string) {\n"
+            + "\tdefer func() {\n"
+            + "\t\tif r := recover(); r != nil {\n"
+            + "\t\t\tmsg = fmt.Sprint(r)\n"
+            + "\t\t}\n"
+            + "\t}()\n"
+            + "\tvar addr *unsafe.Pointer\n"
+            + "\tatomic.StorePointer(addr, valStore())\n"
+            + "\treturn \"no-panic\"\n"
+            + "}\n\n"
+            + "func main() {\n"
+            + "\tfmt.Println(probeSwapNilVar())\n"
+            + "\tfmt.Println(probeCasNilVar())\n"
+            + "\tfmt.Println(probeStoreNilVar())\n"
+            + "}\n";
+
     private static final int REPS = 10;
 
     private static void assertTrue(boolean cond, String msg) {
@@ -349,6 +420,19 @@ public final class AtomicPointerPublishE2ETest {
                 "runtime error: invalid memory address or nil pointer dereference\n"
                         + "runtime error: invalid memory address or nil pointer dereference\n"
                         + "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "runtime error: invalid memory address or nil pointer dereference");
+    }
+
+    /** F1 fixup (REVIEW-2026-11-19-nilptr-db05e17a): nil-var address ops
+     * evaluate their value argument(s) before the nil-address panic. */
+    public void testNilAddressEvalOrder() throws Exception {
+        checkRepeated("atomicptrniladdrevalorder.go", PROG_NILADDR_EVALORDER,
+                "swap-val-evaluated\n"
+                        + "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "cas-old-evaluated\n"
+                        + "cas-new-evaluated\n"
+                        + "runtime error: invalid memory address or nil pointer dereference\n"
+                        + "store-val-evaluated\n"
                         + "runtime error: invalid memory address or nil pointer dereference");
     }
 }

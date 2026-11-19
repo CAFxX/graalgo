@@ -1076,6 +1076,28 @@ def selftest():
         lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
             nd("atomicaddr", {"addr": lit(), "cell": "float64"})),
         "must be one of")
+    # F2 fixup (REVIEW-2026-11-19-nilptr-db05e17a): db05e17a extended
+    # the atomicptrop enum to {swap, cas, load, store} but the selftest
+    # positively covered only "swap" (via NEW_KIND_FIELDS). Pin each
+    # op with its real arg arity (load 0, store 1, cas 2) plus a
+    # negative case for an unknown op, so a future enum regression
+    # cannot slip past the selftest again.
+    bad("atomicptrop-ok-load",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("atomicptrop", {"op": "load", "addr": lit(), "args": [], "type": 0})),
+        None)
+    bad("atomicptrop-ok-store",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("atomicptrop", {"op": "store", "addr": lit(), "args": [lit()], "type": 0})),
+        None)
+    bad("atomicptrop-ok-cas",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("atomicptrop", {"op": "cas", "addr": lit(), "args": [lit(), lit()], "type": 0})),
+        None)
+    bad("atomicptrop-bad-op",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            nd("atomicptrop", {"op": "fetchadd", "addr": lit(), "args": [], "type": 0})),
+        "must be one of")
     bad("linkname-with-body",
         lambda d: d["funcs"][0]["fields"].update(linkname="pkg.F"),
         "must not carry a body")
