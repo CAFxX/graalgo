@@ -4,7 +4,7 @@ import graalgo.go.types.GoType;
 import java.util.Arrays;
 
 /**
- * A flat Go memory object (SPEC §3.4, GG-0061): scalar leaves wider than a byte in
+ * A flat Go memory object (SPEC §3.4, GG-0072): scalar leaves wider than a byte in
  * {@code prims} (integers sign/zero-extended, floats as raw {@code double} bits), reference
  * leaves in {@code refs}, and every byte-sized leaf — {@code uint8}, {@code int8}, {@code bool}
  * (0/1), as fields and as array elements alike — in {@code bytes} (ADR-0015 decision 3). Nested

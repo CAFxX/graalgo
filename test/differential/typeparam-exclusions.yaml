@@ -20,61 +20,65 @@
 # v1 frontend is deleted (toolexec-design D11) and the typeparam suite runs
 # through the toolexec path. Per-file details of the old entries are in git
 # history (version 4). Entries that are not v1 scope limits stay individual.
-version: 5
+#
+# version 6 (2026-11-18, ci-green2 lane): the adapter's batch JVM no longer
+# dies on one entry's unchecked exception (graalgo-run --batch records it
+# per entry), so the 196 comparisons produce results again (they were all
+# INFRA). Full local run (-jobs 2, -Xmx2g): 42 match, 88 expected, 66 stale;
+# the 66 stale files are pruned (individual entries and group members).
+# Every deferred-parity entry now cites a docs/dev/bugs.md id and every
+# individual one pins its signature (diffharness registers gate); the cgo
+# entry is deferred-parity (BUG-0034: cgo is a graalgo gap, GG-0022).
+version: 6
 exclusions:
 - file: issue54765.go
-  reason: backend-specific
-  detail: //go:build cgo: graalgo has no cgo support
+  reason: deferred-parity
+  detail: BUG-0034 (no cgo: CGO_ENABLED=0 per ADR-0010 DV4; cgo via Panama is WP-CGO1/2, GG-0022): the //go:build cgo file is classified exclude and never runs
+  signature: unpinned (never run: //go:build cgo)
 - file: append.go
   reason: deferred-parity
-  detail: "named type use as value: identifier 'Recv' denotes *types.TypeName"
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: makechan.fields: makechan type/elem mismatch
+  signature: e3dc0f809e6ef21c
 - file: interfacearg.go
   reason: deferred-parity
-  detail: "named type use as value: identifier 'T' denotes *types.TypeName"
-- file: issue48453.go
-  reason: deferred-parity
-  detail: "named type use as value: identifier 'M' denotes *types.TypeName"
-- file: issue50419.go
-  reason: deferred-parity
-  detail: "fmt Stringer dispatch not implemented (pre-existing missing feature; non-generic Stringer also fails)"
-- file: issue50690a.go
-  reason: deferred-parity
-  detail: "WS D: calling function value l.SumFn()(...); method lookup fixed (methodIndex) but function-value call out of scope"
-- file: issue50690b.go
-  reason: deferred-parity
-  detail: "WS D: calling function value; method lookup fixed (methodIndex) but function-value call out of scope"
+  detail: BUG-0001 (v1 frontend type error); observed: gofrontend: identifier "T" denotes *types.TypeName
+  signature: 8bcebaf82f99b99d
 - file: issue50833.go
   reason: deferred-parity
-  detail: "use of variable 'f' before declaration (rejected by go/types)"
+  detail: BUG-0001 (v1 frontend type error); observed: gofrontend: variable "f" used before declaration (gc accepts the program)
+  signature: 293dcd0fd358b351
 - file: issue51303.go
   reason: deferred-parity
-  detail: "runtime ClassCastException: [J cannot be cast to [I (int64-slice vs int-slice confusion; pre-existing, non-generic)"
-- file: issue54225.go
-  reason: deferred-parity
-  detail: "method Len on type parameter with non-named argument type: interface dispatch on type parameters not supported (WS H)"
+  detail: BUG-0014 (v1 node factory rejects valid IR); observed: java.lang.IllegalArgumentException: illegal conversion: SLICE -> STRUCT
+  signature: f9b9b4ca550ea703
 - file: issue58513.go
   reason: deferred-parity
-  detail: "go/types type error in test program (rejected before export)"
+  detail: BUG-0001 (v1 frontend scope gap); observed: runtime.Caller is multi-result ... in frontend/v1 scope (WS D)
+  signature: b914a14f4dde2f69
 - file: pragma.go
   reason: backend-specific
   detail: "tests gc -m inliner diagnostics (\"can inline\" output for //go:noinline stenciling); gc compiler-diagnostic text is not a portability observable"
 - file: typeswitch2.go
   reason: deferred-parity
-  detail: "residual ClassCastException on f[float64](int8(9)) (expected \"other 9\"): int8 in default clause; reproduced non-generically, pre-existing factory bug. B2b struct-descriptor path fixed (lines 1-4 now print)"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stdout differs at line 8: ref="T 10" alt="int 10"
+  signature: 3aedc266ff5610d0
 - file: typeswitch6.go
   reason: deferred-parity
-  detail: "case T with T instantiated to an interface: type switch uses descriptor identity, not interface satisfaction (same pre-existing limitation as typeswitch1)"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 2: ref="T" alt="int"
+  signature: 03bd1c94fdc12ec5
 - file: typeswitch7.go
   reason: deferred-parity
-  detail: "case interface{bar() T} with a type parameter inside the interface case: not matched by descriptor identity (same pre-existing limitation family as typeswitch1)"
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 2: ref="barT" alt="myint"
+  signature: f98aa174dd621a41
 - file: typeswitch1.go
   reason: deferred-parity
-  detail: "case T: where T is a type parameter instantiated to an interface (e.g. any) does not match: type switch uses descriptor identity (t == dyn), not interface satisfaction. Pre-existing limitation."
+  detail: BUG-0036 (v1 type switch matches type-parameter cases by descriptor identity); observed: stderr differs at line 8: ref="T" alt="int"
+  signature: 19843ecf43a57553
 groups:
 - group: v1-multi-file
   reason: deferred-parity
   expires: M3
-  detail: multi-file program (<name>.dir): frontend/v1 is single-file; real package loading is the toolexec path (69 files)
+  detail: BUG-0001: multi-file program (<name>.dir): frontend/v1 is single-file; real package loading is the toolexec path (69 files)
   files: absdiffimp.go absdiffimp2.go aliasimp.go chansimp.go dedup.go factimp.go
   files: gencrawler.go geninline.go issue46461b.go issue47514c.go issue47775.go issue47892.go
   files: issue47892b.go issue48094.go issue48094b.go issue48185a.go issue48185b.go issue48280.go
@@ -90,50 +94,48 @@ groups:
 - group: v1-package-decls
   reason: deferred-parity
   expires: M3
-  detail: package-level declarations outside the frontend/v1 WS G scope (19 files)
-  files: dictionaryCapture-noinline.go dictionaryCapture.go fact.go issue45547.go issue46591.go issue47775b.go
+  detail: BUG-0001: package-level declarations outside the frontend/v1 WS G scope (13 files)
+  files: dictionaryCapture-noinline.go dictionaryCapture.go issue45547.go issue47775b.go
   files: issue47924.go issue47925d.go issue47929.go issue48198.go issue50259.go issue50642.go
-  files: issue51245.go issue51765.go issue52124.go issue53087.go list.go min.go
+  files: issue51765.go issue52124.go
   files: smoketest.go
 - group: v1-no-main
   reason: deferred-parity
   expires: M3
-  detail: no func main: the v1 program model requires func main (16 files)
+  detail: BUG-0001: no func main: the v1 program model requires func main (16 files)
   files: builtins.go issue39755.go issue46461.go issue47631.go issue47710.go issue47896.go
   files: issue47966.go issue48056.go issue48538.go issue48609.go issue49611.go issue49875.go
   files: issue50147.go issue50177.go issue54497.go issue55101.go
 - group: v1-import-overlay
   reason: deferred-parity
   expires: M3
-  detail: imports outside the v1 D4 import overlay (reflect, math, unsafe, strconv, sync, sort, errors, ...) (40 files)
-  files: absdiff2.go absdiff3.go boundmethod.go chans.go double.go genembed2.go
-  files: graph.go importtest.go issue45722.go issue47272.go issue47713.go issue47716.go
-  files: issue47740b.go issue48013.go issue48016.go issue48042.go issue48225.go issue48253.go
-  files: issue48317.go issue48318.go issue48645a.go issue49295.go issue50993.go issue51521.go
-  files: issue53390.go issue54456.go list2.go lockable.go map.go maps.go
-  files: metrics.go nested.go ordered.go orderedmap.go pair.go sets.go
-  files: settable.go slices.go stringable.go stringer.go
+  detail: BUG-0001: imports outside the v1 D4 import overlay (reflect, math, unsafe, strconv, sync, sort, errors, ...) (23 files)
+  files: absdiff2.go boundmethod.go chans.go double.go
+  files: graph.go importtest.go issue45722.go issue47713.go issue47716.go
+  files: issue48042.go
+  files: issue48317.go issue48318.go issue49295.go issue51521.go
+  files: issue53390.go issue54456.go map.go
+  files: metrics.go nested.go ordered.go orderedmap.go
+  files: slices.go stringer.go
 - group: v1-frontend-scope
   reason: deferred-parity
   expires: M3
-  detail: constructs outside the frontend/v1 scope (& on identifiers, non-identifier call targets, *ast.StarExpr, array types, ...) (40 files)
-  files: combine.go devirtualize1.go devirtualize2.go dottype.go eface.go equal.go
-  files: index.go index2.go issue23536.go issue376214.go issue42758.go issue45817.go
-  files: issue46472.go issue47514b.go issue47684c.go issue47878.go issue47901.go issue48191.go
-  files: issue48604.go issue48617.go issue49432.go issue49516.go issue49538.go issue49659b.go
-  files: issue50109b.go issue50193.go issue50690c.go issue51355.go issue51522b.go issue51840.go
-  files: issue51909.go issue51925.go issue52241.go issue54537.go shape1.go shape_assert.go
-  files: subdict.go typelist.go typeswitch5.go value.go
+  detail: BUG-0001: constructs outside the frontend/v1 scope (& on identifiers, non-identifier call targets, *ast.StarExpr, array types, ...) (15 files)
+  files: combine.go dottype.go eface.go
+  files: issue47514b.go issue47878.go issue47901.go
+  files: issue48604.go issue49516.go issue49538.go issue49659b.go
+  files: issue50193.go issue51840.go
+  files: issue51925.go
+  files: typelist.go typeswitch5.go
 - group: v1-backend-build-error
   reason: deferred-parity
   expires: M3
-  detail: v1 NodeFactory build errors (interface conversion fields, binary-op kind combinations) (11 files)
-  files: issue47258.go issue47925b.go issue47925c.go issue48602.go issue50002.go issue51522a.go
-  files: issue51700.go issue52228.go issue53477.go issue53762.go issue54135.go
+  detail: BUG-0014: v1 NodeFactory build errors (interface conversion fields, binary-op kind combinations) (6 files)
+  files: issue47925b.go issue47925c.go issue48602.go issue50002.go
+  files: issue53477.go issue53762.go
 - group: v1-method-resolution
   reason: deferred-parity
   expires: M3
-  detail: v1 method resolution fails on generic receivers (13 files)
-  files: cons.go genembed.go ifaceconv.go issue44688.go issue47797.go issue48047.go
-  files: issue48598.go issue48645b.go issue49049.go issue50109.go issue53406.go typeswitch3.go
-  files: typeswitch4.go
+  detail: BUG-0001: v1 method resolution fails on generic receivers (5 files)
+  files: issue44688.go issue47797.go
+  files: issue48598.go issue48645b.go issue49049.go

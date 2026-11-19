@@ -54,6 +54,18 @@ class Gate(unittest.TestCase):
         errs = g.scan(repo({"x/__pycache__/m.cpython-312.pyc": b"abc", "lib/a.so": b"abc"}))
         self.assertEqual(len(errs), 2, errs)
 
+    def test_tree_log_cap(self):
+        # Many small logs, each under the per-file limit, over the per-tree cap.
+        chunk = b"x" * (200 * 1024)
+        files = {f"docs/arch/spikes/s{i}/run{i}.log": chunk for i in range(8)}
+        errs = g.scan(repo(files))
+        self.assertTrue(any("docs/arch/spikes/: tracked logs total" in e for e in errs), errs)
+        # The same bytes as non-log files, or split across two trees, pass.
+        self.assertEqual(g.scan(repo({f"docs/arch/spikes/s{i}/run{i}.md": chunk for i in range(8)})), [])
+        half = {f"docs/a/t{i}/r.log": chunk for i in range(4)}
+        half.update({f"docs/b/t{i}/r.log": chunk for i in range(4)})
+        self.assertEqual(g.scan(repo(half)), [])
+
     def test_allowlisted_passes(self):
         d = repo({"lib/big.jar": BIG}, allow="lib/*.jar  # pinned jars\n")
         self.assertEqual(g.scan(d), [])

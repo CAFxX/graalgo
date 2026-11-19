@@ -17,7 +17,7 @@
 # by .github/scripts/check_makefile.py (part of `make check`).
 #   `make all` = generate build snapshot-check check test-v2 test-toolexec
 #                test-gir test-p3frontend test-ci test-java-fast
-#                test-regression test-m1a pe-check-m1a:
+#                test-regression test-m1a pe-check-m1a test-m1w13:
 #     generate  rebuilds the gofrontend binary + overlay.json, the 18
 #               generated synth_*.go, and the GIR Go/Java codecs
 #     build     compiles both backend modules (javac, -Werror)
@@ -32,10 +32,14 @@
 #               pin-audit smoke; duplicate FQN; dead paths; MR-table
 #               subset; check-repo (tracked-file size/binary, doc paths,
 #               GG ids, this Makefile's .PHONY/header, generated-files
-#               list, placeholder + runtime-unimplemented ratchets, every
+#               list, placeholder + runtime-unimplemented ratchets, the
+#               new-path/v1 layering gate, the no-bridges gate (vs
+#               GATE_BASE or the merge-base), the exclusion-register
+#               gate (bug id + signature per deferred-parity entry), every
 #               .github/scripts/test_*.py, markdown links, `tools/req
 #               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
-#               tests, vendoring diff, frontend/v1 wire-format validator)
+#               tests, vendoring diff, frontend/v1 wire-format validator);
+#               vet-spikes (go vet of the test/spikes/abi probe modules)
 #     test-v2 / test-toolexec / test-gir / test-p3frontend
 #               the Go/Java module suites (frontend v2, -toolexec wrapper,
 #               GIR Java codec, p3frontend loader)
@@ -56,6 +60,13 @@
 #     pe-check-m1a
 #               partial-evaluation gate of the new node package over the
 #               benchmark set (~15 s): any failed compilation fails it
+#     test-m1w13
+#               the pointer-model gate (~1.5 min; GG-0072/GG-0062): programs
+#               that use package unsafe through graalgo-tool on the new node
+#               package vs live gc — generated loads and stores at every
+#               byte offset per addressable kind, unsafe idioms of real
+#               code, gc's -d=checkptr fatal errors, documented restrictions
+#               ([test/m1w13/](test/m1w13/))
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
 #   `make test` — the full differential suite (graalgo.test.Runner,
@@ -147,7 +158,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a pe-check-m1a test-m1r test-m1w13 goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13
 
@@ -187,6 +198,7 @@ check:
 	python3 .github/scripts/check_no_dead_paths.py
 	GO="$(GO)" python3 .github/scripts/check_mr_table_subset.py
 	$(MAKE) check-repo
+	$(MAKE) vet-spikes
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
 	# wire-format validation (internal/frontend/build.sh check).
 	# /tmp is a 512M shared tmpfs: keep the fresh-export JSONs on the
@@ -195,15 +207,39 @@ check:
 	cd internal/frontend && TMPDIR="$(CURDIR)/internal/frontend/.tmp" \
 	GOTMPDIR="$(CURDIR)/internal/frontend/.tmp" GO="$(GO)" ./build.sh check
 
+# The ABI spike's probe modules (test/spikes/abi/*, abi-spike.md) are built
+# by no other target and would rot silently: vet (which type-checks and
+# compiles) each one here, in `make check`.
+SPIKE_MODULES := $(sort $(dir $(wildcard test/spikes/abi/*/go.mod)))
+vet-spikes:
+	@set -e; test -n "$(SPIKE_MODULES)" || { echo "vet-spikes: no modules found"; exit 1; }; \
+	for m in $(SPIKE_MODULES); do echo "== vet $$m"; \
+	  (cd $$m && GOTOOLCHAIN=local PATH="$(dir $(GO)):$$PATH" $(GO) vet ./...); done
+
 # Repo-wide static gates (no build needed). Each check_*.py has a
 # test_*.py that plants the violation it guards; every test_*.py runs here.
 check-repo:
-	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py; do echo "== $$t"; python3 $$t; done
+	# Gate self-tests plant violations, so their passing output is full of
+	# gate failure lines, and a "file.go:N: ..." line becomes a fake
+	# ##[error] annotation through setup-go's problem matcher (the top
+	# annotation of a red run pointed at test_check_ratchets.py's planted
+	# tools/b.go). A self-test's output is shown only when it fails.
+	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py; do \
+	  if out=$$(python3 $$t 2>&1); then echo "== $$t: ok"; \
+	  else echo "== $$t: FAILED"; echo "$$out"; exit 1; fi; done
 	python3 .github/scripts/check_tracked_files.py
 	python3 .github/scripts/check_doc_paths.py
 	python3 .github/scripts/check_gg_ids.py
 	python3 .github/scripts/check_makefile.py
 	python3 .github/scripts/check_ratchets.py
+	python3 .github/scripts/check_layering.py
+	python3 .github/scripts/check_no_bridges.py
+	# exclusion registers: every deferred-parity entry cites a bugs.md id
+	# and (differential registers) pins a signature; gate tests first.
+	cd test/differential && PATH="$(dir $(GO)):$$PATH" $(GO) test -count=1 -run 'Register|IsPinned|LoadBugIDs|Parse' ./internal/harness/ && \
+	  PATH="$(dir $(GO)):$$PATH" $(GO) run ./cmd/diffharness registers -bugs ../../docs/dev/bugs.md \
+	  -unsigned ../../tools/stdlib-fork/exclusions.yaml \
+	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
 	python3 .github/scripts/check_markdown_links.py --skip-external
 	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
 
@@ -358,7 +394,7 @@ test-m1r: build
 	GO="$(GO)" test/m1r/run.sh $(M1R_PROGRAMS)
 M1R_PROGRAMS ?=
 
-# The pointer-model gate (toolexec W13; SPEC §3.4, GG-0061/GG-0062, ADR-0015;
+# The pointer-model gate (toolexec W13; SPEC §3.4, GG-0072/GG-0062, ADR-0015;
 # ~1.5 min, per-push): programs that use package unsafe, through graalgo-tool
 # on the node package against gc — the generated load/store program over every
 # byte offset of a corpus of struct types per addressable kind, unsafe idioms
@@ -450,7 +486,7 @@ JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest
 JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
 JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
 JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
-JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest graalgo.p3reflect.GcMaskTest graalgo.p3reflect.MapKeyHashTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3sync.launcher.StackDepthLimitTest
+JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest graalgo.p3reflect.GcMaskTest graalgo.p3reflect.MapKeyHashTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3sync.launcher.StackDepthLimitTest graalgo.p3sync.launcher.CallPathWarmupTest
 JAVA_SLOW_INTEROP := graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
 
 java-test-classes: build

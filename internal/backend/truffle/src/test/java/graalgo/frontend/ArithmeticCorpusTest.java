@@ -37,9 +37,6 @@ import java.util.stream.Stream;
  * <p>Run from the phase1 directory ({@code make test}); override with
  * {@code -Dgraalgo.phase1.dir=...}.
  */
-// verifies: GG-0061 (M3: expressions + values differential-green on the
-// arithmetic corpus; every observed value asserted bit-identical to stock
-// gc across all int/uint/float widths, conversions, and comparisons).
 public final class ArithmeticCorpusTest {
 
     private static Path repoDir() {

@@ -3,9 +3,10 @@ title: Flat Java-object value model
 statement: 'Go values SHALL live as Java objects without native addresses: a struct or array value SHALL be stored flat — nested struct and array fields inlined — as one long[] of scalar leaves plus one Object[] of reference leaves, with a per-type leaf table derived from the gc layout (types.SizesFor("gc", GOARCH)) mapping each gc byte offset to its slot; slices SHALL be typed-Java-array-backed {array, offset, len, cap}; interfaces (itab, data); strings immutable byte[]-backed; maps a runtime-owned table. A Go pointer SHALL be a Java reference to its referent object plus a gc byte offset within it, never a native address. A model of one Java object per nested struct (v1 nested GoStruct) SHALL NOT be carried into the toolexec backend.'
 rationale: Keeps GG-0015 (GC integration with exact roots and free write barriers, PE/escape-analysis visibility, closed-world compatibility) and makes it addressable by gc byte offset, which verbatim internal/abi, reflect, sync and the syscall executor require; the nested-object model is the measured cause of 20 of 50 reflect-probe failures and does not converge (abi-spike.md §1.2–§1.3).
 parent: ""
-status: locked
-superseded_by: ""
+status: superseded
+superseded_by: GG-0072
 verification_plan: Value-model conformance tests; GC-correctness stress; leaf tables checked against gc layout by the descview/imgcheck gate over a >=300-type corpus; reflectprobe 126/126 vs gc; corpus differential.
 history:
     - '2026-11-18: created (draft), supersedes GG-0015'
     - '2026-11-18: locked'
+    - '2026-11-19: superseded by GG-0072'

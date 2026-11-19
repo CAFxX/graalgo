@@ -324,7 +324,7 @@ Related: [Makefile](../Makefile) (root build entry point),
     `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
   - [m1w13/](../test/m1w13/) — the pointer-model gate (`make test-m1w13`,
     ~1.5 min, per-push in `make all`; toolexec W13, SPEC §3.4,
-    GG-0061/GG-0062): [run.sh](../test/m1w13/run.sh) runs programs that use
+    GG-0072/GG-0062): [run.sh](../test/m1w13/run.sh) runs programs that use
     package `unsafe` through graalgo-tool on the node package against gc.
     [gen.py](../test/m1w13/gen.py) generates a corpus of struct types and
     from it the layout program whose gc output is

@@ -179,3 +179,14 @@ backends[0]. `${DH_GO}` env expansion keeps toolchain paths portable.
   `mutations.txt` (multiple instances per class, more classes: dropped
   `close`, inverted select cases, wrong method receiver).
 - Generative corpus (FEASIBILITY.md §7.5) as a later layer.
+
+## Pruned run logs (2026-11-18)
+
+1 raw run logs that this report does not cite were removed from git
+(debris gate: per-tree log-size cap in `check_tracked_files.py`), from
+`results/`. They remain in history:
+`git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
+--name-only 228dd7ab docs/arch/spikes/07-harness` lists them). To regenerate,
+re-run the commands this report describes on the pinned toolchains (docs/dev/ENV.md); every log
+this report cites is kept.
+

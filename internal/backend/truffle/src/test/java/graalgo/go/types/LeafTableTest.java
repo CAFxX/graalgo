@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * The leaf tables of the flat value model (SPEC §3.4, GG-0061; ADR-0015 step 1) against gc's
+ * The leaf tables of the flat value model (SPEC §3.4, GG-0072; ADR-0015 step 1) against gc's
  * own answers: test/m1w13/layout_corpus.txt is the output, under gc, of the program
  * {@code test/m1w13/gen.py layout} generates — per struct type of the corpus its
  * {@code unsafe.Sizeof}, {@code unsafe.Alignof} and the byte offset and kind of every leaf.

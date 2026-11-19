@@ -480,3 +480,14 @@ provenance record); the old draft's terminal-only post-fix numbers
    exercises the `LinkedBlockingQueue` path only. The MPSC code (incl. the
    INIT cross-queue `taker`-nulling race) is diagnostic, not production
    lineage; no production design inherits it without review.
+
+## Pruned run logs (2026-11-18)
+
+9 raw run logs that this report does not cite were removed from git
+(debris gate: per-tree log-size cap in `check_tracked_files.py`), from
+`logs/`, `logs-prefix-20261003/`. They remain in history:
+`git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
+--name-only 228dd7ab docs/arch/spikes/02b-userspace-scheduler` lists them). To regenerate,
+re-run `build.sh` + `run.sh` in this directory on the pinned toolchains (docs/dev/ENV.md); every log
+this report cites is kept.
+

@@ -34,8 +34,73 @@ import java.util.stream.Stream;
 public final class ClassPreloader {
     private ClassPreloader() {}
 
-    /** Preloads all {@code graalgo.*} classes found on the classpath. */
+    /**
+     * Truffle runtime classes whose nested holder classes are initialized
+     * lazily from the guest call path (e.g. {@code ReturnProfile}, first
+     * initialized when an exception unwinds through a call target).
+     */
+    private static final java.util.List<String> CALL_PATH_CLASSES = java.util.List.of(
+            "com.oracle.truffle.runtime.OptimizedCallTarget");
+
+    /** The classes whose nested holders {@link #initializeCallPathHolders} initializes. */
+    public static java.util.List<String> callPathClasses() {
+        return CALL_PATH_CLASSES;
+    }
+
+    /**
+     * Initializes the lazily-initialized holder classes of the Truffle
+     * call path on the launcher's shallow stack, before any guest code runs.
+     *
+     * <p>Why: a class initializer that first runs deep inside guest
+     * recursion can hit {@link StackOverflowError}; the JVM then marks the
+     * class erroneous for the rest of the process, and every later use
+     * throws {@code NoClassDefFoundError: Could not initialize class} —
+     * including Truffle's own exception profiling on the way out of the
+     * call target, which turned a clean Go "stack overflow" fatal error into
+     * a leaked JVM trace (CI, 2026-11-18, {@code OptimizedCallTarget$ReturnProfile}).
+     * Initializing these holders up front removes class initialization from
+     * the stack-exhaustion failure surface. The holders only build constant
+     * sentinels; initializing them early has no semantic effect.
+     *
+     * <p>Best-effort: a runtime without these classes (another Truffle
+     * runtime) skips them; {@code CallPathWarmupTest} pins that the current
+     * runtime's holders are initialized.
+     */
+    public static void initializeCallPathHolders() {
+        // The runtime must be initialized first: it opens the compiler
+        // module's packages to the runtime classes, which cannot even be
+        // loaded before that. Creating the polyglot Context initializes it
+        // anyway, so this only moves that work earlier.
+        ClassLoader loader;
+        try {
+            loader = com.oracle.truffle.api.Truffle.getRuntime().getClass().getClassLoader();
+        } catch (Throwable t) {
+            return;
+        }
+        for (String outer : CALL_PATH_CLASSES) {
+            Class<?> c;
+            try {
+                c = Class.forName(outer, false, loader);
+            } catch (Throwable t) {
+                continue;
+            }
+            for (Class<?> nested : c.getDeclaredClasses()) {
+                try {
+                    Class.forName(nested.getName(), true, loader);
+                } catch (Throwable t) {
+                    // Best-effort (see method javadoc).
+                }
+            }
+        }
+    }
+
+    /**
+     * Initializes the Truffle call-path holders
+     * ({@link #initializeCallPathHolders}), then preloads all
+     * {@code graalgo.*} classes found on the classpath.
+     */
     public static void preload() {
+        initializeCallPathHolders();
         String cp = System.getProperty("java.class.path");
         if (cp == null || cp.isEmpty()) {
             return;

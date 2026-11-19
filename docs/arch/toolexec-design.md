@@ -433,7 +433,7 @@ programs gc rejects are rejected here too.
   `Name`, …) comes from the same table applied to `internal/abi`; **the
   backend hard-codes no descriptor offset**, so a Go release that moves a
   field needs no backend change.
-- **Pointer model** (SPEC §3.4, GG-0061/GG-0062). Values are flat: a
+- **Pointer model** (SPEC §3.4, GG-0072/GG-0062). Values are flat: a
   struct or array is one `long[]` of scalar leaves plus one `Object[]` of
   reference leaves, with nested structs and arrays inlined; a per-type
   **leaf table** derived from the gc layout maps a gc byte offset to a slot.
@@ -945,9 +945,9 @@ paths; new code lives in new directories, including the new node package
 | W5 | Fork: facade `runtime` + `internal/runtime/*`, patch stack, GOROOT assembly + overlay generator, fork-size audit (§5.1, §5.6) | — (API list from §5.4 measurements) | all |
 | W6 | Intrinsic registry and link-time resolution/reachability (§5.3) — **in M1r** (2–4), because `internal/reflectlite` and `syscall` are reached by M1b's packages; then atomics, bytealg, math, sync semaphores, time (M1b) | W4 for execution; registry format independent | W5 |
 | W7 | Linker: bundle, manifest, init order, `-X`, ELF stub + build-ID patch (§2.4, §4.2) | W2 | W3, W4 |
-| W8 | Syscall executor (§5.6), in two parts. **W8a (M1r, 3–4):** executor in the backend incl. slot release (GG-SCHED-0006), `EINTR`, errno; raw entry; role-table entries for `openat`, `read`, `lseek`, `close` from the generated sysscan skeleton with the table-vs-source gate on them. **W8b (M1c/M4, 7–11):** the remaining entries of the 148 numbers + gate (2–3, M1c), `AllThreads*`, raw-fd epoll poller, GG-0063 (2–3); spawn helper + `forkExec` patch, GG-0064 (3–4); foreign memory for `mmap`, signals glue (1–2). **10–15 agent-days** in total | W6, W13 | W9 |
-| W9 | `reflect`/`abi` (§5.6), in two parts. **W9a (M1r, 4–6):** descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); the `internal/reflectlite` intrinsics over the pointer model — `resolveNameOff`/`resolveTypeOff`, `unsafe_New`, `typedmemmove`, `ifaceE2I`, `chanlen`/`maplen` (1–2). **W9b (M1d, 6–9):** the remaining runtime intrinsics — `typedmemmove` family, `unsafe_New*`, `addReflectOff`, `typelinks`, map/chan helpers (2–3); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–15 agent-days**, 14–21 with W13 | W4, W13 | W8 |
-| W13 | Pointer model (§3.4), scheduled **once, in M1r, before W8a, W9a and every M1b package** (4–6): view pointers for `(*T)(unsafe.Pointer)`, offset → slot leaf tables, header views with stores, range-allocating `uintptr` handle table, `checkptr` traps. Part of the new node package | W4 | W5, W6 |
+| W8 | Syscall executor (§5.6), in two parts. **W8a (M1r, 3–4; after W13, whose byte region ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted) lets the `Bytes` role work on `byte[]` directly):** executor in the backend incl. slot release (GG-SCHED-0006), `EINTR`, errno; raw entry; role-table entries for `openat`, `read`, `lseek`, `close` from the generated sysscan skeleton with the table-vs-source gate on them. **W8b (M1c/M4, 7–11):** the remaining entries of the 148 numbers + gate (2–3, M1c), `AllThreads*`, raw-fd epoll poller, GG-0063 (2–3); spawn helper + `forkExec` patch, GG-0064 (3–4); foreign memory for `mmap`, signals glue (1–2). **10–15 agent-days** in total | W6, W13 | W9 |
+| W9 | `reflect`/`abi` (§5.6), in two parts. **W9a (M1r, 4–6; on the pointer model of W13, [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md) accepted):** descriptor image builder + imgcheck gate over a ≥ 300-type corpus (3–4); the `internal/reflectlite` intrinsics over the pointer model — `resolveNameOff`/`resolveTypeOff`, `unsafe_New`, `typedmemmove`, `ifaceE2I`, `chanlen`/`maplen` (1–2). **W9b (M1d, 6–9):** the remaining runtime intrinsics — `typedmemmove` family, `unsafe_New*`, `addReflectOff`, `typelinks`, map/chan helpers (2–3); call path: invoke intrinsic + the 4-function patch, `MakeFunc`, method values (2–3); inverse descriptor reader (2–3). **10–15 agent-days**, 14–21 with W13 | W4, W13 | W8 |
+| W13 | **ACTIVE (owner lane `w13`); decided by [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted by the owner 2026-11-18.** Pointer model (§3.4), scheduled **once, in M1r, before W8a, W9a and every M1b package** (4–6): checked `(*T)(unsafe.Pointer)` conversions with view pointers as the fallback, offset → slot leaf tables (and the inverse), a byte region for one-byte leaves (one slice shape), header views through the holding slot with replace-on-store, range-allocating `uintptr` handle table, `checkptr` traps. Part of the new node package | W4 | W5, W6 |
 | W10 | Test infrastructure for the new path: corpus runner through the launcher, package-splitting transform, compile-only std gate, std-test runner with exclusion list | W1 | all |
 | W11 | Cutover and deletion (M3) | M2 | — |
 | W12 (optional) | unified-IR export writer from `go/types` to drop the shadow compile | — | any time after M3 |
@@ -959,6 +959,38 @@ table-vs-source check ([sysscan](../../test/spikes/abi/sysscan/)) run in CI. W3 
 two largest packages and split further by node family (expressions,
 statements, declarations/types, closures+defer, concurrency) once the schema
 is fixed.
+
+### 9.1 M3 delete inventory (W11)
+
+Everything below exists only for the v1 pipeline and is deleted at the M3
+cutover (D11/D12), in the same change that makes the new path the only
+one. The list is the W11 checklist; a path that M3 does not delete is not
+listed. Kept: the runtime library both paths execute (`graalgo.runtime`,
+`graalgo.sched` minus the v1 launcher, `graalgo.jfr`, `graalgo.safepoint`,
+`graalgo.language`/`graalgo.launcher` minus the v1 entry points — after the
+layering split of [RECOVERY.md](RECOVERY.md) "Layering debt"), the new node
+package [graalgo/go/](../../internal/backend/truffle/src/main/java/graalgo/go/),
+[internal/toolexec/](../../internal/toolexec/) and
+[internal/backend/gir/](../../internal/backend/gir/).
+
+| Area | Deleted at M3 |
+|---|---|
+| Frontends | [internal/frontend/](../../internal/frontend/) whole: `gofrontend` (v1 JSON exporter, `export.go`, `main.go`, `mr_disk.go`, …), all 140 `synth_*.go` and their `gen_synth_*` generators and `run_gen_synth.py`, the import overlay (`overlay.json`), the vendored `go/*` copy [internal/frontend/go/](../../internal/frontend/go/) (the new path uses the toolchain's own `go/*`, GG-0069), [p3frontend/](../../internal/frontend/p3frontend/), [v2/](../../internal/frontend/v2/), `javatest/`, `testdata/` |
+| v1 Java, truffle module | `graalgo.frontend` (JSON `NodeFactory`, `Json`, ~110 node classes, `FrontendException`, `WireKindRegistrar`, `TypeTable`), `graalgo.frontend.v2` (`NodeFactoryV2`, `BinaryDecoder`), `graalgo.values` (nested-`GoStruct` value classes), `graalgo.launcher.Main` and `ClassPreloader`'s v1 use, `graalgo.sched.launcher` (`SchedMain`, `GoDebug`, `GcTrace`), the v1 halves of `GoLanguage`/`GoProgramBuilder`/`GoProgramRootNode`/`GoContext`, `graalgo.runtime.Intrinsics` and the v1 adapters of the runtime helpers |
+| Interop module | [internal/backend/interop/](../../internal/backend/interop/) whole — every package is a v1 stand-in ([bridge-inventory.md](bridge-inventory.md) B-8): `p3reflect`, `p3unsafe`, `p3net`, `p3sync`, `p3os`, `p3link`, `p3time`, `p3chan`, `p3x509`, `p3tls`, `p3builtin`, `p3math`, `p3crypto`, `p3abi`, `p3log`, `iface`, `rtstack`, `rtmemstats`, and the `P3SyncMain` launcher |
+| Launchers | [graalgo-run](../../internal/backend/graalgo-run) (v1 `Main`), [graalgo-sync-run](../../internal/backend/graalgo-sync-run) (`P3SyncMain`); [graalgo-bundle-run](../../internal/backend/graalgo-bundle-run) stays |
+| Go driver | [internal/driver/](../../internal/driver/) (the custom 5-command driver; `cmd/graalgo` becomes the §1 launcher) and [internal/vet/](../../internal/vet/) (vet passes through the wrapper, GG-0053) |
+| Tools | [tools/gate1/](../../tools/gate1/) (Phase-3 Gate-1 trial harness) |
+| Makefile | targets `gen-synth`, `test-v2`, `test-p3frontend`, `gate1`, `gate1-pilot`, the `check_mr_table_subset.py` step of `check` (and the script), the v1 halves of `test-ci`/`test-java-*`/`test-regression`; `generate` loses the gofrontend/overlay/`synth_*` steps |
+| Lists and budgets | [large_files_allowlist.txt](../../.github/scripts/large_files_allowlist.txt) entry `internal/frontend/testdata/timeintr_value.json`; every [ratchet_budget.json](../../.github/scripts/ratchet_budget.json) entry under a deleted path (the budget file is regenerated with `--update`); [layering_allowlist.txt](../../.github/scripts/layering_allowlist.txt) emptied; [quarantine.txt](../../test/java/quarantine.txt) lines owned by T1 (`MainTest`, `GenericsCorpusTest`, `BuiltinsCorpusTest`); `check_no_bridges.py`'s adjudication lists and the [bridge-inventory.md](bridge-inventory.md) entries |
+| v1 Java tests | truffle `src/test` classes of the deleted packages (`graalgo.frontend.*` corpus tests, `TypeparamDifferentialTest` — its adapter moves to the new path —, `MainTest`, `SchedTestRunner` v1 entries) and the whole interop `src/test` tree with `IfaceTestRunner`; the Makefile's `JAVA_*` lists shrink accordingly |
+| Exclusion lists | entries citing v1-only bugs (`BUG-0001`, `BUG-0014`, …) are re-triaged on the new path, not carried over |
+
+**girinterp** ([internal/toolexec/girinterp/](../../internal/toolexec/girinterp/))
+is **not** v1 and is not deleted at M3: it is the emitter's JVM-free
+reference interpreter and mutation oracle (§13) and stays as a test-only
+tool of the toolexec module for as long as it is cheaper than running the
+JVM for emitter tests; it never ships.
 
 ## 10. Risk register
 
@@ -1042,8 +1074,10 @@ stock `go build -toolexec` over a two-package module:
 
 **Not done, deliberately:**
 
-- **The linked program does not execute on the JVM yet.** The stub's
-  runner hand-off is tested with a stand-in. Reading the existing Java v2
+- **At the skeleton (M0), the linked program did not execute on the JVM.**
+  (Superseded below: since W4's first slice linked programs execute — see
+  "Since the skeleton".) The stub's runner hand-off was tested with a
+  stand-in. Reading the existing Java v2
   code showed that this is not a small step:
   [NodeFactoryV2.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)
   returns bare statement trees with no call targets, cannot call another
@@ -1301,7 +1335,7 @@ fixed here): (1) a conversion between `unsafe.Pointer` and `*T` is the
 identity in the node package, so `(*U)(unsafe.Pointer(p))` with another
 pointee type reads `U`'s slots from `T`'s object **silently** — W13 is a
 soundness gate for every further std package, not only a feature
-([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), draft); (2) `&T{}`
+([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted by the owner 2026-11-18); (2) `&T{}`
 for a slice-typed `T` yields a pointer whose pointee is not a variable
 (`container/heap`'s usual `pq := &PriorityQueue{}`); (3) operand order:
 gc reads plain variables after the calls of the same expression list
@@ -1382,7 +1416,7 @@ Applied from the owner's decisions of 2026-11-18 and
 | P1 answered: `internal/abi`/`internal/reflectlite` verbatim, `reflect` verbatim except 4 call-path functions; the 150–200-function fallback and "37–200 intrinsics" removed [1] | D8, §5.6, R1, §12 |
 | Patched list without `internal/abi`, `internal/reflectlite`, `sync` (pool); P5 expected verbatim [2] | §5.1, §5.5, §5.6, §12 |
 | Descriptor facts for every type; no hard-coded descriptor offset [3] | §3.2, §3.4 |
-| Pointer model: `(object, gc byte offset)`, leaf tables, range-allocated `uintptr` handles; flat values, no nested `GoStruct` (SPEC §3.4, GG-0061/GG-0062) [4] | §3.4, §5.6 `unsafe` |
+| Pointer model: `(object, gc byte offset)`, leaf tables, range-allocated `uintptr` handles; flat values, no nested `GoStruct` (SPEC §3.4, GG-0072/GG-0062) [4] | §3.4, §5.6 `unsafe` |
 | Syscall table → role model; measured counts 148/70/47; R2 → low [5] | §5.6, R2, §12 |
 | Readiness: runtime epoll poller through the executor (SPEC §3.5, GG-0063) replaces the blocking-NIO contract [6] | §5.6, M4 |
 | fork/exec: `posix_spawn` + helper under `$GRAALGO_HOME/libexec` (SPEC §3.8, GG-0064) [7] | §5.6, M4, W8 |

@@ -178,3 +178,14 @@ default scheduler past Phase 0 without one of (2)/(3) decided.
 ## Removed artifacts
 
 The binary JFR recordings under `logs/jfr/` were removed from the repo 2026-11-18 (no tracked binaries); the textual summaries in this report and [logs/RUN_MANIFEST.txt](logs/RUN_MANIFEST.txt) remain the evidence. Re-record with the harness to reproduce.
+
+## Pruned run logs (2026-11-18)
+
+6 raw run logs that this report does not cite were removed from git
+(debris gate: per-tree log-size cap in `check_tracked_files.py`), from
+`scratch/diag/`. They remain in history:
+`git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
+--name-only 228dd7ab docs/arch/spikes/02-loom` lists them). To regenerate,
+re-run the commands this report describes on the pinned toolchains (docs/dev/ENV.md); every log
+this report cites is kept.
+

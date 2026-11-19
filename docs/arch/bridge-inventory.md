@@ -30,6 +30,13 @@ bridges, no new `synth_*.go`), and an entry is removed only when its code is
 deleted. M3's exit criterion is an empty inventory and an empty grandfather
 list in [check_no_bridges.py](../../.github/scripts/check_no_bridges.py).
 
+The bridges below are the user-visible part of M3's deletion; the complete
+list of what the cutover deletes — including the non-bridge v1
+infrastructure (frontends `v2`/`p3frontend`/vendored `go/*`,
+`internal/driver`, `internal/vet`, the v1 launchers, `tools/gate1`, the
+v1-only Makefile targets, allow-list/ratchet/quarantine entries and the v1
+Java tests) — is [toolexec-design.md §9.1](toolexec-design.md#91-m3-delete-inventory-w11).
+
 ## Active bridges
 
 ### B-2. `NodeFactory.syncPrimitiveName` (name-keyed sync lowering)
@@ -184,7 +191,7 @@ real Go source run instead.
 | Package | LOC | Stands in for | Root-cause retirement |
 |---|---:|---|---|
 | `graalgo.p3reflect` | 8449 | `reflect`, `internal/abi` | verbatim `reflect` over gc-layout descriptor views ([abi-spike.md](abi-spike.md) P1, toolexec M2) |
-| `graalgo.p3unsafe` | 2914 | `unsafe` pointer views | flat value model with `(object, byte offset)` pointers (SPEC §3.4, GG-0061/0062) |
+| `graalgo.p3unsafe` | 2914 | `unsafe` pointer views | flat value model with `(object, byte offset)` pointers (SPEC §3.4, GG-0072/0062) |
 | `graalgo.p3net` (incl. `GoNetpoll`) | 2120 | `net`, `net/http`, v1 netpoller | real `net` over the syscall executor + runtime epoll poller (GG-0063, toolexec W8/M4) |
 | `graalgo.p3sync` | 2024 | `sync`, `sync/atomic` | real `sync` over the runtime facade's semaphore/atomic intrinsics (toolexec runtime facade) |
 | `graalgo.p3os` | 1806 | `os`, `syscall` | real `os`/`syscall` over the Panama syscall table ([abi-spike.md](abi-spike.md) P2, ADR-0009) |

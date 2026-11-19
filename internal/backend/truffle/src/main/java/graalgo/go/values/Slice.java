@@ -7,7 +7,7 @@ package graalgo.go.values;
  * {@code nr} reference and {@code nb} byte slots lives at {@code base.prims[prim + i*np ..]},
  * {@code base.refs[ref + i*nr ..]}, {@code base.bytes[byt + i*nb ..]}; the element layout is
  * static, so it is a constant of the accessing node, not a field here. A slice of an array
- * shares the array's {@link Flat} (GG-0061: arrays are inlined in their enclosing object), and
+ * shares the array's {@link Flat} (GG-0072: arrays are inlined in their enclosing object), and
  * this is the one slice shape: a {@code []byte} addresses {@code base.bytes} whether the backing
  * object was made for it or is a struct with an inlined {@code [N]byte} (ADR-0015 decision 3).
  */

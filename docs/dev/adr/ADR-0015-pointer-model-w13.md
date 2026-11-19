@@ -1,10 +1,12 @@
 # ADR-0015 — W13 on the flat value model: checked pointer conversions, view pointers, and a byte region for byte-sized leaves
 
 **Date:** 2026-11-18
-**Status:** **draft for the owner — not accepted, nothing locked.** It
-proposes how toolexec work package W13 is built in the node package and one
-amendment of [SPEC.md](../../arch/SPEC.md) §3.4's wording (decision 3). No
-requirement changes: GG-0061 and GG-0062 stay as they are.
+**Status:** **accepted by the owner 2026-11-18** (all four decisions). It
+decides how toolexec work package W13 is built in the node package and
+amends [SPEC.md](../../arch/SPEC.md) §3.4's wording (decision 3). Requirements:
+GG-0062 stays as it is; `GG-0061`'s locked text became
+false under decisions 1–3 and is superseded by GG-0072 (locked by the owner 2026-11-19) (owner
+sign-off pending, 2026-11-19).
 **Scope:** [toolexec-design.md](../../arch/toolexec-design.md) §3.4, §5.6,
 §9 (W13, W9a, W8a); [truffle-design.md](../../arch/truffle-design.md) §15
 (rows "Pointers", "Slices", "Complex");
@@ -47,7 +49,7 @@ runs `reflectlite.TypeOf((*error)(nil)).Elem()` (an interface-header view
 and two descriptor reads), and `strconv`, `strings`, `bytes`, `time` import
 `errors`.
 
-## Proposed decisions
+## Decisions
 
 1. **A pointer conversion is an identity that is checked, with a view as
    the fallback.** `unsafe.Pointer` carries the same Java object as the

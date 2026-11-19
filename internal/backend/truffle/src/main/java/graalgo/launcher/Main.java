@@ -445,6 +445,14 @@ public final class Main {
                 // own absolute path; see runOne) — no state leaks across
                 // entries.
                 exit = runOne(file, check, false, null, new String[0]);
+            } catch (RuntimeException | StackOverflowError e) {
+                // One entry's crash must not take down the batch (it did:
+                // every typeparam comparison came back INFRA because a
+                // single v1 NodeFactory IllegalArgumentException escaped).
+                // Record what a single-file run shows: the JVM's uncaught
+                // exception line and exit status 1.
+                System.err.println("Exception in thread \"main\" " + e);
+                exit = 1;
             } finally {
                 System.setOut(realOut);
                 System.setErr(realErr);

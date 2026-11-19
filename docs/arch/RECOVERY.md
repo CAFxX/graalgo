@@ -25,7 +25,9 @@ verified by running programs, not by reading docs).
 
 ## State (2026-11-18)
 
-Integration branch: `wt/recovery/integration`.
+Integration branch: `master` in `~/dev/graalgo` (fast-forward only; lanes
+work in worktrees, [AGENTS.md](../../AGENTS.md) §4). The `wt/recovery/*`
+branches below are history.
 
 | Lane | State |
 |---|---|
@@ -39,8 +41,10 @@ Integration branch: `wt/recovery/integration`.
 | T0.D + TR-0 + TR-1 backend structure (`wt/recovery/backend-structure`) | landed |
 | toolexec W3 emitter (all GIR node kinds; girinterp reference interpreter) | landed 2026-11-18 (`wt/m1a/nodes-fix2`); the M1a close-out added GIR `FuncLit.wrapper` |
 | toolexec W4 new node package ([graalgo/go/](../../internal/backend/truffle/src/main/java/graalgo/go/), [truffle-design.md](truffle-design.md) §15) | landed 2026-11-18; M1a close-out (`wt/m1a/closeout`): Goexit, recover through wrappers, range-over-func, the open-coding limit pinned; `make test-m1a` 173/173 programs vs gc (+ [defer_path.sh](../../test/m1a/defer_path.sh)), per-push in `make all`; per-node T1–T4 tests waived ([ADR-0014](../dev/adr/ADR-0014-node-tests-waived-m1a.md), WP-NODETEST) |
+| srctest v4 (`wt/ci/green`): conformance triage of every GOROOT/test result on the product launcher | landed 2026-11-18 (`c14b63d0`): adapter honors action lines, stable divergence texts, every entry bug-id'd and signature-pinned ([srctest-exclusions.yaml](../../test/differential/srctest-exclusions.yaml) v4; v5 adds gc2.go, BUG-0032) |
+| Debt paydown round 2 (`wt/ci/green2`) | 2026-11-18: StackDepthLimit flake fixed at the root (call-path holder warm-up); layering, forward-only (ratchet, locked-text, statuses), exclusion-register, quarantine owner/expiry, superseded-id, per-tree log-size gates; no-bridges gate over whole pushes; typeparam adapter un-broken (un-quarantined); fuzz-soak fits the job limit; stdlib-gate manual-only (BUG-0033); M3 delete inventory (toolexec-design §9.1) |
 | Spec reconciliation (`wt/spec/reconcile`): global spec-conformance review items | done 2026-11-18 ([ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md), [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md), coverage below) |
-| toolexec M1r, first slice (`wt/m1r/facade`): W5 fork tooling + facade `runtime`, W6 intrinsic registry + link-time resolution and reachability | landed 2026-11-18: upstream's std source runs on the node package for 18 importable packages — those that at run time need no `internal/reflectlite` descriptor read, no semaphore and no system call (`make test-m1r` 11/11; [toolexec-design.md](toolexec-design.md) §13); all of std compiles against the facade. **Open in M1r:** W13 pointer model ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), draft for the owner — also a soundness gate: `unsafe.Pointer` conversions are an unchecked identity today), W9a descriptor images + `reflectlite` intrinsics (gate for `errors` and everything above it), W8a syscalls; then `sync`'s semaphores (11 symbols) |
+| toolexec M1r, first slice (`wt/m1r/facade`): W5 fork tooling + facade `runtime`, W6 intrinsic registry + link-time resolution and reachability | landed 2026-11-18: upstream's std source runs on the node package for 18 importable packages — those that at run time need no `internal/reflectlite` descriptor read, no semaphore and no system call (`make test-m1r` 11/11; [toolexec-design.md](toolexec-design.md) §13); all of std compiles against the facade. **Open in M1r:** W13 pointer model ([ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), accepted by the owner 2026-11-18, **ACTIVE: owner lane `w13`** — also a soundness gate: `unsafe.Pointer` conversions are an unchecked identity until it lands), W9a descriptor images + `reflectlite` intrinsics (gate for `errors` and everything above it), W8a syscalls; then `sync`'s semaphores (11 symbols) |
 | toolexec W13, the pointer model (`wt/w13/pointers`; [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)) | landed 2026-11-19 on the branch: gc layout + leaf tables on every type (checked against the frontend's record), byte region in `Flat` with one slice shape, checked `unsafe.Pointer` conversions with view pointers and header views, `unsafe` builtins as node kinds, range-allocating `uintptr` handles, gc's `checkptr` fatal errors; gc's order of evaluation; `&T{}` for slice/map types; the startup hang traced to Truffle's mount hook re-entering `MethodHandle.customize` (runner flag). Gates: `make test-m1w13` 14/14 (per-push), `test-m1a` 176, `test-m1r` 12, `LeafTableTest`; [toolexec-design.md](toolexec-design.md) §13, [truffle-design.md](truffle-design.md) §15, [limitations.md](limitations.md). **Open in M1r:** W9a (gate for `errors` and everything above it), W8a, then `sync`'s semaphores |
 
 ## Decision log
@@ -51,7 +55,7 @@ Integration branch: `wt/recovery/integration`.
 | 2026-11-18 | Goroutines in image modes (A1) and GG-0050's "performant without the JIT" (A2): **measure first** — gating work items P-D (`engine.Compilation=false`, 0.5 day) and P-F (native-image thread behaviour, 1 day) before TR-12/T3; SPEC carries both as `[OPEN]` | SPEC §3.5, §3.9; truffle-design §13.2, §14 |
 | 2026-11-18 | Host access for `graalgo/java` (A4): embedder's `HostAccess` when embedded; allow-listed public access when standalone and the package is imported. A3, A5, A6 stay pending | SPEC §2.4, §4.3; truffle-design §5.6, §14 |
 | 2026-11-18 | Netpoller: runtime epoll poller through the Panama syscall executor, goroutines park via the slot-releasing path; `GG-0018` superseded by GG-0063 | SPEC §3.5, §7.4 |
-| 2026-11-18 | Value model flat with per-type leaf tables; `unsafe.Pointer` = (object, gc byte offset), in-object arithmetic defined, escapes are gc `checkptr` fatal errors; `GG-0015`/`GG-0016` superseded by GG-0061/GG-0062 | SPEC §3.4, §7.3 |
+| 2026-11-18 | Value model flat with per-type leaf tables; `unsafe.Pointer` = (object, gc byte offset), in-object arithmetic defined, escapes are gc `checkptr` fatal errors; `GG-0015`/`GG-0016` superseded by `GG-0061`/GG-0062 (`GG-0061` was re-issued as GG-0072 the next day, see the ADR-0015 row) | SPEC §3.4, §7.3 |
 | 2026-11-18 | Process creation: `posix_spawn` helper binary shipped in the distribution (GG-0064) | SPEC §3.8 |
 | 2026-11-18 | abi-spike §3's ten toolexec-design amendments applied; R1/R2 resolved GO with residual risks; new R15 (memory-unsafe syscall table) | toolexec-design §10, §14 |
 | 2026-11-18 | Unknown GODEBUG keys accepted silently like gc; `GG-0055` superseded by `GG-0065` (re-issued below) | SPEC §4.5, ADR-0011 |
@@ -63,8 +67,10 @@ Integration branch: `wt/recovery/integration`.
 | 2026-11-18 | A7 (safepoint preemption) **accepted conditionally on P-B** `[OPEN]`: the owner switches only if prototype P-B validates; SPEC, GG-SCHED-0001 and GG-0017 unchanged and `Safepoint.poll()` stays until then | ADR-0012, truffle-design §13.2, §14 |
 | 2026-11-18 | A7 **REJECTED** (supersedes the row above): prototype P-B failed — pinned virtual-thread parks (94 `jdk.VirtualThreadPinned` events vs 0), plain programs hang (3,000 CPU-bound goroutines; F1 with 10,000 spinners), Truffle mount-hook recursion, counted loops lose the safepoint under the community compiler configuration, a compiled `for {}` never preempted in the unwind-and-resume variant; by the owner's rule (switch only if P-B validates) the poll stays; SPEC and requirements unchanged. Real finding kept as backlog: the explicit poll costs 18.3 ms vs 1.0 ms without on `loop` (gc 4.4 ms) — new work package WP-POLLCOST | [ADR-0013](../dev/adr/ADR-0013-a7-rejected.md), truffle-design §2.7, §14 |
 | 2026-11-18 | M1a close-out: the per-node unit/PE tests of truffle-design §11 (T1–T4) are waived for M1a — the gc-differential corpus gate, `defer_path.sh` and `pe-check-m1a` stand in — with work package WP-NODETEST to build them; graalgo-tool's refusal of `-race`/`-msan`/`-asan`/`-cover`/fuzzing recorded as deviation DV6 | [ADR-0014](../dev/adr/ADR-0014-node-tests-waived-m1a.md), [ADR-0010](../dev/adr/ADR-0010-launcher-deviations.md), truffle-design §15 |
+| 2026-11-18 | **ADR-0015 accepted (all four decisions); W13 ACTIVE, owner lane `w13`:** checked `unsafe.Pointer` conversions with view pointers (gc byte offset) as the fallback and `checkptr` fatal errors; headers viewed through the slot that holds them, replaced on store; one-byte leaves in a typed `byte[]` region of each flat object, one slice shape `{base, prim, ref, byt, len, cap}` (**amends SPEC §3.4's "typed Java arrays" wording**; other narrow kinds stay `long`/`double` slots, wider typed arrays are a post-M2 benchmark question); `uintptr(p)` via the range-allocating handle table. `GG-0061` is superseded by the draft GG-0072 (its text said one `long[]` plus one `Object[]` and typed-array slices, false under this ADR; awaiting owner sign-off), GG-0062 text unchanged | ADR-0015, SPEC §3.4, truffle-design §15, toolexec-design §9 |
 | 2026-11-18 | A9 (closures over typed cells) **deferred pending benchmarks**: SPEC §3.4 unchanged (`MaterializedFrame` closures) until the owner decides after the closure benchmarks | ADR-0012, truffle-design §14 |
 | 2026-11-18 | **Re-issue (owner decision on the independent Fable review):** the four requirements locked that day without owner sign-off are superseded by requirements with corrected wording — `GG-0065` → GG-0068 (GODEBUG: what gc ignores is ignored; fail only on an unsupported knob's effective value from any source), `GG-0066` → GG-0069 (frontend unmodified; graalgo-tool refuses to run when built by another release), `GG-SCHED-0005` → GG-SCHED-0006 (slot *and* carrier accounting around every may-block host call; semaphore and poller parks; fail-fast bracket misuse), `GG-0067` split into GG-0070 (observable semantics incl. `panicnil` and caller frames, with [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (open-coded/chain mechanism, limit *L* pinned by a boundary test). **The owner signed off and locked all five on 2026-11-18** (`req lock`, after reading the independent Fable review); `GG-0063` (its only defect is the `GG-SCHED-0004` citation, resolved by the `superseded_by` chain) and `GG-0013` (cosmetic "vendored stdlib" wording) are left as is, not re-issued. `req lint` gains rule (e), a locked-text hash check | [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md) (re-issue section), ADR-0011 (status corrected), SPEC §3.2, §3.5, §4.5, §7.15, Appendix B |
+| 2026-11-19 | **Re-issue (owner decision):** `GG-0061` is superseded by GG-0072 (owner locked it 2026-11-19) because its locked text is false under ADR-0015 (one `long[]` plus one `Object[]` per struct, typed-Java-array-backed slices `{array, offset, len, cap}`): GG-0072 states the three regions (`long[]`, `Object[]`, `byte[]` for one-byte leaves), the one slice shape `{base, prim, ref, byt, len, cap}`, string windows into a `byte[]`, checked conversions with view pointers and header views, and keeps every other obligation; history ends "drafted for ADR-0015; awaiting owner sign-off" and it is **not locked** (GG-0062 is unchanged) | [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), SPEC §3.4, Appendix B |
 
 ## Tracks
 
@@ -210,8 +216,8 @@ rule (Sulong vs direct AST) whose re-test triggers are watched, not built.
 | GG-0058 MM-0017 gate on FFI | WP-CGO3 |
 | GG-0059 Interface freeze | WP-FRZ |
 | GG-0060 Mode selection | WP-MODE |
-| GG-0061 Flat value model | W4, W13 |
-| GG-0062 unsafe.Pointer/uintptr | W13 |
+| GG-0072 Flat value model with a byte region (locked 2026-11-19; supersedes `GG-0061`) | W4, W13 (ACTIVE, lane `w13`; [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)) |
+| GG-0062 unsafe.Pointer/uintptr | W13 (ACTIVE, lane `w13`; [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)) |
 | GG-0063 Runtime epoll poller | W8b |
 | GG-0064 Spawn helper | W8b |
 | GG-0068 GODEBUG registry, gc-compatible parsing (locked 2026-11-18) | WP-GODEBUG, W5, WP-UPG1 |
@@ -226,6 +232,38 @@ toolexec M0–M5 and TR-0–TR-13. Superseded requirements (`GG-0012`,
 `GG-0015`, `GG-0016`, `GG-0018`, `GG-0055`, `GG-SCHED-0004`, and the
 re-issued `GG-0065`, `GG-0066`, `GG-0067`, `GG-SCHED-0005`) are covered
 through their successors.
+
+## Layering debt
+
+The new path (`graalgo.go.*`, and `internal/toolexec`) must not depend on
+v1 code, which is deleted at M3. [check_layering.py](../../.github/scripts/check_layering.py)
+(`make check`) follows every reference transitively from `graalgo.go.*`
+through the shared code and fails on any edge into `graalgo.frontend`,
+`graalgo.values`, `graalgo.p3*`, `graalgo.iface`, `graalgo.rtstack` or
+`graalgo.rtmemstats`, and on any `internal/toolexec` import of
+`internal/{frontend,driver,vet}`. The 38 edges present when the gate landed
+(2026-11-18) are grandfathered, shrink-only, in
+[layering_allowlist.txt](../../.github/scripts/layering_allowlist.txt);
+`PanicNilError` was split off then (its v1 descriptor moved to
+`RuntimeErrorTypes`). The rest is not a mechanical split and is left to the
+owning lanes, in this order:
+
+1. `graalgo.language` (`GoLanguage`, `GoContext`, `GoProgramBuilder`,
+   `GoProgramRootNode` → `frontend.NodeFactory`, `WireKindRegistrar`,
+   `FrontendException`): the language shell serves both paths; the v1 wire
+   build moves behind a v1-only builder interface that the bundle path never
+   loads (T2, with the m1a-closeout/m1r-facade lanes, which edit this code
+   now). Deleted at M3 otherwise.
+2. `graalgo.runtime.Intrinsics` (→ `values.GoMap/GoSlice/GoKind/
+   GoTypeDescriptor/GoStructDescriptor/GoComplex*`, `frontend.Boxing`,
+   `FrontendException`): the v1 intrinsic surface; the new path has
+   `graalgo.go.runtime`. Split the entry points the new path reaches, the
+   rest goes at M3.
+3. `graalgo.runtime` helpers (`Panic`, `PanicRendering`, `RuntimeErrorTypes`,
+   `BuiltinPrint`, `DeferredCall`, `GoCalls`, `GoStrings`) and
+   `graalgo.sched.SchedulerCore` (→ `values.GoFunc`, `GoString`,
+   `GoTypeDescriptor`, `GoKind`): typed on the v1 value model; each splits
+   into a v1-free core and a v1 adapter deleted at M3 (T2 runtime/scheduler).
 
 ## Working rules
 

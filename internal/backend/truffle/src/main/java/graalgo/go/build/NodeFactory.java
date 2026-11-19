@@ -2117,7 +2117,7 @@ public final class NodeFactory {
                 return new Unsafes.StringData(a0.get());
             case Gir.Builtin.UNSAFE_SIZEOF:
                 // Folded by the frontend unless the operand's type depends on a type parameter:
-                // here it is instantiated, and its gc layout is the type's own (GG-0061).
+                // here it is instantiated, and its gc layout is the type's own (GG-0072).
                 return new N.ConstI64(ty(a[0]).gcSize());
             case Gir.Builtin.UNSAFE_ALIGNOF:
                 return new N.ConstI64(ty(a[0]).gcAlign());

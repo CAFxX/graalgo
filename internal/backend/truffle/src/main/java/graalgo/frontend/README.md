@@ -105,20 +105,21 @@ stored on the node and exposed via `getSourceSection()` override.
 ## Tests
 
 - `src/test/java/graalgo/frontend/StraightLineCorpusTest.java`
-  (`// verifies: GG-0012`): 12-program corpus
+  (no `verifies:` annotation since the 2026-11-18 verifies audit: a v1
+  test does not verify the frontend requirement GG-0069): 12-program corpus
   (`phases/phase1/corpus/straightline/`, conventions in its [README.md](README.md)),
   differential vs stock gc — the oracle injects `println(vars...)` and the
   test asserts frame-slot reads are bit-identical. Run via `make test`.
 - `src/test/java/graalgo/frontend/ArithmeticCorpusTest.java`
-  (`// verifies: GG-0015`): 17-program corpus
+  (formerly annotated `// verifies: GG-0061`, since re-issued as GG-0072; the annotation was removed 2026-11-19 because the test exercises the v1 model): 17-program corpus
   (`phases/phase1/corpus/arithmetic/`, conventions in its [README.md](README.md)),
   differential vs stock gc with a type-aware oracle (ints decimal, floats
   by `math.Float32/64bits`, strings hex) and per-kind frame-slot reads.
 - `src/test/java/graalgo/values/ValuesTest.java`
-  (`// verifies: GG-0015`): unit tests for the D5 value model and the
+  (no `verifies:` annotation): unit tests for the D5 value model and the
   `GoConvert` matrices, including gc-probed edge cases.
 - `src/test/java/graalgo/frontend/PanicCorpusTest.java`
-  (`// verifies: GG-0019`): 20-program corpus
+  (no `verifies:` annotation; the semantics it covers are GG-0070's): 20-program corpus
   (`phases/phase1/corpus/panic/`, conventions in its [README.md](README.md)),
   differential vs stock gc — recovered programs assert post-defer values
   bit-identical (gc oracle via a `// probe`-anchored deferred `println`);
@@ -130,24 +131,31 @@ stored on the node and exposed via `getSourceSection()` override.
   values, node shapes, and `SourceSection` ↔ exporter-position agreement,
   plus negative cases.
 
-## GG status
+## GG status (history)
 
-**`GG-0012` active** (2026-10-04, M2): `gofrontend` emits typed AST and
-`NodeFactory` builds straight-line programs end-to-end via `graalgo-run`,
-verified by `StraightLineCorpusTest` (`// verifies: GG-0012`, differential vs
-stock gc). GG-0013/GG-0044 stay **locked** per PLAN.md.
+The ids below are this package's history: `GG-0012`, `GG-0015` and
+`GG-0019` are superseded (by GG-0069, GG-0072 and GG-0070/GG-0071
+respectively; see [requirements/](../../../../../../../../requirements/)). Current
+annotations are listed under Tests above.
 
-**`GG-0015` active** (2026-10-04, M3; superseded by GG-0061 on 2026-11-18): the D5 value model
+**`GG-0012` active** (2026-10-04, M2; superseded via `GG-0066` by GG-0069):
+`gofrontend` emits typed AST and `NodeFactory` builds straight-line programs
+end-to-end via `graalgo-run`, verified then by `StraightLineCorpusTest`
+(differential vs stock gc). GG-0013/GG-0044 stay **locked** per PLAN.md.
+
+**`GG-0015` active** (2026-10-04, M3; superseded by GG-0072 on 2026-11-18): the D5 value model
 (`graalgo.values`) and the complete expression surface
 (`BinaryOpNode`/`UnaryOpNode`/`ConstNode`/`ConvertNode` at every Go kind)
-are differential-green on the arithmetic corpus, verified by
-`ArithmeticCorpusTest` + `ValuesTest` (`// verifies: GG-0015`). The D8
+are differential-green on the arithmetic corpus, verified then by
+`ArithmeticCorpusTest` + `ValuesTest` (historical annotation; superseded
+since). The D8
 `Safepoint.poll()` seam is in place at function entries (no-op in
 Phase 1; signature frozen in `docs/spec/freeze-stub.md`).
 
-**`GG-0019` active** (2026-10-04, M5): defer/panic/recover/Goexit are
-differential-green on the 20-program panic corpus, verified by
-`PanicCorpusTest` (`// verifies: GG-0019`) — recovered programs assert
+**`GG-0019` active** (2026-10-04, M5; superseded via `GG-0067` by
+GG-0070/GG-0071): defer/panic/recover/Goexit are differential-green on the
+20-program panic corpus, verified then by `PanicCorpusTest` (historical
+annotation) — recovered programs assert
 every observed post-defer value bit-identical to stock gc; fatal programs
 assert exit code 2, the normalized panic header block, and the
 goroutine-trace header. `panic(nil)` renders as `*PanicNilError`;

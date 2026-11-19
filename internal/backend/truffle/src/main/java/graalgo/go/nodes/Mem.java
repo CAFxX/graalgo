@@ -19,7 +19,7 @@ import graalgo.go.values.Slice;
 import graalgo.go.values.View;
 
 /**
- * Memory locations of the flat value model (SPEC §3.4, GG-0061/0062): a location is an object
+ * Memory locations of the flat value model (SPEC §3.4, GG-0072/0062): a location is an object
  * plus one offset per region — scalar slots, reference slots, byte-sized leaves (ADR-0015
  * decision 3). A {@link Loc} node evaluates its operand
  * expressions exactly once in {@link Loc#resolve}, returns the object and makes the offsets

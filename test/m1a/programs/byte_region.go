@@ -1,5 +1,5 @@
 // Byte-sized leaves (uint8, int8, bool) live in the byte region of a flat
-// object (SPEC §3.4, GG-0061; ADR-0015 decision 3): fields and array elements
+// object (SPEC §3.4, GG-0072; ADR-0015 decision 3): fields and array elements
 // alike, with one slice shape over made arrays and inlined [N]byte fields.
 package main
 

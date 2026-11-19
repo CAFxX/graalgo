@@ -314,19 +314,31 @@ spike 6's re-test triggers (current-LLVM Sulong support, a maintained
 full-language Go→LLVM frontend, or precise-GC/threading/signal primitives in
 Sulong). `[DECIDED]`.
 
-### 3.4 Value model: Java objects throughout (GG-0061, GG-0062)
+### 3.4 Value model: Java objects throughout (GG-0072, GG-0062)
 
 Go values live as Java objects `[DECIDED]`: descriptor-based structs (per-type
-descriptor + flat `long[]` for scalars + `Object[]` for references — one-class-
+descriptor + flat `long[]` for scalars + `Object[]` for references + a typed
+`byte[]` region for one-byte leaves, see below — one-class-
 per-struct is rejected because runtime class definition is unavailable in
 closed-world images). Structs and arrays are **flat**: nested struct and array
 fields are inlined into the enclosing value's `long[]`/`Object[]`, and a per-type
 **leaf table** derived from the gc layout maps each gc byte offset to its slot;
 one Java object per nested struct is not carried into the toolexec backend
-(GG-0061) `[DECIDED]` 2026-11-18. Slices as `{typedArray, offset, len, cap}` with typed Java
-arrays; maps as a hand-written open-addressing table (Go specifies randomized
+(GG-0072 — the re-issue of `GG-0061` for the byte region and the slice shape below; locked by the owner 2026-11-19) `[DECIDED]` 2026-11-18. **One-byte leaves** (`uint8`, `int8`, `bool`, as
+fields and as array elements alike) live in a typed `byte[]` region of each flat
+object, indexed through the same leaf table; every other scalar leaf stays a
+`long`/`double` slot (`[DECIDED]` 2026-11-18, [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)
+decision 3, accepted by the owner; it amends this section's earlier wording
+"slices as `{typedArray, offset, len, cap}` with typed Java arrays"). Slices have **one shape**,
+`{base, prim, ref, byt, len, cap}`, windows into the regions of the backing flat
+object, so a `[]byte` over a `make`d array and one over a struct's inlined
+`[N]byte` field address the same `byte[]`, and `string` ↔ `[]byte` conversion
+is one array copy. Whether wider narrow kinds (`int16`, `int32`, `float32`) are
+worth typed-array backing (`[]int32` as `int[]`) is a benchmark question after
+M2 `[OPEN]`, not a value-model decision. Maps as a hand-written open-addressing table (Go specifies randomized
 iteration order, so the runtime must own the iterator); strings as immutable
-`GoString{byte[]}` (`java.lang.String` is UTF-16 and wrong for arbitrary Go
+`GoString{byte[]}` (a window into a `byte[]`, so `unsafe.String`/`unsafe.StringData`
+can share storage; `java.lang.String` is UTF-16 and wrong for arbitrary Go
 bytes); interfaces as `(dynamicType descriptor, data)` + itab; closures as
 `{RootCallTarget, MaterializedFrame|null}`. "Go pointer" = Java reference to the
 referent plus a gc byte offset within it, never a native address:
@@ -337,7 +349,16 @@ for a managed Go implementation it reimplements the GC's job worse.
 
 `unsafe.Pointer` = `(referent object, gc byte offset)` over flat values; every
 `*T` converted from it is a view at that offset (GG-0062) `[DECIDED]`
-2026-11-18. **In-object arithmetic** (`unsafe.Add`, `uintptr(p)+n` converted
+2026-11-18. Refined by [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md)
+(accepted by the owner 2026-11-18) `[DECIDED]`: a typed pointer stays the
+referent or a slot-offset pointer, and a conversion through `unsafe.Pointer` is
+**checked** — the same object when `U`'s leaves coincide with the referent's
+leaves from that location on, otherwise a view pointer (referent + gc byte
+offset) whose loads and stores go through the leaf table, with `checkptr`
+fatal errors below for anything gc's checkptr rejects; typed code never sees a
+view. An interface, string or slice **header** viewed as words (`packEface`,
+`atomic.Value`, `SetLen`) is read from the slot that holds it and **replaced** on
+store, never mutated. **In-object arithmetic** (`unsafe.Add`, `uintptr(p)+n` converted
 back, `unsafe.Slice/String`, `(*T)(p)` views) has gc layout semantics.
 `uintptr(p)` is a stable integer from a range-allocating handle table (each
 address-taken object owns a range above any real user address; integer →
@@ -1262,7 +1283,7 @@ Extends [FEASIBILITY.md](FEASIBILITY.md) §11 with the decisions this spec makes
 | Wrap-via-`-toolexec`; fork only as escape hatch | this spec §3.1 (T3 analysis) | `[DECIDED]` |
 | `go/*` frontend of the tracked toolchain, GIR to the node factory (amended 2026-11-18); frontend+stdlib as one unit; `-lang` gates | this spec §3.2 (T2 analysis; toolexec-design D3–D5, D10) | `[DECIDED]` |
 | One Truffle AST; specialization budget only at dynamic sites | this spec §3.3 (T5 adversarial) | `[DECIDED]` |
-| Java-object value model (flat, amended 2026-11-18); unsafe = gc byte offsets + checkptr traps | this spec §3.4 (T5; abi-spike) | `[DECIDED]` |
+| Java-object value model (flat, amended 2026-11-18; byte region and checked conversions, ADR-0015); unsafe = gc byte offsets + checkptr traps | this spec §3.4 (T5; abi-spike; ADR-0015) | `[DECIDED]` |
 | Goroutine = vthread + scheduler token; user-space quantum scheduler (option C); runtime epoll poller (amended 2026-11-18); panic/defer model | this spec §3.5 (spike 2b PASS) | `[DECIDED]` |
 | Spike 2 (1:1 on FJP, back-edge yields): KILLED — 0 latency samples, systematic starvation | [spikes/02-loom/](spikes/02-loom/) | `[VERIFIED]` |
 | Spike 2b (option C): PASS — 11,824 vs 0 samples, in-flight cap assert never tripped, 48,140/48,140 parks/admissions, 40,588/40,588 wakeups won, scoped fixes (initFifo, 10ms quantum) | [spikes/02b-userspace-scheduler/](spikes/02b-userspace-scheduler/) | `[VERIFIED]` |
@@ -1347,7 +1368,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | `GG-0012` | Verbatim frontend vendoring — superseded by `GG-0066`, then GG-0069 | — |
 | GG-0013 | No language pinning | §3.2 |
 | GG-0014 | One Truffle AST | §3.3 |
-| `GG-0015` | Java-object value model — superseded by GG-0061 | — |
+| `GG-0015` | Java-object value model — superseded by `GG-0061`, then GG-0072 | — |
 | `GG-0016` | unsafe.Pointer v1 semantics — superseded by GG-0062 | — |
 | GG-0017 | Goroutines on virtual threads with user-space scheduler | §3.5 |
 | `GG-0018` | Netpoller deletion — superseded by GG-0063 | — |
@@ -1393,7 +1414,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0058 | MM-0017 gate on FFI | §3.7 |
 | GG-0059 | Interface freeze | §4.1, §4.2 |
 | GG-0060 | Mode selection | §2.5 |
-| GG-0061 | Flat Java-object value model | §3.4 |
+| `GG-0061` | Flat Java-object value model — superseded by GG-0072 (ADR-0015: byte region, one slice shape) | — |
 | GG-0062 | unsafe.Pointer and uintptr semantics | §3.4 (§7.3 closure) |
 | GG-0063 | Runtime epoll poller over raw fds | §3.5 (§7.4 closure) |
 | GG-0064 | Process creation via a spawn helper | §3.8 |
@@ -1404,6 +1425,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0069 | Frontend: go/parser + go/types of the tracked release, unmodified (locked 2026-11-18) | §3.2 |
 | GG-0070 | Panic/defer/recover/Goexit semantics and caller frames exactly as gc (locked 2026-11-18) | §3.5; [traceback-normalization.md](traceback-normalization.md) |
 | GG-0071 | Defer mechanism: open-coded up to a fixed limit, per-goroutine chain otherwise (locked 2026-11-18) | §3.5 |
+| GG-0072 | Flat Java-object value model with a byte region (locked 2026-11-19; supersedes `GG-0061`) | §3.4 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |

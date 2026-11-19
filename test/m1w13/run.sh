@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test/m1w13/run.sh — the pointer-model gate (`make test-m1w13`; toolexec work
-# package W13, SPEC §3.4, GG-0061/GG-0062, ADR-0015): programs that use
+# package W13, SPEC §3.4, GG-0072/GG-0062, ADR-0015): programs that use
 # package unsafe, built by the stock `go build` through graalgo-tool with
 # graalgo's fork applied and run on the node package, against gc.
 #

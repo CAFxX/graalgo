@@ -15,7 +15,7 @@ import java.util.function.Supplier;
  * {@link #NAMED} and resolves its underlying type and method sets lazily from the declaring
  * package's TYPEDEFS; every other descriptor is structural.
  *
- * <p>The descriptor also owns the flat layout of its values (GG-0061): how many scalar and
+ * <p>The descriptor also owns the flat layout of its values (GG-0072): how many scalar and
  * reference slots a value occupies and at which slot offsets each struct field starts.
  */
 public final class GoType {
@@ -610,7 +610,7 @@ public final class GoType {
     }
 
     /**
-     * The leaf table, forward direction (SPEC §3.4, GG-0061): the leaf that holds gc byte
+     * The leaf table, forward direction (SPEC §3.4, GG-0072): the leaf that holds gc byte
      * {@code off} of a value of this type, or null when the byte is padding or outside the
      * value. Structural, so an array of any length costs one division per level.
      */

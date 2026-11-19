@@ -5,7 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Unit tests for the v1 D5 value model (deleted at M3; GG-0061 supersedes it).
+ * Unit tests for the v1 D5 value model (deleted at M3; GG-0072 supersedes it).
  *
  * <p>Float-conversion expectations are the stock-gc/amd64 values measured
  * in the M3 probe battery (the spec leaves out-of-range float→int
