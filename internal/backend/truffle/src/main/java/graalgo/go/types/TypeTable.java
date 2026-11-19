@@ -50,6 +50,19 @@ public final class TypeTable {
         named("", "comparable", NONE, () -> emptyInterface, null, null);
     }
 
+    /** The descriptor images of this table's types (toolexec-design §3.4, W9a). */
+    public final Descriptors descriptors = new Descriptors(this);
+
+    /**
+     * The layout type of a descriptor image: an unnamed struct of {@code internal/abi}'s own
+     * types, marked so that a pointer to such an object is recognized as a type word.
+     */
+    GoType imageLayout(Field[] fields) {
+        GoType t = struct(fields);
+        t.imageLayout = true;
+        return t;
+    }
+
     private GoType intern(GoType t) {
         GoType prev = types.putIfAbsent(t.key, t);
         return prev != null ? prev : t;

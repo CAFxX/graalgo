@@ -111,6 +111,13 @@ public final class GoType {
     private static final Object NO_ITAB = new Object();
     /** Display string override for package-name qualification; see {@link #str()}. */
     String pkgName;
+    /** The descriptor image of this type, once built ({@link Descriptors}); null before. */
+    volatile Flat image;
+    /**
+     * Set on the layout type of a descriptor image: an object of this layout is gc's descriptor
+     * of some type, and its last reference slot holds that type ({@link Descriptors#typeOf}).
+     */
+    boolean imageLayout;
 
     /** One lock for every lazy resolution in a type table (the table itself). */
     private final Object lock;
@@ -717,6 +724,34 @@ public final class GoType {
             return elem.ptrMethods().get(methodKey);
         }
         return null;
+    }
+
+    /**
+     * The type word of an interface value of this dynamic type as code that reads the header
+     * through a view sees it ({@link Descriptors#typeWord}).
+     */
+    public Object typeWord() {
+        return ((TypeTable) lock).descriptors.typeWord(this);
+    }
+
+    /** Whether an object of this layout is a descriptor image ({@link Descriptors}). */
+    public boolean isImageLayout() {
+        return imageLayout;
+    }
+
+    /**
+     * The method set of this type as a dynamic type — what gc lists in the descriptor's
+     * uncommon section: a defined type's or struct's value set, a pointer's pointee's pointer
+     * set, nothing otherwise (an interface type's methods are its interface methods).
+     */
+    @TruffleBoundary
+    public Map<String, Method> methodSet() {
+        if ((kind == NAMED || kind == STRUCT) && u().kind != INTERFACE) {
+            return valueMethods();
+        } else if (kind == POINTER && (elem.kind == NAMED || elem.kind == STRUCT) && elem.u().kind != INTERFACE) {
+            return elem.ptrMethods();
+        }
+        return Map.of();
     }
 
     private Map<String, Method> valueMethods() {

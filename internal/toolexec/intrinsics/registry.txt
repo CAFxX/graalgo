@@ -28,6 +28,13 @@
 # character outside [A-Za-z0-9] replaced by '_', and takes the calling
 # Truffle node followed by the Go arguments in carrier form (integers
 # long, floats double, bool boolean, string Str, anything else Object).
+# A function with several results returns them as an Object[] in carrier
+# form.
+#   method SYMBOL CLASS SIGNATURE
+#       a method without a Go body ("pkg.T.M", "pkg.(*T).M"). SIGNATURE is
+#       the method's type, without the receiver; the Java method takes the
+#       receiver, an Object, before the arguments. The linker refuses a
+#       function bound to a `method` entry and a method bound to another.
 #
 # Bump `version` for an incompatible edit (a removed symbol or a changed
 # signature). The version and a content hash travel in every linked
@@ -119,3 +126,23 @@ intrinsic sync/atomic.StorePointer AtomicIntrinsics func(*unsafe.Pointer, unsafe
 # marker safely, so the pair is a no-op here (procPin's result, the P's id, is unused).
 intrinsic sync/atomic.runtime_procPin   AtomicIntrinsics func() int
 intrinsic sync/atomic.runtime_procUnpin AtomicIntrinsics func()
+
+# --- internal/reflectlite (W9a): the seven functions the runtime provides by
+# //go:linkname (upstream runtime/runtime1.go, mbarrier.go, iface.go, chan.go,
+# map.go). They work on descriptor images (graalgo/go/types/Descriptors.java);
+# reflectlite itself is upstream's source. ------------------------------------
+intrinsic internal/reflectlite.resolveNameOff ReflectliteIntrinsics func(unsafe.Pointer, int32) unsafe.Pointer
+intrinsic internal/reflectlite.resolveTypeOff ReflectliteIntrinsics func(unsafe.Pointer, int32) unsafe.Pointer
+intrinsic internal/reflectlite.unsafe_New     ReflectliteIntrinsics func(*internal/abi.Type) unsafe.Pointer
+intrinsic internal/reflectlite.typedmemmove   ReflectliteIntrinsics func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer)
+intrinsic internal/reflectlite.ifaceE2I       ReflectliteIntrinsics func(*internal/abi.Type, interface {}, unsafe.Pointer)
+intrinsic internal/reflectlite.chanlen        ReflectliteIntrinsics func(unsafe.Pointer) int
+intrinsic internal/reflectlite.maplen         ReflectliteIntrinsics func(unsafe.Pointer) int
+
+# --- runtime (facade), reached by internal/reflectlite's panic messages
+# (methodName). The node package records no call positions yet, so Caller
+# reports ok == false and FuncForPC nil, as gc does for a pc it cannot
+# attribute (docs/arch/limitations.md); (*Func).Name is upstream's "" for nil.
+intrinsic runtime.Caller       RuntimeIntrinsics func(int) (uintptr, string, int, bool)
+intrinsic runtime.FuncForPC    RuntimeIntrinsics func(uintptr) *runtime.Func
+method    runtime.(*Func).Name RuntimeIntrinsics func() string

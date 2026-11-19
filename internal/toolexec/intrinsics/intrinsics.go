@@ -32,6 +32,9 @@ type Entry struct {
 	// Replace: the symbol has a Go body that the intrinsic takes the place
 	// of (gc's compiler intrinsics).
 	Replace bool
+	// Method: the symbol is a method; Sig is its type without the receiver,
+	// and the Java method takes the receiver before the arguments.
+	Method bool
 }
 
 // Table is a parsed registry.
@@ -89,11 +92,11 @@ func Parse(text string) (*Table, error) {
 				return nil, fail("bad version %q", f[1])
 			}
 			t.Version = v
-		case "intrinsic", "replace":
+		case "intrinsic", "replace", "method":
 			if len(f) < 4 {
 				return nil, fail("want `%s SYMBOL CLASS SIGNATURE`", f[0])
 			}
-			e := Entry{Symbol: f[1], Class: f[2], Sig: strings.Join(f[3:], " "), Replace: f[0] == "replace"}
+			e := Entry{Symbol: f[1], Class: f[2], Sig: strings.Join(f[3:], " "), Replace: f[0] == "replace", Method: f[0] == "method"}
 			if !strings.Contains(e.Symbol, ".") {
 				return nil, fail("symbol %q has no package", e.Symbol)
 			}
@@ -125,7 +128,7 @@ func Parse(text string) (*Table, error) {
 	fmt.Fprintf(h, "version %d\n", t.Version)
 	for i, e := range t.Entries {
 		t.bySym[e.Symbol] = i
-		fmt.Fprintf(h, "%q %q %q %v\n", e.Symbol, e.Class, e.Sig, e.Replace)
+		fmt.Fprintf(h, "%q %q %q %v %v\n", e.Symbol, e.Class, e.Sig, e.Replace, e.Method)
 	}
 	copy(t.Hash[:], h.Sum(nil))
 	return t, nil

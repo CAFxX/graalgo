@@ -33,12 +33,21 @@ public final class Unsafes {
     public static final class ToPtr extends Ref {
         @Child private Expr x;
         private final GoType pointee;
+        private final boolean sliced;
         @CompilationFinal private GoType identical;
         private final BranchProfile slow = BranchProfile.create();
 
-        public ToPtr(Expr x, GoType pointee) {
+        /**
+         * {@code sliced}: the conversion is the operand of a slice expression,
+         * {@code (*[N]T)(p)[lo:hi:max]}. gc's checkptr then checks the elements the slice takes
+         * instead of the whole array type (cmd/compile walkCheckPtrAlignment), which is how
+         * {@code internal/abi} reaches a descriptor's method and parameter arrays through
+         * {@code *[1<<16]T}: the array may overrun the referent.
+         */
+        public ToPtr(Expr x, GoType pointee, boolean sliced) {
             this.x = x;
             this.pointee = pointee;
+            this.sliced = sliced;
         }
 
         @Override
@@ -50,7 +59,7 @@ public final class Unsafes {
                 return p;
             }
             slow.enter();
-            Object q = Unsafe.convert(this, p, pointee);
+            Object q = sliced ? Unsafe.convertSliced(this, p, pointee) : Unsafe.convert(this, p, pointee);
             if (q == p && identical == null && p instanceof Flat f && f.type != null) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 identical = f.type;

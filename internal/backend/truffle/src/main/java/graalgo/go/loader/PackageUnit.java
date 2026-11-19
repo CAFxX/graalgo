@@ -287,9 +287,19 @@ public final class PackageUnit {
         }
     }
 
+    /** The defined, non-generic type {@code name} that this package declares. */
+    public GoType namedType(String typeName) {
+        synchronized (program.types) {
+            typeDef(typeName);
+            return named(path, typeName, new GoType[0]);
+        }
+    }
+
     private GoType named(Gir.SymRef sym, GoType[] targs) {
-        String pkgPath = str(sym.pkg());
-        String typeName = str(sym.name());
+        return named(str(sym.pkg()), str(sym.name()), targs);
+    }
+
+    private GoType named(String pkgPath, String typeName, GoType[] targs) {
         TypeTable table = program.types;
         if (pkgPath.isEmpty()) {
             GoType universe = table.lookup(typeName);

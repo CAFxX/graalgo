@@ -68,12 +68,19 @@ func (t *Table) Java() string {
 		m := MethodName(e.Symbol)
 		var args []string
 		args = append(args, "this")
+		// A method's receiver travels as the first Go argument; the signature
+		// (the method's type key) does not list it.
+		first := 1
+		if e.Method {
+			args = append(args, "a[1]")
+			first = 2
+		}
 		for i, pt := range params {
 			jt := javaType(pt)
 			if jt == "Object" {
-				args = append(args, fmt.Sprintf("a[%d]", i+1))
+				args = append(args, fmt.Sprintf("a[%d]", i+first))
 			} else {
-				args = append(args, fmt.Sprintf("(%s) a[%d]", jt, i+1))
+				args = append(args, fmt.Sprintf("(%s) a[%d]", jt, i+first))
 			}
 		}
 		call := fmt.Sprintf("%s.%s(%s)", e.Class, m, strings.Join(args, ", "))
@@ -81,7 +88,7 @@ func (t *Table) Java() string {
 		p("    static final class R_%s extends Root {\n", m)
 		p("        R_%s(GoLanguage language) {\n            super(language, %q);\n        }\n\n", m, e.Symbol)
 		p("        @Override\n        public Object execute(VirtualFrame frame) {\n")
-		if len(params) > 0 {
+		if len(params) > 0 || e.Method {
 			p("            Object[] a = frame.getArguments();\n")
 		}
 		if len(results) == 0 {

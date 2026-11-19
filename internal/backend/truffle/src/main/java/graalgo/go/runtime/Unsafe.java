@@ -2,6 +2,7 @@ package graalgo.go.runtime;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.go.types.Descriptors;
 import graalgo.go.types.GoType;
 import graalgo.go.types.GoType.Leaf;
 import graalgo.go.values.Complex;
@@ -137,6 +138,26 @@ public final class Unsafe {
             return p; // nil, or a word that is not a pointer into a flat object (a type word)
         }
         return typed(n, referent(p), offset(p), u, p);
+    }
+
+    /**
+     * {@code (*[N]T)(p)} as the operand of a slice expression: gc's checkptr sizes this
+     * conversion by the slice bounds, not by the array type (cmd/compile
+     * walkCheckPtrAlignment), so an array that overruns the referent is not an error here. It
+     * yields a view; slicing it checks the elements actually taken ({@link #sliceOver}).
+     */
+    @TruffleBoundary
+    public static Object convertSliced(Node n, Object p, GoType array) {
+        if (p == null || !isFlatPointer(p)) {
+            return p;
+        }
+        Flat obj = referent(p);
+        long off = offset(p);
+        long ext = extent(obj);
+        if (array.u().kind == GoType.ARRAY && off >= 0 && off <= ext && off + array.gcSize() > ext) {
+            return p instanceof View ? p : new View(obj, off);
+        }
+        return typed(n, obj, off, array, p);
     }
 
     /** The {@code *U} pointer to byte {@code off} of {@code obj}; {@code same}: a pointer already naming it. */
@@ -686,6 +707,42 @@ public final class Unsafe {
         throw Panics.fatal(n, INVALID);
     }
 
+    /** Stores a value of any type, boxed in carrier form, at byte {@code off}. */
+    @TruffleBoundary
+    public static void storeValue(Node n, Flat obj, long off, GoType t, Object v) {
+        switch (t.carrier()) {
+            case GoType.C_I64:
+                storeScalar(n, obj, off, t, (long) v);
+                break;
+            case GoType.C_F64:
+                storeScalar(n, obj, off, t, Double.doubleToRawLongBits((double) v));
+                break;
+            case GoType.C_BOOL:
+                storeScalar(n, obj, off, t, (boolean) v ? 1 : 0);
+                break;
+            case GoType.C_REF:
+                storeRef(n, obj, off, t, v);
+                break;
+            default:
+                storeFlat(n, obj, off, t, (Flat) v);
+        }
+    }
+
+    /** Stores a value of type {@code t}, boxed in carrier form, where a (non-nil) pointer of any shape points. */
+    @TruffleBoundary
+    public static void storeThrough(Node n, Object p, GoType t, Object v) {
+        Object q = convert(n, p, t);
+        if (q instanceof Flat f) {
+            Values.store(t, f, 0, 0, 0, v);
+        } else if (q instanceof Ptr ptr) {
+            Values.store(t, ptr.obj, ptr.prim, ptr.ref, ptr.byt, v);
+        } else if (q instanceof View w) {
+            storeValue(n, w.obj, w.off, t, v);
+        } else {
+            throw Panics.fatal(n, INVALID);
+        }
+    }
+
     // ---------------------------------------------------------------- string and slice headers
 
     /** The pointer to a string's bytes ({@code unsafe.StringData}); nil for a string without storage. */
@@ -865,9 +922,12 @@ public final class Unsafe {
 
     // ---------------------------------------------------------------- interface headers
 
-    /** The type word of an interface slot: the dynamic type's descriptor, nil for a nil interface. */
+    /**
+     * The type word of an interface slot: the dynamic type's descriptor image (W9a; the type
+     * itself in a program without {@code internal/abi}), nil for a nil interface.
+     */
     public static Object typeWord(Object slot) {
-        return slot == null ? null : slot instanceof Iface i ? i.type : ((RawIface) slot).typ;
+        return slot == null ? null : slot instanceof Iface i ? i.type.typeWord() : ((RawIface) slot).typ;
     }
 
     /**
@@ -896,10 +956,11 @@ public final class Unsafe {
     public static Object makeIface(Node n, Object typ, Object data) {
         if (typ == null && data == null) {
             return null;
-        } else if (!(typ instanceof GoType)) {
+        }
+        GoType t = Descriptors.typeOf(typ);
+        if (t == null) {
             return new RawIface(typ, data);
         }
-        GoType t = (GoType) typ;
         if (t.u().kind != GoType.POINTER && t.isPointerShaped()) {
             return new Iface(t, data); // a map, channel, function or unsafe.Pointer: the word itself
         }

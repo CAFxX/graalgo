@@ -3,6 +3,7 @@ package graalgo.go.intrinsics;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.go.runtime.Panics;
+import graalgo.go.values.Str;
 import graalgo.runtime.GoErrors;
 import graalgo.sched.SchedulerCore;
 
@@ -52,6 +53,25 @@ final class RuntimeIntrinsics {
         sc.requestExit((int) code);
         sc.freezeForExit();
         throw new IllegalStateException("syscall.Exit returned");
+    }
+
+    /**
+     * {@code runtime.Caller}: the node package records no call positions yet, so no frame can
+     * be attributed — {@code ok == false}, which is gc's answer when it cannot recover the
+     * information (docs/arch/limitations.md).
+     */
+    static Object runtime_Caller(Node node, long skip) {
+        return new Object[] {0L, Str.EMPTY, 0L, false};
+    }
+
+    /** {@code runtime.FuncForPC}: nil, gc's answer for a pc inside no known function. */
+    static Object runtime_FuncForPC(Node node, long pc) {
+        return null;
+    }
+
+    /** {@code (*runtime.Func).Name}: upstream returns "" for a nil receiver, the only one there is. */
+    static Str runtime___Func__Name(Node node, Object f) {
+        return Str.EMPTY;
     }
 
     static long runtime_nanotime(Node node) {

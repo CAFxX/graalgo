@@ -102,6 +102,10 @@ func Resolve(files []*ir.File, reg *intrinsics.Table) (*bundle.Resolution, error
 	unbound := map[funcID]bool{}
 	checkSig := func(id funcID, e intrinsics.Entry) bool {
 		fn := &id.pkg.file.Funcs[id.fn]
+		if isMethod := fn.Flags&flagMethod != 0; isMethod != e.Method {
+			errs = append(errs, fmt.Sprintf("%s: a method binds to a `method` entry of the registry and a function to another; intrinsic %s is not that", id.symbol(), e.Symbol))
+			return false
+		}
 		if got := id.pkg.file.Types[fn.Sig-1].Key; got != e.Sig {
 			errs = append(errs, fmt.Sprintf("%s is declared %s; intrinsic %s of registry version %d is %s", id.symbol(), got, e.Symbol, reg.Version, e.Sig))
 			return false

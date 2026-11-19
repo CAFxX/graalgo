@@ -74,3 +74,25 @@ func TestParseErrors(t *testing.T) {
 		}
 	}
 }
+
+// A method's Java implementation takes the receiver before the arguments of
+// its signature; a function's does not.
+func TestMethodReceiver(t *testing.T) {
+	tab, err := Parse("version 1\nmethod p.(*T).M C func(int) string\nintrinsic p.F C func(int) string\nmethod q.v2.T.N C func()\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	java := tab.Java()
+	for _, want := range []string{"C.p___T__M(this, a[1], (long) a[2])", "C.p_F(this, (long) a[1])", "C.q_v2_T_N(this, a[1])"} {
+		if !strings.Contains(java, want) {
+			t.Errorf("generated Java lacks %q", want)
+		}
+	}
+	if e, _ := tab.Lookup("p.(*T).M"); !e.Method || e.Replace {
+		t.Errorf("p.(*T).M parsed as %+v", e)
+	}
+	other, _ := Parse("version 1\nintrinsic p.(*T).M C func(int) string\nintrinsic p.F C func(int) string\nmethod q.v2.T.N C func()\n")
+	if other.Hash == tab.Hash {
+		t.Errorf("the registry hash does not cover the method bit")
+	}
+}

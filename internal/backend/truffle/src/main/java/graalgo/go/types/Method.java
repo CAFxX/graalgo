@@ -71,6 +71,20 @@ public final class Method {
         return s == want;
     }
 
+    /** The receiver-less signature, or null for an entry no interface is ever matched against. */
+    @TruffleBoundary
+    public GoType sig() {
+        if (sigSupplier == null) {
+            return null;
+        }
+        GoType s = sig;
+        if (s == null) {
+            s = sigSupplier.get();
+            sig = s;
+        }
+        return s;
+    }
+
     /** The method's call target (built on first use). */
     public RootCallTarget target() {
         RootCallTarget t = target;

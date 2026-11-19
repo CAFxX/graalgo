@@ -6,7 +6,10 @@ import graalgo.gir.GirFile;
 import graalgo.go.intrinsics.IntrinsicTable;
 import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.RuntimeTypes;
+import graalgo.go.types.Descriptors;
+import graalgo.go.types.GoType;
 import graalgo.go.types.TypeTable;
+import graalgo.go.values.Closure;
 import graalgo.go.values.Flat;
 import graalgo.language.GoLanguage;
 import java.nio.charset.StandardCharsets;
@@ -113,6 +116,26 @@ public final class Program {
             throw new IllegalArgumentException("bundle has no main package " + mainPath);
         }
         p.computeInitOrder(units);
+        PackageUnit abi = p.byPath.get("internal/abi");
+        if (abi != null) {
+            // The program can read type descriptors: its internal/abi defines their layout.
+            p.types.descriptors.attach(new Descriptors.Host() {
+                @Override
+                public GoType abiType(String name) {
+                    return abi.namedType(name);
+                }
+
+                @Override
+                public String packageName(String path) {
+                    return p.packageNamed(path).name;
+                }
+
+                @Override
+                public Object equalFunc(GoType t) {
+                    return new Closure(new TypeEqual(language, t).getCallTarget(), null);
+                }
+            });
+        }
         return p;
     }
 

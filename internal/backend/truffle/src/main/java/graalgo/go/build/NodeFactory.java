@@ -1161,6 +1161,15 @@ public final class NodeFactory {
             case Gir.Expr.TypeAssert ta:
                 return typeAssert(ta);
             case Gir.Expr.Convert c:
+                if (c == slicedConversion) {
+                    // (*[N]T)(p)[lo:hi:max]: gc sizes the conversion's check by the slice
+                    // bounds, so the array type may overrun the referent (Unsafes.ToPtr).
+                    slicedConversion = null;
+                    GoType to = ty(c.type()).u();
+                    if (to.kind == GoType.POINTER && ty(c.x()).u().kind == GoType.UNSAFE_POINTER) {
+                        return new Unsafes.ToPtr(expr(c.x()), to.elem, true);
+                    }
+                }
                 return convert(ty(c.x()), ty(c.type()), c.x());
             case Gir.Expr.Call c:
                 return call(c);
@@ -1508,11 +1517,18 @@ public final class NodeFactory {
         return index != null && ty(index).u().isUnsigned();
     }
 
+    /** The conversion that is the operand of the slice expression being built, if any. */
+    private Gir.Expr slicedConversion;
+
     private Expr slice(Gir.Expr.Slice s) {
         GoType xt = ty(s.x()).u();
         // The operand first, then the indexes: the order their hoisted operations run in.
         Expr x = xt.kind == GoType.STRING || xt.kind == GoType.SLICE ? expr(s.x()) : null;
+        if (xt.kind == GoType.POINTER && s.x() instanceof Gir.Expr.Convert) {
+            slicedConversion = s.x();
+        }
         LocMk base = x == null ? structBase(s.x(), null) : null;
+        slicedConversion = null;
         I64 lo = s.lo() == null ? null : i64(s.lo());
         I64 hi = s.hi() == null ? null : i64(s.hi());
         I64 max = s.max() == null ? null : i64(s.max());
@@ -1599,7 +1615,7 @@ public final class NodeFactory {
             return new Unsafes.IntToPtr(asI64(x));
         } else if (t.kind == GoType.POINTER && f.kind == GoType.UNSAFE_POINTER) {
             // The checked identity of ADR-0015 decision 1 (the reverse direction is the identity).
-            return new Unsafes.ToPtr(x, t.elem);
+            return new Unsafes.ToPtr(x, t.elem, false);
         }
         if (f.kind == t.kind) {
             return x;

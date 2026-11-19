@@ -246,6 +246,25 @@ func TestSignatureMismatchAndDuplicates(t *testing.T) {
 	}
 }
 
+// A method binds to a `method` entry and a function to another kind: the
+// two calling conventions differ by the receiver.
+func TestMethodEntries(t *testing.T) {
+	reg := registry(t, "method rt.(*Func).Name C func() string\nintrinsic rt.nanotime C func() int64\nmethod rt.now C func() int64\nintrinsic rt.T.M C func()\n")
+	res, problems := resolve(t, reg,
+		newPkg("main").fn("main", 0, "", "func()"),
+		newPkg("rt").fn("(*Func).Name", bodyless|method, "", "func() string").fn("nanotime", bodyless, "", "func() int64"))
+	if len(problems) != 0 || len(res.Funcs) != 2 {
+		t.Errorf("matching entries: problems %q, bindings %v", problems, res.Funcs)
+	}
+	_, problems = resolve(t, reg,
+		newPkg("main").fn("main", 0, "", "func()"),
+		newPkg("rt").fn("now", bodyless, "", "func() int64").fn("T.M", bodyless|method, "", "func()"))
+	if len(problems) != 2 || !strings.Contains(problems[0], "rt.T.M: a method binds to a `method` entry") ||
+		!strings.Contains(problems[1], "rt.now: a method binds to a `method` entry") {
+		t.Errorf("mismatched entries: %q", problems)
+	}
+}
+
 func TestVariableAliases(t *testing.T) {
 	reg := registry(t, "")
 	res, problems := resolve(t, reg,

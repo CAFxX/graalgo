@@ -16,11 +16,25 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "19ba544492df9089";
+    public static final String HASH = "2629e0f697eae49e";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
         switch (symbol) {
+            case "internal/reflectlite.chanlen":
+                return new R_internal_reflectlite_chanlen(language);
+            case "internal/reflectlite.ifaceE2I":
+                return new R_internal_reflectlite_ifaceE2I(language);
+            case "internal/reflectlite.maplen":
+                return new R_internal_reflectlite_maplen(language);
+            case "internal/reflectlite.resolveNameOff":
+                return new R_internal_reflectlite_resolveNameOff(language);
+            case "internal/reflectlite.resolveTypeOff":
+                return new R_internal_reflectlite_resolveTypeOff(language);
+            case "internal/reflectlite.typedmemmove":
+                return new R_internal_reflectlite_typedmemmove(language);
+            case "internal/reflectlite.unsafe_New":
+                return new R_internal_reflectlite_unsafe_New(language);
             case "maps.clone":
                 return new R_maps_clone(language);
             case "math.Float32bits":
@@ -47,6 +61,12 @@ public final class IntrinsicTable {
                 return new R_math_archMin(language);
             case "math.archTrunc":
                 return new R_math_archTrunc(language);
+            case "runtime.(*Func).Name":
+                return new R_runtime___Func__Name(language);
+            case "runtime.Caller":
+                return new R_runtime_Caller(language);
+            case "runtime.FuncForPC":
+                return new R_runtime_FuncForPC(language);
             case "runtime.GC":
                 return new R_runtime_GC(language);
             case "runtime.GOMAXPROCS":
@@ -166,6 +186,99 @@ public final class IntrinsicTable {
         @Override
         public boolean isInternal() {
             return true;
+        }
+    }
+
+    /** {@code internal/reflectlite.chanlen}: {@code func(unsafe.Pointer) int}. */
+    static final class R_internal_reflectlite_chanlen extends Root {
+        R_internal_reflectlite_chanlen(GoLanguage language) {
+            super(language, "internal/reflectlite.chanlen");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_chanlen(this, a[1]);
+        }
+    }
+
+    /** {@code internal/reflectlite.ifaceE2I}: {@code func(*internal/abi.Type, interface {}, unsafe.Pointer)}. */
+    static final class R_internal_reflectlite_ifaceE2I extends Root {
+        R_internal_reflectlite_ifaceE2I(GoLanguage language) {
+            super(language, "internal/reflectlite.ifaceE2I");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectliteIntrinsics.internal_reflectlite_ifaceE2I(this, a[1], a[2], a[3]);
+            return null;
+        }
+    }
+
+    /** {@code internal/reflectlite.maplen}: {@code func(unsafe.Pointer) int}. */
+    static final class R_internal_reflectlite_maplen extends Root {
+        R_internal_reflectlite_maplen(GoLanguage language) {
+            super(language, "internal/reflectlite.maplen");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_maplen(this, a[1]);
+        }
+    }
+
+    /** {@code internal/reflectlite.resolveNameOff}: {@code func(unsafe.Pointer, int32) unsafe.Pointer}. */
+    static final class R_internal_reflectlite_resolveNameOff extends Root {
+        R_internal_reflectlite_resolveNameOff(GoLanguage language) {
+            super(language, "internal/reflectlite.resolveNameOff");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_resolveNameOff(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/reflectlite.resolveTypeOff}: {@code func(unsafe.Pointer, int32) unsafe.Pointer}. */
+    static final class R_internal_reflectlite_resolveTypeOff extends Root {
+        R_internal_reflectlite_resolveTypeOff(GoLanguage language) {
+            super(language, "internal/reflectlite.resolveTypeOff");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_resolveTypeOff(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/reflectlite.typedmemmove}: {@code func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer)}. */
+    static final class R_internal_reflectlite_typedmemmove extends Root {
+        R_internal_reflectlite_typedmemmove(GoLanguage language) {
+            super(language, "internal/reflectlite.typedmemmove");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectliteIntrinsics.internal_reflectlite_typedmemmove(this, a[1], a[2], a[3]);
+            return null;
+        }
+    }
+
+    /** {@code internal/reflectlite.unsafe_New}: {@code func(*internal/abi.Type) unsafe.Pointer}. */
+    static final class R_internal_reflectlite_unsafe_New extends Root {
+        R_internal_reflectlite_unsafe_New(GoLanguage language) {
+            super(language, "internal/reflectlite.unsafe_New");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectliteIntrinsics.internal_reflectlite_unsafe_New(this, a[1]);
         }
     }
 
@@ -335,6 +448,45 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return MathIntrinsics.math_archTrunc(this, (double) a[1]);
+        }
+    }
+
+    /** {@code runtime.(*Func).Name}: {@code func() string}. */
+    static final class R_runtime___Func__Name extends Root {
+        R_runtime___Func__Name(GoLanguage language) {
+            super(language, "runtime.(*Func).Name");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime___Func__Name(this, a[1]);
+        }
+    }
+
+    /** {@code runtime.Caller}: {@code func(int) (uintptr, string, int, bool)}. */
+    static final class R_runtime_Caller extends Root {
+        R_runtime_Caller(GoLanguage language) {
+            super(language, "runtime.Caller");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_Caller(this, (long) a[1]);
+        }
+    }
+
+    /** {@code runtime.FuncForPC}: {@code func(uintptr) *runtime.Func}. */
+    static final class R_runtime_FuncForPC extends Root {
+        R_runtime_FuncForPC(GoLanguage language) {
+            super(language, "runtime.FuncForPC");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_FuncForPC(this, (long) a[1]);
         }
     }
 
