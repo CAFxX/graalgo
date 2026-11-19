@@ -524,8 +524,11 @@ func (fs *fnState) call(x *ast.CallExpr) ir.Expr {
 		arg := info.Types[x.Args[0]]
 		switch {
 		case arg.IsNil():
-			// T(nil) is the nil value of T
-			return &ir.NilExpr{Type: e.typeID(to), Pos: fs.pos(x)}
+			// T(nil) is the nil value of T. It is a typed value, not the
+			// predeclared nil: wrapped in an (identity) conversion so that
+			// no context retypes it — any((*T)(nil)) is a non-nil interface
+			// holding a nil pointer, and i == (*T)(nil) compares with it.
+			return &ir.ConvertExpr{Type: e.typeID(to), Pos: fs.pos(x), X: &ir.NilExpr{Type: e.typeID(to), Pos: fs.pos(x)}}
 		case arg.Value != nil && isTypeParam(to):
 			// Conversions of a constant to a type parameter are the only
 			// ones go/types does not fold (it records the operand with its
