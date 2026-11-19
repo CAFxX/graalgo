@@ -69,6 +69,17 @@ var m7BytesBufferWriteStringTable = []m7StrconvJsonExpect{
 	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
 }
 
+var m7BigByteReaderTable = []m7StrconvJsonExpect{
+	// math/big: byteReader multi-result methods (REVIEW-2026-11-18-14
+	// C-P1-1, rev-1118-14-big-scan). ReadByte's helper had a Scan panic
+	// (now the gc body via the ReadRune helper); ReadRune/Token are new
+	// (promoted from fmt.ScanState upstream, made explicit here so the
+	// m7 desugar can rewrite the calls).
+	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}},
+	{"math/big", "ReadRune", "byteReader", "__mrbyteReader_ReadRune", "__mrbyteReader_ReadRunePair", []string{"ch", "size", "err"}},
+	{"math/big", "Token", "byteReader", "__mrbyteReader_Token", "__mrbyteReader_TokenPair", []string{"tok", "err"}},
+}
+
 var m7ArchiveMimeTable = []m7StrconvJsonExpect{
 	// mime/multipart: Reader.ReadForm + FileHeader.Open (A-P1-11,
 	// REVIEW-2026-11-05-15): the __-helpers existed with real bodies but
@@ -117,6 +128,18 @@ func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
 		t.Fatalf("m7BytesBufferWriteStringTable has %d entries, want 1", len(m7BytesBufferWriteStringTable))
 	}
 	for _, want := range m7BytesBufferWriteStringTable {
+		name := want.pkgPath + "." + want.recvType + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
+func TestM7BigByteReaderDesugarWiring(t *testing.T) {
+	if len(m7BigByteReaderTable) != 3 {
+		t.Fatalf("m7BigByteReaderTable has %d entries, want 3", len(m7BigByteReaderTable))
+	}
+	for _, want := range m7BigByteReaderTable {
 		name := want.pkgPath + "." + want.recvType + "." + want.name
 		t.Run(name, func(t *testing.T) {
 			checkM7DesugarWiring(t, want)

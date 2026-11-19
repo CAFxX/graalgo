@@ -454,7 +454,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// P3-M9 (tier1c): math/cmplx.Polar desugars to the __cmplxPolar helper
 	// (Appendix M; pair fields match the gc result names in order).
 	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}, false},
-	// P3-M9 (wave 3, math/big): 47 multi-result funcs/methods. Each has a
+	// P3-M9 (wave 3, math/big): 49 multi-result funcs/methods. Each has a
 	{"math/big", "AppendText", "Float", "__mrFloat_AppendText", "__mrFloat_AppendTextPair", []string{"v0", "v1"}, false},
 	{"math/big", "AppendText", "Int", "__mrInt_AppendText", "__mrInt_AppendTextPair", []string{"text", "err"}, false},
 	{"math/big", "AppendText", "Rat", "__mrRat_AppendText", "__mrRat_AppendTextPair", []string{"v0", "v1"}, false},
@@ -480,6 +480,8 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"math/big", "QuoRem", "Int", "__mrInt_QuoRem", "__mrInt_QuoRemPair", []string{"v0", "v1"}, false},
 	{"math/big", "Rat", "Float", "__mrFloat_Rat", "__mrFloat_RatPair", []string{"v0", "v1"}, false},
 	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}, false},
+	{"math/big", "ReadRune", "byteReader", "__mrbyteReader_ReadRune", "__mrbyteReader_ReadRunePair", []string{"ch", "size", "err"}, false},
+	{"math/big", "Token", "byteReader", "__mrbyteReader_Token", "__mrbyteReader_TokenPair", []string{"tok", "err"}, false},
 	{"math/big", "SetString", "Float", "__mrFloat_SetString", "__mrFloat_SetStringPair", []string{"v0", "v1"}, false},
 	{"math/big", "SetString", "Int", "__mrInt_SetString", "__mrInt_SetStringPair", []string{"v0", "v1"}, false},
 	{"math/big", "SetString", "Rat", "__mrRat_SetString", "__mrRat_SetStringPair", []string{"v0", "v1"}, false},
