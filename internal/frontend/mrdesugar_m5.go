@@ -4313,7 +4313,7 @@ func (e *exporter) synthMethodCall(c *ast.CallExpr, tmpName string, tmpID, tmpTi
 
 // synthPairField builds the __p5mr_N.<field> selector node for a pair
 // struct (field index i).
-func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid int, pairType types.Type, field string, i int) (*Node, error) {
+func (e *exporter) synthPairField(pos ast.Node, tmpName string, tmpID, tmpTid int, pairType types.Type, field string, i int) (*Node, error) {
 	nt, ok := pairType.(*types.Named)
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: pair type %v is not named", pairType)
@@ -4334,8 +4334,8 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 	if err != nil {
 		return nil, err
 	}
-	x := e.node("ident", c, map[string]any{"name": tmpName, "obj": tmpID, "type": tmpTid})
-	return e.node("selector", c, map[string]any{
+	x := e.node("ident", pos, map[string]any{"name": tmpName, "obj": tmpID, "type": tmpTid})
+	return e.node("selector", pos, map[string]any{
 		"x": x, "field": field, "selpath": []any{i}, "type": ftid,
 	}), nil
 }

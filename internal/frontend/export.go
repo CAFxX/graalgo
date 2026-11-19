@@ -3103,6 +3103,19 @@ type userMRInfo struct {
 	pairType   *types.Named     // synthesized pair struct (fields f0, f1, ...)
 	pairFields []string         // field names in result order
 	origSig    *types.Signature // original multi-result signature
+	// F2 (Sscanf error propagation): the function needs the deferred
+	// repack — it has an own-level `defer` (a DeferStmt outside any
+	// nested func literal) AND at least one named result. Such a
+	// function needs the deferred repack: explicit returns assign to
+	// the named-result locals first, and a synthetic deferred closure
+	// re-packs the locals into the pair after the user's defers run.
+	// Set by the pair-transform call sites before the body is exported.
+	repack bool
+	// F2: the synthetic single pair result var (created by the
+	// pair-transform call site next to the pair result node). The
+	// repack closure assigns to it; set by the call site before the
+	// body is exported.
+	pairVar *types.Var
 }
 
 // M10 (P1-4): struct-nesting depth cap for offset computation.
@@ -6064,6 +6077,7 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		}
 		// New signature: same params, single pair result.
 		pairVar := types.NewParam(token.NoPos, e.pkg, "", mrInfo.pairType)
+		mrInfo.pairVar = pairVar
 		sigResults = types.NewTuple(pairVar)
 		// Export a single result var for the pair type.
 		pairResult, err := e.exportParamVar(fd.Type, pairVar)
@@ -6079,6 +6093,9 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	// Set the current transform so return statements are rewritten.
 	prevMR := e.currentMR
 	if mrInfo != nil {
+		// F2: record whether the body has an own-level defer before
+		// exporting it — the ReturnStmt case and the repack depend on it.
+		mrInfo.repack = hasOwnLevelDefer(fd.Body) && sigHasNamedResult(mrInfo.origSig)
 		e.currentMR = mrInfo
 	}
 	body, err := e.exportBlock(fd.Body)
@@ -6090,7 +6107,7 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	// names, define them as locals at the start of the body so assignments
 	// to named results work. The `return` packs them into the pair.
 	if mrInfo != nil {
-		body, err = e.prependMRNamedResultDecls(fd.Type, fd.Body, fi.sig, body)
+		body, err = e.prependMRNamedResultDecls(fd.Type, fd.Body, mrInfo, body)
 		if err != nil {
 			return nil, err
 		}
@@ -6118,7 +6135,20 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 // against the same *types.Var objects) share the slots. Shared by
 // exportFuncDecl, exportFuncLit, and the generic-instantiation path: all
 // three apply the pair transform and all three must declare the locals.
-func (e *exporter) prependMRNamedResultDecls(varPos, blockPos ast.Node, sig *types.Signature, body *Node) (*Node, error) {
+//
+// F2 (Sscanf error propagation): when the function also has an own-level
+// defer (mrInfo.repack), a synthetic deferred repack closure is prepended
+// right after the named-result vardecls. It is the first defer registered,
+// so LIFO runs it last — after every user defer — and it re-packs the
+// named-result locals (plus the unnamed fields read back from the current
+// pair) into the pair result. Without it the backend reads the pair packed
+// at the `return` statement, before the defers ran, and any deferred write
+// to a named result (fmt's `defer errorHandler(&err)` in doScanf, a
+// deferred assignment, a post-recover assignment) is silently lost. The
+// repack is skipped when no result is named: defers cannot modify unnamed
+// results, so there is nothing to re-pack.
+func (e *exporter) prependMRNamedResultDecls(varPos, blockPos ast.Node, mrInfo *userMRInfo, body *Node) (*Node, error) {
+	sig := mrInfo.origSig
 	var namedDecls []*Node
 	sigResults := sig.Results()
 	for i := 0; i < sigResults.Len(); i++ {
@@ -6141,6 +6171,13 @@ func (e *exporter) prependMRNamedResultDecls(varPos, blockPos ast.Node, sig *typ
 			"define": true, "type": tid, "values": []*Node{},
 		}))
 	}
+	if mrInfo.repack {
+		repack, err := e.mrDeferRepackNode(blockPos, mrInfo)
+		if err != nil {
+			return nil, err
+		}
+		namedDecls = append(namedDecls, repack)
+	}
 	if len(namedDecls) == 0 {
 		return body, nil
 	}
@@ -6150,6 +6187,218 @@ func (e *exporter) prependMRNamedResultDecls(varPos, blockPos ast.Node, sig *typ
 	}
 	return e.node("block", blockPos, map[string]any{
 		"stmts": append(namedDecls, stmts...),
+	}), nil
+}
+
+// sigHasNamedResult reports whether sig has at least one named,
+// non-blank result — the precondition (with an own-level defer) for the
+// F2 deferred repack.
+func sigHasNamedResult(sig *types.Signature) bool {
+	if sig == nil {
+		return false
+	}
+	for i := 0; i < sig.Results().Len(); i++ {
+		name := sig.Results().At(i).Name()
+		if name != "" && name != "_" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasOwnLevelDefer reports whether b contains a DeferStmt that registers on
+// this function's own defer chain: any DeferStmt except those inside a
+// nested func literal (whose defers belong to the literal). A defer in a
+// nested block (if/for/switch) still counts — defers are function-scoped
+// in Go, so it runs at this function's exit.
+func hasOwnLevelDefer(b *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(b, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.DeferStmt:
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// mrDeferRepackNode builds the synthetic deferred repack closure for a
+// pair-transformed function with named results and an own-level defer:
+//
+//	defer func() { <pairResult> = Pair{f0: n, f1: err, ...} }()
+//
+// Named positions read the named-result locals (the values user defers
+// wrote); unnamed/blank positions read the fields back from the current
+// pair result (the values the `return` packed — on the panic+recover path
+// no return executed, so these read the entry zero, matching gc, where
+// unnamed results are zero when no return assigned them). The closure is
+// built from the same wire shapes as the ifacemethod defer desugar
+// (funclit + zero-arg call + defer node); it captures the locals and the
+// pair result by obj id, exactly like user-written deferred closures.
+func (e *exporter) mrDeferRepackNode(blockPos ast.Node, mrInfo *userMRInfo) (*Node, error) {
+	pairTid, err := e.typeID(mrInfo.pairType)
+	if err != nil {
+		return nil, err
+	}
+	if mrInfo.pairVar == nil {
+		return nil, fmt.Errorf("gofrontend: pair result var not set (exporter bug)")
+	}
+	pairVar := mrInfo.pairVar
+	pairObj, ok := e.objIDs[pairVar]
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: pair result has no obj id (exporter bug)")
+	}
+	pairIdent := e.node("ident", blockPos, map[string]any{
+		"name": pairVar.Name(), "obj": pairObj, "type": pairTid,
+	})
+	var keys []string
+	var vals []*Node
+	sigResults := mrInfo.origSig.Results()
+	for i := 0; i < sigResults.Len(); i++ {
+		rv := sigResults.At(i)
+		keys = append(keys, mrInfo.pairFields[i])
+		if rv.Name() != "" && rv.Name() != "_" {
+			oid, ok := e.objIDs[rv]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: named result %q has no obj id (exporter bug)", rv.Name())
+			}
+			tid, err := e.typeID(rv.Type())
+			if err != nil {
+				return nil, err
+			}
+			vals = append(vals, e.node("ident", blockPos, map[string]any{
+				"name": rv.Name(), "obj": oid, "type": tid,
+			}))
+		} else {
+			sel, err := e.synthPairField(blockPos, pairVar.Name(), pairObj, pairTid, mrInfo.pairType, mrInfo.pairFields[i], i)
+			if err != nil {
+				return nil, err
+			}
+			vals = append(vals, sel)
+		}
+	}
+	pairNode := e.node("complit", blockPos, map[string]any{
+		"type": pairTid, "keyed": true, "values": vals, "fieldkeys": keys,
+	})
+	assign := e.node("assign", blockPos, map[string]any{
+		"tok": "=", "lhs": []*Node{pairIdent}, "rhs": []*Node{pairNode},
+	})
+	body := e.node("block", blockPos, map[string]any{"stmts": []*Node{assign}})
+	funclit := e.node("funclit", blockPos, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", blockPos, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
+	return e.node("defer", blockPos, map[string]any{"call": call}), nil
+}
+
+// namedResultIdent builds the ident node for a named result position,
+// resolving the obj id from the already-exported signature vars.
+func (e *exporter) namedResultIdent(pos ast.Node, mrInfo *userMRInfo, i int) (*Node, error) {
+	rv := mrInfo.origSig.Results().At(i)
+	oid, ok := e.objIDs[rv]
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: named result %q has no obj id (exporter bug)", rv.Name())
+	}
+	tid, err := e.typeID(rv.Type())
+	if err != nil {
+		return nil, err
+	}
+	return e.node("ident", pos, map[string]any{
+		"name": rv.Name(), "obj": oid, "type": tid,
+	}), nil
+}
+
+// assignUnpackedToNamedResults appends `named_i = unpacked[i]` assigns to
+// e.mrHoistPre for every named result position (F2, return-position
+// multi-result call in a deferring pair function). The assigns ride the
+// hoist so exportStmt wraps them in a block before the return: the call
+// temp is declared first (hoistMRCallArg's pre-statements precede these),
+// then the locals are assigned, then the return packs the pair.
+func (e *exporter) assignUnpackedToNamedResults(s *ast.ReturnStmt, mr *userMRInfo, unpacked []*Node) error {
+	sigResults := mr.origSig.Results()
+	for i, u := range unpacked {
+		if i >= sigResults.Len() {
+			return fmt.Errorf("gofrontend: unpacked field %d exceeds %d results (exporter bug)", i, sigResults.Len())
+		}
+		rv := sigResults.At(i)
+		if rv.Name() == "" || rv.Name() == "_" {
+			continue
+		}
+		lhs, err := e.namedResultIdent(s, mr, i)
+		if err != nil {
+			return err
+		}
+		e.mrHoistPre = append(e.mrHoistPre, e.node("assign", s, map[string]any{
+			"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{u},
+		}))
+	}
+	return nil
+}
+
+// packReturnViaNamedResults implements the F2 explicit-return path for a
+// deferring pair function: hoist every return value into a fresh temp
+// (each expression evaluated exactly once, in source order), assign the
+// temps to the named-result locals, and build the pair from the locals
+// (named positions) and the temps (unnamed positions). The temp vardecls
+// and assigns ride e.mrHoistPre so exportStmt wraps them in a block
+// before the return node.
+func (e *exporter) packReturnViaNamedResults(s *ast.ReturnStmt, mr *userMRInfo, results []*Node) (*Node, error) {
+	sigResults := mr.origSig.Results()
+	var pairVals []*Node
+	for i, r := range results {
+		if i >= sigResults.Len() {
+			return nil, fmt.Errorf("gofrontend: return value %d exceeds %d results (exporter bug)", i, sigResults.Len())
+		}
+		rt := e.substType(sigResults.At(i).Type())
+		rtid, err := e.typeID(rt)
+		if err != nil {
+			return nil, err
+		}
+		e.chanSeq++
+		tmpName := fmt.Sprintf("__mrret_%d", e.chanSeq)
+		v := types.NewVar(token.NoPos, nil, tmpName, rt)
+		tmpID, err := e.defVar(v, false)
+		if err != nil {
+			return nil, err
+		}
+		e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", s, map[string]any{
+			"names": []string{tmpName}, "objs": []int{tmpID},
+			"define": true, "type": nil, "values": []*Node{r},
+		}))
+		rv := sigResults.At(i)
+		if rv.Name() != "" && rv.Name() != "_" {
+			lhs, err := e.namedResultIdent(s, mr, i)
+			if err != nil {
+				return nil, err
+			}
+			e.mrHoistPre = append(e.mrHoistPre, e.node("assign", s, map[string]any{
+				"tok": "=", "lhs": []*Node{lhs},
+				"rhs": []*Node{e.node("ident", s, map[string]any{
+					"name": tmpName, "obj": tmpID, "type": rtid,
+				})},
+			}))
+			pairVals = append(pairVals, lhs)
+		} else {
+			pairVals = append(pairVals, e.node("ident", s, map[string]any{
+				"name": tmpName, "obj": tmpID, "type": rtid,
+			}))
+		}
+	}
+	pairTypeID, err := e.typeID(mr.pairType)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("complit", s, map[string]any{
+		"type": pairTypeID, "keyed": true, "values": pairVals, "fieldkeys": mr.pairFields,
 	}), nil
 }
 
@@ -6521,6 +6770,7 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 		}
 		// New signature: same params, single pair result.
 		pairVar := types.NewParam(token.NoPos, e.pkg, "", mrInfo.pairType)
+		mrInfo.pairVar = pairVar
 		pairResult, err := e.exportParamVar(fd.Type, pairVar)
 		if err != nil {
 			return nil, err
@@ -6530,6 +6780,9 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	// Set the current transform so return statements are rewritten.
 	prevMR := e.currentMR
 	if mrInfo != nil {
+		// F2: record whether the body has an own-level defer before
+		// exporting it — the ReturnStmt case and the repack depend on it.
+		mrInfo.repack = hasOwnLevelDefer(fd.Body) && sigHasNamedResult(mrInfo.origSig)
 		e.currentMR = mrInfo
 	}
 	body, err := e.exportBlock(fd.Body)
@@ -6540,7 +6793,7 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	// Like exportFuncDecl: a transformed instantiation's named results are
 	// locals so assignments and bare returns resolve to real frame slots.
 	if mrInfo != nil {
-		body, err = e.prependMRNamedResultDecls(fd.Type, fd.Body, mrInfo.origSig, body)
+		body, err = e.prependMRNamedResultDecls(fd.Type, fd.Body, mrInfo, body)
 		if err != nil {
 			return nil, err
 		}
@@ -6779,6 +7032,18 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 							"values":    unpacked,
 							"fieldkeys": mr.pairFields,
 						})
+						// F2: a multi-result call in return position in a
+						// deferring pair function must also land in the
+						// named-result locals first (same gc rule as the
+						// explicit-value path below): the unpacked fields
+						// are pure selectors on the hoisted call temp, so
+						// they are evaluated once and the assigns cannot
+						// re-evaluate them.
+						if mr.repack {
+							if err := e.assignUnpackedToNamedResults(s, mr, unpacked); err != nil {
+								return nil, err
+							}
+						}
 						return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
 					}
 					return e.node("return", s, map[string]any{"results": unpacked}), nil
@@ -6797,6 +7062,23 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		// `return a, b` becomes `return Pair{f0: a, f1: b}`.
 		if e.currentMR != nil && len(results) > 1 {
 			mr := e.currentMR
+			if mr.repack {
+				// F2: gc assigns return values to the result parameters
+				// BEFORE deferred functions run, so a defer may observe
+				// and modify them. The plain pack above bypasses the
+				// named-result locals, which would leave the deferred
+				// repack reading stale values. Hoist every value into a
+				// temp first (each expression evaluated exactly once, in
+				// order — a value expression reading a named result must
+				// see the pre-return value, as in gc), assign the temps
+				// to the named locals, and pack the pair from the locals
+				// (named positions) and the temps (unnamed positions).
+				pairNode, err := e.packReturnViaNamedResults(s, mr, results)
+				if err != nil {
+					return nil, err
+				}
+				return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
+			}
 			pairTypeID, err := e.typeID(mr.pairType)
 			if err != nil {
 				return nil, err
@@ -11595,6 +11877,7 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 		e.funcLitMRInfo[l] = mrInfo
 		// New signature: same params, single pair result.
 		pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
+		mrInfo.pairVar = pairVar
 		pairResults := types.NewTuple(pairVar)
 		pairResult, err := e.exportParamVar(l.Type, pairVar)
 		if err != nil {
@@ -11610,6 +11893,9 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	// named results into a pair where the literal's single result belongs.
 	prevMR := e.currentMR
 	if mrInfo != nil {
+		// F2: record whether the body has an own-level defer before
+		// exporting it — the ReturnStmt case and the repack depend on it.
+		mrInfo.repack = hasOwnLevelDefer(l.Body) && sigHasNamedResult(mrInfo.origSig)
 		e.currentMR = mrInfo
 	} else {
 		e.currentMR = nil
@@ -11622,7 +11908,7 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	// Like exportFuncDecl: a transformed literal's named results are locals
 	// so assignments and bare returns resolve to real frame slots.
 	if mrInfo != nil {
-		body, err = e.prependMRNamedResultDecls(l.Type, l.Body, sig, body)
+		body, err = e.prependMRNamedResultDecls(l.Type, l.Body, mrInfo, body)
 		if err != nil {
 			return nil, err
 		}

@@ -669,8 +669,26 @@ func resultTypesFL(results *ast.FieldList) []ast.Expr {
 	return out
 }
 
-// tparamNamesOf returns the type parameter names declared by a FuncType,
-// or nil for a non-generic function.
+// resultNamesFL returns the result names of a results field list in
+// order, parallel to resultTypesFL: "" for an unnamed result, "_" for a
+// blank-named one. Used by the F2 repack to decide, per pair position,
+// whether a named-result local exists to read.
+func resultNamesFL(results *ast.FieldList) []string {
+	var out []string
+	if results == nil {
+		return out
+	}
+	for _, fld := range results.List {
+		if len(fld.Names) == 0 {
+			out = append(out, "")
+		} else {
+			for _, n := range fld.Names {
+				out = append(out, n.Name)
+			}
+		}
+	}
+	return out
+}
 func tparamNamesOf(ft *ast.FuncType) []string {
 	if ft == nil || ft.TypeParams == nil {
 		return nil
@@ -873,6 +891,9 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// binding is out of M4 scope), keep the panic body exactly as before.
 	var rewrittenBody *ast.BlockStmt
 	var helperDoc *ast.CommentGroup
+	// F2: whether the helper gets a deferred repack closure (set in the
+	// bodied branch below; body-less helpers never do).
+	needRepack := false
 	if fd.Body == nil {
 		if len(tparamNames) == 0 {
 			if sym, ok := mrLinknameSymbol(fd, pkgPath); ok {
@@ -896,7 +917,15 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 		}
 	} else {
 		usedNames := usedNamedResults(fd)
-		rewrittenBody = rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
+		// F2: the helper gets a deferred repack closure when the body
+		// has an own-level defer and at least one named result has a
+		// local in the helper (usedNames non-empty): without it, the
+		// pair packed at the `return` is read before the defers run
+		// and deferred writes to named results (fmt's `defer
+		// errorHandler(&err)` in doScanf) are silently lost. Computed
+		// on the original body, before rewriteMRReturns reshapes it.
+		needRepack = len(usedNames) > 0 && hasOwnLevelDefer(fd.Body)
+		rewrittenBody = rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames, needRepack, usedNames)
 		var namedDecls []ast.Stmt
 		if len(usedNames) > 0 && fd.Type.Results != nil {
 			for _, fld := range fd.Type.Results.List {
@@ -938,23 +967,43 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 				}
 			}
 		}
-		if len(namedDecls) > 0 {
-			rewrittenBody.List = append(namedDecls, rewrittenBody.List...)
+		if len(namedDecls) > 0 || needRepack {
+			var prefix []ast.Stmt
+			prefix = append(prefix, namedDecls...)
+			if needRepack {
+				// F2: the deferred repack closure — registered first
+				// (right after the named-result locals), so LIFO runs
+				// it last, after every user defer. It re-packs the
+				// named-result locals (plus the unnamed fields read
+				// back from the current pair) into the helper's named
+				// pair result.
+				prefix = append(prefix, mrRepackDeferStmt(pairType, pairFields, resultNamesFL(fd.Type.Results), usedNames, tparamNames))
+			}
+			rewrittenBody.List = append(prefix, rewrittenBody.List...)
 		}
 	} // end else (fd.Body != nil); body-less case used panic body above,
 	// or a body-less linkname-bound helper when helperDoc is set
+	// F2: when the helper gets a deferred repack closure, its pair
+	// result is named so the closure can assign to it. The name is
+	// invisible to callers (they unpack the pair fields); a single
+	// named result's slot IS the result slot, so deferred writes to it
+	// land — the same mechanism as a single-result user function.
+	helperResults := &ast.FieldList{
+		// GAP-GENERIC-MR: the pair type is generic exactly when
+		// the function is; reference it with explicit type
+		// arguments.
+		List: []*ast.Field{{Type: genericRef(pairType, tparamNames)}},
+	}
+	if needRepack {
+		helperResults.List[0].Names = []*ast.Ident{ast.NewIdent("__mrret")}
+	}
 	helperDecl := &ast.FuncDecl{
 		Doc:  helperDoc,
 		Name: ast.NewIdent(helper),
 		Type: &ast.FuncType{
 			TypeParams: tparams,
 			Params:     helperParams,
-			Results: &ast.FieldList{
-				// GAP-GENERIC-MR: the pair type is generic exactly when
-				// the function is; reference it with explicit type
-				// arguments.
-				List: []*ast.Field{{Type: genericRef(pairType, tparamNames)}},
-			},
+			Results:    helperResults,
 		},
 		Body: rewrittenBody,
 	}
@@ -988,6 +1037,53 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// The original fd is DISCARDED (replaced by helper+stub). We return
 	// the three new decls; the caller splices them in.
 	return spec, pairDecl, helperDecl, stubDecl
+}
+
+// mrRepackDeferStmt builds the synthetic deferred repack closure for a
+// disk-MR __-helper (F2):
+//
+//	defer func() { __mrret = Pair{f1: n, f2: err, ...} }()
+//
+// Named positions read the named-result locals (the values user defers
+// wrote); unnamed/blank positions — and named results the body never
+// uses, for which no local exists — read the fields back from the
+// current pair result. The pair literal is positional, matching
+// rewriteMRReturns' style.
+func mrRepackDeferStmt(pairType string, pairFields, resultNames []string, usedNames map[string]bool, tparamNames []string) *ast.DeferStmt {
+	elts := make([]ast.Expr, len(pairFields))
+	for i, f := range pairFields {
+		name := ""
+		if i < len(resultNames) {
+			name = resultNames[i]
+		}
+		if name != "" && name != "_" && usedNames[name] {
+			elts[i] = ast.NewIdent(name)
+		} else {
+			elts[i] = &ast.SelectorExpr{X: ast.NewIdent("__mrret"), Sel: ast.NewIdent(f)}
+		}
+	}
+	assign := &ast.AssignStmt{
+		Lhs: []ast.Expr{ast.NewIdent("__mrret")},
+		Tok: token.ASSIGN,
+		Rhs: []ast.Expr{&ast.CompositeLit{
+			Type: genericRef(pairType, tparamNames),
+			Elts: elts,
+		}},
+	}
+	return &ast.DeferStmt{
+		Call: &ast.CallExpr{
+			Fun: &ast.FuncLit{
+				// Params/Results must be non-nil empty lists:
+				// go/types calls FuncType.End() when checking a
+				// func literal, and a nil Results panics there.
+				Type: &ast.FuncType{
+					Params:  &ast.FieldList{},
+					Results: &ast.FieldList{},
+				},
+				Body: &ast.BlockStmt{List: []ast.Stmt{assign}},
+			},
+		},
+	}
 }
 
 // recvBaseName extracts the base type name from a receiver type expr.
@@ -1648,7 +1744,7 @@ func (w *mrUseWalker) walkLitElem(e ast.Expr, kk, childKK mrKeyKind) {
 //   - return             -> return __Pair{n1, n2} (named results)
 //   - return F(args)     -> __t := __F(args); return __Pair{__t.f1, __t.f2}
 //     (F multi-result; spliced as two statements)
-func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string) *ast.BlockStmt {
+func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string, repack bool, usedNames map[string]bool) *ast.BlockStmt {
 	// Named result names (and their types) for bare return.
 	var namedResults []string
 	var namedResultTypes []ast.Expr
@@ -1678,6 +1774,16 @@ func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string,
 		// return-position call to such a name is a func value, not a
 		// reference to the package-level multi-result function.
 		boundNames: locallyBoundNames(fd),
+		// F2: the deferred repack (see transformMRFunc). When set,
+		// explicit returns land in the named-result locals first so
+		// the repack reads them; resultNames is parallel to
+		// pairFields ("" for unnamed/blank positions); resultTypes
+		// is parallel too (the declared type per position, for the
+		// step-1 temp declarations).
+		repack:      repack,
+		resultNames: resultNamesFL(fd.Type.Results),
+		resultTypes: resultTypes(fd),
+		usedNamed:   usedNames,
 	}
 	ctx.rewriteBlock(body)
 	return body
@@ -1705,6 +1811,18 @@ type mrRewriteCtx struct {
 	// reference to the package-level multi-result function, so it must
 	// not be rewritten to a __-helper call.
 	boundNames map[string]bool
+	// F2: repack is set when the helper gets a deferred repack closure
+	// (see transformMRFunc). resultNames parallels pairFields ("" for
+	// unnamed/blank positions); resultTypes is parallel too (the
+	// declared type per position, for the step-1 temp declarations);
+	// usedNamed names the results that have a local in the helper body.
+	// retSeq disambiguates the __mr_ret temps across return sites in
+	// one function.
+	repack      bool
+	resultNames []string
+	resultTypes []ast.Expr
+	usedNamed   map[string]bool
+	retSeq      int
 }
 
 // locallyBoundNames returns the names bound as locals anywhere in fd
@@ -1904,6 +2022,55 @@ func (ctx *mrRewriteCtx) rewriteStmt(stmt ast.Stmt) []ast.Stmt {
 	}
 }
 
+// repackAssigns returns `name = value` assigns for every used named
+// result position, where value is the already-evaluated expression for
+// that position (a selector on the call temp or a temp ident — pure,
+// never re-evaluated). The values must be freshly built nodes: AST nodes
+// are not shared between the assign and the pair literal. Returns nil
+// when the repack does not apply.
+func (ctx *mrRewriteCtx) repackAssigns(values []ast.Expr) []ast.Stmt {
+	if !ctx.repack {
+		return nil
+	}
+	var out []ast.Stmt
+	for i, v := range values {
+		if i >= len(ctx.resultNames) {
+			break
+		}
+		name := ctx.resultNames[i]
+		if name == "" || name == "_" || !ctx.usedNamed[name] {
+			continue
+		}
+		out = append(out, &ast.AssignStmt{
+			Lhs: []ast.Expr{ast.NewIdent(name)},
+			Tok: token.ASSIGN,
+			Rhs: []ast.Expr{v},
+		})
+	}
+	return out
+}
+
+// repackPairElts builds the pair literal elements for an explicit return
+// under the repack: the named-result locals for used named positions
+// (their values were assigned just before), the temps for everything
+// else. temps[i] is the temp ident name for position i (fresh ident
+// nodes are built for each use).
+func (ctx *mrRewriteCtx) repackPairElts(temps []string) []ast.Expr {
+	elts := make([]ast.Expr, len(temps))
+	for i, tmp := range temps {
+		name := ""
+		if i < len(ctx.resultNames) {
+			name = ctx.resultNames[i]
+		}
+		if name != "" && name != "_" && ctx.usedNamed[name] {
+			elts[i] = ast.NewIdent(name)
+		} else {
+			elts[i] = ast.NewIdent(tmp)
+		}
+	}
+	return elts
+}
+
 // rewriteReturn rewrites one return statement, returning 1-2 statements.
 func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 	pairFields, namedResults := ctx.pairFields, ctx.namedResults
@@ -2020,11 +2187,19 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 					Rhs: []ast.Expr{helperCall},
 				}
 				args := make([]ast.Expr, len(pairFields))
+				assignVals := make([]ast.Expr, len(pairFields))
 				for i, f := range pairFields {
 					// Use fresh Ident nodes for the uses (not the def site).
 					args[i] = &ast.SelectorExpr{X: ast.NewIdent("__mr_tmp"), Sel: ast.NewIdent(f)}
+					assignVals[i] = &ast.SelectorExpr{X: ast.NewIdent("__mr_tmp"), Sel: ast.NewIdent(f)}
 				}
-				return []ast.Stmt{assign, mkPair(args)}
+				// F2: land the unpacked fields in the named-result
+				// locals before the pair return, so the deferred
+				// repack reads them.
+				stmts := []ast.Stmt{assign}
+				stmts = append(stmts, ctx.repackAssigns(assignVals)...)
+				stmts = append(stmts, mkPair(args))
+				return stmts
 			}
 			// General fallback: __t1, __t2 := <original call>;
 			// return Pair{__t1, __t2}. Correct for func values, methods
@@ -2041,15 +2216,68 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 				Rhs: []ast.Expr{call},
 			}
 			args := make([]ast.Expr, len(pairFields))
+			assignVals := make([]ast.Expr, len(pairFields))
 			for i := range pairFields {
 				// Use fresh Ident nodes for the uses (not the def sites).
 				args[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
+				assignVals[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
 			}
-			return []ast.Stmt{assign, mkPair(args)}
+			// F2: land the unpacked fields in the named-result locals
+			// before the pair return, so the deferred repack reads them.
+			stmts := []ast.Stmt{assign}
+			stmts = append(stmts, ctx.repackAssigns(assignVals)...)
+			stmts = append(stmts, mkPair(args))
+			return stmts
 		}
 		return []ast.Stmt{rs}
 	default:
 		// return a, b, ... -> return Pair{a, b, ...}
+		if ctx.repack {
+			// F2: gc assigns return values to the result parameters
+			// BEFORE deferred functions run. Hoist every value into
+			// a fresh temp (each expression evaluated exactly once,
+			// in order), assign the temps to the named-result locals,
+			// and pack the pair from the locals (used named positions)
+			// and the temps (everything else). Temp names carry a
+			// per-function sequence so two returns in one block cannot
+			// collide on `:=` redeclaration.
+			ctx.retSeq++
+			seq := ctx.retSeq
+			var stmts []ast.Stmt
+			temps := make([]string, len(rs.Results))
+			for i, r := range rs.Results {
+				tmp := fmt.Sprintf("__mr_ret%d_%d", seq, i+1)
+				temps[i] = tmp
+				// `var tmp T = r`, not `tmp := r`: the temp must
+				// have the result position's declared type, so
+				// untyped values convert as they do in the pair
+				// literal (`:= nil` is a type error, and `:= 1`
+				// would default to int where the result is int64).
+				// The type expr is reused from the signature, as
+				// the named-result locals above do.
+				var typ ast.Expr
+				if i < len(ctx.resultTypes) {
+					typ = ctx.resultTypes[i]
+				}
+				stmts = append(stmts, &ast.DeclStmt{
+					Decl: &ast.GenDecl{
+						Tok: token.VAR,
+						Specs: []ast.Spec{&ast.ValueSpec{
+							Names:  []*ast.Ident{ast.NewIdent(tmp)},
+							Type:   typ,
+							Values: []ast.Expr{r},
+						}},
+					},
+				})
+			}
+			assignVals := make([]ast.Expr, len(temps))
+			for i, tmp := range temps {
+				assignVals[i] = ast.NewIdent(tmp)
+			}
+			stmts = append(stmts, ctx.repackAssigns(assignVals)...)
+			stmts = append(stmts, mkPair(ctx.repackPairElts(temps)))
+			return stmts
+		}
 		return []ast.Stmt{mkPair(rs.Results)}
 	}
 }
