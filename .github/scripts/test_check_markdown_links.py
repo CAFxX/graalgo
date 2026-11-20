@@ -179,6 +179,21 @@ class CheckExternalTest(unittest.TestCase):
         self.assertEqual(sleeps, [])
         self.assertEqual(api_calls, 0)
 
+    def test_every_attempt_sends_accept_header(self):
+        # 2026-11-20 (markdown-links run 44722519299): Akamai answers
+        # 403 to a request with no Accept header, which urllib omits;
+        # bugs.openjdk.org and intel.com links were reported dead. The
+        # fake host below behaves like that frontend: without the header
+        # every attempt is a definitive 403 and the URL is "dead".
+        def akamai(req, timeout=None):
+            if not req.get_header("Accept"):
+                raise http_error(403)
+            return FakeResponse(200)
+        result, calls, sleeps, _ = self.run_with(akamai)
+        self.assertIs(result, True)
+        self.assertEqual(calls, 1)
+        self.assertEqual(sleeps, [])
+
     def test_remote_disconnected_is_transient(self):
         # The other reset flavour seen in the wild for the same URLs.
         result, calls, _, _ = self.run_with(
