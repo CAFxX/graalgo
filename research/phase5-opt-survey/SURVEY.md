@@ -2220,7 +2220,9 @@ are the reasons-shaped knowledge that keeps us from re-learning them.
    2026-10-06:** graalgo's target hardware may well have TSX enabled — on
    such targets RTM-based lock elision / transactional techniques are fair
    game for Phase 5, not a caution. Revisit as an optimization candidate when
-   the deployment target is pinned.
+   the deployment target is pinned. **Follow-up 2026-11-20:** promoted to an
+   exploratory backlog item (PHASES §7, WP-TMELIDE); hardware/JVM status and
+   the experimental design are in [htm-lock-elision.md](htm-lock-elision.md).
 3. **HotSpot stack-locking — dropped for compact headers (Lilliput).** The lightweight
    locking design was superseded; lesson folded into SURV-021's header design. (T2)
 4. **Graphite (GCC polyhedral loop optimization) — effectively unmaintained.** Failure

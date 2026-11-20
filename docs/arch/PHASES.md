@@ -690,6 +690,41 @@ before it becomes a claimed win):
   placement must not regress the fast path (guard the store, not the load).
   Candidate benchmarks: append-growth temporaries, struct copies in hot loops,
   marshal/unmarshal round-trips, slice-passing-heavy pipelines.
+- **Hardware transactional lock elision (exploratory, owner request
+  2026-11-20; WP-TMELIDE).** On microarchitectures with usable HTM, run
+  `sync.Mutex`/`RWMutex` critical sections as hardware transactions that only
+  *read* the lock word, falling back to upstream's lock on abort — so
+  contended-but-non-conflicting sections (mutex-protected maps and caches,
+  read-mostly `RWMutex`, whose `RLock` writes a shared `readerCount` line) stop
+  serializing and stop bouncing the lock's cache line. Precedent: speculative
+  lock elision, GOCC (USENIX ATC '21: an RTM rewrite of Go `Lock`/`Unlock`
+  pairs with a per-site learned predictor; up to 10× on lock-heavy library
+  benchmarks, small slowdowns elsewhere). Honest bounds, all from the research
+  note
+  [htm-lock-elision.md](../../research/phase5-opt-survey/htm-lock-elision.md):
+  only Intel RTM on TAA-unaffected Xeons (Ice Lake-SP, Sapphire/Emerald/Granite
+  Rapids) ships it — HLE is removed, AMD has none, Arm withdrew TME unshipped,
+  POWER10 dropped TM, IBM Z sunsets it from z17, and Linux defaulted TSX off
+  until 7.0; HotSpot removed its C2-only `UseRTMLocking` in JDK 24 and Graal
+  never had RTM, so emitting `XBEGIN`/`XEND` needs either an unsupported Panama
+  critical-downcall pair that leaves a transaction open across compiled Java
+  code, or new Graal LIR (a compiler fork). Therefore *adaptive, never
+  "everywhere"*: plain lock by default; a site is promoted to the elided variant
+  only on observed contention with short sections, and demoted (deopt) on a high
+  abort ratio, capacity aborts or a starving mutex; retries only after the lock
+  word reads free (anti-lemming). Hard constraints: an elided region aborts
+  before any other synchronization operation (so `Unlock` from another
+  goroutine still finds a held lock), re-locking an elided mutex aborts (so gc's
+  deadlock is reproduced), parks/syscalls/allocation slow paths abort, and the
+  Go memory model's unlock→lock edges, GG-FAIR/GG-SCHED observables and the
+  deadlock report are unchanged. Falsifier sequence, cheapest first: (1) the
+  ceiling with gc plus a Go-assembly TLE wrapper — no JVM; (2) the JVM
+  emission spike; (3) the graalgo prototype. Kill: < 10% ceiling win on
+  mutex-map / `RWMutex` / GOCC-set benchmarks at ≥ 8 threads, no abort-safe
+  emission path on the pinned GraalVM, < 10% over gc+PGO plain locks on a
+  realistic workload, > 2% regression on uncontended locks, or no TSX hardware
+  in the deployment targets. Candidate benchmarks: mutex-protected map (90/10,
+  99/1 get/put), `RWMutex` read-mostly cache, fastcache/go-cache/tally.
 
 **Done-gates:** (1) every claimed win beats gc **with PGO** on its named benchmark, or the
 claim is struck from the docs; (2) hybrid meta-gate resolved: it beats *both* single modes on

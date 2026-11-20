@@ -177,6 +177,18 @@ strong baseline (mid-stack inlining since 1.12, PGO inlining + devirtualization,
 good EA, excellent BCE) `[HIST]`. **Every claimed win must beat gc *with* PGO on
 its named falsifying benchmark, or the claim is struck from the docs** `[DECIDED]`.
 
+Exploratory candidate — hardware transactional lock elision `[PROPOSAL]`
+(owner request 2026-11-20; PHASES §7, WP-TMELIDE): adaptively run contended
+`sync.Mutex`/`RWMutex` critical sections as HTM transactions on hardware that
+ships usable HTM (today only Intel RTM on TAA-unaffected Xeons `[VERIFIED]`),
+with upstream's lock as the fallback. No supported JVM path emits the
+instructions (HotSpot's RTM locking was removed in JDK 24; Graal never had it
+`[VERIFIED]`), and uncontended locks get slower, so it is never "everywhere".
+Same rule as every item here: it must beat plain-lock gc+PGO on a named
+benchmark (mutex-protected map, read-mostly `RWMutex` cache) on TM-capable
+hardware, or it is struck. Evidence and experimental design:
+[htm-lock-elision.md](../../research/phase5-opt-survey/htm-lock-elision.md).
+
 #### 2.6.1 Primary optimization thesis: the devirtualization cascade
 
 Carlo's thesis, adopted `[DECIDED]` as the program's primary optimization bet
