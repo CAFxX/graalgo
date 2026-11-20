@@ -24,7 +24,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
   and the new path's gates `test-m1a` (import-free corpus vs gc through
   the `-toolexec` path), `pe-check-m1a`, `test-m1w13`, `test-imgcheck`,
-  `test-m1r` and `test-m1c` (the Makefile header is the exact list). CI
+  `test-m1r`, `test-m1c` and `test-m1d` (std from upstream's source vs gc:
+  pointer model, descriptor images, leaf packages, `sync`/`time`/syscalls,
+  `os`/`reflect`/`fmt`; the Makefile header is the exact list). CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).
 - `make pre-land` — **the pre-land checklist; a lane runs it in full

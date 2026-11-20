@@ -65,6 +65,30 @@ public final class Executor {
         return t;
     });
 
+    /** A write of at most this many bytes to a writable pipe does not wait (POSIX PIPE_BUF on linux). */
+    private static final long PIPE_BUF = 4096;
+    private static final short POLLIN = 0x1;
+    private static final short POLLOUT = 0x4;
+    private static final MethodHandle POLL = LINKER.downcallHandle(LINKER.defaultLookup().find("poll").orElseThrow(),
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT));
+
+    /**
+     * Whether {@code fd} is readable ('r') or writable ('w') now: {@code poll(2)} with a zero
+     * timeout. An error condition on the descriptor counts as ready — the call reports it at once.
+     */
+    private static boolean readyNow(long fd, int mode) {
+        try (Arena a = Arena.ofConfined()) {
+            // struct pollfd { int fd; short events; short revents; }
+            MemorySegment p = a.allocate(8, 4);
+            p.set(ValueLayout.JAVA_INT, 0, (int) fd);
+            p.set(ValueLayout.JAVA_SHORT, 4, mode == 'r' ? POLLIN : POLLOUT);
+            int n = (int) POLL.invokeExact(p, 1L, 0);
+            return n > 0 && p.get(ValueLayout.JAVA_SHORT, 6) != 0;
+        } catch (Throwable t) {
+            throw new IllegalStateException("poll downcall failed", t);
+        }
+    }
+
     /** The raw result: {@code r1} and {@code errno} (0 on success). */
     private record Raw(long r1, long errno) {}
 
@@ -103,6 +127,9 @@ public final class Executor {
         try (Arena arena = Arena.ofConfined()) {
             for (int i = 0; i < roles.length; i++) {
                 Role r = roles[i];
+                if (r.allowed != null && !listed(r.allowed, a[i])) {
+                    throw fail(node, e, i, "is " + a[i] + ", a selector the role table does not list");
+                }
                 if (r.kind == Role.K_VAL || a[i] == 0) {
                     continue; // a value, or a nil pointer (the kernel answers EFAULT where it matters)
                 }
@@ -151,6 +178,25 @@ public final class Executor {
         return new Object[] {raw.r1, 0L, raw.errno};
     }
 
+    /**
+     * A system call whose three argument words are integers by the Go signature of its caller
+     * (the runtime's own {@code fcntl}); never blocks. Returns {@code {r1, errno}}.
+     */
+    @TruffleBoundary
+    public static long[] values(long nr, long a1, long a2, long a3) {
+        Raw raw = invoke(nr, new long[] {a1, a2, a3, 0, 0, 0});
+        return new long[] {raw.r1, raw.errno};
+    }
+
+    private static boolean listed(long[] allowed, long v) {
+        for (long x : allowed) {
+            if (x == v) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** The bytes of the C string at {@code off} with its NUL, which must lie inside the object. */
     private static byte[] cString(Node node, Entry e, int i, Flat obj, long off, long room) {
         int max = (int) Math.min(room, Integer.MAX_VALUE);
@@ -172,6 +218,13 @@ public final class Executor {
     private static Raw call(Entry e, long nr, long[] w) {
         SchedulerCore sched = SchedulerCore.installedOrNull();
         if (!e.mayBlock || sched == null || !sched.onGoroutine()) {
+            return invoke(nr, w);
+        }
+        if (e.ready != 0 && (e.ready == 'r' || w[e.lenArg] <= PIPE_BUF) && readyNow(w[0], e.ready)) {
+            // The descriptor is ready: the transfer returns without waiting (a regular file,
+            // a terminal, a pipe with data or room), so it needs neither the slot release nor
+            // the thread hand-off. Another process may take the readiness between the poll and
+            // the call; the call then waits on the carrier for that one transfer.
             return invoke(nr, w);
         }
         sched.ioEnter();

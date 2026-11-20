@@ -270,11 +270,18 @@ directory's README repeats its status.
     identifiers std names outside the runtime family, declarations and
     documentation upstream's, functions without bodies resolved by the
     intrinsic registry); [fork/runtime/race/](../stdlib/fork/runtime/race/)
-    is the empty package a `GRAALGO_RACE=ignore` build links.
+    is the empty package a `GRAALGO_RACE=ignore` build links;
+    [fork/internal/runtime/maps/](../stdlib/fork/internal/runtime/maps/) is
+    the facade of the Swiss-table package (reflect's map iterator over the
+    backend's map object).
   - [patches/](../stdlib/patches/) — minimal diffs against upstream
     [go/](https://go.dev/dl/) sources, as
-    `patches/<import path>/<file>.patch`. Empty where the real sources
-    compile unmodified. Which packages are replaced or patched is exactly
+    `patches/<import path>/<file>.patch`:
+    [patches/reflect/](../stdlib/patches/reflect/) (the call path and the
+    type constructors, which gc's ABI frames, itabs and self-made
+    descriptors cannot serve; toolexec-design §13) and
+    [patches/internal/abi/](../stdlib/patches/internal/abi/) (the body of a
+    generic compiler intrinsic). Which packages are replaced or patched is exactly
     what these two directories contain: no tool has a package list, and
     [internal/toolexec/fork/](../internal/toolexec/fork/) refuses a fork
     that does not apply exactly to the tracked release.
@@ -327,6 +334,14 @@ directory's README repeats its status.
     [probes/](../test/m1c/probes/) matches gc (another lane's piece landed);
     [mutants.sh](../test/m1c/mutants.sh) plants the bugs listed in
     [mutants.py](../test/m1c/mutants.py) and requires the gate to fail.
+  - [m1d/](../test/m1d/) — the M1d gate (`make test-m1d`, ~15 s, per-push in `make all`):
+    hello world and a verb matrix with the real `fmt`, `os` over
+    `internal/poll` and the syscall role table, the reflect probe, and the
+    packages on top (`encoding/json`, `regexp`, `text/template`, …);
+    [run.sh](../test/m1d/run.sh) follows the m1r conventions and reads
+    `// args:`, `// env:` and `// stdin:` directives of a program;
+    [mutants.sh](../test/m1d/mutants.sh) plants the bugs listed in
+    [mutants.py](../test/m1d/mutants.py) and requires the gate to fail.
   - [fuzz/](../test/fuzz/) — the differential fuzzer of the new path
     (`make fuzz-newpath N= SEED=`, nightly
     [fuzz-newpath.yml](../.github/workflows/fuzz-newpath.yml), not per-push):

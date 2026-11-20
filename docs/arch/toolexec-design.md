@@ -873,8 +873,8 @@ estimate; ranges reflect the uncertainty named in §12.
 | **M1a** | GIR schema + generated Go encoder/Java decoder; full-language emitter (all 60 node kinds, no "unsupported"); loader + new node factory over the **new node package** (D12; flat value classes of §3.4); multi-package user modules; generics by run-time instantiation; init order; facade `runtime` v0 (println, panics, goroutines, `runtime.Gosched/GC/GOMAXPROCS`) applied by `-overlay` | the 134 corpus programs under [test/corpus/](../../test/corpus/) that import nothing, each also split across ≥ 2 packages by a mechanical test transform; emitter runs over all 376 non-empty std packages without error (compile-only gate); per node class the unit and PE tests of truffle-design §11 (T1–T4) — waived for M1a by [ADR-0014](../dev/adr/ADR-0014-node-tests-waived-m1a.md) (WP-NODETEST), `pe-check` bailouts = 0 on the corpus | 21–35 (15–25 + 6–10 for the new node package) |
 | **M1r** (new 2026-11-18, §8.1) | The floor every M1b package stands on: intrinsic registry + link-time resolution and reachability (W6, moved from M1b); the pointer model (W13); descriptor images + imgcheck gate + the `internal/reflectlite` intrinsics (W9a); `internal/abi` + `internal/reflectlite` verbatim; `syscall` raw entry + executor + role-table entries for `openat`, `read`, `lseek`, `close` with the table-vs-source gate on them (W8a) | `errors.Is`/`errors.As`/`errors.New` (package init runs `reflectlite.TypeOf((*error)(nil)).Elem()`), `sort.Slice` (`reflectlite.Swapper`) and `time.Now().Format` with `Local` loaded from `/etc/localtime` (and with `TZ=Europe/Rome`) differential vs gc; imgcheck over a ≥ 300-type corpus; the syscall table-vs-source check green for the M1r entries | 13–20 (W6 registry 2–4, W13 4–6, W9a 4–6, W8a 3–4) |
 | **M1b** | Verbatim leaf std through the path: `errors`, `internal/bytealg`, `unicode/utf8`, `unicode`, `math`, `math/bits`, `cmp`, `slices`, `sort`, `strconv`, `strings`, `bytes`, `sync/atomic`, `internal/sync`, `sync` (verbatim, P1), `iter`, `time` | new corpus of programs that use these packages and report with `println`; per-package exported-function sweeps generated from gc outputs; `sync.Map` (`internal/sync.HashTrieMap` reads the map type's hasher from its descriptor) std tests (P5) | 8–11 (registry moved to M1r) |
-| **M1c** | `syscall` role table for the remaining numbers `os` reaches (write/fstat/fcntl/getpid first) and the table-vs-source gate (R15), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes; the syscall table-vs-source check green | 5–9 (W8's M1c share: 2–4; executor moved to M1r) |
-| **M1d** | `reflect` with the 4-function patch (P1) + `internal/fmtsort` + `fmt` → **hello world with `fmt` from the real stdlib** | every corpus program that imports only `fmt`, `os`, `strings`, `strconv`, `errors`, `sort`, `time`, `sync`; `fmt` verb matrix differential; reflectprobe 126/126 | 8–13 (W9b 6–9, + `fmtsort`/`fmt` 2–4; W13 and descriptor images moved to M1r) |
+| **M1c** (as built 2026-11-20: `os` runs, `make test-m1d`; §13) | `syscall` role table for the remaining numbers `os` reaches (write/fstat/fcntl/getpid first) and the table-vs-source gate (R15), `internal/poll`, `os` (files, args, env, exit), `io`, `io/fs`, `path` | file and stdout/stderr programs; `os.Args`, env, exit codes; the syscall table-vs-source check green | 5–9 (W8's M1c share: 2–4; executor moved to M1r) |
+| **M1d** (as built 2026-11-20: hello world with `fmt` runs, `make test-m1d`; reflect probe 125/126, BUG-0047; the corpus leg is open; §13) | `reflect` with the 4-function patch (P1) + `internal/fmtsort` + `fmt` → **hello world with `fmt` from the real stdlib** | every corpus program that imports only `fmt`, `os`, `strings`, `strconv`, `errors`, `sort`, `time`, `sync`; `fmt` verb matrix differential; reflectprobe 126/126 | 8–13 (W9b 6–9, + `fmtsort`/`fmt` 2–4; W13 and descriptor images moved to M1r) |
 | **M2** | `testing`, `flag`, `runtime/debug`, `internal/testlog`, `testdeps`; `go test` on user packages incl. `-run`, `-v`, `-json`, `-count`, caching, `-timeout` | cmd/go test-protocol scripts from the txtar suite; then **std's own tests** become the oracle: `go test` green for the M1 packages with a versioned exclusion list (GG-0009's verification plan) | 10–15 |
 | **M3 — cutover** | the full differential corpus (591 programs) and snapshots pass through the new path at ≥ v1's pass rate; `cmd/graalgo` becomes the §1 launcher; **delete** `internal/frontend` v1, all 140 `synth_*.go`, the generators, the import overlay, JSON `NodeFactory`, `NodeFactoryV2`, **v1's ~110 node classes and nested-`GoStruct` value classes** (D11/D12), `p3reflect`/`p3unsafe`/`p3net`, the bridge inventory entries | zero regressions vs the v1 baseline per program, each remaining failure triaged; `check_no_bridges.py` grandfather list empty | 10–20 (dominated by triage) |
 | **M4** | `encoding/*`, `bufio`, `regexp`, `text/template`, `os/exec` (spawn helper, GG-0064), `os/signal`, `net` (runtime epoll poller, GG-0063), `net/http`, `crypto/*` (purego), `context`, `log/slog` | std tests per package with exclusion list; `net/http` client/server differential; fd-blocked goroutines at cap = GOMAXPROCS never starve a runnable one (the `CapExhaustion` falsifier, ported to the poller) | 20–35 (incl. W8's remaining 5–8) |
@@ -1242,7 +1242,8 @@ included, and has no package list. Measured:
 - Replaced packages: **2** — `runtime` (8 files, 980 lines, hiding 780
   upstream files) and `runtime/race` (the empty package of §2.6, with the
   no-op hooks pushed by the facade under the `race` tag). Patched files:
-  **0**.
+  **0**. (As of the fmt-path lane, below: 3 replaced packages, 5
+  patched files.)
 - The facade `runtime` declares the **35 identifiers** that Go source of std
   outside `runtime` and `internal/runtime/*` names (syntactic scan of
   `runtime.X` selectors over the 381 packages `go list std` reports with
@@ -1597,6 +1598,92 @@ per-push), `make test-m1r` 15/15, `make test-m1w13` 16/16.
 - *Not in this lane:* W9b — package `reflect` (the 14 symbols above, the
   call path, descriptors made at run time, method code offsets, itab
   words).
+
+**Since the skeleton (fmt-path lane: W8b for `os`, W9b, `fmt`;
+2026-11-20, `wt/fmt/path`):** hello world prints through the real `fmt`.
+Gate: `make test-m1d` ([test/m1d/run.sh](../../test/m1d/run.sh), per-push,
+~15 s: 6 programs vs gc — `hello_fmt`, a verb matrix, `os` files/pipes/
+args/env/exit, the abi-spike reflect probe, two programs over
+`encoding/json`, `regexp`, `text/template`, `bufio`, `flag`, `log`,
+`context`, …), [test/m1d/mutants.sh](../../test/m1d/mutants.sh) 7/7 planted
+backend bugs caught, and the R15 gate (`go test ./syscalls`) over 47
+role-table entries.
+
+- *Registry:* a delimited fmt-path block of 100 entries — `os` (6),
+  `internal/poll` (11: the `fdMutex` semaphores and `runtime_poll*`),
+  `reflect` (41), `internal/abi.FuncPC*`, `sys.GetCallerPC`, the facade
+  `internal/runtime/maps.iterNext`, `runtime.fcntl`/`write`,
+  `syscall.rawSyscallNoError`/`rawVforkSyscall`/`runtimeSetenv`/
+  `runtimeUnsetenv`, `internal/godebug` (3), `weak` (2). No entry is
+  TEMPORARY.
+- *Fork:* 3 replaced packages (11 files, 1,112 lines) — `runtime`,
+  `runtime/race` and the new facade
+  [internal/runtime/maps](../../stdlib/fork/internal/runtime/maps/)
+  (upstream's Swiss table has nothing to run on; the facade is `Map`,
+  `Iter` and `Use64BitHash`, the iterator stepping the backend's map) —
+  and **5 patched files (+195 −1,057)**: `reflect/value.go`, `makefunc.go`,
+  `type.go`, `map.go` and `internal/abi/escape.go`
+  ([stdlib/patches/](../../stdlib/patches/)). The facade `runtime` gives Go
+  bodies to `Callers`/`CallersFrames`/`Frames.Next` (no frames, BUG-0047),
+  `KeepAlive`, `SetFinalizer`, `addCleanup`, `Cleanup.Stop` (finalizers and
+  cleanups never run, [limitations.md](limitations.md)) and
+  `getStaticuint64s`.
+- *reflect's call path (abi-spike §1.5: "4 functions patched").* As built
+  the patch touches seven functions, because the backend has neither gc ABI
+  frames nor itab slots nor text offsets: `Value.call` (the frame half is
+  replaced: arguments and fresh result variables go to `callFunc` /
+  `callMethodByName` by address), `methodReceiver` (the dynamic type by
+  `Elem()`, no itab read), `callReflect` and `callMethod` (called by a func
+  value the runtime makes, `makeFuncValue`, with argument and result
+  addresses), `MakeFunc`, `makeMethodValue`, and `(*rtype).Method`
+  (`methodFunc`: the method expression's func value by name). Methods are
+  found by name in the frontend's method sets; `resolveTextOff` stays
+  unreachable.
+- *Run-time-made types (abi-spike §1.5 item 1).* Not the inverse descriptor
+  reader: the constructors' allocate-and-fill tails are patched into
+  intrinsics (`typePointerTo`, `typeSliceOf`, `typeArrayOf`, `typeChanOf`,
+  `typeMapOf`, `typeFuncOf`, `typeStructOf`) that intern the shape in the
+  backend's type table and return its image — one descriptor per type
+  whoever asked, so `reflect.PointerTo(t) == reflect.TypeOf(&x)` holds
+  without typelinks. Upstream's validation of the arguments stays in Go.
+  A `StructOf` type has no promoted methods ([limitations.md](limitations.md)).
+- *Pointer model, found by `fmt` and the probe:* gc stores a
+  one-pointer-word struct or array directly in an interface's data word
+  (`abi.TFlagDirectIface`); the data word of such an `Iface` is now that
+  pointer. A slice header written word by word in any order, and over
+  storage of another element type (`Value.Slice` builds a `[]int` header
+  in a `[]unsafe.Pointer`), stands in its slot as an untyped header and is
+  read back through the reader's type. An interface whose data word points
+  at the *words* of a slice or string (`MakeSlice`'s `unsafeheader.Slice`)
+  composes the value. Channels carry their element type (`TypedChan`).
+- *W8b for `os`.* 39 more role-table entries, checked against std's call
+  sites. New role `sel(V,…)`: a selector word (the command of `fcntl`) is
+  executed only for the listed values — the lock commands pass a
+  `*Flock_t` through a variable number the scan cannot tie to the entry.
+  New BLOCK values `rd`/`wr`: a may-block transfer on the descriptor `a1`
+  is first asked of `poll(2)` and runs inline when ready (200,000
+  `fmt.Println` to a file: 24.2 s → 1.1 s; gc 0.06 s). Struct roles accept
+  arrays of pointer-free types. **Not in the table yet:** pointers to
+  values that hold pointers (`writev`'s `[]Iovec`, `sendmsg`), the socket
+  family, `ioctl`, `getrandom` (the scan misreads its `unsafe.SliceData`
+  argument); each fails loudly when reached.
+- *The runtime poller (GG-0063)*,
+  [Poller.java](../../internal/backend/truffle/src/main/java/graalgo/syscall/Poller.java):
+  one epoll instance, one daemon thread in `epoll_wait`, edge-triggered
+  registration, one waiter per direction parked with `ParkReason.NETPOLL`,
+  deadlines on the scheduler's timer heap. Exercised by `os.Pipe` (the only
+  pollable descriptors `os` makes); sockets wait for the role table.
+- *Process contract:* the stub passes `{runner, exe, argv...}`; `os.Args[0]`
+  is the invoked `argv[0]` (BUG-0029 fixed). `os.sigpipe` exits 141;
+  `rawVforkSyscall` returns `ENOSYS` until GG-0064's helper.
+- *Linker:* `GRAALGO_LINK_WORKLIST=1` prints every undefined symbol.
+- *Worklist for the next rung* (undefined reachable symbols of a blank
+  import, same build): `hash/crc32` 3 (the SSE4.2/CLMUL assembly; also
+  blocks `compress/gzip`), `os/signal` 1, `testing` 3 (`internal/cpu` 1,
+  `syscall` 2), `math/big` 6 (assembly), `crypto/sha256` 24 (fips140
+  assembly and indicators). `net`, `net/url`, `os/exec`, `archive/tar`
+  and `math/rand` link. Not started: BUG-0046 (the runtime's error types as
+  facade source), the fuzzer's generator on `fmt`.
 
 ## 14. Amendments (2026-11-18)
 

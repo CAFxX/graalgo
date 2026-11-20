@@ -24,6 +24,13 @@
 # BLOCK  "block" when the call may block indefinitely (the executor releases
 #        the goroutine's scheduler slot and runs the downcall off the
 #        carrier pool, GG-SCHED-0006), "-" otherwise
+#        "rd" / "wr": a may-block transfer on the descriptor a1 — as
+#        "block", except that the executor first asks poll(2) whether the
+#        descriptor is readable / writable now and, when it is (and, for
+#        wr, the buffer is at most PIPE_BUF bytes, which a writable pipe
+#        takes whole), runs the call inline: it returns without waiting.
+#        Regular files and terminals are always ready, so file and
+#        console I/O costs one downcall, not a thread hand-off.
 # ROLE   one per argument word that the call uses, a1 first:
 #          val                    an integer
 #          cstr                   pointer to NUL-terminated bytes (in)
@@ -37,18 +44,69 @@
 #                                 gc linux/amd64; read by the kernel
 #          struct(TYPE,SIZE,out)  ... written by the kernel (copied in,
 #                                 and back after a successful call)
+#          sel(V,...)             an integer that selects what the other
+#                                 words mean (fcntl's command): the call
+#                                 runs only for the listed values, whose
+#                                 other words are as the entry says; any
+#                                 other value is a fatal error
 #        LEN is the 1-based index of the length argument. A nil pointer
-#        reaches the kernel as NULL.
-#        (struct/array roles with nested pointers: W8b.)
+#        reaches the kernel as NULL. A struct TYPE may be an array of a
+#        pointer-free type ([2]syscall.Timespec).
+#        Not in the table yet (each fails loudly when reached): pointers
+#        to values that hold pointers (writev's []Iovec, sendmsg's Msghdr),
+#        the socket family, ioctl, getrandom.
 
-0   read    block  val bytes(3,out,result) val
-1   write   block  val bytes(3,in) val
-3   close   -      val
-8   lseek   -      val val val
-39  getpid  -
-257 openat  block  val cstr val val
-263 unlinkat block val cstr val
-302 prlimit64 -    val val struct(syscall.Rlimit,16,in) struct(syscall.Rlimit,16,out)
+0   read       rd     val bytes(3,out,result) val
+1   write      wr     val bytes(3,in) val
+3   close      -      val
+5   fstat      -      val struct(syscall.Stat_t,144,out)
+8   lseek      -      val val val
+17  pread64    rd     val bytes(3,out,result) val val
+18  pwrite64   wr     val bytes(3,in) val val
+32  dup        -      val
+33  dup2       -      val val
+39  getpid     -
+63  uname      -      struct(syscall.Utsname,390,out)
+# fcntl: F_DUPFD, F_GETFD, F_SETFD, F_GETFL, F_SETFL, F_DUPFD_CLOEXEC,
+# F_SETPIPE_SZ, F_GETPIPE_SZ — the commands whose argument is an integer.
+# The lock commands pass a *Flock_t (syscall.FcntlFlock, through a variable
+# number the scan cannot tie to this entry) and are refused.
+72  fcntl      -      val sel(0,1,2,3,4,1030,1031,1032) val
+74  fsync      block  val
+75  fdatasync  block  val
+76  truncate   -      cstr val
+77  ftruncate  -      val val
+79  getcwd     -      bytes(2,out,result) val
+80  chdir      -      cstr
+81  fchdir     -      val
+91  fchmod     -      val val
+93  fchown     -      val val val
+95  umask      -      val
+102 getuid     -
+104 getgid     -
+107 geteuid    -
+108 getegid    -
+110 getppid    -
+186 gettid     -
+217 getdents64 -      val bytes(3,out,result) val
+257 openat     block  val cstr val val
+258 mkdirat    -      val cstr val
+260 fchownat   -      val cstr val val val
+262 newfstatat -      val cstr struct(syscall.Stat_t,144,out) val
+263 unlinkat   -      val cstr val
+264 renameat   -      val cstr val cstr
+265 linkat     -      val cstr val cstr val
+266 symlinkat  -      cstr val cstr
+267 readlinkat -      val cstr bytes(4,out,result) val
+268 fchmodat   -      val cstr val
+269 faccessat  -      val cstr val
+280 utimensat  -      val cstr struct([2]syscall.Timespec,32,in) val
+285 fallocate  -      val val val val
+292 dup3       -      val val val
+293 pipe2      -      struct([2]syscall._C_int,8,out) val
+302 prlimit64  -      val val struct(syscall.Rlimit,16,in) struct(syscall.Rlimit,16,out)
+439 faccessat2 -      val cstr val val
+452 fchmodat2  -      val cstr val val
 
 # afterfork FUNC: a function of syscall's fork/exec glue (which GG-0064
 # replaces by posix_spawn of a helper, W8b) whose system calls all run after

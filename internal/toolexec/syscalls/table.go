@@ -30,6 +30,10 @@ const (
 	// fixed size (an Rlimit, a Timespec): copied in, and back after a
 	// successful call when the kernel writes it.
 	Struct
+	// Sel: an integer that selects what the call's other words mean (the
+	// command of fcntl): only the listed values are executed, with the
+	// roles of the entry; any other value is a fatal error.
+	Sel
 )
 
 // Dir is the direction of a buffer.
@@ -52,12 +56,20 @@ type Role struct {
 	// its size in bytes; Dir is the direction.
 	Type string
 	Size int64
+	// Sel: the values the executor accepts.
+	Values []int64
 }
 
 func (r Role) String() string {
 	switch r.Kind {
 	case CStr:
 		return "cstr"
+	case Sel:
+		v := make([]string, len(r.Values))
+		for i, x := range r.Values {
+			v[i] = strconv.FormatInt(x, 10)
+		}
+		return "sel(" + strings.Join(v, ",") + ")"
 	case Struct:
 		d := "in"
 		if r.Dir == Out {
@@ -82,6 +94,10 @@ type Entry struct {
 	Nr       int
 	Name     string
 	MayBlock bool
+	// Ready: for a may-block call on the descriptor a1, the readiness that
+	// makes it return without waiting — 'r' (readable) or 'w' (writable);
+	// 0 when the entry names none.
+	Ready byte
 	Roles    []Role
 }
 
@@ -139,9 +155,12 @@ func Parse(text string) (*Table, error) {
 		switch f[2] {
 		case "block":
 			e.MayBlock = true
+		case "rd", "wr":
+			e.MayBlock = true
+			e.Ready = f[2][0]
 		case "-":
 		default:
-			return nil, bad("BLOCK is %q, want block or -", f[2])
+			return nil, bad("BLOCK is %q, want block, rd, wr or -", f[2])
 		}
 		if len(f)-3 > 6 {
 			return nil, bad("more than six roles")
@@ -161,6 +180,19 @@ func Parse(text string) (*Table, error) {
 				return nil, bad("%s: length argument %d is not a val role of the entry", r, r.LenArg+1)
 			}
 		}
+		if e.Ready != 0 {
+			// a1 is the descriptor that is polled, and the transfer length
+			// is the buffer's (a write the pipe has room for does not wait).
+			nbuf := 0
+			for _, r := range e.Roles {
+				if r.Kind == Bytes {
+					nbuf++
+				}
+			}
+			if len(e.Roles) == 0 || e.Roles[0].Kind != Val || nbuf != 1 {
+				return nil, bad("%s: rd/wr needs a descriptor at a1 and exactly one bytes role", e.Name)
+			}
+		}
 		if seenNr[nr] || seenName[e.Name] {
 			return nil, bad("duplicate entry %d %s", nr, e.Name)
 		}
@@ -177,6 +209,17 @@ func parseRole(s string) (Role, error) {
 		return Role{Kind: Val}, nil
 	case "cstr":
 		return Role{Kind: CStr}, nil
+	}
+	if strings.HasPrefix(s, "sel(") && strings.HasSuffix(s, ")") {
+		r := Role{Kind: Sel}
+		for _, v := range strings.Split(s[len("sel("):len(s)-1], ",") {
+			n, err := strconv.ParseInt(v, 0, 64)
+			if err != nil {
+				return Role{}, fmt.Errorf("%s: want sel(VALUE,...)", s)
+			}
+			r.Values = append(r.Values, n)
+		}
+		return r, nil
 	}
 	if strings.HasPrefix(s, "struct(") && strings.HasSuffix(s, ")") {
 		p := strings.Split(s[len("struct("):len(s)-1], ",")

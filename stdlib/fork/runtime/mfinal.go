@@ -99,7 +99,11 @@ import "unsafe"
 // The modifications in the main program and the inspection in the finalizer
 // need to use appropriate synchronization, such as mutexes or atomic updates,
 // to avoid read-write races.
-func SetFinalizer(obj any, finalizer any)
+//
+// graalgo: finalizers are never run (docs/arch/limitations.md); "there is no
+// guarantee that finalizers will run before a program exits" covers every
+// program that is correct under gc.
+func SetFinalizer(obj any, finalizer any) {}
 
 // KeepAlive marks its argument as currently reachable.
 // This ensures that the object is not freed, and its finalizer is not run,
@@ -125,7 +129,7 @@ func SetFinalizer(obj any, finalizer any)
 // Note: KeepAlive should only be used to prevent finalizers from
 // running prematurely. In particular, when used with [unsafe.Pointer],
 // the rules for valid uses of unsafe.Pointer still apply.
-func KeepAlive(x any)
+func KeepAlive(x any) {}
 
 // AddCleanup attaches a cleanup function to ptr. Some time after ptr is no longer
 // reachable, the runtime will call cleanup(arg) in a separate goroutine.
@@ -195,8 +199,9 @@ func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup {
 }
 
 // addCleanup attaches fn to the object ptr points to; fn runs once after
-// the object becomes unreachable.
-func addCleanup(ptr unsafe.Pointer, fn func()) Cleanup
+// the object becomes unreachable. graalgo: cleanups, like finalizers, are
+// never run (docs/arch/limitations.md).
+func addCleanup(ptr unsafe.Pointer, fn func()) Cleanup { return Cleanup{} }
 
 // Cleanup is a handle to a cleanup call for a specific object.
 type Cleanup struct {
@@ -208,4 +213,4 @@ type Cleanup struct {
 // has already been queued for execution (because ptr became unreachable).
 // To guarantee that Stop removes the cleanup function, the caller must ensure
 // that the pointer that was passed to AddCleanup is reachable across the call to Stop.
-func (c Cleanup) Stop()
+func (c Cleanup) Stop() {}

@@ -1,0 +1,64 @@
+--- a/src/reflect/makefunc.go
++++ b/src/reflect/makefunc.go
+@@ -53,23 +53,12 @@
+ 
+ 	ftyp := (*funcType)(unsafe.Pointer(t))
+ 
+-	code := abi.FuncPCABI0(makeFuncStub)
++	// graalgo: the func value is made by the runtime (makeFuncValue); it
++	// calls callReflect with the addresses of its arguments and results
++	// in place of a frame, so there is no makeFuncImpl and no stack map.
++	impl := func(args, rets []unsafe.Pointer) { callReflect(ftyp, fn, args, rets) }
+ 
+-	// makeFuncImpl contains a stack map for use by the runtime
+-	_, _, abid := funcLayout(ftyp, nil)
+-
+-	impl := &makeFuncImpl{
+-		makeFuncCtxt: makeFuncCtxt{
+-			fn:      code,
+-			stack:   abid.stackPtrs,
+-			argLen:  abid.stackCallArgsSize,
+-			regPtrs: abid.inRegPtrs,
+-		},
+-		ftyp: ftyp,
+-		fn:   fn,
+-	}
+-
+-	return Value{t, unsafe.Pointer(impl), flag(Func)}
++	return Value{t, makeFuncValue(t, impl), flag(Func)}
+ }
+ 
+ // makeFuncStub is an assembly function that is the code half of
+@@ -108,27 +97,16 @@
+ 	// v.Type returns the actual type of the method value.
+ 	ftyp := (*funcType)(unsafe.Pointer(v.Type().(*rtype)))
+ 
+-	code := methodValueCallCodePtr()
+-
+-	// methodValue contains a stack map for use by the runtime
+-	_, _, abid := funcLayout(ftyp, nil)
+-	fv := &methodValue{
+-		makeFuncCtxt: makeFuncCtxt{
+-			fn:      code,
+-			stack:   abid.stackPtrs,
+-			argLen:  abid.stackCallArgsSize,
+-			regPtrs: abid.inRegPtrs,
+-		},
+-		method: int(v.flag) >> flagMethodShift,
+-		rcvr:   rcvr,
+-	}
++	// graalgo: as MakeFunc; the func value calls callMethod.
++	method := int(v.flag) >> flagMethodShift
++	impl := func(args, rets []unsafe.Pointer) { callMethod(rcvr, method, ftyp, args, rets) }
+ 
+ 	// Cause panic if method is not appropriate.
+ 	// The panic would still happen during the call if we omit this,
+ 	// but we want Interface() and other operations to fail early.
+-	methodReceiver(op, fv.rcvr, fv.method)
++	methodReceiver(op, rcvr, method)
+ 
+-	return Value{ftyp.Common(), unsafe.Pointer(fv), v.flag&flagRO | flag(Func)}
++	return Value{ftyp.Common(), makeFuncValue(ftyp.Common(), impl), v.flag&flagRO | flag(Func)}
+ }
+ 
+ func methodValueCallCodePtr() uintptr {

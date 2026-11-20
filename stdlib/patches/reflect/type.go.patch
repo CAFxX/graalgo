@@ -1,0 +1,564 @@
+--- a/src/reflect/type.go
++++ b/src/reflect/type.go
+@@ -667,8 +667,9 @@
+ 	}
+ 	mt := FuncOf(in, out, ft.IsVariadic())
+ 	m.Type = mt
+-	tfn := t.textOff(p.Tfn)
+-	fn := unsafe.Pointer(&tfn)
++	// graalgo: the method expression's func value comes from the runtime,
++	// by name; descriptors carry no text offsets.
++	fn := methodFunc(&t.t, m.Name)
+ 	m.Func = Value{&mt.(*rtype).t, fn, fl}
+ 
+ 	m.Index = i
+@@ -1405,42 +1406,10 @@
+ 		return t.typeOff(at.PtrToThis)
+ 	}
+ 
+-	// Check the cache.
+-	if pi, ok := ptrMap.Load(t); ok {
+-		return &pi.(*ptrType).Type
+-	}
+-
+-	// Look in known types.
+-	s := "*" + t.String()
+-	for _, tt := range typesByString(s) {
+-		p := (*ptrType)(unsafe.Pointer(tt))
+-		if p.Elem != &t.t {
+-			continue
+-		}
+-		pi, _ := ptrMap.LoadOrStore(t, p)
+-		return &pi.(*ptrType).Type
+-	}
+-
+-	// Create a new ptrType starting with the description
+-	// of an *unsafe.Pointer.
+-	var iptr any = (*unsafe.Pointer)(nil)
+-	prototype := *(**ptrType)(unsafe.Pointer(&iptr))
+-	pp := *prototype
+-
+-	pp.Str = resolveReflectName(newName(s, "", false, false))
+-	pp.PtrToThis = 0
+-
+-	// For the type structures linked into the binary, the
+-	// compiler provides a good hash of the string.
+-	// Create a good hash for the new string by using
+-	// the FNV-1 hash's mixing function to combine the
+-	// old hash and the new "*".
+-	pp.Hash = fnv1(t.t.Hash, '*')
+-
+-	pp.Elem = at
+-
+-	pi, _ := ptrMap.LoadOrStore(t, &pp)
+-	return &pi.(*ptrType).Type
++	// graalgo: the runtime interns the type and builds its descriptor
++	// (stdlib/patches; docs/arch/toolexec-design.md §5.6): there is one
++	// descriptor per type, whether the compiler or reflect asked for it.
++	return typePointerTo(at)
+ }
+ 
+ func ptrTo(t *abi.Type) *abi.Type {
+@@ -1823,58 +1792,19 @@
+ 	typ := t.common()
+ 	t = toType(typ) // for #80332, ensure t's exported methods are not shadowed
+ 
+-	// Look in cache.
+-	ckey := cacheKey{Chan, typ, nil, uintptr(dir)}
+-	if ch, ok := lookupCache.Load(ckey); ok {
+-		return ch.(*rtype)
+-	}
+-
+ 	// This restriction is imposed by the gc compiler and the runtime.
+ 	if typ.Size_ >= 1<<16 {
+ 		panic("reflect.ChanOf: element size too large")
+ 	}
+-
+-	// Look in known types.
+-	var s string
+ 	switch dir {
+ 	default:
+ 		panic("reflect.ChanOf: invalid dir")
+-	case SendDir:
+-		s = "chan<- " + stringFor(typ)
+-	case RecvDir:
+-		s = "<-chan " + stringFor(typ)
+-	case BothDir:
+-		typeStr := stringFor(typ)
+-		if typeStr[0] == '<' {
+-			// typ is recv chan, need parentheses as "<-" associates with leftmost
+-			// chan possible, see:
+-			// * https://golang.org/ref/spec#Channel_types
+-			// * https://github.com/golang/go/issues/39897
+-			s = "chan (" + typeStr + ")"
+-		} else {
+-			s = "chan " + typeStr
+-		}
++	case SendDir, RecvDir, BothDir:
+ 	}
+-	for _, tt := range typesByString(s) {
+-		ch := (*chanType)(unsafe.Pointer(tt))
+-		if ch.Elem == typ && ch.Dir == abi.ChanDir(dir) {
+-			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
+-			return ti.(Type)
+-		}
+-	}
+-
+-	// Make a channel type.
+-	var ichan any = (chan unsafe.Pointer)(nil)
+-	prototype := *(**chanType)(unsafe.Pointer(&ichan))
+-	ch := *prototype
+-	ch.TFlag = abi.TFlagRegularMemory | abi.TFlagDirectIface
+-	ch.Dir = abi.ChanDir(dir)
+-	ch.Str = resolveReflectName(newName(s, "", false, false))
+-	ch.Hash = fnv1(typ.Hash, 'c', byte(dir))
+-	ch.Elem = typ
+-
+-	ti, _ := lookupCache.LoadOrStore(ckey, toRType(&ch.Type))
+-	return ti.(Type)
++	// graalgo: the runtime interns the type and builds its descriptor
++	// (stdlib/patches; docs/arch/toolexec-design.md §5.6): there is one
++	// descriptor per type, whether the compiler or reflect asked for it.
++	return toType(typeChanOf(typ, int(dir)))
+ }
+ 
+ var funcTypes []Type
+@@ -1917,86 +1847,21 @@
+ 		panic("reflect.FuncOf: last arg of variadic func must be slice")
+ 	}
+ 
+-	// Make a func type.
+-	var ifunc any = (func())(nil)
+-	prototype := *(**funcType)(unsafe.Pointer(&ifunc))
+-	n := len(in) + len(out)
+-
+-	if n > 128 {
++	if len(in)+len(out) > 128 {
+ 		panic("reflect.FuncOf: too many arguments")
+ 	}
+-
+-	o := New(initFuncTypes(n)).Elem()
+-	ft := (*funcType)(unsafe.Pointer(o.Field(0).Addr().Pointer()))
+-	args := unsafe.Slice((**rtype)(unsafe.Pointer(o.Field(1).Addr().Pointer())), n)[0:0:n]
+-	*ft = *prototype
+-
+-	// Build a hash and minimally populate ft.
+-	var hash uint32
+-	for _, in := range in {
+-		t := in.(*rtype)
+-		args = append(args, t)
+-		hash = fnv1(hash, byte(t.t.Hash>>24), byte(t.t.Hash>>16), byte(t.t.Hash>>8), byte(t.t.Hash))
++	ins := make([]*abi.Type, len(in))
++	for i, t := range in {
++		ins[i] = t.common()
+ 	}
+-	if variadic {
+-		hash = fnv1(hash, 'v')
+-	}
+-	hash = fnv1(hash, '.')
+-	for _, out := range out {
+-		t := out.(*rtype)
+-		args = append(args, t)
+-		hash = fnv1(hash, byte(t.t.Hash>>24), byte(t.t.Hash>>16), byte(t.t.Hash>>8), byte(t.t.Hash))
+-	}
+-
+-	ft.TFlag = abi.TFlagDirectIface
+-	ft.Hash = hash
+-	ft.InCount = uint16(len(in))
+-	ft.OutCount = uint16(len(out))
+-	if variadic {
+-		ft.OutCount |= 1 << 15
+-	}
+-
+-	// Look in cache.
+-	if ts, ok := funcLookupCache.m.Load(hash); ok {
+-		for _, t := range ts.([]*abi.Type) {
+-			if haveIdenticalUnderlyingType(&ft.Type, t, true) {
+-				return toRType(t)
+-			}
+-		}
+-	}
+-
+-	// Not in cache, lock and retry.
+-	funcLookupCache.Lock()
+-	defer funcLookupCache.Unlock()
+-	if ts, ok := funcLookupCache.m.Load(hash); ok {
+-		for _, t := range ts.([]*abi.Type) {
+-			if haveIdenticalUnderlyingType(&ft.Type, t, true) {
+-				return toRType(t)
+-			}
+-		}
+-	}
+-
+-	addToCache := func(tt *abi.Type) Type {
+-		var rts []*abi.Type
+-		if rti, ok := funcLookupCache.m.Load(hash); ok {
+-			rts = rti.([]*abi.Type)
+-		}
+-		funcLookupCache.m.Store(hash, append(rts, tt))
+-		return toType(tt)
+-	}
+-
+-	// Look in known types for the same string representation.
+-	str := funcStr(ft)
+-	for _, tt := range typesByString(str) {
+-		if haveIdenticalUnderlyingType(&ft.Type, tt, true) {
+-			return addToCache(tt)
+-		}
++	outs := make([]*abi.Type, len(out))
++	for i, t := range out {
++		outs[i] = t.common()
+ 	}
+-
+-	// Populate the remaining fields of ft and store in cache.
+-	ft.Str = resolveReflectName(newName(str, "", false, false))
+-	ft.PtrToThis = 0
+-	return addToCache(&ft.Type)
++	// graalgo: the runtime interns the type and builds its descriptor
++	// (stdlib/patches; docs/arch/toolexec-design.md §5.6): there is one
++	// descriptor per type, whether the compiler or reflect asked for it.
++	return toType(typeFuncOf(ins, outs, variadic))
+ }
+ func stringFor(t *abi.Type) string {
+ 	return toRType(t).String()
+@@ -2131,34 +1996,10 @@
+ 	typ := t.common()
+ 	t = toType(typ) // for #80332, ensure t's exported methods are not shadowed
+ 
+-	// Look in cache.
+-	ckey := cacheKey{Slice, typ, nil, 0}
+-	if slice, ok := lookupCache.Load(ckey); ok {
+-		return slice.(Type)
+-	}
+-
+-	// Look in known types.
+-	s := "[]" + stringFor(typ)
+-	for _, tt := range typesByString(s) {
+-		slice := (*sliceType)(unsafe.Pointer(tt))
+-		if slice.Elem == typ {
+-			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
+-			return ti.(Type)
+-		}
+-	}
+-
+-	// Make a slice type.
+-	var islice any = ([]unsafe.Pointer)(nil)
+-	prototype := *(**sliceType)(unsafe.Pointer(&islice))
+-	slice := *prototype
+-	slice.TFlag = 0
+-	slice.Str = resolveReflectName(newName(s, "", false, false))
+-	slice.Hash = fnv1(typ.Hash, '[')
+-	slice.Elem = typ
+-	slice.PtrToThis = 0
+-
+-	ti, _ := lookupCache.LoadOrStore(ckey, toRType(&slice.Type))
+-	return ti.(Type)
++	// graalgo: the runtime interns the type and builds its descriptor
++	// (stdlib/patches; docs/arch/toolexec-design.md §5.6): there is one
++	// descriptor per type, whether the compiler or reflect asked for it.
++	return toType(typeSliceOf(typ))
+ }
+ 
+ // The structLookupCache caches StructOf lookups.
+@@ -2439,156 +2280,20 @@
+ 		}
+ 	}
+ 
+-	var typ *structType
+-	var ut *uncommonType
+-
+-	if len(methods) == 0 {
+-		t := new(structTypeUncommon)
+-		typ = &t.structType
+-		ut = &t.u
+-	} else {
+-		// A *rtype representing a struct is followed directly in memory by an
+-		// array of method objects representing the methods attached to the
+-		// struct. To get the same layout for a run time generated type, we
+-		// need an array directly following the uncommonType memory.
+-		// A similar strategy is used for funcTypeFixed4, ...funcTypeFixedN.
+-		tt := New(StructOf([]StructField{
+-			{Name: "S", Type: TypeOf(structType{})},
+-			{Name: "U", Type: TypeOf(uncommonType{})},
+-			{Name: "M", Type: ArrayOf(len(methods), TypeOf(methods[0]))},
+-		}))
+-
+-		typ = (*structType)(tt.Elem().Field(0).Addr().UnsafePointer())
+-		ut = (*uncommonType)(tt.Elem().Field(1).Addr().UnsafePointer())
+-
+-		copy(tt.Elem().Field(2).Slice(0, len(methods)).Interface().([]abi.Method), methods)
+-	}
+-	// TODO(sbinet): Once we allow embedding multiple types,
+-	// methods will need to be sorted like the compiler does.
+-	// TODO(sbinet): Once we allow non-exported methods, we will
+-	// need to compute xcount as the number of exported methods.
+-	ut.Mcount = uint16(len(methods))
+-	ut.Xcount = ut.Mcount
+-	ut.Moff = uint32(unsafe.Sizeof(uncommonType{}))
+-
+-	if len(fs) > 0 {
+-		repr = append(repr, ' ')
+-	}
+-	repr = append(repr, '}')
+-	hash = fnv1(hash, '}')
+-	str := string(repr)
+-
+-	// Round the size up to be a multiple of the alignment.
+-	s := align(size, uintptr(typalign))
+-	if s < size {
+-		panic("reflect.StructOf: struct size would exceed virtual address space")
+-	}
+-	size = s
+-
+-	// Make the struct type.
+-	var istruct any = struct{}{}
+-	prototype := *(**structType)(unsafe.Pointer(&istruct))
+-	*typ = *prototype
+-	typ.Fields = fs
+-	if pkgpath != "" {
+-		typ.PkgPath = newName(pkgpath, "", false, false)
++	// graalgo: the fields are valid; the runtime interns the struct type
++	// from them and builds its descriptor (stdlib/patches). What the loop
++	// above computed for a descriptor of reflect's own making is not used.
++	_, _, _, _, _ = hash, repr, comparable, methods, fs
++	names := make([]string, len(fields))
++	pkgs := make([]string, len(fields))
++	tags := make([]string, len(fields))
++	types := make([]*abi.Type, len(fields))
++	embedded := make([]bool, len(fields))
++	for i, f := range fields {
++		names[i], pkgs[i], tags[i] = f.Name, f.PkgPath, string(f.Tag)
++		types[i], embedded[i] = f.Type.common(), f.Anonymous
+ 	}
+-
+-	// Look in cache.
+-	if ts, ok := structLookupCache.m.Load(hash); ok {
+-		for _, st := range ts.([]Type) {
+-			t := st.common()
+-			if haveIdenticalUnderlyingType(&typ.Type, t, true) {
+-				return toType(t)
+-			}
+-		}
+-	}
+-
+-	// Not in cache, lock and retry.
+-	structLookupCache.Lock()
+-	defer structLookupCache.Unlock()
+-	if ts, ok := structLookupCache.m.Load(hash); ok {
+-		for _, st := range ts.([]Type) {
+-			t := st.common()
+-			if haveIdenticalUnderlyingType(&typ.Type, t, true) {
+-				return toType(t)
+-			}
+-		}
+-	}
+-
+-	addToCache := func(t Type) Type {
+-		var ts []Type
+-		if ti, ok := structLookupCache.m.Load(hash); ok {
+-			ts = ti.([]Type)
+-		}
+-		structLookupCache.m.Store(hash, append(ts, t))
+-		return t
+-	}
+-
+-	// Look in known types.
+-	for _, t := range typesByString(str) {
+-		if haveIdenticalUnderlyingType(&typ.Type, t, true) {
+-			// even if 't' wasn't a structType with methods, we should be ok
+-			// as the 'u uncommonType' field won't be accessed except when
+-			// tflag&abi.TFlagUncommon is set.
+-			return addToCache(toType(t))
+-		}
+-	}
+-
+-	typ.Str = resolveReflectName(newName(str, "", false, false))
+-	if isRegularMemory(toType(&typ.Type)) {
+-		typ.TFlag = abi.TFlagRegularMemory
+-	} else {
+-		typ.TFlag = 0
+-	}
+-	typ.Hash = hash
+-	typ.Size_ = size
+-	typ.PtrBytes = typeptrdata(&typ.Type)
+-	typ.Align_ = typalign
+-	typ.FieldAlign_ = typalign
+-	typ.PtrToThis = 0
+-	if len(methods) > 0 {
+-		typ.TFlag |= abi.TFlagUncommon
+-	}
+-
+-	if typ.PtrBytes == 0 {
+-		typ.GCData = nil
+-	} else if typ.PtrBytes <= abi.MaxPtrmaskBytes*8*goarch.PtrSize {
+-		bv := new(bitVector)
+-		addTypeBits(bv, 0, &typ.Type)
+-		typ.GCData = &bv.data[0]
+-	} else {
+-		// Runtime will build the mask if needed. We just need to allocate
+-		// space to store it.
+-		typ.TFlag |= abi.TFlagGCMaskOnDemand
+-		typ.GCData = (*byte)(unsafe.Pointer(new(uintptr)))
+-		if runtime.GOOS == "aix" {
+-			typ.GCData = adjustAIXGCData(typ.GCData)
+-		}
+-	}
+-
+-	typ.Equal = nil
+-	if comparable {
+-		typ.Equal = func(p, q unsafe.Pointer) bool {
+-			for _, ft := range typ.Fields {
+-				pi := add(p, ft.Offset, "&x.field safe")
+-				qi := add(q, ft.Offset, "&x.field safe")
+-				if !ft.Typ.Equal(pi, qi) {
+-					return false
+-				}
+-			}
+-			return true
+-		}
+-	}
+-
+-	switch {
+-	case typ.Size_ == goarch.PtrSize && typ.PtrBytes == goarch.PtrSize:
+-		typ.TFlag |= abi.TFlagDirectIface
+-	default:
+-		typ.TFlag &^= abi.TFlagDirectIface
+-	}
+-
+-	return addToCache(toType(&typ.Type))
++	return toType(typeStructOf(names, pkgs, tags, types, embedded))
+ }
+ 
+ func embeddedIfaceMethStub() {
+@@ -2660,109 +2365,16 @@
+ 	typ := elem.common()
+ 	elem = toType(typ) // for #80332, ensure elem's exported methods are not shadowed
+ 
+-	// Look in cache.
+-	ckey := cacheKey{Array, typ, nil, uintptr(length)}
+-	if array, ok := lookupCache.Load(ckey); ok {
+-		return array.(Type)
+-	}
+-
+-	// Look in known types.
+-	s := "[" + strconv.Itoa(length) + "]" + stringFor(typ)
+-	for _, tt := range typesByString(s) {
+-		array := (*arrayType)(unsafe.Pointer(tt))
+-		if array.Elem == typ {
+-			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
+-			return ti.(Type)
+-		}
+-	}
+-
+-	// Make an array type.
+-	var iarray any = [1]unsafe.Pointer{}
+-	prototype := *(**arrayType)(unsafe.Pointer(&iarray))
+-	array := *prototype
+-	array.TFlag = typ.TFlag & abi.TFlagRegularMemory
+-	array.Str = resolveReflectName(newName(s, "", false, false))
+-	array.Hash = fnv1(typ.Hash, '[')
+-	for n := uint32(length); n > 0; n >>= 8 {
+-		array.Hash = fnv1(array.Hash, byte(n))
+-	}
+-	array.Hash = fnv1(array.Hash, ']')
+-	array.Elem = typ
+-	array.PtrToThis = 0
+ 	if typ.Size_ > 0 {
+ 		max := ^uintptr(0) / typ.Size_
+ 		if uintptr(length) > max {
+ 			panic("reflect.ArrayOf: array size would exceed virtual address space")
+ 		}
+ 	}
+-	array.Size_ = typ.Size_ * uintptr(length)
+-	if length > 0 && typ.Pointers() {
+-		array.PtrBytes = typ.Size_*uintptr(length-1) + typ.PtrBytes
+-	} else {
+-		array.PtrBytes = 0
+-	}
+-	array.Align_ = typ.Align_
+-	array.FieldAlign_ = typ.FieldAlign_
+-	array.Len = uintptr(length)
+-	array.Slice = &(SliceOf(elem).(*rtype).t)
+-
+-	switch {
+-	case array.PtrBytes == 0:
+-		// No pointers.
+-		array.GCData = nil
+-
+-	case length == 1:
+-		// In memory, 1-element array looks just like the element.
+-		// We share the bitmask with the element type.
+-		array.TFlag |= typ.TFlag & abi.TFlagGCMaskOnDemand
+-		array.GCData = typ.GCData
+-
+-	case array.PtrBytes <= abi.MaxPtrmaskBytes*8*goarch.PtrSize:
+-		// Create pointer mask by repeating the element bitmask Len times.
+-		n := (array.PtrBytes/goarch.PtrSize + 7) / 8
+-		// Runtime needs pointer masks to be a multiple of uintptr in size.
+-		n = (n + goarch.PtrSize - 1) &^ (goarch.PtrSize - 1)
+-		mask := make([]byte, n)
+-		emitGCMask(mask, 0, typ, array.Len)
+-		array.GCData = &mask[0]
+-
+-	default:
+-		// Runtime will build the mask if needed. We just need to allocate
+-		// space to store it.
+-		array.TFlag |= abi.TFlagGCMaskOnDemand
+-		array.GCData = (*byte)(unsafe.Pointer(new(uintptr)))
+-		if runtime.GOOS == "aix" {
+-			array.GCData = adjustAIXGCData(array.GCData)
+-		}
+-	}
+-
+-	etyp := typ
+-	esize := etyp.Size()
+-
+-	array.Equal = nil
+-	if eequal := etyp.Equal; eequal != nil {
+-		array.Equal = func(p, q unsafe.Pointer) bool {
+-			for i := 0; i < length; i++ {
+-				pi := arrayAt(p, i, esize, "i < length")
+-				qi := arrayAt(q, i, esize, "i < length")
+-				if !eequal(pi, qi) {
+-					return false
+-				}
+-
+-			}
+-			return true
+-		}
+-	}
+-
+-	switch {
+-	case array.Size_ == goarch.PtrSize && array.PtrBytes == goarch.PtrSize:
+-		array.TFlag |= abi.TFlagDirectIface
+-	default:
+-		array.TFlag &^= abi.TFlagDirectIface
+-	}
+-
+-	ti, _ := lookupCache.LoadOrStore(ckey, toRType(&array.Type))
+-	return ti.(Type)
++	// graalgo: the runtime interns the type and builds its descriptor
++	// (stdlib/patches; docs/arch/toolexec-design.md §5.6): there is one
++	// descriptor per type, whether the compiler or reflect asked for it.
++	return toType(typeArrayOf(length, typ))
+ }
+ 
+ // adjustAIXGCData adjusts the GCData field pointer for AIX.
+@@ -2801,6 +2413,17 @@
+ 	return x
+ }
+ 
++// The type constructors of the runtime (graalgo: provided by the runtime, in
++// place of descriptors that reflect allocates and fills itself). Each returns
++// the descriptor of the one type of that shape.
++func typePointerTo(elem *abi.Type) *abi.Type
++func typeSliceOf(elem *abi.Type) *abi.Type
++func typeArrayOf(length int, elem *abi.Type) *abi.Type
++func typeChanOf(elem *abi.Type, dir int) *abi.Type
++func typeMapOf(key, elem *abi.Type) *abi.Type
++func typeFuncOf(in, out []*abi.Type, variadic bool) *abi.Type
++func typeStructOf(names, pkgPaths, tags []string, types []*abi.Type, embedded []bool) *abi.Type
++
+ // toType converts from a *rtype to a Type that can be returned
+ // to the client of package reflect. In gc, the only concern is that
+ // a nil *rtype must be replaced by a nil Type, but in gccgo this

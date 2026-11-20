@@ -9,17 +9,56 @@ package graalgo.syscall;
 final class SyscallTable {
     private SyscallTable() {}
 
-    private static final Entry[] BY_NR = new Entry[303];
+    private static final Entry[] BY_NR = new Entry[453];
 
     static {
-        BY_NR[0] = new Entry(0, "read", true, new Role[] {Role.VAL, Role.bytes(2, true, true), Role.VAL});
-        BY_NR[1] = new Entry(1, "write", true, new Role[] {Role.VAL, Role.bytes(2, false, false), Role.VAL});
-        BY_NR[3] = new Entry(3, "close", false, new Role[] {Role.VAL});
-        BY_NR[8] = new Entry(8, "lseek", false, new Role[] {Role.VAL, Role.VAL, Role.VAL});
-        BY_NR[39] = new Entry(39, "getpid", false, new Role[] {});
-        BY_NR[257] = new Entry(257, "openat", true, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
-        BY_NR[263] = new Entry(263, "unlinkat", true, new Role[] {Role.VAL, Role.CSTR, Role.VAL});
-        BY_NR[302] = new Entry(302, "prlimit64", false, new Role[] {Role.VAL, Role.VAL, Role.struct(16, false), Role.struct(16, true)});
+        BY_NR[0] = new Entry(0, "read", true, 114, new Role[] {Role.VAL, Role.bytes(2, true, true), Role.VAL});
+        BY_NR[1] = new Entry(1, "write", true, 119, new Role[] {Role.VAL, Role.bytes(2, false, false), Role.VAL});
+        BY_NR[3] = new Entry(3, "close", false, 0, new Role[] {Role.VAL});
+        BY_NR[5] = new Entry(5, "fstat", false, 0, new Role[] {Role.VAL, Role.struct(144, true)});
+        BY_NR[8] = new Entry(8, "lseek", false, 0, new Role[] {Role.VAL, Role.VAL, Role.VAL});
+        BY_NR[17] = new Entry(17, "pread64", true, 114, new Role[] {Role.VAL, Role.bytes(2, true, true), Role.VAL, Role.VAL});
+        BY_NR[18] = new Entry(18, "pwrite64", true, 119, new Role[] {Role.VAL, Role.bytes(2, false, false), Role.VAL, Role.VAL});
+        BY_NR[32] = new Entry(32, "dup", false, 0, new Role[] {Role.VAL});
+        BY_NR[33] = new Entry(33, "dup2", false, 0, new Role[] {Role.VAL, Role.VAL});
+        BY_NR[39] = new Entry(39, "getpid", false, 0, new Role[] {});
+        BY_NR[63] = new Entry(63, "uname", false, 0, new Role[] {Role.struct(390, true)});
+        BY_NR[72] = new Entry(72, "fcntl", false, 0, new Role[] {Role.VAL, Role.sel(0L, 1L, 2L, 3L, 4L, 1030L, 1031L, 1032L), Role.VAL});
+        BY_NR[74] = new Entry(74, "fsync", true, 0, new Role[] {Role.VAL});
+        BY_NR[75] = new Entry(75, "fdatasync", true, 0, new Role[] {Role.VAL});
+        BY_NR[76] = new Entry(76, "truncate", false, 0, new Role[] {Role.CSTR, Role.VAL});
+        BY_NR[77] = new Entry(77, "ftruncate", false, 0, new Role[] {Role.VAL, Role.VAL});
+        BY_NR[79] = new Entry(79, "getcwd", false, 0, new Role[] {Role.bytes(1, true, true), Role.VAL});
+        BY_NR[80] = new Entry(80, "chdir", false, 0, new Role[] {Role.CSTR});
+        BY_NR[81] = new Entry(81, "fchdir", false, 0, new Role[] {Role.VAL});
+        BY_NR[91] = new Entry(91, "fchmod", false, 0, new Role[] {Role.VAL, Role.VAL});
+        BY_NR[93] = new Entry(93, "fchown", false, 0, new Role[] {Role.VAL, Role.VAL, Role.VAL});
+        BY_NR[95] = new Entry(95, "umask", false, 0, new Role[] {Role.VAL});
+        BY_NR[102] = new Entry(102, "getuid", false, 0, new Role[] {});
+        BY_NR[104] = new Entry(104, "getgid", false, 0, new Role[] {});
+        BY_NR[107] = new Entry(107, "geteuid", false, 0, new Role[] {});
+        BY_NR[108] = new Entry(108, "getegid", false, 0, new Role[] {});
+        BY_NR[110] = new Entry(110, "getppid", false, 0, new Role[] {});
+        BY_NR[186] = new Entry(186, "gettid", false, 0, new Role[] {});
+        BY_NR[217] = new Entry(217, "getdents64", false, 0, new Role[] {Role.VAL, Role.bytes(2, true, true), Role.VAL});
+        BY_NR[257] = new Entry(257, "openat", true, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
+        BY_NR[258] = new Entry(258, "mkdirat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL});
+        BY_NR[260] = new Entry(260, "fchownat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL, Role.VAL});
+        BY_NR[262] = new Entry(262, "newfstatat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.struct(144, true), Role.VAL});
+        BY_NR[263] = new Entry(263, "unlinkat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL});
+        BY_NR[264] = new Entry(264, "renameat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.CSTR});
+        BY_NR[265] = new Entry(265, "linkat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.CSTR, Role.VAL});
+        BY_NR[266] = new Entry(266, "symlinkat", false, 0, new Role[] {Role.CSTR, Role.VAL, Role.CSTR});
+        BY_NR[267] = new Entry(267, "readlinkat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.bytes(3, true, true), Role.VAL});
+        BY_NR[268] = new Entry(268, "fchmodat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL});
+        BY_NR[269] = new Entry(269, "faccessat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL});
+        BY_NR[280] = new Entry(280, "utimensat", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.struct(32, false), Role.VAL});
+        BY_NR[285] = new Entry(285, "fallocate", false, 0, new Role[] {Role.VAL, Role.VAL, Role.VAL, Role.VAL});
+        BY_NR[292] = new Entry(292, "dup3", false, 0, new Role[] {Role.VAL, Role.VAL, Role.VAL});
+        BY_NR[293] = new Entry(293, "pipe2", false, 0, new Role[] {Role.struct(8, true), Role.VAL});
+        BY_NR[302] = new Entry(302, "prlimit64", false, 0, new Role[] {Role.VAL, Role.VAL, Role.struct(16, false), Role.struct(16, true)});
+        BY_NR[439] = new Entry(439, "faccessat2", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
+        BY_NR[452] = new Entry(452, "fchmodat2", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
     }
 
     /** The entry of system call {@code nr}, or null if the table has none. */

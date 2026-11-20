@@ -1,0 +1,82 @@
+--- a/src/reflect/map.go
++++ b/src/reflect/map.go
+@@ -37,75 +37,10 @@
+ 		panic("reflect.MapOf: invalid key type " + stringFor(ktyp))
+ 	}
+ 
+-	// Look in cache.
+-	ckey := cacheKey{Map, ktyp, etyp, 0}
+-	if mt, ok := lookupCache.Load(ckey); ok {
+-		return mt.(Type)
+-	}
+-
+-	// Look in known types.
+-	s := "map[" + stringFor(ktyp) + "]" + stringFor(etyp)
+-	for _, tt := range typesByString(s) {
+-		mt := (*abi.MapType)(unsafe.Pointer(tt))
+-		if mt.Key == ktyp && mt.Elem == etyp {
+-			ti, _ := lookupCache.LoadOrStore(ckey, toRType(tt))
+-			return ti.(Type)
+-		}
+-	}
+-
+-	group := groupOf(key, elem)
+-
+-	// Make a map type.
+-	// Note: flag values must match those used in the TMAP case
+-	// in ../cmd/compile/internal/reflectdata/reflect.go:writeType.
+-	var imap any = (map[unsafe.Pointer]unsafe.Pointer)(nil)
+-	mt := **(**abi.MapType)(unsafe.Pointer(&imap))
+-	mt.Str = resolveReflectName(newName(s, "", false, false))
+-	mt.TFlag = abi.TFlagDirectIface
+-	mt.Hash = fnv1(etyp.Hash, 'm', byte(ktyp.Hash>>24), byte(ktyp.Hash>>16), byte(ktyp.Hash>>8), byte(ktyp.Hash))
+-	mt.Key = ktyp
+-	mt.Elem = etyp
+-	mt.Group = group.common()
+-	mt.Hasher = func(p unsafe.Pointer, seed uintptr) uintptr {
+-		return typehash(ktyp, p, seed)
+-	}
+-	mt.GroupSize = mt.Group.Size()
+-	if goexperiment.MapSplitGroup {
+-		// Split layout: field 1 is keys array, field 2 is elems array.
+-		mt.KeysOff = group.Field(1).Offset
+-		mt.KeyStride = group.Field(1).Type.Elem().Size()
+-		mt.ElemsOff = group.Field(2).Offset
+-		mt.ElemStride = group.Field(2).Type.Elem().Size()
+-		mt.ElemOff = 0
+-	} else {
+-		// Interleaved layout: field 1 is slots array.
+-		// KeyStride = ElemStride = slot stride.
+-		// ElemsOff = slots offset + elem offset within slot.
+-		slot := group.Field(1).Type.Elem()
+-		slotSize := slot.Size()
+-		mt.KeysOff = group.Field(1).Offset
+-		mt.KeyStride = slotSize
+-		mt.ElemsOff = group.Field(1).Offset + slot.Field(1).Offset
+-		mt.ElemStride = slotSize
+-		mt.ElemOff = slot.Field(1).Offset
+-	}
+-	mt.Flags = 0
+-	if needKeyUpdate(ktyp) {
+-		mt.Flags |= abi.MapNeedKeyUpdate
+-	}
+-	if hashMightPanic(ktyp) {
+-		mt.Flags |= abi.MapHashMightPanic
+-	}
+-	if ktyp.Size_ > abi.MapMaxKeyBytes {
+-		mt.Flags |= abi.MapIndirectKey
+-	}
+-	if etyp.Size_ > abi.MapMaxElemBytes {
+-		mt.Flags |= abi.MapIndirectElem
+-	}
+-	mt.PtrToThis = 0
+-
+-	ti, _ := lookupCache.LoadOrStore(ckey, toRType(&mt.Type))
+-	return ti.(Type)
++	// graalgo: the runtime interns the type and builds its descriptor
++	// (stdlib/patches; docs/arch/toolexec-design.md §5.6): there is one
++	// descriptor per type, whether the compiler or reflect asked for it.
++	return toType(typeMapOf(ktyp, etyp))
+ }
+ 
+ func groupOf(ktyp, etyp Type) Type {

@@ -263,6 +263,18 @@ public final class Descriptors {
 
     // ---------------------------------------------------------------- offsets and names
 
+    /**
+     * {@code reflect.addReflectOff}: the offset id of an object reflect wants to name by offset
+     * (a descriptor, or a name it encoded itself); {@link #resolve} maps the id back.
+     */
+    @TruffleBoundary
+    public int addOff(Object ptr) {
+        GoType t = typeOf(ptr);
+        synchronized (table) {
+            return offId(t != null ? t : ptr);
+        }
+    }
+
     private int offId(Object target) {
         Integer id = offIds.get(target);
         if (id == null) {
@@ -372,7 +384,7 @@ public final class Descriptors {
     }
 
     /** gc's PtrDataSize: the length of the prefix of a value that can hold pointers. */
-    static long ptrBytes(GoType t) {
+    public static long ptrBytes(GoType t) {
         GoType u = t.u();
         switch (u.kind) {
             case GoType.STRING, GoType.SLICE, GoType.POINTER, GoType.UNSAFE_POINTER, GoType.MAP, GoType.CHAN, GoType.FUNC:

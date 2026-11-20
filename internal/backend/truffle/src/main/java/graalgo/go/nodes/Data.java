@@ -589,6 +589,23 @@ public final class Data {
         return grow(s, need, backing, np, nr, nb, elemSize, pointers, zeroElem);
     }
 
+    /** {@link #reserve} for a caller outside the nodes (reflect's {@code growslice}). */
+    @TruffleBoundary
+    public static Slice reserve(Slice s, int add, GoType elem) {
+        return reserve(s, add, elem.backing(), elem.nPrim(), elem.nRef(), elem.nByte(), elem.gcSize(),
+                elem.hasPointers(), elem.zeroRefsAreNull() ? null : elem.zeroRefs());
+    }
+
+    /** A zeroed backing store for {@code cap} elements of type {@code elem} (reflect's {@code unsafe_NewArray}). */
+    @TruffleBoundary
+    public static Flat backing(GoType elem, int cap) {
+        if (cap < 0 || cap > maxElems(elem.nPrim(), elem.nRef(), elem.nByte())) {
+            throw new OutOfMemoryError("makeslice: len out of range");
+        }
+        return backing(elem.backing(), cap, elem.nPrim(), elem.nRef(), elem.nByte(),
+                elem.zeroRefsAreNull() ? null : elem.zeroRefs());
+    }
+
     @TruffleBoundary
     private static Slice grow(Slice s, int need, GoType backing, int np, int nr, int nb, long elemSize,
             boolean pointers, Object[] zeroElem) {

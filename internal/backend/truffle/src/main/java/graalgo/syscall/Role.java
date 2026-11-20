@@ -23,6 +23,8 @@ final class Role {
     final boolean filledResult;
     /** Struct: the size of the value in bytes. */
     final long size;
+    /** Sel: the only values the executor accepts; null for every other role. */
+    long[] allowed;
 
     private Role(int kind, int lenArg, boolean out, boolean filledResult, long size) {
         this.kind = kind;
@@ -38,6 +40,16 @@ final class Role {
 
     static Role bytes(int lenArg, boolean out, boolean filledResult) {
         return new Role(K_BYTES, lenArg, out, filledResult);
+    }
+
+    /**
+     * A value that selects what the call's other words mean (fcntl's command): the executor
+     * runs the call only for the listed values.
+     */
+    static Role sel(long... allowed) {
+        Role r = new Role(K_VAL, -1, false, false);
+        r.allowed = allowed;
+        return r;
     }
 
     /** A pointer to a pointer-free value of {@code size} bytes; {@code out}: the kernel writes it. */

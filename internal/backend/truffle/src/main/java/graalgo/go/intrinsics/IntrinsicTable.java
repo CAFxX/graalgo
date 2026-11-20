@@ -17,11 +17,15 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "7720d14889e62e5c";
+    public static final String HASH = "19f049a59e81adcb";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
         switch (symbol) {
+            case "internal/abi.FuncPCABI0":
+                return new R_internal_abi_FuncPCABI0(language);
+            case "internal/abi.FuncPCABIInternal":
+                return new R_internal_abi_FuncPCABIInternal(language);
             case "internal/bytealg.Compare":
                 return new R_internal_bytealg_Compare(language);
             case "internal/bytealg.Count":
@@ -38,6 +42,34 @@ public final class IntrinsicTable {
                 return new R_internal_bytealg_IndexString(language);
             case "internal/bytealg.MakeNoZero":
                 return new R_internal_bytealg_MakeNoZero(language);
+            case "internal/godebug.registerMetric":
+                return new R_internal_godebug_registerMetric(language);
+            case "internal/godebug.setNewIncNonDefault":
+                return new R_internal_godebug_setNewIncNonDefault(language);
+            case "internal/godebug.setUpdate":
+                return new R_internal_godebug_setUpdate(language);
+            case "internal/poll.runtime_Semacquire":
+                return new R_internal_poll_runtime_Semacquire(language);
+            case "internal/poll.runtime_Semrelease":
+                return new R_internal_poll_runtime_Semrelease(language);
+            case "internal/poll.runtime_isPollServerDescriptor":
+                return new R_internal_poll_runtime_isPollServerDescriptor(language);
+            case "internal/poll.runtime_pollClose":
+                return new R_internal_poll_runtime_pollClose(language);
+            case "internal/poll.runtime_pollOpen":
+                return new R_internal_poll_runtime_pollOpen(language);
+            case "internal/poll.runtime_pollReset":
+                return new R_internal_poll_runtime_pollReset(language);
+            case "internal/poll.runtime_pollServerInit":
+                return new R_internal_poll_runtime_pollServerInit(language);
+            case "internal/poll.runtime_pollSetDeadline":
+                return new R_internal_poll_runtime_pollSetDeadline(language);
+            case "internal/poll.runtime_pollUnblock":
+                return new R_internal_poll_runtime_pollUnblock(language);
+            case "internal/poll.runtime_pollWait":
+                return new R_internal_poll_runtime_pollWait(language);
+            case "internal/poll.runtime_pollWaitCanceled":
+                return new R_internal_poll_runtime_pollWaitCanceled(language);
             case "internal/reflectlite.Swapper":
                 return new R_internal_reflectlite_Swapper(language);
             case "internal/reflectlite.chanlen":
@@ -58,6 +90,10 @@ public final class IntrinsicTable {
                 return new R_internal_reflectlite_unsafe_New(language);
             case "internal/runtime/atomic.StoreReluintptr":
                 return new R_internal_runtime_atomic_StoreReluintptr(language);
+            case "internal/runtime/maps.iterNext":
+                return new R_internal_runtime_maps_iterNext(language);
+            case "internal/runtime/sys.GetCallerPC":
+                return new R_internal_runtime_sys_GetCallerPC(language);
             case "internal/runtime/syscall/linux.Syscall6":
                 return new R_internal_runtime_syscall_linux_Syscall6(language);
             case "internal/sync.fatal":
@@ -130,6 +166,108 @@ public final class IntrinsicTable {
                 return new R_math_bits_TrailingZeros32(language);
             case "math/bits.TrailingZeros64":
                 return new R_math_bits_TrailingZeros64(language);
+            case "os.ignoreSIGSYS":
+                return new R_os_ignoreSIGSYS(language);
+            case "os.restoreSIGSYS":
+                return new R_os_restoreSIGSYS(language);
+            case "os.runtime_args":
+                return new R_os_runtime_args(language);
+            case "os.runtime_beforeExit":
+                return new R_os_runtime_beforeExit(language);
+            case "os.runtime_rand":
+                return new R_os_runtime_rand(language);
+            case "os.sigpipe":
+                return new R_os_sigpipe(language);
+            case "reflect.addReflectOff":
+                return new R_reflect_addReflectOff(language);
+            case "reflect.adjustAIXGCDataForRuntime":
+                return new R_reflect_adjustAIXGCDataForRuntime(language);
+            case "reflect.callFunc":
+                return new R_reflect_callFunc(language);
+            case "reflect.callMethodByName":
+                return new R_reflect_callMethodByName(language);
+            case "reflect.chancap":
+                return new R_reflect_chancap(language);
+            case "reflect.chanclose":
+                return new R_reflect_chanclose(language);
+            case "reflect.chanlen":
+                return new R_reflect_chanlen(language);
+            case "reflect.chanrecv":
+                return new R_reflect_chanrecv(language);
+            case "reflect.chansend0":
+                return new R_reflect_chansend0(language);
+            case "reflect.compiledTypelinks":
+                return new R_reflect_compiledTypelinks(language);
+            case "reflect.growslice":
+                return new R_reflect_growslice(language);
+            case "reflect.ifaceE2I":
+                return new R_reflect_ifaceE2I(language);
+            case "reflect.makeFuncValue":
+                return new R_reflect_makeFuncValue(language);
+            case "reflect.makechan":
+                return new R_reflect_makechan(language);
+            case "reflect.makemap":
+                return new R_reflect_makemap(language);
+            case "reflect.mapaccess":
+                return new R_reflect_mapaccess(language);
+            case "reflect.mapaccess_faststr":
+                return new R_reflect_mapaccess_faststr(language);
+            case "reflect.mapassign0":
+                return new R_reflect_mapassign0(language);
+            case "reflect.mapassign_faststr0":
+                return new R_reflect_mapassign_faststr0(language);
+            case "reflect.mapclear":
+                return new R_reflect_mapclear(language);
+            case "reflect.mapdelete":
+                return new R_reflect_mapdelete(language);
+            case "reflect.mapdelete_faststr":
+                return new R_reflect_mapdelete_faststr(language);
+            case "reflect.maplen":
+                return new R_reflect_maplen(language);
+            case "reflect.methodFunc":
+                return new R_reflect_methodFunc(language);
+            case "reflect.methodValueCall":
+                return new R_reflect_methodValueCall(language);
+            case "reflect.resolveNameOff":
+                return new R_reflect_resolveNameOff(language);
+            case "reflect.resolveTextOff":
+                return new R_reflect_resolveTextOff(language);
+            case "reflect.resolveTypeOff":
+                return new R_reflect_resolveTypeOff(language);
+            case "reflect.rselect":
+                return new R_reflect_rselect(language);
+            case "reflect.typeArrayOf":
+                return new R_reflect_typeArrayOf(language);
+            case "reflect.typeChanOf":
+                return new R_reflect_typeChanOf(language);
+            case "reflect.typeFuncOf":
+                return new R_reflect_typeFuncOf(language);
+            case "reflect.typeMapOf":
+                return new R_reflect_typeMapOf(language);
+            case "reflect.typePointerTo":
+                return new R_reflect_typePointerTo(language);
+            case "reflect.typeSliceOf":
+                return new R_reflect_typeSliceOf(language);
+            case "reflect.typeStructOf":
+                return new R_reflect_typeStructOf(language);
+            case "reflect.typedarrayclear":
+                return new R_reflect_typedarrayclear(language);
+            case "reflect.typedmemclr":
+                return new R_reflect_typedmemclr(language);
+            case "reflect.typedmemmove":
+                return new R_reflect_typedmemmove(language);
+            case "reflect.typedslicecopy":
+                return new R_reflect_typedslicecopy(language);
+            case "reflect.typehash":
+                return new R_reflect_typehash(language);
+            case "reflect.unsafe_New":
+                return new R_reflect_unsafe_New(language);
+            case "reflect.unsafe_NewArray":
+                return new R_reflect_unsafe_NewArray(language);
+            case "reflect.unsafeslice":
+                return new R_reflect_unsafeslice(language);
+            case "reflect.verifyNotInHeapPtr":
+                return new R_reflect_verifyNotInHeapPtr(language);
             case "runtime.(*Func).Name":
                 return new R_runtime___Func__Name(language);
             case "runtime.Caller":
@@ -156,6 +294,8 @@ public final class IntrinsicTable {
                 return new R_runtime_entersyscall(language);
             case "runtime.exitsyscall":
                 return new R_runtime_exitsyscall(language);
+            case "runtime.fcntl":
+                return new R_runtime_fcntl(language);
             case "runtime.nanotime":
                 return new R_runtime_nanotime(language);
             case "runtime.rand":
@@ -164,6 +304,8 @@ public final class IntrinsicTable {
                 return new R_runtime_randn(language);
             case "runtime.runtimeError":
                 return new R_runtime_runtimeError(language);
+            case "runtime.write":
+                return new R_runtime_write(language);
             case "sync.fatal":
                 return new R_sync_fatal(language);
             case "sync.runtime_Semacquire":
@@ -280,6 +422,14 @@ public final class IntrinsicTable {
                 return new R_syscall_Exit(language);
             case "syscall.Getpagesize":
                 return new R_syscall_Getpagesize(language);
+            case "syscall.rawSyscallNoError":
+                return new R_syscall_rawSyscallNoError(language);
+            case "syscall.rawVforkSyscall":
+                return new R_syscall_rawVforkSyscall(language);
+            case "syscall.runtimeSetenv":
+                return new R_syscall_runtimeSetenv(language);
+            case "syscall.runtimeUnsetenv":
+                return new R_syscall_runtimeUnsetenv(language);
             case "syscall.runtime_envs":
                 return new R_syscall_runtime_envs(language);
             case "time.Sleep":
@@ -296,6 +446,10 @@ public final class IntrinsicTable {
                 return new R_time_runtimeNow(language);
             case "time.stopTimer":
                 return new R_time_stopTimer(language);
+            case "weak.runtime_makeStrongFromWeak":
+                return new R_weak_runtime_makeStrongFromWeak(language);
+            case "weak.runtime_registerWeakPointer":
+                return new R_weak_runtime_registerWeakPointer(language);
             default:
                 return null;
         }
@@ -317,6 +471,32 @@ public final class IntrinsicTable {
         @Override
         public boolean isInternal() {
             return true;
+        }
+    }
+
+    /** {@code internal/abi.FuncPCABI0}: {@code func(interface {}) uintptr}. */
+    static final class R_internal_abi_FuncPCABI0 extends Root {
+        R_internal_abi_FuncPCABI0(GoLanguage language) {
+            super(language, "internal/abi.FuncPCABI0");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.internal_abi_FuncPCABI0(this, a[1]);
+        }
+    }
+
+    /** {@code internal/abi.FuncPCABIInternal}: {@code func(interface {}) uintptr}. */
+    static final class R_internal_abi_FuncPCABIInternal extends Root {
+        R_internal_abi_FuncPCABIInternal(GoLanguage language) {
+            super(language, "internal/abi.FuncPCABIInternal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.internal_abi_FuncPCABIInternal(this, a[1]);
         }
     }
 
@@ -421,6 +601,197 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return BytealgIntrinsics.internal_bytealg_MakeNoZero(this, (long) a[1]);
+        }
+    }
+
+    /** {@code internal/godebug.registerMetric}: {@code func(string, func() uint64)}. */
+    static final class R_internal_godebug_registerMetric extends Root {
+        R_internal_godebug_registerMetric(GoLanguage language) {
+            super(language, "internal/godebug.registerMetric");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.internal_godebug_registerMetric(this, (Str) a[1], a[2]);
+            return null;
+        }
+    }
+
+    /** {@code internal/godebug.setNewIncNonDefault}: {@code func(func(string) func())}. */
+    static final class R_internal_godebug_setNewIncNonDefault extends Root {
+        R_internal_godebug_setNewIncNonDefault(GoLanguage language) {
+            super(language, "internal/godebug.setNewIncNonDefault");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.internal_godebug_setNewIncNonDefault(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/godebug.setUpdate}: {@code func(func(string, string))}. */
+    static final class R_internal_godebug_setUpdate extends Root {
+        R_internal_godebug_setUpdate(GoLanguage language) {
+            super(language, "internal/godebug.setUpdate");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.internal_godebug_setUpdate(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_Semacquire}: {@code func(*uint32)}. */
+    static final class R_internal_poll_runtime_Semacquire extends Root {
+        R_internal_poll_runtime_Semacquire(GoLanguage language) {
+            super(language, "internal/poll.runtime_Semacquire");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            PollIntrinsics.internal_poll_runtime_Semacquire(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_Semrelease}: {@code func(*uint32)}. */
+    static final class R_internal_poll_runtime_Semrelease extends Root {
+        R_internal_poll_runtime_Semrelease(GoLanguage language) {
+            super(language, "internal/poll.runtime_Semrelease");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            PollIntrinsics.internal_poll_runtime_Semrelease(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_isPollServerDescriptor}: {@code func(uintptr) bool}. */
+    static final class R_internal_poll_runtime_isPollServerDescriptor extends Root {
+        R_internal_poll_runtime_isPollServerDescriptor(GoLanguage language) {
+            super(language, "internal/poll.runtime_isPollServerDescriptor");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return PollIntrinsics.internal_poll_runtime_isPollServerDescriptor(this, (long) a[1]);
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollClose}: {@code func(uintptr)}. */
+    static final class R_internal_poll_runtime_pollClose extends Root {
+        R_internal_poll_runtime_pollClose(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollClose");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            PollIntrinsics.internal_poll_runtime_pollClose(this, (long) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollOpen}: {@code func(uintptr) (uintptr, int)}. */
+    static final class R_internal_poll_runtime_pollOpen extends Root {
+        R_internal_poll_runtime_pollOpen(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollOpen");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return PollIntrinsics.internal_poll_runtime_pollOpen(this, (long) a[1]);
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollReset}: {@code func(uintptr, int) int}. */
+    static final class R_internal_poll_runtime_pollReset extends Root {
+        R_internal_poll_runtime_pollReset(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollReset");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return PollIntrinsics.internal_poll_runtime_pollReset(this, (long) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollServerInit}: {@code func()}. */
+    static final class R_internal_poll_runtime_pollServerInit extends Root {
+        R_internal_poll_runtime_pollServerInit(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollServerInit");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            PollIntrinsics.internal_poll_runtime_pollServerInit(this);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollSetDeadline}: {@code func(uintptr, int64, int)}. */
+    static final class R_internal_poll_runtime_pollSetDeadline extends Root {
+        R_internal_poll_runtime_pollSetDeadline(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollSetDeadline");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            PollIntrinsics.internal_poll_runtime_pollSetDeadline(this, (long) a[1], (long) a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollUnblock}: {@code func(uintptr)}. */
+    static final class R_internal_poll_runtime_pollUnblock extends Root {
+        R_internal_poll_runtime_pollUnblock(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollUnblock");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            PollIntrinsics.internal_poll_runtime_pollUnblock(this, (long) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollWait}: {@code func(uintptr, int) int}. */
+    static final class R_internal_poll_runtime_pollWait extends Root {
+        R_internal_poll_runtime_pollWait(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollWait");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return PollIntrinsics.internal_poll_runtime_pollWait(this, (long) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/poll.runtime_pollWaitCanceled}: {@code func(uintptr, int)}. */
+    static final class R_internal_poll_runtime_pollWaitCanceled extends Root {
+        R_internal_poll_runtime_pollWaitCanceled(GoLanguage language) {
+            super(language, "internal/poll.runtime_pollWaitCanceled");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            PollIntrinsics.internal_poll_runtime_pollWaitCanceled(this, (long) a[1], (long) a[2]);
+            return null;
         }
     }
 
@@ -554,6 +925,31 @@ public final class IntrinsicTable {
             Object[] a = frame.getArguments();
             AtomicIntrinsics.internal_runtime_atomic_StoreReluintptr(this, a[1], (long) a[2]);
             return null;
+        }
+    }
+
+    /** {@code internal/runtime/maps.iterNext}: {@code func(*internal/abi.MapType, *internal/runtime/maps.Map, unsafe.Pointer) (unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)}. */
+    static final class R_internal_runtime_maps_iterNext extends Root {
+        R_internal_runtime_maps_iterNext(GoLanguage language) {
+            super(language, "internal/runtime/maps.iterNext");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.internal_runtime_maps_iterNext(this, a[1], a[2], a[3]);
+        }
+    }
+
+    /** {@code internal/runtime/sys.GetCallerPC}: {@code func() uintptr}. */
+    static final class R_internal_runtime_sys_GetCallerPC extends Root {
+        R_internal_runtime_sys_GetCallerPC(GoLanguage language) {
+            super(language, "internal/runtime/sys.GetCallerPC");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return ReflectIntrinsics.internal_runtime_sys_GetCallerPC(this);
         }
     }
 
@@ -1028,6 +1424,680 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code os.ignoreSIGSYS}: {@code func()}. */
+    static final class R_os_ignoreSIGSYS extends Root {
+        R_os_ignoreSIGSYS(GoLanguage language) {
+            super(language, "os.ignoreSIGSYS");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            OsIntrinsics.os_ignoreSIGSYS(this);
+            return null;
+        }
+    }
+
+    /** {@code os.restoreSIGSYS}: {@code func()}. */
+    static final class R_os_restoreSIGSYS extends Root {
+        R_os_restoreSIGSYS(GoLanguage language) {
+            super(language, "os.restoreSIGSYS");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            OsIntrinsics.os_restoreSIGSYS(this);
+            return null;
+        }
+    }
+
+    /** {@code os.runtime_args}: {@code func() []string}. */
+    static final class R_os_runtime_args extends Root {
+        R_os_runtime_args(GoLanguage language) {
+            super(language, "os.runtime_args");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return OsIntrinsics.os_runtime_args(this);
+        }
+    }
+
+    /** {@code os.runtime_beforeExit}: {@code func(int)}. */
+    static final class R_os_runtime_beforeExit extends Root {
+        R_os_runtime_beforeExit(GoLanguage language) {
+            super(language, "os.runtime_beforeExit");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            OsIntrinsics.os_runtime_beforeExit(this, (long) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code os.runtime_rand}: {@code func() uint64}. */
+    static final class R_os_runtime_rand extends Root {
+        R_os_runtime_rand(GoLanguage language) {
+            super(language, "os.runtime_rand");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return OsIntrinsics.os_runtime_rand(this);
+        }
+    }
+
+    /** {@code os.sigpipe}: {@code func()}. */
+    static final class R_os_sigpipe extends Root {
+        R_os_sigpipe(GoLanguage language) {
+            super(language, "os.sigpipe");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            OsIntrinsics.os_sigpipe(this);
+            return null;
+        }
+    }
+
+    /** {@code reflect.addReflectOff}: {@code func(unsafe.Pointer) int32}. */
+    static final class R_reflect_addReflectOff extends Root {
+        R_reflect_addReflectOff(GoLanguage language) {
+            super(language, "reflect.addReflectOff");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_addReflectOff(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.adjustAIXGCDataForRuntime}: {@code func(*uint8) *uint8}. */
+    static final class R_reflect_adjustAIXGCDataForRuntime extends Root {
+        R_reflect_adjustAIXGCDataForRuntime(GoLanguage language) {
+            super(language, "reflect.adjustAIXGCDataForRuntime");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_adjustAIXGCDataForRuntime(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.callFunc}: {@code func(*internal/abi.Type, unsafe.Pointer, []unsafe.Pointer, []unsafe.Pointer)}. */
+    static final class R_reflect_callFunc extends Root {
+        R_reflect_callFunc(GoLanguage language) {
+            super(language, "reflect.callFunc");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_callFunc(this, a[1], a[2], a[3], a[4]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.callMethodByName}: {@code func(interface {}, string, *internal/abi.Type, []unsafe.Pointer, []unsafe.Pointer)}. */
+    static final class R_reflect_callMethodByName extends Root {
+        R_reflect_callMethodByName(GoLanguage language) {
+            super(language, "reflect.callMethodByName");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_callMethodByName(this, a[1], (Str) a[2], a[3], a[4], a[5]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.chancap}: {@code func(unsafe.Pointer) int}. */
+    static final class R_reflect_chancap extends Root {
+        R_reflect_chancap(GoLanguage language) {
+            super(language, "reflect.chancap");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_chancap(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.chanclose}: {@code func(unsafe.Pointer)}. */
+    static final class R_reflect_chanclose extends Root {
+        R_reflect_chanclose(GoLanguage language) {
+            super(language, "reflect.chanclose");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_chanclose(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.chanlen}: {@code func(unsafe.Pointer) int}. */
+    static final class R_reflect_chanlen extends Root {
+        R_reflect_chanlen(GoLanguage language) {
+            super(language, "reflect.chanlen");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_chanlen(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.chanrecv}: {@code func(unsafe.Pointer, bool, unsafe.Pointer) (bool, bool)}. */
+    static final class R_reflect_chanrecv extends Root {
+        R_reflect_chanrecv(GoLanguage language) {
+            super(language, "reflect.chanrecv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_chanrecv(this, a[1], (boolean) a[2], a[3]);
+        }
+    }
+
+    /** {@code reflect.chansend0}: {@code func(unsafe.Pointer, unsafe.Pointer, bool) bool}. */
+    static final class R_reflect_chansend0 extends Root {
+        R_reflect_chansend0(GoLanguage language) {
+            super(language, "reflect.chansend0");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_chansend0(this, a[1], a[2], (boolean) a[3]);
+        }
+    }
+
+    /** {@code reflect.compiledTypelinks}: {@code func() ([]*internal/abi.Type, [][]*internal/abi.Type)}. */
+    static final class R_reflect_compiledTypelinks extends Root {
+        R_reflect_compiledTypelinks(GoLanguage language) {
+            super(language, "reflect.compiledTypelinks");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return ReflectIntrinsics.reflect_compiledTypelinks(this);
+        }
+    }
+
+    /** {@code reflect.growslice}: {@code func(*internal/abi.Type, internal/unsafeheader.Slice, int) internal/unsafeheader.Slice}. */
+    static final class R_reflect_growslice extends Root {
+        R_reflect_growslice(GoLanguage language) {
+            super(language, "reflect.growslice");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_growslice(this, a[1], a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code reflect.ifaceE2I}: {@code func(*internal/abi.Type, interface {}, unsafe.Pointer)}. */
+    static final class R_reflect_ifaceE2I extends Root {
+        R_reflect_ifaceE2I(GoLanguage language) {
+            super(language, "reflect.ifaceE2I");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_ifaceE2I(this, a[1], a[2], a[3]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.makeFuncValue}: {@code func(*internal/abi.Type, func([]unsafe.Pointer, []unsafe.Pointer)) unsafe.Pointer}. */
+    static final class R_reflect_makeFuncValue extends Root {
+        R_reflect_makeFuncValue(GoLanguage language) {
+            super(language, "reflect.makeFuncValue");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_makeFuncValue(this, a[1], a[2]);
+        }
+    }
+
+    /** {@code reflect.makechan}: {@code func(*internal/abi.Type, int) unsafe.Pointer}. */
+    static final class R_reflect_makechan extends Root {
+        R_reflect_makechan(GoLanguage language) {
+            super(language, "reflect.makechan");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_makechan(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.makemap}: {@code func(*internal/abi.Type, int) unsafe.Pointer}. */
+    static final class R_reflect_makemap extends Root {
+        R_reflect_makemap(GoLanguage language) {
+            super(language, "reflect.makemap");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_makemap(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.mapaccess}: {@code func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_reflect_mapaccess extends Root {
+        R_reflect_mapaccess(GoLanguage language) {
+            super(language, "reflect.mapaccess");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_mapaccess(this, a[1], a[2], a[3]);
+        }
+    }
+
+    /** {@code reflect.mapaccess_faststr}: {@code func(*internal/abi.Type, unsafe.Pointer, string) unsafe.Pointer}. */
+    static final class R_reflect_mapaccess_faststr extends Root {
+        R_reflect_mapaccess_faststr(GoLanguage language) {
+            super(language, "reflect.mapaccess_faststr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_mapaccess_faststr(this, a[1], a[2], (Str) a[3]);
+        }
+    }
+
+    /** {@code reflect.mapassign0}: {@code func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)}. */
+    static final class R_reflect_mapassign0 extends Root {
+        R_reflect_mapassign0(GoLanguage language) {
+            super(language, "reflect.mapassign0");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_mapassign0(this, a[1], a[2], a[3], a[4]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.mapassign_faststr0}: {@code func(*internal/abi.Type, unsafe.Pointer, string, unsafe.Pointer)}. */
+    static final class R_reflect_mapassign_faststr0 extends Root {
+        R_reflect_mapassign_faststr0(GoLanguage language) {
+            super(language, "reflect.mapassign_faststr0");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_mapassign_faststr0(this, a[1], a[2], (Str) a[3], a[4]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.mapclear}: {@code func(*internal/abi.Type, unsafe.Pointer)}. */
+    static final class R_reflect_mapclear extends Root {
+        R_reflect_mapclear(GoLanguage language) {
+            super(language, "reflect.mapclear");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_mapclear(this, a[1], a[2]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.mapdelete}: {@code func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer)}. */
+    static final class R_reflect_mapdelete extends Root {
+        R_reflect_mapdelete(GoLanguage language) {
+            super(language, "reflect.mapdelete");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_mapdelete(this, a[1], a[2], a[3]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.mapdelete_faststr}: {@code func(*internal/abi.Type, unsafe.Pointer, string)}. */
+    static final class R_reflect_mapdelete_faststr extends Root {
+        R_reflect_mapdelete_faststr(GoLanguage language) {
+            super(language, "reflect.mapdelete_faststr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_mapdelete_faststr(this, a[1], a[2], (Str) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.maplen}: {@code func(unsafe.Pointer) int}. */
+    static final class R_reflect_maplen extends Root {
+        R_reflect_maplen(GoLanguage language) {
+            super(language, "reflect.maplen");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_maplen(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.methodFunc}: {@code func(*internal/abi.Type, string) unsafe.Pointer}. */
+    static final class R_reflect_methodFunc extends Root {
+        R_reflect_methodFunc(GoLanguage language) {
+            super(language, "reflect.methodFunc");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_methodFunc(this, a[1], (Str) a[2]);
+        }
+    }
+
+    /** {@code reflect.methodValueCall}: {@code func()}. */
+    static final class R_reflect_methodValueCall extends Root {
+        R_reflect_methodValueCall(GoLanguage language) {
+            super(language, "reflect.methodValueCall");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            ReflectIntrinsics.reflect_methodValueCall(this);
+            return null;
+        }
+    }
+
+    /** {@code reflect.resolveNameOff}: {@code func(unsafe.Pointer, int32) unsafe.Pointer}. */
+    static final class R_reflect_resolveNameOff extends Root {
+        R_reflect_resolveNameOff(GoLanguage language) {
+            super(language, "reflect.resolveNameOff");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_resolveNameOff(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.resolveTextOff}: {@code func(unsafe.Pointer, int32) unsafe.Pointer}. */
+    static final class R_reflect_resolveTextOff extends Root {
+        R_reflect_resolveTextOff(GoLanguage language) {
+            super(language, "reflect.resolveTextOff");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_resolveTextOff(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.resolveTypeOff}: {@code func(unsafe.Pointer, int32) unsafe.Pointer}. */
+    static final class R_reflect_resolveTypeOff extends Root {
+        R_reflect_resolveTypeOff(GoLanguage language) {
+            super(language, "reflect.resolveTypeOff");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_resolveTypeOff(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.rselect}: {@code func([]reflect.runtimeSelect) (int, bool)}. */
+    static final class R_reflect_rselect extends Root {
+        R_reflect_rselect(GoLanguage language) {
+            super(language, "reflect.rselect");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_rselect(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.typeArrayOf}: {@code func(int, *internal/abi.Type) *internal/abi.Type}. */
+    static final class R_reflect_typeArrayOf extends Root {
+        R_reflect_typeArrayOf(GoLanguage language) {
+            super(language, "reflect.typeArrayOf");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typeArrayOf(this, (long) a[1], a[2]);
+        }
+    }
+
+    /** {@code reflect.typeChanOf}: {@code func(*internal/abi.Type, int) *internal/abi.Type}. */
+    static final class R_reflect_typeChanOf extends Root {
+        R_reflect_typeChanOf(GoLanguage language) {
+            super(language, "reflect.typeChanOf");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typeChanOf(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.typeFuncOf}: {@code func([]*internal/abi.Type, []*internal/abi.Type, bool) *internal/abi.Type}. */
+    static final class R_reflect_typeFuncOf extends Root {
+        R_reflect_typeFuncOf(GoLanguage language) {
+            super(language, "reflect.typeFuncOf");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typeFuncOf(this, a[1], a[2], (boolean) a[3]);
+        }
+    }
+
+    /** {@code reflect.typeMapOf}: {@code func(*internal/abi.Type, *internal/abi.Type) *internal/abi.Type}. */
+    static final class R_reflect_typeMapOf extends Root {
+        R_reflect_typeMapOf(GoLanguage language) {
+            super(language, "reflect.typeMapOf");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typeMapOf(this, a[1], a[2]);
+        }
+    }
+
+    /** {@code reflect.typePointerTo}: {@code func(*internal/abi.Type) *internal/abi.Type}. */
+    static final class R_reflect_typePointerTo extends Root {
+        R_reflect_typePointerTo(GoLanguage language) {
+            super(language, "reflect.typePointerTo");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typePointerTo(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.typeSliceOf}: {@code func(*internal/abi.Type) *internal/abi.Type}. */
+    static final class R_reflect_typeSliceOf extends Root {
+        R_reflect_typeSliceOf(GoLanguage language) {
+            super(language, "reflect.typeSliceOf");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typeSliceOf(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.typeStructOf}: {@code func([]string, []string, []string, []*internal/abi.Type, []bool) *internal/abi.Type}. */
+    static final class R_reflect_typeStructOf extends Root {
+        R_reflect_typeStructOf(GoLanguage language) {
+            super(language, "reflect.typeStructOf");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typeStructOf(this, a[1], a[2], a[3], a[4], a[5]);
+        }
+    }
+
+    /** {@code reflect.typedarrayclear}: {@code func(*internal/abi.Type, unsafe.Pointer, int)}. */
+    static final class R_reflect_typedarrayclear extends Root {
+        R_reflect_typedarrayclear(GoLanguage language) {
+            super(language, "reflect.typedarrayclear");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_typedarrayclear(this, a[1], a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.typedmemclr}: {@code func(*internal/abi.Type, unsafe.Pointer)}. */
+    static final class R_reflect_typedmemclr extends Root {
+        R_reflect_typedmemclr(GoLanguage language) {
+            super(language, "reflect.typedmemclr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_typedmemclr(this, a[1], a[2]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.typedmemmove}: {@code func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer)}. */
+    static final class R_reflect_typedmemmove extends Root {
+        R_reflect_typedmemmove(GoLanguage language) {
+            super(language, "reflect.typedmemmove");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_typedmemmove(this, a[1], a[2], a[3]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.typedslicecopy}: {@code func(*internal/abi.Type, internal/unsafeheader.Slice, internal/unsafeheader.Slice) int}. */
+    static final class R_reflect_typedslicecopy extends Root {
+        R_reflect_typedslicecopy(GoLanguage language) {
+            super(language, "reflect.typedslicecopy");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typedslicecopy(this, a[1], a[2], a[3]);
+        }
+    }
+
+    /** {@code reflect.typehash}: {@code func(*internal/abi.Type, unsafe.Pointer, uintptr) uintptr}. */
+    static final class R_reflect_typehash extends Root {
+        R_reflect_typehash(GoLanguage language) {
+            super(language, "reflect.typehash");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_typehash(this, a[1], a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code reflect.unsafe_New}: {@code func(*internal/abi.Type) unsafe.Pointer}. */
+    static final class R_reflect_unsafe_New extends Root {
+        R_reflect_unsafe_New(GoLanguage language) {
+            super(language, "reflect.unsafe_New");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_unsafe_New(this, a[1]);
+        }
+    }
+
+    /** {@code reflect.unsafe_NewArray}: {@code func(*internal/abi.Type, int) unsafe.Pointer}. */
+    static final class R_reflect_unsafe_NewArray extends Root {
+        R_reflect_unsafe_NewArray(GoLanguage language) {
+            super(language, "reflect.unsafe_NewArray");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_unsafe_NewArray(this, a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code reflect.unsafeslice}: {@code func(*internal/abi.Type, unsafe.Pointer, int)}. */
+    static final class R_reflect_unsafeslice extends Root {
+        R_reflect_unsafeslice(GoLanguage language) {
+            super(language, "reflect.unsafeslice");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ReflectIntrinsics.reflect_unsafeslice(this, a[1], a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code reflect.verifyNotInHeapPtr}: {@code func(uintptr) bool}. */
+    static final class R_reflect_verifyNotInHeapPtr extends Root {
+        R_reflect_verifyNotInHeapPtr(GoLanguage language) {
+            super(language, "reflect.verifyNotInHeapPtr");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return ReflectIntrinsics.reflect_verifyNotInHeapPtr(this, (long) a[1]);
+        }
+    }
+
     /** {@code runtime.(*Func).Name}: {@code func() string}. */
     static final class R_runtime___Func__Name extends Root {
         R_runtime___Func__Name(GoLanguage language) {
@@ -1194,6 +2264,19 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.fcntl}: {@code func(int32, int32, int32) (int32, int32)}. */
+    static final class R_runtime_fcntl extends Root {
+        R_runtime_fcntl(GoLanguage language) {
+            super(language, "runtime.fcntl");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyscallIntrinsics.runtime_fcntl(this, (long) a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
     /** {@code runtime.nanotime}: {@code func() int64}. */
     static final class R_runtime_nanotime extends Root {
         R_runtime_nanotime(GoLanguage language) {
@@ -1241,6 +2324,19 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_runtimeError(this, (long) a[1]);
+        }
+    }
+
+    /** {@code runtime.write}: {@code func(uintptr, unsafe.Pointer, int32) int32}. */
+    static final class R_runtime_write extends Root {
+        R_runtime_write(GoLanguage language) {
+            super(language, "runtime.write");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return GodebugIntrinsics.runtime_write(this, (long) a[1], a[2], (long) a[3]);
         }
     }
 
@@ -2014,6 +3110,60 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code syscall.rawSyscallNoError}: {@code func(uintptr, uintptr, uintptr, uintptr) (uintptr, uintptr)}. */
+    static final class R_syscall_rawSyscallNoError extends Root {
+        R_syscall_rawSyscallNoError(GoLanguage language) {
+            super(language, "syscall.rawSyscallNoError");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyscallIntrinsics.syscall_rawSyscallNoError(this, (long) a[1], (long) a[2], (long) a[3], (long) a[4]);
+        }
+    }
+
+    /** {@code syscall.rawVforkSyscall}: {@code func(uintptr, uintptr, uintptr, uintptr) (uintptr, syscall.Errno)}. */
+    static final class R_syscall_rawVforkSyscall extends Root {
+        R_syscall_rawVforkSyscall(GoLanguage language) {
+            super(language, "syscall.rawVforkSyscall");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyscallIntrinsics.syscall_rawVforkSyscall(this, (long) a[1], (long) a[2], (long) a[3], (long) a[4]);
+        }
+    }
+
+    /** {@code syscall.runtimeSetenv}: {@code func(string, string)}. */
+    static final class R_syscall_runtimeSetenv extends Root {
+        R_syscall_runtimeSetenv(GoLanguage language) {
+            super(language, "syscall.runtimeSetenv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.syscall_runtimeSetenv(this, (Str) a[1], (Str) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code syscall.runtimeUnsetenv}: {@code func(string)}. */
+    static final class R_syscall_runtimeUnsetenv extends Root {
+        R_syscall_runtimeUnsetenv(GoLanguage language) {
+            super(language, "syscall.runtimeUnsetenv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.syscall_runtimeUnsetenv(this, (Str) a[1]);
+            return null;
+        }
+    }
+
     /** {@code syscall.runtime_envs}: {@code func() []string}. */
     static final class R_syscall_runtime_envs extends Root {
         R_syscall_runtime_envs(GoLanguage language) {
@@ -2112,6 +3262,32 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return TimeIntrinsics.time_stopTimer(this, a[1]);
+        }
+    }
+
+    /** {@code weak.runtime_makeStrongFromWeak}: {@code func(unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_weak_runtime_makeStrongFromWeak extends Root {
+        R_weak_runtime_makeStrongFromWeak(GoLanguage language) {
+            super(language, "weak.runtime_makeStrongFromWeak");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return WeakIntrinsics.weak_runtime_makeStrongFromWeak(this, a[1]);
+        }
+    }
+
+    /** {@code weak.runtime_registerWeakPointer}: {@code func(unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_weak_runtime_registerWeakPointer extends Root {
+        R_weak_runtime_registerWeakPointer(GoLanguage language) {
+            super(language, "weak.runtime_registerWeakPointer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return WeakIntrinsics.weak_runtime_registerWeakPointer(this, a[1]);
         }
     }
 }

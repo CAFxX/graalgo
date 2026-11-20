@@ -1,0 +1,15 @@
+--- a/src/internal/abi/escape.go
++++ b/src/internal/abi/escape.go
+@@ -45,7 +45,11 @@
+ //	if hasNonStringPointers(T) { Escape(v) }
+ //
+ // Implemented as a compiler intrinsic.
+-func EscapeNonString[T any](v T) { panic("intrinsic") }
++//
++// graalgo: gc's compiler replaces the call by an escape-analysis fact and no
++// code; a generic function cannot be a registry intrinsic, so the body is
++// that no code (the JVM moves no stack: every value is safe to hash).
++func EscapeNonString[T any](v T) {}
+ 
+ // EscapeToResultNonString models a data flow edge from v to the result,
+ // if v contains a non-string pointer. If v contains only string pointers,
