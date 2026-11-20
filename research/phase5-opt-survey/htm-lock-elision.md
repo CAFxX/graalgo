@@ -80,7 +80,7 @@ architectures" — are the industry-wide summary `[VERIFIED]`.
   evidence of one found).
 - **glibc.** Mutex elision is runtime opt-in through `glibc.elision.enable`
   (default off; the configure-time default-on switch was removed in 2017) and only
-  on x86-64 with RTM, POWER and z `[VERIFIED]` ([manual](https://www.gnu.org/software/libc/manual/html_node/Elision-Tunables.html),
+  on x86-64 with RTM, POWER and z `[VERIFIED]` ([manual](https://sourceware.org/glibc/manual/2.42/html_node/Elision-Tunables.html),
   [2.42 x86 source](https://sources.debian.org/src/glibc/2.42-1/sysdeps/unix/sysv/linux/x86/elision-conf.c)).
   glibc also blacklists TSX on CPU models with the broken microcode
   ([patch](https://patchwork.sourceware.org/comment/118206/)) `[VERIFIED]`.

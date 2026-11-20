@@ -30,7 +30,8 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - `make pre-land` — **the pre-land checklist; a lane runs it in full
   before reporting done**: `make all`, then `check-links-external` (the
   markdown-links workflow: every external URL, network; local `make
-  check` skips them) and `test-diffharness` (ci.yml's harness self-test),
+  check` skips them; a 403/429/5xx/timeout that survives the retries is an
+  *unverifiable* warning, never a failure — only 404/410/NXDOMAIN fail) and `test-diffharness` (ci.yml's harness self-test),
   then CI's drift check. Never a hand-picked subset of targets: gates
   share inputs (a new `test/m1a/programs` file is also an input of
   `test-toolexec`'s reference-interpreter differential), so "the gate for
