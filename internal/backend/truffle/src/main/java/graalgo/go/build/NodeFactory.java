@@ -2873,18 +2873,98 @@ public final class NodeFactory {
         if (f.post() != null) {
             post.add(stmt(f.post()));
         }
-        out.add(new Ctl.For(cond, b, post.isEmpty() ? null : seq(post), target.brk, target.cont));
+        int idx = -1;
+        I64 limit = null;
+        if (counted(f)) {
+            Gir.Expr.Binary c = (Gir.Expr.Binary) f.cond();
+            idx = slots[((Gir.Expr.Local) c.x()).local()];
+            limit = asI64(expr(c.y()));
+        }
+        out.add(new Ctl.For(cond, b, post.isEmpty() ? null : seq(post), target.brk, target.cont, idx, limit));
         return seq(out);
     }
 
+    /**
+     * {@code for ...; i < X; i++ {...}} over a signed integer variable {@code i} held in its
+     * frame slot, where the body assigns neither {@code i} nor anything {@code X} reads: X is
+     * constants, such variables, {@code len} of such slice, string or array variables, and
+     * sums and differences of those. Then {@code i < X} is the loop's only test and X is the
+     * same at every test, which is what lets compiled code strip-mine the loop ({@link Ctl.For}).
+     */
+    private boolean counted(Gir.Stmt.For f) {
+        if (!(f.cond() instanceof Gir.Expr.Binary c) || c.op() != Gir.BinOp.LSS
+                || !(c.x() instanceof Gir.Expr.Local i) || boxed[i.local()]) {
+            return false;
+        }
+        GoType t = ltypes[i.local()];
+        if (!t.isInteger() || t.isUnsigned() || !(f.post() instanceof Gir.Stmt.IncDec p) || !p.inc()
+                || !(p.x() instanceof Gir.Expr.Local pi) || pi.local() != i.local()) {
+            return false;
+        }
+        boolean[] written = new boolean[body.locals().length];
+        walk(f.body(), s -> assigned(s, written));
+        return !written[i.local()] && invariant(c.y(), written);
+    }
+
+    private boolean invariant(Gir.Expr e, boolean[] written) {
+        return switch (e) {
+            case Gir.Expr.Const x -> true;
+            case Gir.Expr.Local x -> !boxed[x.local()] && !written[x.local()];
+            case Gir.Expr.Binary x -> (x.op() == Gir.BinOp.ADD || x.op() == Gir.BinOp.SUB) && ty(x).isInteger()
+                    && invariant(x.x(), written) && invariant(x.y(), written);
+            case Gir.Expr.BuiltinCall x -> x.builtin() == Gir.Builtin.LEN && x.args().length == 1
+                    && x.args()[0] instanceof Gir.Expr.Local l && lenFixed(ty(l)) && invariant(l, written);
+            default -> false;
+        };
+    }
+
+    /** {@code len} of a variable of this type changes only when the variable is assigned. */
+    private static boolean lenFixed(GoType t) {
+        int k = t.u().kind;
+        return k == GoType.SLICE || k == GoType.STRING || k == GoType.ARRAY;
+    }
+
+    /** Marks the locals statement {@code s} itself assigns (not those of nested statements). */
+    private static void assigned(Gir.Stmt s, boolean[] written) {
+        switch (s) {
+            case Gir.Stmt.Assign x -> lhsLocals(x.lhs(), written);
+            case Gir.Stmt.Define x -> lhsLocals(x.lhs(), written);
+            case Gir.Stmt.IncDec x -> lhsLocals(new Gir.Expr[] {x.x()}, written);
+            case Gir.Stmt.Range x -> lhsLocals(new Gir.Expr[] {x.key(), x.value()}, written);
+            case Gir.Stmt.Select x -> {
+                for (Gir.CommClause c : x.clauses()) {
+                    if (c.comm() != null) {
+                        assigned(c.comm(), written);
+                    }
+                }
+            }
+            default -> {
+            }
+        }
+    }
+
+    private static void lhsLocals(Gir.Expr[] lhs, boolean[] written) {
+        for (Gir.Expr e : lhs) {
+            if (e instanceof Gir.Expr.Local l) {
+                written[l.local()] = true;
+            }
+        }
+    }
+
     private Stmt loop(Target target, Bool cond, List<Stmt> prelude, Gir.Stmt[] bodyStmts, Stmt post) {
+        return loop(target, cond, prelude, bodyStmts, post, -1, null);
+    }
+
+    /** {@code idx}, {@code limit}: a counted loop over a factory temp (see {@link Ctl.For}). */
+    private Stmt loop(Target target, Bool cond, List<Stmt> prelude, Gir.Stmt[] bodyStmts, Stmt post, int idx,
+            I64 limit) {
         targets.push(target);
         Stmt b = block(bodyStmts);
         targets.pop();
         // `continue` must still run the post statement: it targets the user body only.
         Stmt inner = target.cont == null ? b : new Ctl.BreakTarget(b, target.cont);
         prelude.add(inner);
-        return new Ctl.For(cond, seq(prelude), post, target.brk, null);
+        return new Ctl.For(cond, seq(prelude), post, target.brk, null, idx, limit);
     }
 
     private Stmt rangeVar(Gir.Stmt.Range r, Gir.Expr target, Expr v) {
@@ -2952,7 +3032,7 @@ public final class NodeFactory {
                     pre.add(rangeVar(r, r.value(), load(xt.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ReadI64(len)), pre,
-                        r.body(), inc));
+                        r.body(), inc, idx, new N.ReadI64(len)));
                 return seq(out);
             }
             case GoType.ARRAY, GoType.POINTER: {
@@ -2974,7 +3054,7 @@ public final class NodeFactory {
                     pre.add(rangeVar(r, r.value(), load(at.elem, loc)));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ConstI64(at.len)), pre,
-                        r.body(), inc));
+                        r.body(), inc, idx, new N.ConstI64(at.len)));
                 return seq(out);
             }
             case GoType.STRING: {
@@ -3051,7 +3131,7 @@ public final class NodeFactory {
                     pre.add(rangeVar(r, r.key(), readIdx.get()));
                 }
                 out.add(loop(target, ArithFactory.LtI64NodeGen.create(readIdx.get(), new N.ReadI64(n)), pre, r.body(),
-                        inc));
+                        inc, xt.isUnsigned() ? -1 : idx, xt.isUnsigned() ? null : new N.ReadI64(n)));
                 return seq(out);
             }
         }
