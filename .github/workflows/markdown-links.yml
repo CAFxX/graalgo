@@ -25,4 +25,4 @@ jobs:
         # instead of failing master on a degraded frontend.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python3 .github/scripts/check_markdown_links.py
+        run: make check-links-external

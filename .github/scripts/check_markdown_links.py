@@ -93,6 +93,17 @@ def file_anchors(path):
 BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
+# Every web request carries an Accept header, as curl and browsers do.
+# Python's urllib sends none, and Akamai bot protection answers 403 to a
+# request without one (2026-11-20, markdown-links run 44722519299: the
+# "dead" bugs.openjdk.org/browse/JDK-* and intel.com developer-article
+# URLs answered 403 to urllib, 200 to the same request plus
+# "Accept: */*"). The browser-UA attempt still gets 403 there (UA and
+# TLS fingerprint disagree), so the plain-UA attempts must carry it.
+PLAIN_ACCEPT = "*/*"
+BROWSER_ACCEPT = ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                  "*/*;q=0.8")
+
 
 # Transport failures that mean "no answer arrived at all" — the host is
 # alive but this request was lost on the way (connection reset before
@@ -260,9 +271,9 @@ def check_external(url, sleep=None):
     # Some sites 403 HEAD or non-browser user agents (bot protection);
     # retry with GET + browser UA before declaring dead.
     attempts = [
-        ("HEAD", "graalgo-linkcheck/1.0"),
-        ("GET", "graalgo-linkcheck/1.0"),
-        ("GET", BROWSER_UA),
+        ("HEAD", "graalgo-linkcheck/1.0", PLAIN_ACCEPT),
+        ("GET", "graalgo-linkcheck/1.0", PLAIN_ACCEPT),
+        ("GET", BROWSER_UA, BROWSER_ACCEPT),
     ]
     # Two rounds over the (method, UA) ladder. A transient failure
     # sleeps with backoff before the next attempt so a short outage
@@ -272,9 +283,10 @@ def check_external(url, sleep=None):
     # a second round, so a genuinely dead link still fails fast.
     for round_no in range(2):
         saw_transient = False
-        for i, (method, ua) in enumerate(attempts):
+        for i, (method, ua, accept) in enumerate(attempts):
             req = urllib.request.Request(url, method=method,
-                                         headers={"User-Agent": ua})
+                                         headers={"User-Agent": ua,
+                                                  "Accept": accept})
             try:
                 with urllib.request.urlopen(req, timeout=10) as r:
                     if 200 <= r.status < 400:

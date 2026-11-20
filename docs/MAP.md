@@ -27,7 +27,7 @@ and is **deleted at the M3 cutover** — never build on it.
 | change the launcher / tool protocol | [internal/toolexec/cmd/](../internal/toolexec/cmd/) (`graalgo-launcher`, `graalgo-tool`, `graalgo-stub`, each with a README), runner [graalgo-bundle-run](../internal/backend/graalgo-bundle-run) | `make test-toolexec` |
 | add a differential program | new path: [test/m1a/programs/](../test/m1a/programs/) (no imports), [test/m1r/programs/](../test/m1r/programs/) (std), [test/m1c/programs/](../test/m1c/programs/) (sync/time/syscalls), [test/m1w13/programs/](../test/m1w13/programs/) (`unsafe`); a fuzz reproducer → [test/fuzz/repro/](../test/fuzz/repro/) | the dir's `run.sh` / make target |
 | add a v1-era corpus program | [test/corpus/](../test/corpus/README.md) + [test/differential/](../test/differential/README.md) (gc snapshot in [test/snapshots/](../test/snapshots/)) | `make snapshot-check SNAPSHOT_PROGRAMS=…` |
-| run the gates | [Makefile](../Makefile) header; `make check-repo` (docs-only, no JVM), `make check`, `make all` (per-push); [AGENTS.md](../AGENTS.md) §2 | — |
+| run the gates | [Makefile](../Makefile) header; `make check-repo` (docs-only, no JVM), `make check`, `make all` (per-push), `make pre-land` (before a lane reports done: `all` + external links + harness self-test + drift); [AGENTS.md](../AGENTS.md) §2 | — |
 | benchmark | [test/bench/](../test/bench/README.md), [performance.md](arch/performance.md) | `make bench-suite`, `make bench-m1a` |
 | fuzz | [test/fuzz/](../test/fuzz/README.md) (new path, nightly) | `make fuzz-newpath N= SEED=` |
 | read/change requirements & SPEC | [SPEC.md](arch/SPEC.md); one YAML per requirement in [requirements/](../requirements/); CLI [tools/req/](../tools/req/README.md) | `cd tools/req && go run . lint` |
