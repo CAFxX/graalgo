@@ -158,6 +158,8 @@ public final class NodeFactory {
      * its calls pass {@code recover()} eligibility on ({@link Calls#passRecover}).
      */
     private boolean wrapper;
+    /** Building a split copy ({@link #rebuild}): the function was reported when first built. */
+    private boolean split;
     private int litCount;
     /** gc names a range-over-func body {@code f-rangeN}, numbered apart from literals. */
     private int rangeCount;
@@ -211,7 +213,20 @@ public final class NodeFactory {
     public static RootCallTarget buildFunction(FunctionUnit.Instance inst) {
         FunctionUnit u = inst.unit();
         Gir.FuncBody b = u.pkg.gir.body(u.index);
-        return new NodeFactory(inst, b, u.symbol).buildRoot(0);
+        return new NodeFactory(inst, b, u.symbol).buildRoot(0).getCallTarget();
+    }
+
+    /**
+     * The root of a function body built by a fresh factory: what {@link Calls.FuncRoot}'s
+     * {@code cloneUninitialized} returns for Truffle splitting (truffle-design §4.7: the body is
+     * decoded again from GIR, so a split copy starts with fresh inline caches).
+     */
+    private static Calls.FuncRoot rebuild(FunctionUnit.Instance inst, Gir.FuncBody body, String name, boolean wrapper,
+            int captures, boolean split) {
+        NodeFactory f = new NodeFactory(inst, body, name);
+        f.wrapper = wrapper;
+        f.split = split;
+        return f.buildRoot(captures);
     }
 
     /**
@@ -226,7 +241,7 @@ public final class NodeFactory {
                 .getCallTarget();
     }
 
-    private RootCallTarget buildRoot(int captures) {
+    private Calls.FuncRoot buildRoot(int captures) {
         List<Stmt> pro = new ArrayList<>();
         for (int i = 0; i < captures; i++) {
             pro.add(new N.WriteRef(slots[i], new Calls.EnvRead(i)));
@@ -256,7 +271,7 @@ public final class NodeFactory {
         Stmt[] prologue = pro.toArray(new Stmt[0]);
         FrameDescriptor fd = fdb.build();
         Calls.FuncRoot root;
-        if (DeferPathTrace.ENABLED && hasDefer) {
+        if (DeferPathTrace.ENABLED && hasDefer && !split) {
             DeferPathTrace.report(name, openDefers);
         }
         if (openDefers) {
@@ -272,7 +287,12 @@ public final class NodeFactory {
         } else {
             root = new Calls.FuncRoot(lang, fd, name, prologue, b, result);
         }
-        return root.getCallTarget();
+        FunctionUnit.Instance i = inst;
+        Gir.FuncBody gb = body;
+        String n = name;
+        boolean w = wrapper;
+        root.setRebuild(() -> rebuild(i, gb, n, w, captures, true));
+        return root;
     }
 
     private Stmt param(int local, int arg) {
@@ -1921,9 +1941,7 @@ public final class NodeFactory {
             @Override
             public synchronized RootCallTarget get() {
                 if (built == null) {
-                    NodeFactory f = new NodeFactory(inst, fl.body(), litName);
-                    f.wrapper = fl.wrapper();
-                    built = f.buildRoot(caps.length);
+                    built = rebuild(inst, fl.body(), litName, fl.wrapper(), caps.length, false).getCallTarget();
                 }
                 return built;
             }
