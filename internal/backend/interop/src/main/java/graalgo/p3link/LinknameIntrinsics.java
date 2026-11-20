@@ -597,6 +597,7 @@ public final class LinknameIntrinsics {
         // Files: open/close/read/write/readAt/writeAt/seek/truncate/sync.
         Linknames.register("graalgo.os.open", args -> GoOs.open(args[0], args[1], args[2]), 3);
         Linknames.register("graalgo.os.close", args -> GoOs.close(args[0]), 1);
+        Linknames.register("graalgo.os.dup", args -> GoOs.dup(args[0]), 1);
         Linknames.register("graalgo.os.read", args -> GoOs.read(args[0], args[1]), 2);
         Linknames.register("graalgo.os.write", args -> GoOs.write(args[0], args[1]), 2);
         Linknames.register("graalgo.os.readAt", args -> GoOs.readAt(args[0], args[1], args[2]), 3);

@@ -10,7 +10,9 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentHashMap;
@@ -155,6 +157,15 @@ public final class GoNetpoll {
         /** Set while a nonblocking connect is in flight (OP_CONNECT). */
         volatile boolean connecting;
         volatile SelectionKey key;
+        /**
+         * The shared selector registration for {@link #ch} (dup: several
+         * pollDescs watch one channel). Null until {@code pollOpen}
+         * attaches this desc to its share.
+         */
+        volatile KeyShare share;
+        /** This desc's currently armed wait modes (unioned into the shared key). */
+        volatile boolean readArmed;
+        volatile boolean writeArmed;
         final AtomicReference<Waiter> reader = new AtomicReference<>();
         final AtomicReference<Waiter> writer = new AtomicReference<>();
         volatile boolean closing;
@@ -181,6 +192,28 @@ public final class GoNetpoll {
         }
     }
 
+    /**
+     * One selector registration shared by every pollDesc watching the same
+     * channel. A dup'd fd registers a second pollDesc on the channel its
+     * alias shares (each desc keeps its own waiter slots — sharing one
+     * pollDesc would throw on concurrent waits), but a channel registers
+     * with a selector exactly once: the {@link SelectionKey} attachment
+     * is this share, and readiness wakes every member. Interest is the
+     * union of the members' armed modes (recomputed under the share lock
+     * on every arm/disarm); the key is cancelled only when the last
+     * member leaves.
+     */
+    private static final class KeyShare {
+        final SelectableChannel ch;
+        volatile SelectionKey key;
+        /** Every live PollDesc registered on {@link #ch}. */
+        final Set<PollDesc> members = ConcurrentHashMap.newKeySet();
+
+        KeyShare(SelectableChannel ch) {
+            this.ch = ch;
+        }
+    }
+
     // ---- process-wide poller state (per program run) ----
 
     private static final AtomicBoolean INIT = new AtomicBoolean(false);
@@ -188,6 +221,9 @@ public final class GoNetpoll {
     private static volatile Thread pollerThread;
     private static final ConcurrentHashMap<Long, PollDesc> DESCS = new ConcurrentHashMap<>();
     private static final ConcurrentHashMap<Long, PollDesc> BY_SOCK = new ConcurrentHashMap<>();
+    /** Selector registration shares, keyed by channel (dup: one key per channel). */
+    private static final ConcurrentHashMap<SelectableChannel, KeyShare> BY_CHANNEL =
+            new ConcurrentHashMap<>();
     private static final AtomicLong NEXT_CTX = new AtomicLong(1); // 0 = null ctx
     private static final BlockingQueue<FutureTask<SelectionKey>> REG_Q =
             new LinkedBlockingQueue<>();
@@ -203,6 +239,7 @@ public final class GoNetpoll {
         pollerThread = null;
         DESCS.clear();
         BY_SOCK.clear();
+        BY_CHANNEL.clear();
         REG_Q.clear();
         NEXT_CTX.set(1);
         lastPollerError = null;
@@ -276,35 +313,72 @@ public final class GoNetpoll {
         }
         DESCS.put(id, pd);
         BY_SOCK.put(cookie, pd);
-        // Registration must happen on the selector thread: enqueue + wakeup,
-        // block (briefly, carrier-pinned like gc's synchronous netpollopen).
-        FutureTask<SelectionKey> task = new FutureTask<>(() -> ch.register(selector, 0, pd));
-        REG_Q.offer(task);
-        Selector sel = selector;
-        if (sel == null) {
-            // resetForTest raced us (test-only; production never resets).
-            dropDesc(pd);
-            LAST_OPEN_ERRNO.set(GoOs.EINVAL);
-            return 0;
-        }
-        sel.wakeup();
-        try {
-            pd.key = task.get();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            // Cancel the registration task before dropping the desc: it
-            // may otherwise run later on the poller thread and register
-            // the (still-open) channel, stranding it until the handleKey
-            // unknown-desc guard cancels it. Cancelling here keeps the
-            // failure synchronous and local (P2-7).
-            task.cancel(false);
-            dropDesc(pd);
-            LAST_OPEN_ERRNO.set(GoOs.EINVAL);
-            return 0;
-        } catch (Exception e) {
-            dropDesc(pd);
-            LAST_OPEN_ERRNO.set(GoNet.sockErrno(e.getCause() != null ? e.getCause() : e));
-            return 0;
+        // Attach to the channel's key share. Registration must happen on
+        // the selector thread (enqueue + wakeup, block briefly,
+        // carrier-pinned like gc's synchronous netpollopen) — but only for
+        // the first member: a channel registers once, and re-registering
+        // would reset the shared key's interestOps to 0, stranding armed
+        // waiters. The join + key check run under the share lock,
+        // serialized with detachShare, so a racing departure cannot
+        // orphan this desc on a detached share. The lock is NOT held
+        // across task.get(): the poller thread must drain the task, and
+        // it can block on the share lock inside handleKey's wake path.
+        // A second joiner racing the first registration only ever sees
+        // an unarmed share (no member arms interest before its pollOpen
+        // returns), so a duplicate registration task is harmless.
+        for (;;) {
+            KeyShare share = BY_CHANNEL.computeIfAbsent(ch, KeyShare::new);
+            FutureTask<SelectionKey> task = null;
+            synchronized (share) {
+                if (BY_CHANNEL.get(ch) != share) {
+                    continue; // detached mid-join; retry with the live share
+                }
+                share.members.add(pd);
+                pd.share = share;
+                if (share.key == null) {
+                    task = new FutureTask<>(() -> ch.register(selector, 0, share));
+                    REG_Q.offer(task);
+                } else {
+                    pd.key = share.key;
+                }
+            }
+            if (task == null) {
+                break;
+            }
+            Selector sel = selector;
+            if (sel == null) {
+                // resetForTest raced us (test-only; production never resets).
+                detachShare(pd);
+                dropDesc(pd);
+                LAST_OPEN_ERRNO.set(GoOs.EINVAL);
+                return 0;
+            }
+            sel.wakeup();
+            try {
+                SelectionKey key = task.get();
+                synchronized (share) {
+                    share.key = key;
+                }
+                pd.key = key;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                // Cancel the registration task before dropping the desc: it
+                // may otherwise run later on the poller thread and register
+                // the (still-open) channel, stranding it until the handleKey
+                // unknown-desc guard cancels it. Cancelling here keeps the
+                // failure synchronous and local (P2-7).
+                task.cancel(false);
+                detachShare(pd);
+                dropDesc(pd);
+                LAST_OPEN_ERRNO.set(GoOs.EINVAL);
+                return 0;
+            } catch (Exception e) {
+                detachShare(pd);
+                dropDesc(pd);
+                LAST_OPEN_ERRNO.set(GoNet.sockErrno(e.getCause() != null ? e.getCause() : e));
+                return 0;
+            }
+            break;
         }
         LAST_OPEN_ERRNO.set(0);
         return id;
@@ -342,10 +416,9 @@ public final class GoNetpoll {
         }
         cancelDeadline(pd, MODE_READ);
         cancelDeadline(pd, MODE_WRITE);
-        SelectionKey key = pd.key;
-        if (key != null) {
-            key.cancel();
-        }
+        // Dup: detach from the key share — the shared key is cancelled
+        // only when the last member leaves (detachShare).
+        detachShare(pd);
         dropDesc(pd);
         Selector sel = selector;
         if (sel != null) {
@@ -437,10 +510,9 @@ public final class GoNetpoll {
         cancelDeadline(pd, MODE_WRITE);
         wakeWith(pd, MODE_READ, POLL_ERR_CLOSING);
         wakeWith(pd, MODE_WRITE, POLL_ERR_CLOSING);
-        SelectionKey key = pd.key;
-        if (key != null) {
-            key.cancel();
-        }
+        // Dup: detach only this desc from the key share — the shared
+        // key (and channel) survive while other aliases remain.
+        detachShare(pd);
         dropDesc(pd);
         Selector sel = selector;
         if (sel != null) {
@@ -507,37 +579,88 @@ public final class GoNetpoll {
             if (cur == null || cur == pd.ch) {
                 return 0;
             }
-            SelectionKey oldKey = pd.key;
-            if (oldKey != null) {
-                oldKey.cancel();
+            KeyShare oldShare = pd.share;
+            if (oldShare == null) {
+                // Never opened (or already detached): just re-point.
+                pd.ch = cur;
+                pd.listener = cur instanceof ServerSocketChannel;
+                return 0;
             }
-            // Registration must happen on the selector thread (same
-            // FutureTask pattern as pollOpen).
-            FutureTask<SelectionKey> task = new FutureTask<>(() -> cur.register(selector, 0, pd));
-            REG_Q.offer(task);
-            Selector sel = selector;
-            if (sel == null) {
-                // resetForTest raced us (test-only; production never resets).
-                dropDesc(pd);
-                return -GoOs.EINVAL;
+            // Dup: the whole share migrates together — every alias of
+            // the socket watches the same channel, so detaching one
+            // member alone would strand the others on the dead key.
+            // Snapshot under the share lock, then detach all members
+            // (cancels the old key when the last member leaves).
+            List<PollDesc> members;
+            synchronized (oldShare) {
+                members = new ArrayList<>(oldShare.members);
             }
-            sel.wakeup();
-            try {
-                pd.key = task.get();
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                task.cancel(false); // P2-7: never strand a registration
-                dropDesc(pd);
-                return -GoOs.EINVAL;
-            } catch (Exception e) {
-                dropDesc(pd);
-                return -GoNet.sockErrno(e.getCause() != null ? e.getCause() : e);
+            for (PollDesc m : members) {
+                detachShare(m);
             }
-            pd.ch = cur;
-            pd.listener = cur instanceof ServerSocketChannel;
+            // Register the new channel on the selector thread (same
+            // FutureTask pattern as pollOpen), attached to the new
+            // channel's share; the members join it under its lock.
+            KeyShare newShare = BY_CHANNEL.computeIfAbsent(cur, KeyShare::new);
+            FutureTask<SelectionKey> task = null;
+            synchronized (newShare) {
+                for (PollDesc m : members) {
+                    newShare.members.add(m);
+                    m.share = newShare;
+                }
+                if (newShare.key == null) {
+                    task = new FutureTask<>(() -> cur.register(selector, 0, newShare));
+                    REG_Q.offer(task);
+                } else {
+                    for (PollDesc m : members) {
+                        m.key = newShare.key;
+                    }
+                }
+            }
+            if (task != null) {
+                Selector sel = selector;
+                if (sel == null) {
+                    // resetForTest raced us (test-only; production never resets).
+                    for (PollDesc m : members) {
+                        detachShare(m);
+                        dropDesc(m);
+                    }
+                    return -GoOs.EINVAL;
+                }
+                sel.wakeup();
+                try {
+                    SelectionKey key = task.get();
+                    synchronized (newShare) {
+                        newShare.key = key;
+                    }
+                    for (PollDesc m : members) {
+                        m.key = key;
+                    }
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    task.cancel(false); // P2-7: never strand a registration
+                    for (PollDesc m : members) {
+                        detachShare(m);
+                        dropDesc(m);
+                    }
+                    return -GoOs.EINVAL;
+                } catch (Exception e) {
+                    for (PollDesc m : members) {
+                        detachShare(m);
+                        dropDesc(m);
+                    }
+                    return -GoNet.sockErrno(e.getCause() != null ? e.getCause() : e);
+                }
+            }
+            for (PollDesc m : members) {
+                m.ch = cur;
+                m.listener = cur instanceof ServerSocketChannel;
+            }
             // Re-arm interest for claimed-but-unresolved waiter slots;
             // level-triggering makes this lossless.
-            rearmClaimed(pd);
+            for (PollDesc m : members) {
+                rearmClaimed(m);
+            }
             return 0;
         }
     }
@@ -568,6 +691,11 @@ public final class GoNetpoll {
     }
 
     private static void dropDesc(PollDesc pd) {
+        // Defense in depth: every drop path detaches first (pollClose,
+        // evictForClose, pollOpen/migration failures), but a future
+        // caller that forgets must not strand a share member — detach
+        // is idempotent, so the redundant call is a no-op.
+        detachShare(pd);
         DESCS.remove(pd.id);
         BY_SOCK.remove(pd.sockCookie, pd);
     }
@@ -677,22 +805,74 @@ public final class GoNetpoll {
         }
     }
 
-    private static void setInterest(PollDesc pd, int mode, boolean on) {
-        SelectionKey key = pd.key;
+    /**
+     * Detaches a desc from its key share (dup: one member leaving).
+     * The shared key is cancelled only when the last member leaves, and
+     * the {@code BY_CHANNEL} entry is removed only if it still points
+     * at this share. Idempotent: safe on a desc that never joined or
+     * already left. Takes only the share lock — never {@code pd}'s lock
+     * — so no lock-order cycle with {@link #setInterest} /
+     * {@link #handleKey}, which never take {@code pd}'s lock.
+     */
+    private static void detachShare(PollDesc pd) {
+        KeyShare share = pd.share;
+        if (share == null) {
+            return;
+        }
+        boolean last;
+        SelectionKey key;
+        synchronized (share) {
+            if (pd.share != share) {
+                return; // already re-attached elsewhere (migration)
+            }
+            share.members.remove(pd);
+            pd.share = null;
+            pd.key = null;
+            pd.readArmed = false;
+            pd.writeArmed = false;
+            last = share.members.isEmpty();
+            key = share.key;
+            if (last) {
+                share.key = null;
+                BY_CHANNEL.remove(share.ch, share);
+            }
+        }
+        if (last && key != null) {
+            key.cancel();
+            Selector sel = selector;
+            if (sel != null) {
+                sel.wakeup();
+            }
+        }
+    }
+
+    /**
+     * Recomputes the shared key's interestOps as the union of the
+     * members' armed modes. Call with the share lock held. A member's
+     * read wait arms OP_ACCEPT on a listener, OP_READ otherwise; a
+     * write wait arms OP_CONNECT while the member is connecting,
+     * OP_WRITE otherwise. The union is exactly what the shared key
+     * must watch: every member's readiness is delivered through the
+     * same key, and {@link #handleKey} fans the event out to all of
+     * them (level-triggered, so a member that loses the race for the
+     * data re-waits and the event re-fires).
+     */
+    private static void recomputeInterestLocked(KeyShare share) {
+        SelectionKey key = share.key;
         if (key == null || !key.isValid()) {
             return;
         }
-        int bit;
-        if (mode == MODE_WRITE && pd.connecting) {
-            bit = SelectionKey.OP_CONNECT;
-        } else if (mode == MODE_READ && pd.listener) {
-            bit = SelectionKey.OP_ACCEPT;
-        } else {
-            bit = mode == MODE_READ ? SelectionKey.OP_READ : SelectionKey.OP_WRITE;
+        int ops = 0;
+        for (PollDesc m : share.members) {
+            if (m.readArmed) {
+                ops |= m.listener ? SelectionKey.OP_ACCEPT : SelectionKey.OP_READ;
+            }
+            if (m.writeArmed) {
+                ops |= m.connecting ? SelectionKey.OP_CONNECT : SelectionKey.OP_WRITE;
+            }
         }
         try {
-            int ops = key.interestOps();
-            key.interestOps(on ? (ops | bit) : (ops & ~bit));
+            key.interestOps(ops);
         } catch (CancelledKeyException ignored) {
             // Raced with close; the waiter will observe closing via checkErr
             // on its next wait, and the current wait's waker paths are
@@ -701,6 +881,24 @@ public final class GoNetpoll {
         Selector sel = selector;
         if (sel != null) {
             sel.wakeup();
+        }
+    }
+
+    private static void setInterest(PollDesc pd, int mode, boolean on) {
+        KeyShare share = pd.share;
+        if (share == null) {
+            return;
+        }
+        synchronized (share) {
+            if (pd.share != share) {
+                return; // detached mid-call; the new share recomputes on attach
+            }
+            if (mode == MODE_READ) {
+                pd.readArmed = on;
+            } else {
+                pd.writeArmed = on;
+            }
+            recomputeInterestLocked(share);
         }
     }
 
@@ -836,10 +1034,30 @@ public final class GoNetpoll {
 
     private static void handleKey(SelectionKey key) {
         Object att = key.attachment();
+        if (att instanceof KeyShare share) {
+            // Dup: one key serves every alias of the channel. Fan the
+            // event out to all live members; a dead member is skipped,
+            // never cancelling the shared key (other aliases still wait).
+            List<PollDesc> members;
+            synchronized (share) {
+                members = new ArrayList<>(share.members);
+            }
+            int ready;
+            try {
+                ready = key.readyOps();
+            } catch (CancelledKeyException e) {
+                return;
+            }
+            for (PollDesc pd : members) {
+                handleMemberReady(pd, ready);
+            }
+            return;
+        }
         if (!(att instanceof PollDesc pd)) {
             key.cancel();
             return;
         }
+        // Legacy attachment (pre-share registration): single-member path.
         if (pd.closed || !DESCS.containsKey(pd.id)) {
             key.cancel();
             return;
@@ -848,6 +1066,14 @@ public final class GoNetpoll {
         try {
             ready = key.readyOps();
         } catch (CancelledKeyException e) {
+            return;
+        }
+        handleMemberReady(pd, ready);
+    }
+
+    /** Wakes one share member for the key's ready ops (never cancels the key). */
+    private static void handleMemberReady(PollDesc pd, int ready) {
+        if (pd.closed || !DESCS.containsKey(pd.id)) {
             return;
         }
         if ((ready & SelectionKey.OP_CONNECT) != 0) {
@@ -898,13 +1124,25 @@ public final class GoNetpoll {
         }
     }
 
+    /**
+     * Drops the OP_CONNECT contribution of a member whose connect just
+     * completed. The caller sets {@code pd.connecting = false} first;
+     * the recompute then drops OP_CONNECT (and, if the member's write
+     * waiter is still armed, arms OP_WRITE in its place — the waiter
+     * is woken by {@link #finishConnect} immediately after, so the
+     * transient OP_WRITE cannot strand or spuriously wake anyone:
+     * level-triggered readiness re-fires only while a waiter is armed).
+     * With no waiter parked at all, the recompute is what prevents the
+     * poller from spinning on a permanently-ready OP_CONNECT.
+     */
     private static void clearInterestConnect(PollDesc pd) {
-        SelectionKey key = pd.key;
-        if (key != null && key.isValid()) {
-            try {
-                key.interestOps(key.interestOps() & ~SelectionKey.OP_CONNECT);
-            } catch (CancelledKeyException ignored) {
-                // Raced with close.
+        KeyShare share = pd.share;
+        if (share == null) {
+            return;
+        }
+        synchronized (share) {
+            if (pd.share == share) {
+                recomputeInterestLocked(share);
             }
         }
     }

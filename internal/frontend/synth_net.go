@@ -40,6 +40,7 @@ import "context"
 import "errors"
 import "internal/poll"
 import "io"
+import "os"
 import "strconv"
 import "strings"
 import "time"
@@ -1067,6 +1068,9 @@ func netSockWrite(h int64, b []byte) int64 // n+1 or -errno
 //go:linkname netSockClose graalgo.os.close
 func netSockClose(h int64) int64 // 0 or -errno
 
+//go:linkname netShutdown graalgo.net.shutdown
+func netShutdown(cookie int64, how int64) int64 // 0 or -errno (SHUT_RD=0, SHUT_WR=1, SHUT_RDWR=2)
+
 // ---------------------------------------------------------------------------
 // Netpoller linknames (internal/poll.*). The net package drives the
 // poller directly by cookie via linknames, avoiding a synthetic->synthetic
@@ -1149,9 +1153,13 @@ func netPollSetDeadlineCookie(cookie int64, d int64, mode int) {
 	}
 }
 
-// errEOF is the EOF error for socket reads (matches io.EOF's message;
-// the net package avoids importing io to sidestep an io/fs export issue).
-var errEOF = errors.New("EOF")
+// errEOF is the EOF error for socket reads. It IS io.EOF (not a
+// message-equal copy): user code compares with ==, and gc's net
+// returns io.EOF itself, so a distinct errors.New("EOF") value
+// diverges observably (io.ReadAll returns it as a real error;
+// Read == io.EOF checks fail). (Was errors.New("EOF") with a stale
+// comment about avoiding an io import; net imports io already.)
+var errEOF = io.EOF
 
 // Sockaddr wire format (net-fork-contract.md): byte 0 = family;
 // AF_INET (2): [2, portHi, portLo, a0..a3]; AF_INET6 (10):
@@ -1229,6 +1237,53 @@ func (fd *netFD) close() error {
 	netPollCloseCookie(fd.cookie)
 	if r := netSockClose(fd.cookie); r < 0 {
 		return &OpError{Op: "close", Net: fd.net, Err: errno(-r)}
+	}
+	return nil
+}
+
+// dup duplicates the socket cookie with close-on-exec semantics and
+// wraps it as an *os.File (gc 1.27.1 net/fd_unix.go netFD.dup +
+// newUnixFile): the dup goes through poll.DupCloseOnExec (O-P1-4),
+// so the alias shares the channel (graalgo.os.dup refcounting) and
+// closing the file does not kill the original fd. The name mirrors
+// gc's netFD.name (fd_posix.go): net:laddr->raddr.
+func (fd *netFD) dup() (*os.File, error) {
+	ns, call, err := poll.DupCloseOnExec(int(fd.cookie))
+	if err != nil {
+		if call != "" {
+			err = os.NewSyscallError(call, err)
+		}
+		return nil, err
+	}
+	return os.NewFile(uintptr(ns), fd.name()), nil
+}
+
+// name mirrors gc's netFD.name (fd_posix.go).
+func (fd *netFD) name() string {
+	var ls, rs string
+	if fd.laddr != nil {
+		ls = fd.laddr.String()
+	}
+	if fd.raddr != nil {
+		rs = fd.raddr.String()
+	}
+	return fd.net + ":" + ls + "->" + rs
+}
+
+// closeRead shuts down the reading side (gc 1.27.1 net/fd_unix.go
+// netFD.closeRead): poll.FD.Shutdown(SHUT_RD) via the shutdown trap.
+func (fd *netFD) closeRead() error {
+	if r := netShutdown(fd.cookie, 0); r < 0 {
+		return errno(-r)
+	}
+	return nil
+}
+
+// closeWrite shuts down the writing side (gc netFD.closeWrite):
+// poll.FD.Shutdown(SHUT_WR) via the shutdown trap.
+func (fd *netFD) closeWrite() error {
+	if r := netShutdown(fd.cookie, 1); r < 0 {
+		return errno(-r)
 	}
 	return nil
 }
@@ -1341,6 +1396,31 @@ func (c *TCPConn) SetDeadline(t time.Time) error    { return c.fd.setDeadline(t,
 func (c *TCPConn) SetReadDeadline(t time.Time) error  { return c.fd.setDeadline(t, 'r') }
 func (c *TCPConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
 
+// CloseRead shuts down the reading side of the TCP connection
+// (gc 1.27.1 net/tcpsock.go TCPConn.CloseRead).
+func (c *TCPConn) CloseRead() error {
+	if c == nil || c.fd == nil {
+		return errno(errnoEINVAL)
+	}
+	if err := c.fd.closeRead(); err != nil {
+		return &OpError{Op: "close", Net: c.fd.net, Addr: c.fd.raddr, Err: err}
+	}
+	return nil
+}
+
+// CloseWrite shuts down the writing side of the TCP connection
+// (gc 1.27.1 net/tcpsock.go TCPConn.CloseWrite). The O-P1-4 corpus
+// test pins this as the poll.FD.Shutdown(SHUT_WR) path.
+func (c *TCPConn) CloseWrite() error {
+	if c == nil || c.fd == nil {
+		return errno(errnoEINVAL)
+	}
+	if err := c.fd.closeWrite(); err != nil {
+		return &OpError{Op: "close", Net: c.fd.net, Addr: c.fd.raddr, Err: err}
+	}
+	return nil
+}
+
 func (fd *netFD) setDeadline(t time.Time, mode int) error {
 	var d int64
 	if !t.IsZero() {
@@ -1396,6 +1476,23 @@ func (l *TCPListener) Accept() (Conn, error) {
 
 func (l *TCPListener) Close() error { return l.fd.close() }
 func (l *TCPListener) Addr() Addr   { return l.fd.laddr }
+
+// File duplicates the listener's socket and returns it as an *os.File
+// (gc 1.27.1 net/tcpsock.go TCPListener.File): the dup shares the
+// channel, so closing the file does not kill the listener. The dup
+// goes through poll.DupCloseOnExec (O-P1-4); a closed/nil listener
+// reports EINVAL, and a dup failure is wrapped in an OpError with
+// Op "file", exactly like gc.
+func (l *TCPListener) File() (*os.File, error) {
+	if l == nil || l.fd == nil {
+		return nil, errno(errnoEINVAL)
+	}
+	f, err := l.fd.dup()
+	if err != nil {
+		return nil, &OpError{Op: "file", Net: l.fd.net, Addr: l.fd.laddr, Err: err}
+	}
+	return f, nil
+}
 
 type acceptPair struct {
 	c   Conn

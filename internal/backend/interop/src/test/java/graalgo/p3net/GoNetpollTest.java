@@ -84,12 +84,14 @@ public final class GoNetpollTest {
         return out.get();
     }
 
-    /** Wire-format AF_INET 127.0.0.1:port. */
+    /** Wire-format AF_INET 127.0.0.1:port (byte[]-backed: D5 stores
+     * []byte in byte[] backing arrays — goBuf casts to byte[], so
+     * int[]-backed slices throw ClassCastException in GoNet/GoOs). */
     private static GoSlice v4(int port) {
-        int[] a = new int[7];
+        byte[] a = new byte[7];
         a[0] = 2;
-        a[1] = (port >>> 8) & 0xFF;
-        a[2] = port & 0xFF;
+        a[1] = (byte) ((port >>> 8) & 0xFF);
+        a[2] = (byte) (port & 0xFF);
         a[3] = 127;
         a[4] = 0;
         a[5] = 0;
@@ -99,22 +101,18 @@ public final class GoNetpollTest {
 
     private static GoSlice bytes(String s) {
         byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        int[] a = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            a[i] = b[i] & 0xFF;
-        }
-        return new GoSlice(a, 0, a.length, a.length);
+        return new GoSlice(b, 0, b.length, b.length);
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static String str(GoSlice gs, int n) {
-        int[] a = (int[]) gs.array();
+        byte[] a = (byte[]) gs.array();
         byte[] b = new byte[n];
         for (int i = 0; i < n; i++) {
-            b[i] = (byte) a[gs.offset() + i];
+            b[i] = a[gs.offset() + i];
         }
         return new String(b, java.nio.charset.StandardCharsets.UTF_8);
     }
@@ -123,7 +121,7 @@ public final class GoNetpollTest {
         GoSlice b = buf(23);
         long r = GoNet.getsockname(cookie, b);
         assertTrue(r > 0, "getsockname ok: " + r);
-        int[] a = (int[]) b.array();
+        byte[] a = (byte[]) b.array();
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
@@ -231,11 +229,121 @@ public final class GoNetpollTest {
             // Peer addresses agree (fd-domain unification: cookies resolve).
             GoSlice pb = buf(23);
             assertTrue(GoNet.getpeername(ss, pb) > 0, "getpeername accepted");
-            int[] a = (int[]) pb.array();
+            byte[] a = (byte[]) pb.array();
             assertEq(2, a[0], "peer family");
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
             closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * O-P1-4: {@code graalgo.os.dup} aliases the channel — both the
+     * original and the dup read the same bytes through the shared key,
+     * and closing the original leaves the channel alive until the last
+     * alias closes (GoOs refcounting). Negative: dup of a bad cookie
+     * fails EBADF.
+     */
+    public void testDupSharesChannelAndSurvivesClose() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long sctx = GoNetpoll.pollOpen(ss);
+            assertTrue(sctx != 0, "pollOpen accepted");
+            long dupCookie = GoOs.dup(ss);
+            assertTrue(dupCookie >= 16 && dupCookie != ss, "dup cookie: " + dupCookie);
+            long dctx = GoNetpoll.pollOpen(dupCookie);
+            assertTrue(dctx != 0, "pollOpen dup");
+            assertEq(-GoOs.EBADF, GoOs.dup(999999L), "dup bad cookie");
+            assertTrue(GoOs.write(cli[0], bytes("ping")) > 0, "client write");
+            // pollWait parks and calls SchedulerCore.current(): it must
+            // run on a scheduler goroutine, never the main test thread.
+            onGoroutine(sched, () -> { assertEq(0, GoNetpoll.pollWait(sctx, (long) 'r'), "orig read wait"); return null; });
+            onGoroutine(sched, () -> { assertEq(0, GoNetpoll.pollWait(dctx, (long) 'r'), "dup read wait"); return null; });
+            GoSlice rb = buf(4);
+            assertEq(5, GoOs.read(dupCookie, rb), "dup read n+1");
+            assertTrue(str(rb, 4).equals("ping"), "dup read bytes");
+            // Close the original alias: the channel must survive (refs).
+            closeSock(ss, sctx);
+            assertTrue(GoOs.write(cli[0], bytes("pong")) > 0, "client write 2");
+            onGoroutine(sched, () -> { assertEq(0, GoNetpoll.pollWait(dctx, (long) 'r'), "dup read wait after orig close"); return null; });
+            GoSlice rb2 = buf(4);
+            assertEq(5, GoOs.read(dupCookie, rb2), "dup read 2 n+1");
+            assertTrue(str(rb2, 4).equals("pong"), "dup read 2 bytes");
+            // Close the last alias: the channel really closes now.
+            closeSock(dupCookie, dctx);
+            assertEq(-GoOs.EBADF, GoOs.write(dupCookie, bytes("x")), "write after last close");
+            closeSock(cli[0], cli[1]);
+            closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * O-P1-4: the shared key survives one member leaving. The dup'd
+     * listener keeps seeing accept readiness after the original alias
+     * closes — pre-fix, pollClose cancelled the key and stranded the
+     * dup's waiters forever.
+     */
+    public void testDupSharedKeySurvivesOneClose() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long dupCookie = GoOs.dup(srv[0]);
+            assertTrue(dupCookie >= 16, "dup listener cookie");
+            long dctx = GoNetpoll.pollOpen(dupCookie);
+            assertTrue(dctx != 0, "pollOpen dup listener");
+            long[] cli1 = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            onGoroutine(sched, () -> { assertEq(0, GoNetpoll.pollWait(dctx, (long) 'r'), "dup accept wait 1"); return null; });
+            long a1 = GoNet.accept(dupCookie);
+            assertTrue(a1 >= 16, "accept via dup cookie");
+            long actx1 = GoNetpoll.pollOpen(a1);
+            closeSock(srv[0], srv[1]);
+            long[] cli2 = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            onGoroutine(sched, () -> { assertEq(0, GoNetpoll.pollWait(dctx, (long) 'r'), "dup accept wait 2 after orig close"); return null; });
+            long a2 = GoNet.accept(dupCookie);
+            assertTrue(a2 >= 16, "accept 2 via dup cookie");
+            long actx2 = GoNetpoll.pollOpen(a2);
+            closeSock(a1, actx1);
+            closeSock(a2, actx2);
+            closeSock(cli1[0], cli1[1]);
+            closeSock(cli2[0], cli2[1]);
+            closeSock(dupCookie, dctx);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * O-P1-4: dup copies the per-socket control state — getsockname on
+     * the dup reports the listener's bound port — and the dup alias
+     * still resolves after the original is gone. Negative: dup of a
+     * closed cookie fails EBADF.
+     */
+    public void testDupSocketStateCopied() {
+        SchedulerCore prev = setup();
+        try {
+            long[] srv = listenLoopback();
+            long dupCookie = GoOs.dup(srv[0]);
+            assertTrue(dupCookie >= 16, "dup listener cookie");
+            GoSlice nb = buf(23);
+            assertTrue(GoNet.getsockname(dupCookie, nb) > 0, "getsockname dup");
+            byte[] a = (byte[]) nb.array();
+            assertEq(2, a[0], "dup sockname family");
+            int port = ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
+            assertEq((int) srv[2], port, "dup sockname port");
+            closeSock(srv[0], srv[1]);
+            assertEq(-GoOs.EBADF, GoOs.dup(srv[0]), "dup closed cookie");
+            GoSlice nb2 = buf(23);
+            assertTrue(GoNet.getsockname(dupCookie, nb2) > 0, "getsockname dup after orig close");
+            assertEq(0, GoOs.close(dupCookie), "os.close dup");
         } finally {
             teardown(prev);
         }
@@ -756,7 +864,7 @@ public final class GoNetpollTest {
                 GoSlice rb = buf(64);
                 GoSlice ab = buf(23);
                 long r = GoNet.recvfrom(a, rb, ab);
-                int[] aa = (int[]) ab.array();
+                byte[] aa = (byte[]) ab.array();
                 peer.set("fam=" + aa[0]);
                 got.set("n=" + (r - 1) + ":" + str(rb, (int) (r - 1)));
                 return null;

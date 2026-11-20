@@ -32,15 +32,18 @@ import java.nio.file.attribute.BasicFileAttributeView;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.nio.file.attribute.PosixFilePermission;
+import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import graalgo.values.GoSlice;
@@ -184,6 +187,14 @@ public final class GoOs {
         final boolean writable;
         final Path path; // null for pipe/stdio
         final boolean closeUnderlying; // false for stdio (never close System.in/out/err)
+        /**
+         * Aliases sharing this channel (dup): the channel is closed only
+         * when the last alias closes. Starts at 1 (the creating cookie);
+         * {@link GoOs#dup} increments, {@link GoOs#close} decrements.
+         * A JVM channel has no kernel fd to dup, so aliasing is at the
+         * cookie table: every alias cookie maps to this same handle.
+         */
+        final AtomicInteger refs = new AtomicInteger(1);
 
         ChannelHandle(Channel ch, boolean readable, boolean writable,
                 Path path, int kind, boolean closeUnderlying) {
@@ -659,15 +670,72 @@ public final class GoOs {
      */
     public static void replaceSocketChannel(long cookie, java.nio.channels.Channel ch,
             boolean readable, boolean writable) {
-        Handle prev = HANDLES.replace(cookie,
-                new ChannelHandle(ch, readable, writable, null, KIND_SOCKET, true));
-        if (prev instanceof ChannelHandle oldCh) {
-            try {
-                oldCh.ch.close();
-            } catch (java.io.IOException ignored) {
-                // Best effort; the replacement is what matters.
+        Handle prev = HANDLES.get(cookie);
+        if (!(prev instanceof ChannelHandle oldCh)) {
+            // No channel to replace (cookie closed or not a channel):
+            // keep the old single-entry behaviour.
+            HANDLES.replace(cookie,
+                    new ChannelHandle(ch, readable, writable, null, KIND_SOCKET, true));
+            return;
+        }
+        // Every cookie aliasing this channel (dup) shares the handle, so
+        // the swap must re-point all of them: replacing one alias alone
+        // would leave the others watching the closed channel. One shared
+        // replacement handle carries the alias count.
+        List<Long> aliases = new ArrayList<>();
+        for (Map.Entry<Long, Handle> e : HANDLES.entrySet()) {
+            if (e.getValue() == oldCh) {
+                aliases.add(e.getKey());
             }
         }
+        ChannelHandle replacement =
+                new ChannelHandle(ch, readable, writable, null, KIND_SOCKET, true);
+        replacement.refs.set(aliases.size());
+        for (Long c : aliases) {
+            HANDLES.put(c, replacement);
+        }
+        try {
+            oldCh.ch.close();
+        } catch (java.io.IOException ignored) {
+            // Best effort; the replacement is what matters.
+        }
+    }
+
+    /**
+     * {@code graalgo.os.dup} — new cookie aliasing the same channel as
+     * {@code cookie} (gc dup(2) on the unified cookie domain), or
+     * {@code -errno}. The alias shares the channel: closing one alias
+     * drops the refcount and the channel closes only with the last one
+     * ({@link #close}). Socket aliases also copy the per-socket control
+     * state ({@code GoNet.duplicateSocketState}); the poller registration
+     * is per-cookie and happens later via {@code runtime_pollOpen} on the
+     * new cookie (shared-key path in GoNetpoll).
+     *
+     * <p>Directories have no dup: a {@code DirHandle} is not a channel and
+     * aliasing its iterator state would corrupt iteration positions.
+     * Returns {@code -EINVAL} for them (unreachable from gc's dup users,
+     * which dup files and sockets).
+     */
+    public static long dup(Object hArg) {
+        long cookie = num(hArg);
+        Handle handle = HANDLES.get(cookie);
+        if (handle == null) {
+            return -EBADF;
+        }
+        if (!(handle instanceof ChannelHandle ch)) {
+            return -EINVAL;
+        }
+        ch.refs.incrementAndGet();
+        long h = NEXT_COOKIE.getAndIncrement();
+        HANDLES.put(h, ch);
+        if (ch.kind == KIND_SOCKET
+                && !graalgo.p3net.GoNet.duplicateSocketState(cookie, h)) {
+            // No socket state for a socket cookie: inconsistent; roll back.
+            ch.refs.decrementAndGet();
+            HANDLES.remove(h);
+            return -EBADF;
+        }
+        return h;
     }
 
     // ------------------------------------------------------------------
@@ -763,7 +831,13 @@ public final class GoOs {
             // that bypasses runtime_pollClose must still wake parked
             // waiters (with pollErrClosing) and deregister the channel.
             // Idempotent: the normal FD.Close path already unblocked.
+            // Per-cookie: a dup alias closing evicts only its own
+            // pollDesc; the shared channel stays open (refs below).
             graalgo.p3net.GoNetpoll.evictForClose(cookie);
+        }
+        if (handle instanceof ChannelHandle ch && ch.refs.decrementAndGet() > 0) {
+            // Aliases remain (dup): the channel stays open.
+            return 0;
         }
         try {
             handle.close();

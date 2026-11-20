@@ -171,6 +171,31 @@ public final class GoNet {
 
     private static final ConcurrentHashMap<Long, SockState> STATES = new ConcurrentHashMap<>();
 
+    /**
+     * Copies per-socket control state to a dup'd cookie (called by
+     * {@code GoOs.dup} after aliasing the channel). The copy is a
+     * snapshot: lifecycle kind, bound address, stashed connect errno,
+     * recorded setsockopt calls (re-applied on channel swap), and the
+     * nonblocking flag. Returns false when the source cookie has no
+     * socket state (inconsistent — the caller rolls the dup back).
+     * The entry follows the same lifecycle as any other socket state
+     * (cleared by {@link #resetForTest}).
+     */
+    public static boolean duplicateSocketState(long oldCookie, long newCookie) {
+        SockState st = STATES.get(oldCookie);
+        if (st == null) {
+            return false;
+        }
+        SockState nst = new SockState(st.domain, st.sockType, st.proto);
+        nst.kind = st.kind;
+        nst.boundAddr = st.boundAddr;
+        nst.connectErrno = st.connectErrno;
+        nst.sockOpts.addAll(st.sockOpts);
+        nst.nonblocking = st.nonblocking;
+        STATES.put(newCookie, nst);
+        return true;
+    }
+
     /** Clears per-run socket state (tests). The GoOs handle table is reset separately. */
     public static void resetForTest() {
         STATES.clear();

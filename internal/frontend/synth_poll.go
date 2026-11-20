@@ -36,6 +36,7 @@ const syntheticPollSource = `package poll
 
 import _ "unsafe" // for go:linkname
 import "errors"
+import "io"
 import "sync"
 import "syscall"
 import "time"
@@ -61,14 +62,31 @@ func (e *DeadlineExceededError) Temporary() bool { return true }
 var TestHookDidWritev = func(wrote int) {}
 var TestHookDidSendFile = func(dstFD *FD, src uintptr, written int64, err error, handled bool) {}
 
-const failPollSpliceSendfile = "poll.Splice/SendFile: temporary until ASM backend (his 2026-10-15 order)"
-
+// Splice (gc 1.27.1 internal/poll/sendfile_linux.go): the JVM has no
+// splice(2), so the socket pair is never spliced in-kernel. Returning
+// handled=false is the contract-faithful fallback: gc's own
+// splice_linux.go returns handled=false on EINVAL (unsupported), and
+// net's sendFile falls back to the generic copy when handled is false.
+// The caller (net.sendFile) then copies with the same observable bytes.
 func Splice(dst, src *FD, remain int64) (written int64, handled bool, err error) {
-	panic(failPollSpliceSendfile)
+	return 0, false, nil
 }
 
+// SendFile (gc 1.27.1 internal/poll/sendfile_linux.go): same fallback
+// as Splice — the JVM has no sendfile(2). The TestHookDidSendFile call
+// (deferred first, exactly like gc) reports the not-handled outcome;
+// net's sendFile falls back to the generic copy. Locks and prepare
+// match gc: a closed fd reports errClosing with handled=false.
 func SendFile(dstFD *FD, src uintptr, size int64) (n int64, err error, handled bool) {
-	panic(failPollSpliceSendfile)
+	defer func() { TestHookDidSendFile(dstFD, src, n, err, handled) }()
+	if err := dstFD.writeLock(); err != nil {
+		return 0, err, false
+	}
+	defer dstFD.writeUnlock()
+	if err := dstFD.pd.prepareWrite(false); err != nil {
+		return 0, err, false
+	}
+	return 0, nil, false
 }
 
 // ---------------------------------------------------------------------------
@@ -108,6 +126,37 @@ func runtime_pollUnblock(ctx uintptr)
 
 //go:linkname runtime_isPollServerDescriptor internal/poll.runtime_isPollServerDescriptor
 func runtime_isPollServerDescriptor(fd uintptr) bool // always false
+
+// ---------------------------------------------------------------------------
+// Socket-trap linknames (O-P1-4): the FD I/O surface drives the JVM
+// socket channel through the same graalgo.os.* / graalgo.net.* traps
+// the synthetic net package uses (netSockRead etc. in synth_net.go).
+// Poll-local names keep the poll package self-contained; duplicate
+// targets are the established pattern (osRead/netSockRead both bind
+// graalgo.os.read). int64 results are negative = -errno, except the
+// read/write traps, which return n+1 (0 = EOF on read).
+// ---------------------------------------------------------------------------
+
+//go:linkname pollSockRead graalgo.os.read
+func pollSockRead(h int64, b []byte) int64 // n+1 (0=EOF) or -errno
+
+//go:linkname pollSockWrite graalgo.os.write
+func pollSockWrite(h int64, b []byte) int64 // n+1 or -errno
+
+//go:linkname pollSockClose graalgo.os.close
+func pollSockClose(h int64) int64 // 0 or -errno
+
+//go:linkname pollAccept graalgo.net.accept
+func pollAccept(cookie int64) int64 // new cookie or -errno (incl. -EAGAIN)
+
+//go:linkname pollShutdown graalgo.net.shutdown
+func pollShutdown(cookie int64, how int64) int64 // 0 or -errno
+
+//go:linkname pollGetpeername graalgo.net.getpeername
+func pollGetpeername(cookie int64, buf []byte) int64 // n+1 or -errno
+
+//go:linkname pollDup graalgo.os.dup
+func pollDup(cookie int64) int64 // new cookie or -errno
 
 //go:linkname runtimeNano runtime.nanotime
 func runtimeNano() int64
@@ -274,6 +323,28 @@ type FD struct {
 	Sysfd int
 	pd    pollDesc
 
+	// I/O operations in progress (gc fdMutex shape, mutex form):
+	// readLock/writeLock serialize concurrent Read/Write calls
+	// (gc fdMutex rwlock), incref/decref count in-flight operations
+	// so Close can wait for them to drain before destroying the fd.
+	// A dup'd alias shares the channel (graalgo.os.dup refcounting)
+	// but has its own FD, refs and locks — exactly like gc, where a
+	// dup'd fd is an independent file description over the same
+	// underlying socket.
+	refs int
+	// done is closed by destroy when the last ref drops after Close;
+	// nil until the first Close (created lazily, under mu).
+	done chan struct{}
+	// gone is set when destroy has run (so the final decref destroys
+	// exactly once).
+	gone bool
+	// destroyErr stashes the cookie-close error for Close to return
+	// (gc fd_unix.go: Close returns destroy's error).
+	destroyErr error
+	// rmu serializes Read calls; wmu serializes Write calls.
+	rmu sync.Mutex
+	wmu sync.Mutex
+
 	IsStream      bool
 	ZeroReadIsEOF bool
 
@@ -287,10 +358,99 @@ func (fd *FD) incref() error {
 	if fd.closed {
 		return errClosing(false)
 	}
+	fd.refs++
 	return nil
 }
 
-func (fd *FD) decref() {}
+func (fd *FD) decref() {
+	fd.mu.Lock()
+	fd.refs--
+	doDestroy := fd.refs == 0 && fd.closed && !fd.gone
+	fd.mu.Unlock()
+	if doDestroy {
+		fd.destroy()
+	}
+}
+
+// destroy releases the pollDesc and the socket cookie. Called exactly
+// once, by the final decref after Close (gc fd_unix.go destroy).
+// The cookie close error is stashed for Close to return.
+func (fd *FD) destroy() {
+	fd.mu.Lock()
+	if fd.gone {
+		fd.mu.Unlock()
+		return
+	}
+	fd.gone = true
+	done := fd.done
+	fd.mu.Unlock()
+	fd.pd.close()
+	if fd.Sysfd >= 0 {
+		if r := pollSockClose(int64(fd.Sysfd)); r < 0 {
+			fd.mu.Lock()
+			fd.destroyErr = errnoErr(syscall.Errno(-r))
+			fd.mu.Unlock()
+		}
+		fd.mu.Lock()
+		fd.Sysfd = -1
+		fd.mu.Unlock()
+	}
+	if done != nil {
+		close(done)
+	}
+}
+
+// readLock serializes Read calls (gc fdMutex rwlock, mutex form) and
+// takes a ref so Close waits for the read to drain.
+func (fd *FD) readLock() error {
+	fd.rmu.Lock()
+	fd.mu.Lock()
+	if fd.closed {
+		fd.mu.Unlock()
+		fd.rmu.Unlock()
+		return errClosing(false)
+	}
+	fd.refs++
+	fd.mu.Unlock()
+	return nil
+}
+
+func (fd *FD) readUnlock() {
+	fd.rmu.Unlock()
+	fd.decref()
+}
+
+// writeLock serializes Write calls (gc fdMutex rwlock, mutex form) and
+// takes a ref so Close waits for the write to drain.
+func (fd *FD) writeLock() error {
+	fd.wmu.Lock()
+	fd.mu.Lock()
+	if fd.closed {
+		fd.mu.Unlock()
+		fd.wmu.Unlock()
+		return errClosing(false)
+	}
+	fd.refs++
+	fd.mu.Unlock()
+	return nil
+}
+
+func (fd *FD) writeUnlock() {
+	fd.wmu.Unlock()
+	fd.decref()
+}
+
+// eofError maps a zero-byte read to EOF only when ZeroReadIsEOF
+// (gc fd_unix.go eofError).
+func (fd *FD) eofError(n int, err error) error {
+	if n == 0 && err == nil && fd.ZeroReadIsEOF {
+		return io.EOF
+	}
+	return err
+}
+
+// maxRW is the largest read/write chunk (gc fd_unix.go).
+const maxRW = 1 << 30
 
 // Init registers the socket cookie with the netpoller. The fork calls
 // this before bind/listen/connect (net-fork-contract.md call order).
@@ -316,31 +476,225 @@ func (fd *FD) WaitWrite() error {
 	return fd.pd.waitWrite(false)
 }
 
-// ClosePoll releases the pollDesc. Called after the socket cookie itself
-// is closed (graalgo.os.close evicts netpoller state); idempotent.
-func (fd *FD) ClosePoll() {
-	fd.mu.Lock()
-	fd.closed = true
-	fd.mu.Unlock()
-	fd.pd.close()
-}
-
 // ---------------------------------------------------------------------------
 // TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
 // Real-net compatibility: poll.FD methods required by the real net package
-// (fd_posix.go, sock_posix.go, etc.). These are stubs: the real net's
-// socket operations go through these methods. Calling them panics with a
-// clear "temporary until ASM" message.
+// (fd_posix.go, sock_posix.go, etc.). O-P1-4 implemented: real I/O through
+// the graalgo.os.* / graalgo.net.* traps (pollSockRead etc. below), with
+// gc's fdMutex refcounting (incref/decref, read/write locks) — see the
+// FD struct fields. ClosePoll was deleted: it had no callers, and
+// graalgo.os.close already evicts netpoller state (GoNetpoll.evictForClose),
+// so there is no second close path to keep in sync.
 // ---------------------------------------------------------------------------
 
-const failPollFD = "poll.FD method: temporary until ASM backend (his 2026-10-15 order)"
+// Close (gc 1.27.1 internal/poll/fd_unix.go): marks the fd closed,
+// unblocks in-flight I/O, waits for it to drain, then destroys the
+// pollDesc and the socket cookie. A second Close fails with errClosing.
+func (fd *FD) Close() error {
+	if err := fd.incref(); err != nil {
+		return err
+	}
+	fd.mu.Lock()
+	if fd.closed {
+		// Unreachable in practice (incref already failed on closed),
+		// but keep the gc shape: never close twice.
+		fd.mu.Unlock()
+		fd.decref()
+		return errClosing(false)
+	}
+	fd.closed = true
+	fd.done = make(chan struct{})
+	fd.mu.Unlock()
+	fd.pd.evict()
+	fd.decref()
+	<-fd.done
+	fd.mu.Lock()
+	err := fd.destroyErr
+	fd.mu.Unlock()
+	return err
+}
 
-func (fd *FD) Close() error { panic(failPollFD) }
-func (fd *FD) Read(p []byte) (int, error) { panic(failPollFD) }
-func (fd *FD) Write(p []byte) (int, error) { panic(failPollFD) }
-func (fd *FD) Accept() (int, syscall.Sockaddr, string, error) { panic(failPollFD) }
-func (fd *FD) Dup() (int, string, error) { panic(failPollFD) }
-func (fd *FD) Shutdown(how int) error { panic(failPollFD) }
+// Read (gc 1.27.1 internal/poll/fd_unix.go, socket half): one
+// pollSockRead per loop iteration. Trap contract (netSockRead):
+// r == 0 is EOF, r < 0 is -errno, r-1 is the byte count. A 0-byte
+// read (r == 1) is the JVM's EAGAIN (nonblocking channel, nothing
+// yet): wait on the poller and retry, exactly like gc on EAGAIN.
+func (fd *FD) Read(p []byte) (int, error) {
+	if err := fd.readLock(); err != nil {
+		return 0, err
+	}
+	defer fd.readUnlock()
+	if len(p) == 0 {
+		return 0, nil
+	}
+	if err := fd.pd.prepareRead(false); err != nil {
+		return 0, err
+	}
+	if fd.IsStream && len(p) > maxRW {
+		p = p[:maxRW]
+	}
+	for {
+		r := pollSockRead(int64(fd.Sysfd), p)
+		if r == 0 {
+			return 0, fd.eofError(0, nil)
+		}
+		if r < 0 {
+			err := errnoErr(syscall.Errno(-r))
+			if err == syscall.EAGAIN && fd.pd.pollable() {
+				if err := fd.pd.waitRead(false); err == nil {
+					continue
+				}
+				return 0, err
+			}
+			return 0, fd.eofError(0, err)
+		}
+		n := int(r - 1)
+		if n == 0 {
+			// JVM 0-byte read = kernel EAGAIN: wait and retry.
+			if err := fd.pd.waitRead(false); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		return n, fd.eofError(n, nil)
+	}
+}
+
+// Write (gc 1.27.1 internal/poll/fd_unix.go, socket half): accumulates
+// bytes across EAGAIN waits. Trap contract: r-1 is the byte count;
+// a 0-byte write (r == 1) is the JVM's EAGAIN (send buffer full):
+// wait on the poller and retry — it is NOT io.ErrUnexpectedEOF,
+// which gc only returns for a 0-byte write with no error on a
+// blocking fd, unreachable here.
+func (fd *FD) Write(p []byte) (int, error) {
+	if err := fd.writeLock(); err != nil {
+		return 0, err
+	}
+	defer fd.writeUnlock()
+	if err := fd.pd.prepareWrite(false); err != nil {
+		return 0, err
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	nn := 0
+	for {
+		max := len(p) - nn
+		if fd.IsStream && max > maxRW {
+			max = maxRW
+		}
+		r := pollSockWrite(int64(fd.Sysfd), p[nn:nn+max])
+		if r < 0 {
+			err := errnoErr(syscall.Errno(-r))
+			if err == syscall.EAGAIN && fd.pd.pollable() {
+				if err := fd.pd.waitWrite(false); err == nil {
+					continue
+				}
+				return nn, err
+			}
+			return nn, err
+		}
+		n := int(r - 1)
+		if n == 0 {
+			// JVM 0-byte write = kernel EAGAIN: wait and retry.
+			if err := fd.pd.waitWrite(false); err != nil {
+				return nn, err
+			}
+			continue
+		}
+		nn += n
+		if nn == len(p) {
+			return nn, nil
+		}
+	}
+}
+
+// Accept (gc 1.27.1 internal/poll/fd_unix.go accept + fd_posix.go
+// accept): one pollAccept per loop iteration; EAGAIN waits on the
+// poller, EINTR/ECONNABORTED retry. The accepted cookie's peer
+// address comes from pollGetpeername (GoNet.renderAddr wire format).
+func (fd *FD) Accept() (int, syscall.Sockaddr, string, error) {
+	if err := fd.readLock(); err != nil {
+		return -1, nil, "", err
+	}
+	defer fd.readUnlock()
+	if err := fd.pd.prepareRead(false); err != nil {
+		return -1, nil, "", err
+	}
+	for {
+		nc := pollAccept(int64(fd.Sysfd))
+		if nc < 0 {
+			errnoVal := syscall.Errno(-nc)
+			if errnoVal == syscall.EINTR || errnoVal == syscall.ECONNABORTED {
+				continue
+			}
+			if errnoVal == syscall.EAGAIN && fd.pd.pollable() {
+				if err := fd.pd.waitRead(false); err != nil {
+					return -1, nil, "accept4", err
+				}
+				continue
+			}
+			return -1, nil, "accept4", errnoVal
+		}
+		sa := fd.peerSockaddr(nc)
+		return int(nc), sa, "", nil
+	}
+}
+
+// peerSockaddr decodes the GoNet.renderAddr wire format
+// ([family, port-hi, port-lo, addr...]) into a syscall.Sockaddr.
+// A short/failed getpeername yields nil (gc: accept returns a nil
+// Sockaddr when the peer address is unavailable, not an error).
+func (fd *FD) peerSockaddr(cookie int64) syscall.Sockaddr {
+	buf := make([]byte, 23)
+	r := pollGetpeername(cookie, buf)
+	if r <= 0 {
+		return nil
+	}
+	n := int(r - 1)
+	if n < 7 {
+		return nil
+	}
+	port := int(buf[1])<<8 | int(buf[2])
+	switch buf[0] {
+	case 2:
+		sa := &syscall.SockaddrInet4{Port: port}
+		copy(sa.Addr[:], buf[3:7])
+		return sa
+	case 10:
+		if n < 19 {
+			return nil
+		}
+		sa := &syscall.SockaddrInet6{Port: port}
+		copy(sa.Addr[:], buf[3:19])
+		return sa
+	}
+	return nil
+}
+
+// Dup (gc 1.27.1 internal/poll/fd_unix.go): duplicates the socket
+// cookie with close-on-exec semantics (DupCloseOnExec).
+func (fd *FD) Dup() (int, string, error) {
+	if err := fd.incref(); err != nil {
+		return -1, "", err
+	}
+	defer fd.decref()
+	return DupCloseOnExec(fd.Sysfd)
+}
+
+// Shutdown (gc 1.27.1 internal/poll/fd_unix.go): shuts down the
+// socket in one direction (SHUT_RD/SHUT_WR/SHUT_RDWR).
+func (fd *FD) Shutdown(how int) error {
+	if err := fd.incref(); err != nil {
+		return err
+	}
+	defer fd.decref()
+	r := pollShutdown(int64(fd.Sysfd), int64(how))
+	if r < 0 {
+		return errnoErr(syscall.Errno(-r))
+	}
+	return nil
+}
 
 // ---------------------------------------------------------------------------
 // Errors and errno helpers (from gc errno_unix.go / fd.go, unix half).
@@ -396,10 +750,17 @@ func (pollTimeoutError) Temporary() bool { return true }
 var ErrDeadlineExceeded error = pollTimeoutError{}
 
 // DupCloseOnExec (gc 1.27.1, src/internal/poll/fd_unix.go:658):
-// duplicates fd with close-on-exec flag set. Not yet implemented as a
-// graalgo intrinsic; panics honestly if called (re-test when the fd-domain
-// unification lands, Phase 4/Panama).
+// duplicates fd with close-on-exec flag set. The flag is vacuous
+// here: the guest has no exec path (os.StartProcess panics, "not in
+// M8 scope"; the only ProcessBuilder uses are host-side launcher
+// tooling), so no fd can ever leak across an exec. The dup itself
+// is real: graalgo.os.dup aliases the channel and refcounts it,
+// so the original and the dup share the socket until both close.
 func DupCloseOnExec(fd int) (int, string, error) {
-	panic("poll.DupCloseOnExec: no graalgo intrinsic; re-test: fd-domain unification, Phase 4/Panama")
+	nc := pollDup(int64(fd))
+	if nc < 0 {
+		return -1, "dup", errnoErr(syscall.Errno(-nc))
+	}
+	return int(nc), "", nil
 }
 `

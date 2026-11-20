@@ -21,6 +21,9 @@ semantics, the shared-runner model).
 - `05_parse_addr.go` — `ParseIP`/`ParseCIDR`/`ParseMAC`,
   `JoinHostPort`/`SplitHostPort`, `ResolveTCPAddr`/`ResolveUDPAddr`
   (IP literals only, no DNS). Pure Go.
+- `06_poll_fd_dup_shutdown_sendfile.go` — poll FD surface (O-P1-4):
+  listener `File()` dup still accepts; `io.Copy` file→TCP exercises the
+  `poll.SendFile` handled=false fallback; `CloseWrite` shutdown EOF.
 
 ## Scope limits
 
