@@ -292,7 +292,65 @@ public final class NodeFactory {
         String n = name;
         boolean w = wrapper;
         root.setRebuild(() -> rebuild(i, gb, n, w, captures, true));
+        root.setReadOnlyReceiver(readOnlyReceiver());
         return root;
+    }
+
+    /**
+     * A struct or array value receiver the body only reads: not escaping (address taken,
+     * captured), never on the left of an assignment, increment or range clause, never
+     * addressed, sliced or used as a method receiver (an implicit {@code &}). Such a callee can
+     * share an interface's data word — immutable in Go — instead of a private copy.
+     */
+    private boolean readOnlyReceiver() {
+        int r = body.recv();
+        if (r < 0 || ltypes[r].carrier() != GoType.C_FLAT || (body.locals()[r].flags() & (8 | 16)) != 0) {
+            return false;
+        }
+        boolean[] bad = new boolean[1];
+        for (Gir.Stmt st : body.body()) {
+            visitGir(st, o -> {
+                switch (o) {
+                    case Gir.Stmt.Assign a -> bad[0] |= mentions(a.lhs(), r);
+                    case Gir.Stmt.Define d -> bad[0] |= mentions(d.lhs(), r);
+                    case Gir.Stmt.IncDec x -> bad[0] |= mentions(x.x(), r);
+                    case Gir.Stmt.Range x -> bad[0] |= mentions(x.key(), r) || mentions(x.value(), r);
+                    case Gir.Expr.Addr x -> bad[0] |= mentions(x, r);
+                    case Gir.Expr.Slice x -> bad[0] |= mentions(x, r);
+                    case Gir.Expr.MethodCall x -> bad[0] |= mentions(x.recv(), r);
+                    case Gir.Expr.MethodVal x -> bad[0] |= mentions(x.recv(), r);
+                    default -> {
+                    }
+                }
+            });
+        }
+        return !bad[0];
+    }
+
+    private static boolean mentions(Object e, int local) {
+        boolean[] found = new boolean[1];
+        visitGir(e, o -> found[0] |= o instanceof Gir.Expr.Local l && l.local() == local);
+        return found[0];
+    }
+
+    /** Every GIR record reachable from {@code o}, not entering nested function bodies. */
+    private static void visitGir(Object o, Consumer<Object> f) {
+        if (o instanceof Object[] arr) {
+            for (Object x : arr) {
+                visitGir(x, f);
+            }
+        } else if (o instanceof Record rec && !(o instanceof Gir.FuncBody)) {
+            f.accept(rec);
+            for (java.lang.reflect.RecordComponent c : rec.getClass().getRecordComponents()) {
+                if (!c.getType().isPrimitive() && c.getType() != String.class) {
+                    try {
+                        visitGir(c.getAccessor().invoke(rec), f);
+                    } catch (ReflectiveOperationException ex) {
+                        throw new IllegalStateException(ex);
+                    }
+                }
+            }
+        }
     }
 
     private Stmt param(int local, int arg) {

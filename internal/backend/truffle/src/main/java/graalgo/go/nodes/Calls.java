@@ -106,6 +106,21 @@ public final class Calls {
             return false;
         }
 
+        private boolean readOnlyReceiver;
+
+        /** Set by the factory: the body never writes or escapes its struct/array value receiver. */
+        public final void setReadOnlyReceiver(boolean v) {
+            this.readOnlyReceiver = v;
+        }
+
+        /**
+         * Whether a call through an interface may pass the interface's data word itself as this
+         * method's value receiver: Go never mutates an interface's data, and the body does not.
+         */
+        public static boolean sharesReceiver(Method m) {
+            return m.mode == Method.COPY && m.target().getRootNode() instanceof FuncRoot f && f.readOnlyReceiver;
+        }
+
         /** Builds this function's tree afresh; set by the factory (null: no splitting). */
         private Supplier<FuncRoot> rebuild;
 
@@ -536,7 +551,9 @@ public final class Calls {
                 @Cached("method(cachedType)") Method method,
                 @Cached("copyShape(method)") int shape,
                 @Cached("create(method.target())") DirectCallNode call) {
-            if (shape >= 0) {
+            if (shape == SHARE) {
+                args[1] = recv.data;
+            } else if (shape >= 0) {
                 // A value receiver: the callee's private copy, with the counts constant so an
                 // inlined callee's copy can be scalar-replaced (Flat.copyFixed).
                 args[1] = ((Flat) recv.data).copyFixed(shape & 0x3FF, (shape >>> 10) & 0x3FF, shape >>> 20);
@@ -548,11 +565,17 @@ public final class Calls {
 
         /**
          * For a {@link Method#COPY} entry whose region counts fit 10 bits each, the counts packed
-         * as {@code nPrim | nRef << 10 | nByte << 20}; -1 otherwise.
+         * as {@code nPrim | nRef << 10 | nByte << 20}; {@link #SHARE} when the callee only reads
+         * its receiver ({@link FuncRoot#sharesReceiver}); -1 otherwise.
          */
+        static final int SHARE = -2;
+
         static int copyShape(Method m) {
             if (m.mode != Method.COPY) {
                 return -1;
+            }
+            if (FuncRoot.sharesReceiver(m)) {
+                return SHARE;
             }
             GoType t = m.owner;
             int np = t.nPrim();
@@ -564,7 +587,7 @@ public final class Calls {
         @Specialization(replaces = "cached")
         Object megamorphic(Iface recv, Object[] args, @Cached IndirectCallNode call) {
             Method m = method(recv.type);
-            args[1] = Receivers.adapt(m, recv.data, this);
+            args[1] = FuncRoot.sharesReceiver(m) ? recv.data : Receivers.adapt(m, recv.data, this);
             return call.call(m.target(), args);
         }
 
