@@ -4,7 +4,9 @@ before the run): the generator is seeded, the minimizer keeps the failure
 and drops the rest, the known-divergence register refuses an id that
 docs/dev/bugs.md does not have, and signatures collapse run-specific numbers.
 """
+import contextlib
 import importlib.util
+import io
 import os
 import tempfile
 import unittest
@@ -69,7 +71,7 @@ class FuzzTest(unittest.TestCase):
         with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
             f.write('test/fuzz/x.go BUG-9999 diverge stdout: x\n')
         try:
-            with self.assertRaises(SystemExit):
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 run.load_known(f.name)
         finally:
             os.unlink(f.name)
