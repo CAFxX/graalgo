@@ -8,10 +8,14 @@
 #
 # Requires `make build`. GRAALGO_JAVA_OPTS: extra JVM flags (word-split),
 # e.g. "-Xmx2g -XX:ActiveProcessorCount=4" on shared hosts.
+# GRAALGO_TRUFFLE_CLASSES: where the truffle module's classes are (default
+# truffle/out/classes): the test gates pass a jar of the same classes, which
+# a class-data-sharing archive can map (test/lib/jvmcds.sh; CDS refuses a
+# non-empty directory on the class path).
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-CP="$HERE/truffle/out/classes"
+CP="${GRAALGO_TRUFFLE_CLASSES:-$HERE/truffle/out/classes}"
 for jar in "$HERE"/truffle/lib/*.jar; do
   CP="$CP:$jar"
 done

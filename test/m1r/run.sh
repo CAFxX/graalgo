@@ -76,6 +76,10 @@ run_leg() { # <exe> <stdout> <stderr> -> exit status
     return "$status"
 }
 
+# shellcheck source=../lib/gcoracle.sh
+. "$HERE/../lib/gcoracle.sh"
+gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg; }
+
 pass=0
 fail=0
 report="${M1R_REPORT:-}"
@@ -88,15 +92,16 @@ for prog in "${programs[@]}"; do
     w="$TMP/w/$n"
     mkdir -p "$w/mod"
     cp "$src" "$w/mod/main.go"
-    printf 'module m1r/p%d\n\ngo 1.27\n' "$n" > "$w/mod/go.mod"
+    printf 'module m1r/p\n\ngo 1.27\n' > "$w/mod/go.mod"
     reason=""
-    if ! ( cd "$w/mod" && "$GO" build -o "$w/gc.bin" . ) >"$w/gc.build" 2>&1; then
+    # The gc leg, replayed from test/lib/gcoracle.sh's cache when unchanged.
+    gc_oracle "$w" "$w/mod" gc_live m1r "$TIMEOUT"
+    gc_status=$(cat "$w/gc.status")
+    if [ "$gc_status" = build ]; then
         reason="gc rejects the program (corpus bug)"
     elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
     else
-        gc_status=0
-        run_leg "$w/gc.bin" "$w/gc.out" "$w/gc.err" || gc_status=$?
         gg_status=0
         TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
