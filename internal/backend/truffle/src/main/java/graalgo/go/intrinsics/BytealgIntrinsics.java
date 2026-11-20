@@ -8,6 +8,9 @@ import graalgo.go.types.GoType;
 import graalgo.go.values.Flat;
 import graalgo.go.values.Slice;
 import graalgo.go.values.Str;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
 import java.util.Arrays;
 
 /**
@@ -59,8 +62,31 @@ final class BytealgIntrinsics {
         return indexByte(s.b, s.off, s.len, (byte) c);
     }
 
+    /** Little-endian 8-byte loads from a {@code byte[]} (one unaligned load when compiled). */
+    private static final VarHandle LONGS = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+    private static final long LOW7 = 0x7F7F7F7F7F7F7F7FL;
+    private static final long HIGH = 0x8080808080808080L;
+    private static final long ONES = 0x0101010101010101L;
+
+    /**
+     * The high bit of every byte of {@code v} that is zero, and only of those: the 7 low bits
+     * plus 0x7F carry into the high bit exactly when they are not all zero, so no borrow or
+     * carry crosses a byte (word-at-a-time search; gc's kernels are SIMD assembly).
+     */
+    private static long zeros(long v) {
+        return ~(((v & LOW7) + LOW7) | v | LOW7);
+    }
+
     private static int indexByte(byte[] a, int off, int n, byte c) {
-        for (int i = 0; i < n; i++) {
+        long pat = (c & 0xFFL) * ONES;
+        int i = 0;
+        for (; i + 8 <= n; i += 8) {
+            long z = zeros((long) LONGS.get(a, off + i) ^ pat);
+            if (z != 0) {
+                return i + (Long.numberOfTrailingZeros(z) >>> 3);
+            }
+        }
+        for (; i < n; i++) {
             if (a[off + i] == c) {
                 return i;
             }
@@ -80,8 +106,13 @@ final class BytealgIntrinsics {
     }
 
     private static int count(byte[] a, int off, int n, byte c) {
+        long pat = (c & 0xFFL) * ONES;
         int k = 0;
-        for (int i = 0; i < n; i++) {
+        int i = 0;
+        for (; i + 8 <= n; i += 8) {
+            k += Long.bitCount(zeros((long) LONGS.get(a, off + i) ^ pat));
+        }
+        for (; i < n; i++) {
             if (a[off + i] == c) {
                 k++;
             }
@@ -106,9 +137,15 @@ final class BytealgIntrinsics {
             return 0;
         }
         byte first = b[boff];
-        for (int i = 0, last = n - m; i <= last; i++) {
-            if (a[aoff + i] == first
-                    && Arrays.equals(a, aoff + i + 1, aoff + i + m, b, boff + 1, boff + m)) {
+        int last = n - m;
+        for (int i = 0; i <= last; i++) {
+            // The next candidate: a word-at-a-time scan for the first byte.
+            int j = indexByte(a, aoff + i, last - i + 1, first);
+            if (j < 0) {
+                return -1;
+            }
+            i += j;
+            if (Arrays.equals(a, aoff + i + 1, aoff + i + m, b, boff + 1, boff + m)) {
                 return i;
             }
         }
