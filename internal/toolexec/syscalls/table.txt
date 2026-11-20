@@ -31,7 +31,14 @@
 #          bytes(LEN,out,result)  ... written by the kernel; the result
 #                                 (r1) is the count filled
 #          bytes(LEN,out,all)     ... written by the kernel, all of them
-#        LEN is the 1-based index of the length argument.
+#          struct(TYPE,SIZE,in)   pointer to one Go value of type TYPE
+#                                 (as the scan names it: syscall.Rlimit)
+#                                 that holds no pointer, SIZE bytes on
+#                                 gc linux/amd64; read by the kernel
+#          struct(TYPE,SIZE,out)  ... written by the kernel (copied in,
+#                                 and back after a successful call)
+#        LEN is the 1-based index of the length argument. A nil pointer
+#        reaches the kernel as NULL.
 #        (struct/array roles with nested pointers: W8b.)
 
 0   read    block  val bytes(3,out,result) val
@@ -41,6 +48,7 @@
 39  getpid  -
 257 openat  block  val cstr val val
 263 unlinkat block val cstr val
+302 prlimit64 -    val val struct(syscall.Rlimit,16,in) struct(syscall.Rlimit,16,out)
 
 # afterfork FUNC: a function of syscall's fork/exec glue (which GG-0064
 # replaces by posix_spawn of a helper, W8b) whose system calls all run after

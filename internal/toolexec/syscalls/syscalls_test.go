@@ -58,6 +58,11 @@ func TestCheckCatchesPlantedErrors(t *testing.T) {
 		{"stale afterfork exemption", "afterfork syscall.nosuchfunc", "stale exemption"},
 		{"fork entry beside afterfork exemptions", "56 clone - val\nafterfork syscall.forkAndExecInChild1", "the exempted sites become reachable"},
 		{"afterfork sites are checked without the exemption", "1 write block val bytes(3,in) val", "passes ptr:syscall.Errno at a2"},
+		{"struct of the wrong size", "302 prlimit64 - val val struct(syscall.Rlimit,8,in) struct(syscall.Rlimit,16,out)", "syscall.Rlimit at a3 is 16 bytes, declared 8"},
+		{"struct of the wrong type", "302 prlimit64 - val val struct(syscall.Timespec,16,in) struct(syscall.Rlimit,16,out)", "passes ptr:syscall.Rlimit at a3, declared struct(syscall.Timespec,16,in)"},
+		{"struct declared val", "302 prlimit64 - val val val struct(syscall.Rlimit,16,out)", "passes ptr:syscall.Rlimit at a3, declared val"},
+		{"struct pointer undeclared", "302 prlimit64 - val val struct(syscall.Rlimit,16,in)", "passes ptr:syscall.Rlimit at a4, which the entry does not declare"},
+		{"struct with pointers", "46 sendmsg - val struct(syscall.Msghdr,56,in) val", "syscall.Msghdr at a2 holds pointers"},
 	}
 	for _, p := range planted {
 		tab, err := Parse(p.line)
@@ -81,12 +86,15 @@ func TestParseErrors(t *testing.T) {
 	for _, line := range []string{
 		"x read block val",
 		"0 read maybe val",
-		"0 read block val bytes(2,out,result)",     // the length argument is the buffer itself
-		"0 read block val bytes(7,in) val",         // out of range
-		"0 read block val bytes(3,sideways) val",   // bad direction
-		"0 read block val val val val val val val", // seven roles
-		"0 read block struct(syscall.Stat_t)",      // not a W8a role
-		"0 read block\n0 read block",               // duplicate
+		"0 read block val bytes(2,out,result)",      // the length argument is the buffer itself
+		"0 read block val bytes(7,in) val",          // out of range
+		"0 read block val bytes(3,sideways) val",    // bad direction
+		"0 read block val val val val val val val",  // seven roles
+		"0 read block struct(syscall.Stat_t)",       // no size, no direction
+		"0 read block struct(syscall.Rlimit,0,in)",  // bad size
+		"0 read block struct(syscall.Rlimit,16,rw)", // bad direction
+		"0 read block struct(,16,in)",               // no type
+		"0 read block\n0 read block",                // duplicate
 	} {
 		if _, err := Parse(line); err == nil {
 			t.Errorf("Parse(%q) accepted", line)

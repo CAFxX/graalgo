@@ -74,20 +74,17 @@ in gc's `checkptr` wording (exit status 2) — never a wrong result:
   does `unsafe.String` (it copies when the bytes are not byte leaves; a
   string is immutable). This is the price of one slice shape; the first std
   package that needs a byte view of words decides what replaces it.
-  Two functions of `internal/reflectlite` are such idioms (found by W9a,
-  pinned in `restricted/`; the decision what replaces the restriction — a
-  word-view slice shape, or two patched functions — is open):
+  Two functions of `internal/reflectlite` are such idioms (found by W9a):
   `reflectlite.Swapper` (`sort.Slice`, `SliceStable`) swaps pointer-free
   elements of size 1, 2, 4, 8 through `[]int8`/`[]int16`/`[]int32`/`[]int64`
-  views of the slice, which works for any one-byte element, `int16`,
-  `int32` and any single 8-byte scalar, and is the fatal error for
-  `[]uint16`, `[]uint32`, `[]float32` and for structs or arrays of several
-  leaves in 2, 4 or 8 bytes (`[]struct{ a, b int32 }`); every other element
-  type (anything with a pointer, a string, or wider than 8 bytes) goes
-  through `typedmemmove` and works. `reflectlite.pkgPath` copies a name's
-  package offset into an `int32` through a `[]byte` over the variable; it
-  is reached for an unexported method of an unnamed interface type
-  (`errors.As` to such a target).
+  views of the slice, and `reflectlite.pkgPath` copies a name's package
+  offset into an `int32` through a `[]byte` over the variable. They are not
+  a restriction: until checked views over wider scalars exist, both run as
+  temporary registry intrinsics that do the same work through typed
+  accessors (BUG-0037, WP-REFLECTLITE-VIEW in
+  [RECOVERY.md](RECOVERY.md)), so `sort.Slice` works on every element type
+  and `errors.As` to an unnamed interface type with an unexported method
+  works ([reflectlite_views.go](../../test/m1r/programs/reflectlite_views.go)).
 - **gc's checkptr conditions always apply**, not only in instrumented
   builds: a converted pointer whose pointee reaches past the object, a
   misaligned pointer to a type with pointers, arithmetic that leaves the

@@ -9,7 +9,7 @@ package graalgo.syscall;
 final class SyscallTable {
     private SyscallTable() {}
 
-    private static final Entry[] BY_NR = new Entry[264];
+    private static final Entry[] BY_NR = new Entry[303];
 
     static {
         BY_NR[0] = new Entry(0, "read", true, new Role[] {Role.VAL, Role.bytes(2, true, true), Role.VAL});
@@ -19,6 +19,7 @@ final class SyscallTable {
         BY_NR[39] = new Entry(39, "getpid", false, new Role[] {});
         BY_NR[257] = new Entry(257, "openat", true, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
         BY_NR[263] = new Entry(263, "unlinkat", true, new Role[] {Role.VAL, Role.CSTR, Role.VAL});
+        BY_NR[302] = new Entry(302, "prlimit64", false, new Role[] {Role.VAL, Role.VAL, Role.struct(16, false), Role.struct(16, true)});
     }
 
     /** The entry of system call {@code nr}, or null if the table has none. */

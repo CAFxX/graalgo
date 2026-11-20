@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	_ "embed"
 	"fmt"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -35,7 +36,17 @@ type Entry struct {
 	// Method: the symbol is a method; Sig is its type without the receiver,
 	// and the Java method takes the receiver before the arguments.
 	Method bool
+	// Temporary is the bug id (docs/dev/bugs.md) of an entry marked
+	// `# TEMPORARY (BUG-NNNN)`: a stop-gap that bug retires. Not part of
+	// the registry hash.
+	Temporary string
 }
+
+// temporaryRE is the marker of a temporary entry in a trailing comment.
+var temporaryRE = regexp.MustCompile(`^\s*TEMPORARY \((BUG-[0-9]{4})\)\s*$`)
+
+// temporaryAnyRE finds a marker anywhere in a comment.
+var temporaryAnyRE = regexp.MustCompile(`TEMPORARY \(BUG-[0-9]{4}\)`)
 
 // Table is a parsed registry.
 type Table struct {
@@ -72,15 +83,25 @@ func Parse(text string) (*Table, error) {
 	t := &Table{bySym: map[string]int{}}
 	methods := map[string]string{}
 	for i, line := range strings.Split(text, "\n") {
+		comment := ""
 		if j := strings.IndexByte(line, '#'); j >= 0 {
-			line = line[:j]
+			line, comment = line[:j], line[j+1:]
 		}
 		f := strings.Fields(line)
-		if len(f) == 0 {
-			continue
-		}
 		fail := func(format string, a ...any) error {
 			return fmt.Errorf("registry.txt:%d: %s", i+1, fmt.Sprintf(format, a...))
+		}
+		if len(f) == 0 {
+			if temporaryAnyRE.MatchString(comment) {
+				return nil, fail("TEMPORARY marker on a line without a declaration")
+			}
+			continue
+		}
+		temporary := ""
+		if m := temporaryRE.FindStringSubmatch(comment); m != nil {
+			temporary = m[1]
+		} else if strings.Contains(comment, "TEMPORARY") {
+			return nil, fail("malformed marker %q: want `# TEMPORARY (BUG-NNNN)` as the whole trailing comment", strings.TrimSpace(comment))
 		}
 		switch f[0] {
 		case "version":
@@ -96,7 +117,7 @@ func Parse(text string) (*Table, error) {
 			if len(f) < 4 {
 				return nil, fail("want `%s SYMBOL CLASS SIGNATURE`", f[0])
 			}
-			e := Entry{Symbol: f[1], Class: f[2], Sig: strings.Join(f[3:], " "), Replace: f[0] == "replace", Method: f[0] == "method"}
+			e := Entry{Symbol: f[1], Class: f[2], Sig: strings.Join(f[3:], " "), Replace: f[0] == "replace", Method: f[0] == "method", Temporary: temporary}
 			if !strings.Contains(e.Symbol, ".") {
 				return nil, fail("symbol %q has no package", e.Symbol)
 			}
@@ -118,6 +139,9 @@ func Parse(text string) (*Table, error) {
 			t.Entries = append(t.Entries, e)
 		default:
 			return nil, fail("unknown declaration %q", f[0])
+		}
+		if temporary != "" && f[0] == "version" {
+			return nil, fail("TEMPORARY marker on the version line")
 		}
 	}
 	if t.Version == 0 {

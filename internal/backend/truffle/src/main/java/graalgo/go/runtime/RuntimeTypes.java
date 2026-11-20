@@ -13,7 +13,9 @@ import graalgo.language.GoLanguage;
 import graalgo.runtime.GoErrorValue;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /**
  * The language-level type universe: the {@link TypeTable} and the runtime's own error types
@@ -60,6 +62,7 @@ public final class RuntimeTypes {
     public final TypeTable table = new TypeTable();
     private final GoLanguage language;
     private final Map<String, GoType> errorTypes = new HashMap<>();
+    private final Map<String, RootCallTarget> shared = new ConcurrentHashMap<>();
 
     public RuntimeTypes(GoLanguage language) {
         this.language = language;
@@ -95,6 +98,15 @@ public final class RuntimeTypes {
     public Iface box(GoErrorValue e) {
         GoType t = e.typeName() == null ? null : errorTypes.get(e.typeName());
         return new Iface(t != null ? t : errorTypes.get("runtime.errorString"), e);
+    }
+
+    /**
+     * The one call target of a Java-implemented function shared by every func value it backs
+     * (an intrinsic that returns a closure: the value differs per call in its environment, not
+     * in its code), built by {@code make} on first use.
+     */
+    public RootCallTarget sharedTarget(String name, Supplier<RootNode> make) {
+        return shared.computeIfAbsent(name, k -> make.get().getCallTarget());
     }
 
     /** A Java-implemented function as a call target (intrinsics, D9). */

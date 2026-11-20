@@ -21,7 +21,7 @@ the measurement programs are described in §11.
 | D5 | The IR is a **resolved typed AST** (not SSA, not gc's unified IR), one independently decodable blob per function, in a schema-driven binary container that evolves v2's `g2bi` encoding. | SPEC §3.2/§3.3: the node factory walks the typed AST. Lazy per-function decoding keeps startup proportional to executed code. |
 | D6 | Generics: generic bodies are serialized **once, uninstantiated**; the backend instantiates per distinct type-argument tuple at first use (full monomorphization in the JVM). AOT modes run the same instantiation as a link-time closure. | A Truffle tree per instantiation is what the JIT wants; no cross-package duplicate bodies; no dictionaries. |
 | D7 | Types cross package boundaries by **canonical type key**; descriptors are interned at load; itabs are computed lazily at run time. No link-time itab or method-set generation. | Itabs are immutable (SPEC §3.3); the JVM is the linker. |
-| D8 | The runtime boundary is the **source tree**: graalgo ships a `GOROOT` whose `src` is upstream go1.27.1 plus the fork patch stack. `runtime` and `internal/runtime/*` are replaced by facade packages whose body-less functions are the intrinsic surface; a small set of coupled packages carries minimal patches; everything else is verbatim. `internal/abi` and `internal/reflectlite` are verbatim and `reflect` is verbatim except a 4-function call-path patch, on byte-exact descriptor images and the pointer model of §3.4 (P1, answered). | GG-0009. No package is name-keyed inside the tool: the tool compiles whatever `cmd/go` hands it. Verified: stock `cmd/go` + gc `compile` + `vet` accept a facade `runtime` (§5.2); verbatim reflect on synthesized descriptors: 607/607 answers identical to gc ([abi-spike.md](abi-spike.md) §1.4). |
+| D8 | The runtime boundary is the **source tree**: graalgo ships a `GOROOT` whose `src` is upstream go1.27.1 plus the fork patch stack. `runtime` and `internal/runtime/*` are replaced by facade packages whose body-less functions are the intrinsic surface; a small set of coupled packages carries minimal patches; everything else is verbatim. `internal/abi` and `internal/reflectlite` are verbatim (exception, temporary: `reflectlite.Swapper` and `pkgPath` run as registry `replace` intrinsics until checked views over wider scalars exist — BUG-0037, WP-REFLECTLITE-VIEW, §13) and `reflect` is verbatim except a 4-function call-path patch, on byte-exact descriptor images and the pointer model of §3.4 (P1, answered). | GG-0009. No package is name-keyed inside the tool: the tool compiles whatever `cmd/go` hands it. Verified: stock `cmd/go` + gc `compile` + `vet` accept a facade `runtime` (§5.2); verbatim reflect on synthesized descriptors: 607/607 answers identical to gc ([abi-spike.md](abi-spike.md) §1.4). |
 | D9 | Body-less functions resolve at link time, by symbol name, to (a) a Go body named by `//go:linkname`, or (b) a Java intrinsic registered under that symbol name; otherwise the link fails if the function is reachable. | GG-0020/GG-0021. Same rule for std, the fork and third-party modules. |
 | D10 | The frontend is `go/parser` + `go/types` from the toolchain that builds `graalgo-tool`, with a build-time assertion that this is the tracked release. | GG-0069/GG-0013 by construction; the vendored copy under `internal/frontend/go` retires with v1. |
 | D11 | v1 (`gofrontend`, JSON, `synth_*.go`, the custom `cmd/graalgo` commands, **and v1's node classes**) is deleted at one cutover gate (§9, M3), not migrated piecemeal. | The two paths share only the runtime library (scheduler, channels, timers); a hybrid would need the import overlay the recovery is removing. |
@@ -1408,7 +1408,8 @@ restrictions relative to gc are in [limitations.md](limitations.md). Gate:
 **Since the skeleton (M1c slice: `sync`, `internal/bytealg`, W8a, `time`;
 2026-11-19, `wt/m1c/sync-time`):** the parts of the standard library that
 need no descriptor image. Gate: `make test-m1c`
-([test/m1c/run.sh](../../test/m1c/run.sh), not per-push; the m1r
+([test/m1c/run.sh](../../test/m1c/run.sh), per-push in `make all` since
+2026-11-19 together with `make test-m1r` — ~15 s each; the m1r
 conventions plus `//m1c:requires <probe>` — a program that needs another
 lane's piece is PENDING until the probe program of that name matches gc, so
 it turns itself on when the piece lands — `//m1c:ldflags` and `//m1c:env`),
@@ -1465,6 +1466,25 @@ it turns itself on when the piece lands — `//m1c:ldflags` and `//m1c:env`),
   first run it flagged the fork glue's typed-value writes and `readlen`'s
   `*byte` buffer (a `*byte` parameter is now `byteptr-param`, a buffer, not
   a C string). Role kinds `struct`/`array` and nested pointers stay W8b.
+  *Follow-up (2026-11-19, lane m1r/reflectlite-temp):* `make test-m1c` was
+  red on master — `syscall`'s package init raises `RLIMIT_NOFILE` through
+  `prlimit64` (302), which the table lacked, so every program importing
+  `syscall` (all of `time`) stopped. The table now has 8 numbers; `prlimit64`
+  needs the minimal struct role `struct(TYPE,SIZE,in|out)`: a pointer to one
+  pointer-free value of a named type, copied in (and back for `out`) as
+  exactly SIZE bytes, nil as NULL. The gate checks the site passes
+  `uintptr(unsafe.Pointer(x))` with `x` of type `*TYPE`, that TYPE holds no
+  pointer and that SIZE is its gc linux/amd64 size (`types.SizesFor`);
+  5 more planted entries (wrong size, wrong type, declared `val`, an
+  undeclared struct pointer, a struct with pointers) turn it red, and two
+  m1c mutants (no copy-back, half size) are killed by
+  [syscall_rlimit.go](../../test/m1c/programs/syscall_rlimit.go). Struct
+  roles with nested pointers and arrays stay W8b. Also found by the now
+  running `time_format_zone.go`: `runtimeNow` returned its monotonic
+  reading relative to the JVM's start while `runtimeNano` was absolute, so
+  `time.Until` of a future monotonic time was negative on a host whose
+  `CLOCK_MONOTONIC` exceeded the offset (fixed: both are `nanotime()`, as
+  gc's `time_now`).
 - *`time`.* `Sleep` parks on a `TimerHeap` sleep entry; `newTimer`/
   `stopTimer`/`resetTimer` arm heap callbacks that start a runtime
   goroutine to run `sendTime`/`goFunc` (Go 1.23 semantics: stop/reset drain
@@ -1544,16 +1564,29 @@ per-push), `make test-m1r` 15/15, `make test-m1w13` 16/16.
   ([generic_mset_iface.go](../../test/m1a/programs/generic_mset_iface.go)).
   (3) Local types are keyed with gc's own `Name·N`, so that the backend
   computes gc's link string and `Hash` for them.
-- *Open, found by this lane* (both pinned in
-  [test/m1w13/restricted/](../../test/m1w13/restricted/)): two functions of
-  `internal/reflectlite` need a byte or word view of other leaves, which
-  W13's one slice shape does not give — `Swapper` (`sort.Slice` on
-  `[]uint16`, `[]uint32`, `[]float32` and on several-leaf elements of 2, 4
-  or 8 bytes is a `checkptr` fatal error; every other element type works)
-  and `pkgPath` (an unexported method of an unnamed interface type). The
-  decision is the owner's: a word-view slice shape, or a two-function patch
-  in [stdlib/patches/](../../stdlib/patches/) (D8 says `reflectlite` is
-  verbatim).
+- *Found by this lane, closed temporarily (follow-up lane m1r/reflectlite-temp,
+  2026-11-19):* two functions of `internal/reflectlite` need a byte or word
+  view of other leaves, which W13's one slice shape does not give —
+  `Swapper` (`sort.Slice` on `[]uint16`, `[]uint32`, `[]float32`,
+  `[]complex64` and on several-leaf elements of 2, 4 or 8 bytes such as
+  `[]struct{ a, b int32 }` or `[][2]int32` was a `checkptr` fatal error;
+  verified: `[]uint64` and every element type with a pointer, a string, or
+  wider than 8 bytes worked) and `pkgPath` (an unexported method of an
+  unnamed interface type, `errors.As` to such a target). Owner decision: a
+  temporary solution with a tracked removal. Both are registry `replace`
+  entries marked `TEMPORARY (BUG-0037)` (`ReflectliteIntrinsics.java`):
+  `Swapper` exchanges the element's slots in each region of the backing
+  object, keeping upstream's observable contract (the `*ValueError` panic,
+  the length-0/1 functions, the index panic per element class); `pkgPath`
+  reads the name's 4 offset bytes as bytes. This is the one exception to
+  D8's "`reflectlite` is verbatim". `TestTemporaryEntries`
+  (`internal/toolexec/intrinsics`) fails once BUG-0037 is marked fixed while
+  the entries remain; their removal is WP-REFLECTLITE-VIEW in
+  [RECOVERY.md](RECOVERY.md) (checked views over wider scalars: a word-view
+  slice shape — GG-0072/ADR-0015 revisited — or per-kind typed views). The
+  restricted pins became
+  [reflectlite_views.go](../../test/m1r/programs/reflectlite_views.go), a
+  `make test-m1r` program compared with gc.
 - *The worklist now* (undefined reachable symbols of a one-call program):
   `errors` 0, `strconv` 0 (`Unquote` and `QuotedPrefix` reach
   `internal/bytealg.IndexByteString`), `sort` 0, `sync` 9 (`internal/sync`

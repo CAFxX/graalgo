@@ -35,7 +35,14 @@ type Site struct {
 	// (p of &p[0]); Len: the x of an argument uintptr(len(x)). Both "" when
 	// not applicable. They tie a buffer to its length argument.
 	Buf, Len []string
+	// Size: per argument, for a "ptr:<type>" role whose type holds no
+	// pointer, the type's size in bytes under gc on linux/amd64; -1 for
+	// every other role and for a pointee with pointers.
+	Size []int64
 }
+
+// amd64 is gc's layout of the tracked platform.
+var amd64 = types.SizesFor("gc", "amd64")
 
 // The analysis is defined by three packages of the tracked release: the one
 // whose entry points every raw system call outside the runtime goes through,
@@ -227,8 +234,47 @@ func (w *world) callSite(info *types.Info, fd *ast.FuncDecl, fn *types.Func, c *
 		s.Roles = append(s.Roles, role)
 		s.Buf = append(s.Buf, buf)
 		s.Len = append(s.Len, lenOf(info, a))
+		size := int64(-1)
+		if t := pointee(info, a); t != nil && strings.HasPrefix(role, "ptr:") && !hasPointers(t) {
+			size = amd64.Sizeof(t)
+		}
+		s.Size = append(s.Size, size)
 	}
 	w.sites = append(w.sites, s)
+}
+
+// pointee returns T when e is uintptr(unsafe.Pointer(x)) with x of type *T.
+func pointee(info *types.Info, e ast.Expr) types.Type {
+	c, ok := ast.Unparen(e).(*ast.CallExpr)
+	if !ok || len(c.Args) != 1 {
+		return nil
+	}
+	pc, ok := ast.Unparen(c.Args[0]).(*ast.CallExpr)
+	if !ok || len(pc.Args) != 1 || !info.Types[pc.Fun].IsType() {
+		return nil
+	}
+	if pt, ok := info.Types[ast.Unparen(pc.Args[0])].Type.Underlying().(*types.Pointer); ok {
+		return pt.Elem()
+	}
+	return nil
+}
+
+// hasPointers reports whether a value of type t holds a pointer word.
+func hasPointers(t types.Type) bool {
+	switch u := t.Underlying().(type) {
+	case *types.Basic:
+		return u.Kind() == types.String || u.Kind() == types.UnsafePointer
+	case *types.Array:
+		return u.Len() > 0 && hasPointers(u.Elem())
+	case *types.Struct:
+		for i := 0; i < u.NumFields(); i++ {
+			if hasPointers(u.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	}
+	return true // pointer, slice, map, chan, func, interface
 }
 
 // lenOf returns x when e is uintptr(len(x)).

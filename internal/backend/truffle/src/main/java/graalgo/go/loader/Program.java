@@ -131,6 +131,12 @@ public final class Program {
                 }
 
                 @Override
+                public GoType namedType(String path, String name) {
+                    PackageUnit u = p.byPath.get(path);
+                    return u == null ? null : u.namedType(name);
+                }
+
+                @Override
                 public Object equalFunc(GoType t) {
                     return new Closure(new TypeEqual(language, t).getCallTarget(), null);
                 }

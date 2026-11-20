@@ -20,6 +20,10 @@ import (
 //   - a bytes role's length argument is uintptr(len(b)) of the very slice
 //     the pointer points into (a length taken from elsewhere could run past
 //     the Go object);
+//   - a struct role's pointer is uintptr(unsafe.Pointer(x)) with x of
+//     type *T, T the declared type, holding no pointer, of the declared
+//     size on gc linux/amd64 (the executor copies exactly that many bytes:
+//     a wrong size would read or write past the Go value);
 //   - a site's argument beyond the entry's roles is a value;
 //   - sites inside the table's afterfork functions are skipped, which is sound
 //     only while the table has no fork entry (checked), and every afterfork
@@ -84,6 +88,14 @@ func Check(t *Table, sites []Site) []string {
 				case CStr:
 					if got != "cstr" {
 						bad(e, "%s passes %s at %s, declared cstr", s.Pos, got, arg)
+					}
+				case Struct:
+					if got != "ptr:"+r.Type {
+						bad(e, "%s passes %s at %s, declared %s", s.Pos, got, arg, r)
+					} else if i >= len(s.Size) || s.Size[i] < 0 {
+						bad(e, "%s: %s at %s holds pointers, which a struct role does not translate", s.Pos, r.Type, arg)
+					} else if s.Size[i] != r.Size {
+						bad(e, "%s: %s at %s is %d bytes, declared %d", s.Pos, r.Type, arg, s.Size[i], r.Size)
 					}
 				case Bytes:
 					if got == "byteptr-param" {

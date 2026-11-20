@@ -12,6 +12,8 @@
 # function executes upstream's Go body, or — when upstream has none (assembly,
 # runtime-provided) or gc's compiler replaces it — the Java intrinsic the
 # registry (internal/toolexec/intrinsics/registry.txt) names for its symbol.
+# The exceptions are the registry's TEMPORARY entries (BUG-0037:
+# reflectlite.Swapper and pkgPath), each tied to an open bug.
 #
 # Compared per program: stdout (bytes), stderr (normalized by
 # test/corpus/lifecycle/normalize.py: goroutine ids, frame lines, hex

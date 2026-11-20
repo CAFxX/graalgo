@@ -20,7 +20,8 @@
 #       a function WITH a Go body that the backend implements instead, as
 #       gc's compiler does for the same function
 #       (cmd/compile/internal/ssagen/intrinsics.go). Only functions gc
-#       itself intrinsifies on the tracked platform may be listed.
+#       itself intrinsifies on the tracked platform may be listed, except
+#       entries marked TEMPORARY (below).
 # SYMBOL is gc's symbol name (import path "." name). SIGNATURE is the
 # function type's canonical key (internal/toolexec/ir/typekey.go); the
 # linker refuses a declaration whose signature differs. CLASS is a class of
@@ -35,6 +36,12 @@
 #       the method's type, without the receiver; the Java method takes the
 #       receiver, an Object, before the arguments. The linker refuses a
 #       function bound to a `method` entry and a method bound to another.
+#
+# A declaration whose trailing comment is `TEMPORARY (BUG-NNNN)` is a
+# stop-gap the named bug of docs/dev/bugs.md retires; the marker is only
+# valid on a declaration line, and a test (TestTemporaryEntries) fails when
+# the bug is missing from bugs.md or marked fixed there, so the entry cannot
+# outlive its reason.
 #
 # Bump `version` for an incompatible edit (a removed symbol or a changed
 # signature). The version and a content hash travel in every linked
@@ -156,6 +163,12 @@ intrinsic internal/reflectlite.typedmemmove   ReflectliteIntrinsics func(*intern
 intrinsic internal/reflectlite.ifaceE2I       ReflectliteIntrinsics func(*internal/abi.Type, interface {}, unsafe.Pointer)
 intrinsic internal/reflectlite.chanlen        ReflectliteIntrinsics func(unsafe.Pointer) int
 intrinsic internal/reflectlite.maplen         ReflectliteIntrinsics func(unsafe.Pointer) int
+# Two functions WITH an upstream body, replaced until checked views over
+# wider scalars exist (WP-REFLECTLITE-VIEW, docs/arch/RECOVERY.md): Swapper's
+# fast paths view a slice as []int8..[]int64, pkgPath reads an int32 through
+# a [4]byte view; neither view exists in the flat value model (SPEC §3.4).
+replace internal/reflectlite.Swapper ReflectliteIntrinsics func(interface {}) func(int, int) # TEMPORARY (BUG-0037)
+replace internal/reflectlite.pkgPath ReflectliteIntrinsics func(internal/abi.Name) string    # TEMPORARY (BUG-0037)
 
 # --- runtime (facade), reached by internal/reflectlite's panic messages
 # (methodName). The node package records no call positions yet, so Caller
