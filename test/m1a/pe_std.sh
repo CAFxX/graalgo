@@ -38,7 +38,8 @@ run() {
     ( cd "$d" && "$GO" build -o "$d/gc.bin" . ) || infra_die "gc build failed: $name"
     ( cd "$d" && toolexec_build "$d/gg.bin" "$RUNNER" ) || infra_die "graalgo-tool build failed: $name"
     "$d/gc.bin" >/dev/null 2>"$d/gc.err" || infra_die "gc run failed: $name"
-    GRAALGO_JAVA_OPTS="$OPTS" TMPDIR="$TMP" nice -n 19 timeout "$TIMEOUT" "$d/gg.bin" >"$d/gg.out" 2>"$d/gg.err" || status=$?
+    # In its own directory: a failed compilation under ExitVM writes graal_dumps/ to the cwd.
+    ( cd "$d" && GRAALGO_JAVA_OPTS="$OPTS" TMPDIR="$TMP" nice -n 19 timeout "$TIMEOUT" "$d/gg.bin" >"$d/gg.out" 2>"$d/gg.err" ) || status=$?
     infra_check_run "$name" "$status" "$d/gg.err"
     want="$(head -1 "$d/gc.err")"
     got="$(grep -a -m1 -E '^-?[0-9]+$' "$d/gg.err")"

@@ -1248,7 +1248,8 @@ public final class NodeFactory {
                         return new Unsafes.ToPtr(expr(c.x()), to.elem, true);
                     }
                 }
-                return convert(ty(c.x()), ty(c.type()), c.x());
+                Expr arith = pointerArith(c);
+                return arith != null ? arith : convert(ty(c.x()), ty(c.type()), c.x());
             case Gir.Expr.Call c:
                 return call(c);
             case Gir.Expr.MethodCall mc:
@@ -1636,6 +1637,31 @@ public final class NodeFactory {
         }
         return ta.commaOk() ? new Ifaces.AssertConcreteOk(x, target)
                 : typed(target, new Ifaces.AssertConcrete(x, from, target));
+    }
+
+    /**
+     * {@code unsafe.Pointer(uintptr(p) + y)} and {@code unsafe.Pointer(uintptr(p) - y)} — the
+     * pointer-arithmetic form of unsafe.Pointer rule (3), one expression — as {@code
+     * unsafe.Add(p, ±y)}, or null for any other conversion. The two agree on every result
+     * (the round trip resolves {@code base(p) + off + y} back into {@code p}'s referent or is
+     * fatal with checkptr's message; a result inside another object is checkptr's "invalid
+     * allocation" either way), operands evaluate in the same order, and the intermediate
+     * integer is unobservable — but the round trip gives every referent a handle range
+     * (Handles), which made {@code reflect}'s {@code add} the cost of every field access.
+     */
+    private Expr pointerArith(Gir.Expr.Convert c) {
+        if (ty(c.type()).u().kind != GoType.UNSAFE_POINTER
+                || !(c.x() instanceof Gir.Expr.Binary b)
+                || b.op() != Gir.BinOp.ADD && b.op() != Gir.BinOp.SUB
+                || !(b.x() instanceof Gir.Expr.Convert pc)
+                || ty(pc.x()).u().kind != GoType.UNSAFE_POINTER
+                || !ty(b.type()).isInteger() || ty(b.type()).bits() != 64
+                || !ty(b.y()).isInteger()) {
+            return null;
+        }
+        Expr p = expr(pc.x());
+        I64 y = asI64(expr(b.y()));
+        return new Unsafes.Add(p, b.op() == Gir.BinOp.ADD ? y : ArithFactory.NegI64NodeGen.create(y));
     }
 
     /** The conversion {@code to(x)}, {@code x} of type {@code from}. */
