@@ -2,7 +2,7 @@ package main
 
 // complex64 multiplication: gc computes the product in float64 and rounds
 // each part to float32 once; rounding every partial product separately
-// differs in the last bit. Found by test/fuzz (BUG-0039).
+// differs in the last bit. Found by test/fuzz (BUG-0040).
 
 func mul(a, b complex64) complex64 { return a * b }
 

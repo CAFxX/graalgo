@@ -1002,7 +1002,7 @@ public final class Unsafe {
         }
         Flat box = i.type.zeroFlat();
         Values.store(i.type, box, 0, 0, 0, i.data);
-        return i.cacheWord(box); // one word per value, as gc's (BUG-0044)
+        return i.cacheWord(box); // one word per value, as gc's (BUG-0045)
     }
 
     /** The interface slot content for a type word and a data word (the inverse of the two above). */

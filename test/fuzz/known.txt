@@ -4,6 +4,6 @@
 # that class and signature is KNOWN; one that diverges otherwise is DRIFT,
 # one that matches gc is STALE (fixed: delete the line, and move a repro/
 # program to the gate it belongs to). Every id is a row of docs/dev/bugs.md.
-test/fuzz/corpus/control/fatal_panic_nil.go BUG-0045 gg-build ./main.go:N:N: undefined: runtime.PanicNilError
-test/fuzz/corpus/control/panic_values_recovered.go BUG-0045 gg-build ./main.go:N:N: undefined: runtime.PanicNilError
-test/fuzz/repro/panic_nil_error_type.go BUG-0045 gg-build ./main.go:N:N: undefined: runtime.PanicNilError
+test/fuzz/corpus/control/fatal_panic_nil.go BUG-0046 gg-build ./main.go:N:N: undefined: runtime.PanicNilError
+test/fuzz/corpus/control/panic_values_recovered.go BUG-0046 gg-build ./main.go:N:N: undefined: runtime.PanicNilError
+test/fuzz/repro/panic_nil_error_type.go BUG-0046 gg-build ./main.go:N:N: undefined: runtime.PanicNilError

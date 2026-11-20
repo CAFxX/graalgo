@@ -3,7 +3,7 @@ package main
 // The equality and hash functions of type descriptors (abi.Type.Equal,
 // MapType.Hasher), called by upstream code such as sync.Map, panic like gc's
 // efaceeq/typehash on an interface holding an uncomparable dynamic type
-// (BUG-0043); runtime.NumGoroutine counts the live goroutines. Found by
+// (BUG-0044); runtime.NumGoroutine counts the live goroutines. Found by
 // test/fuzz.
 
 import (

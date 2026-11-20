@@ -1,11 +1,11 @@
 package main
 
 // Map key edge cases found by test/fuzz: assigning to an existing entry
-// stores the new key (+0 then -0 leaves -0, gc's NeedKeyUpdate; BUG-0041);
+// stores the new key (+0 then -0 leaves -0, gc's NeedKeyUpdate; BUG-0042);
 // a lookup or delete on a nil or empty map checks an interface key and an
 // unhashable one panics with maps.unhashableTypeError ("hash of unhashable
 // type: T", no "runtime error: " prefix), while a non-empty map hashes and
-// panics with the runtime's errorString (BUG-0040).
+// panics with the runtime's errorString (BUG-0041).
 
 func negZero() float64 {
 	z := 0.0

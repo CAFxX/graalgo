@@ -401,6 +401,13 @@ Related: [Makefile](../Makefile) (root build entry point),
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output
     equality with gc and prints best-round times (`make bench`; not a gate).
+    [suite/](../test/bench/suite/) is the benchmark suite of
+    [performance.md](arch/performance.md): 27 programs on a shared harness
+    ([suite/h](../test/bench/suite/h/): `runtime.nanotime` by linkname,
+    `println`), run by [suite.sh](../test/bench/suite.sh) /
+    [suite.py](../test/bench/suite.py) under gc, gc+PGO and graalgo (new
+    path) with results checked against gc, warmup curves, steady-state
+    medians and JSON (`make bench-suite`; not a gate).
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):

@@ -676,7 +676,7 @@ public final class Mem {
             if (o == null) {
                 return Unsafe.loadFlat(this, loc.viewObj(frame), loc.viewOff(frame), type);
             }
-            return o.sub(type, np == 0 ? 0 : loc.prim(frame), np, nr == 0 ? 0 : loc.ref(frame), nr,
+            return o.subFixed(type, np == 0 ? 0 : loc.prim(frame), np, nr == 0 ? 0 : loc.ref(frame), nr,
                     nb == 0 ? 0 : loc.byt(frame), nb);
         }
     }
@@ -770,11 +770,17 @@ public final class Mem {
         @Child private Expr value;
 
         private final GoType type;
+        private final int np;
+        private final int nr;
+        private final int nb;
 
         public StoreSub(Loc loc, GoType type, Expr value) {
             this.loc = loc;
             this.type = type;
             this.value = value;
+            this.np = type.nPrim();
+            this.nr = type.nRef();
+            this.nb = type.nByte();
         }
 
         @Override
@@ -785,7 +791,7 @@ public final class Mem {
                 Unsafe.storeFlat(this, loc.viewObj(frame), loc.viewOff(frame), type, v);
                 return;
             }
-            o.store(loc.prim(frame), loc.ref(frame), loc.byt(frame), v);
+            o.storeFixed(loc.prim(frame), loc.ref(frame), loc.byt(frame), v, np, nr, nb);
         }
     }
 
@@ -810,6 +816,14 @@ public final class Mem {
     /** A private copy of a struct or array value (Go value semantics at a store). */
     public static final class Copy extends Ref {
         @Child private Expr value;
+        /**
+         * The region sizes of the values seen (a static type fixes them), -1 before the first;
+         * {@link #GENERIC} once two different shapes were seen.
+         */
+        @com.oracle.truffle.api.CompilerDirectives.CompilationFinal private int np = -1;
+        @com.oracle.truffle.api.CompilerDirectives.CompilationFinal private int nr;
+        @com.oracle.truffle.api.CompilerDirectives.CompilationFinal private int nb;
+        private static final int GENERIC = -2;
 
         public Copy(Expr value) {
             this.value = value;
@@ -817,7 +831,21 @@ public final class Mem {
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            return ((Flat) value.executeGeneric(frame)).copy();
+            Flat v = (Flat) value.executeGeneric(frame);
+            if (np >= 0 && v.prims.length == np && v.refs.length == nr && v.bytes.length == nb) {
+                return v.copyFixed(np, nr, nb);
+            }
+            if (np != GENERIC) {
+                com.oracle.truffle.api.CompilerDirectives.transferToInterpreterAndInvalidate();
+                if (np == -1) {
+                    np = v.prims.length;
+                    nr = v.refs.length;
+                    nb = v.bytes.length;
+                } else {
+                    np = GENERIC;
+                }
+            }
+            return v.copy();
         }
     }
 

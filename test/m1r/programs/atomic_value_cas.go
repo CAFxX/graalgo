@@ -2,7 +2,7 @@ package main
 
 // atomic.Value.CompareAndSwap reads the stored interface's data word and
 // CASes that same word: the data word of a boxed scalar (string, int) must
-// be one pointer for the value's life, as gc's is (BUG-0044, found by
+// be one pointer for the value's life, as gc's is (BUG-0045, found by
 // test/fuzz). Struct and pointer values are their own words.
 
 import "sync/atomic"

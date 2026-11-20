@@ -3,7 +3,7 @@ package main
 // Slice-to-array and slice-to-array-pointer conversions (Go 1.17/1.20):
 // the array is a copy, the pointer aliases the slice's backing array, a
 // short slice panics with gc's boundsConvert text, a nil slice converts to
-// a nil *[0]T and to a zero [0]T. Found by test/fuzz (BUG-0038).
+// a nil *[0]T and to a zero [0]T. Found by test/fuzz (BUG-0039).
 
 type pair struct {
 	a int

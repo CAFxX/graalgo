@@ -1,5 +1,6 @@
 package graalgo.go.values;
 
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import graalgo.go.types.GoType;
 import java.util.Arrays;
 
@@ -52,6 +53,100 @@ public final class Flat {
                 nPrim == 0 ? NO_PRIMS : Arrays.copyOfRange(prims, primOff, primOff + nPrim),
                 nRef == 0 ? NO_REFS : Arrays.copyOfRange(refs, refOff, refOff + nRef),
                 nByte == 0 ? NO_BYTES : Arrays.copyOfRange(bytes, byteOff, byteOff + nByte));
+    }
+
+    /**
+     * The largest region a node copies element by element ({@link #subFixed}, {@link
+     * #copyFixed}, {@link #storeFixed}) rather than through {@code System.arraycopy}: with the
+     * count a compilation constant the copy is a few loads and stores that escape analysis can
+     * keep in registers (a struct passed by value to an inlined method, a returned literal
+     * stored into a slice element), where an array copy of a runtime length materializes both
+     * arrays.
+     */
+    public static final int FIXED_MAX = 16;
+
+    /**
+     * {@link #sub} for a node whose counts are compilation constants (the static type's
+     * {@code nPrim()}/{@code nRef()}/{@code nByte()}).
+     */
+    public Flat subFixed(GoType subType, int primOff, int nPrim, int refOff, int nRef, int byteOff, int nByte) {
+        if (nPrim > FIXED_MAX || nRef > FIXED_MAX || nByte > FIXED_MAX) {
+            return sub(subType, primOff, nPrim, refOff, nRef, byteOff, nByte);
+        }
+        return new Flat(subType, prims(prims, primOff, nPrim), refs(refs, refOff, nRef), bytes(bytes, byteOff, nByte));
+    }
+
+    /** {@link #copy} for a node that knows this object's counts as compilation constants. */
+    public Flat copyFixed(int nPrim, int nRef, int nByte) {
+        return subFixed(type, 0, nPrim, 0, nRef, 0, nByte);
+    }
+
+    /** {@link #store} for a node that knows {@code src}'s counts as compilation constants. */
+    public void storeFixed(int primOff, int refOff, int byteOff, Flat src, int nPrim, int nRef, int nByte) {
+        if (nPrim > FIXED_MAX || nRef > FIXED_MAX || nByte > FIXED_MAX) {
+            store(primOff, refOff, byteOff, src);
+            return;
+        }
+        putPrims(prims, primOff, src.prims, nPrim);
+        putRefs(refs, refOff, src.refs, nRef);
+        putBytes(bytes, byteOff, src.bytes, nByte);
+    }
+
+    @ExplodeLoop
+    private static long[] prims(long[] src, int off, int n) {
+        if (n == 0) {
+            return NO_PRIMS;
+        }
+        long[] a = new long[n];
+        for (int i = 0; i < n; i++) {
+            a[i] = src[off + i];
+        }
+        return a;
+    }
+
+    @ExplodeLoop
+    private static Object[] refs(Object[] src, int off, int n) {
+        if (n == 0) {
+            return NO_REFS;
+        }
+        Object[] a = new Object[n];
+        for (int i = 0; i < n; i++) {
+            a[i] = src[off + i];
+        }
+        return a;
+    }
+
+    @ExplodeLoop
+    private static byte[] bytes(byte[] src, int off, int n) {
+        if (n == 0) {
+            return NO_BYTES;
+        }
+        byte[] a = new byte[n];
+        for (int i = 0; i < n; i++) {
+            a[i] = src[off + i];
+        }
+        return a;
+    }
+
+    @ExplodeLoop
+    private static void putPrims(long[] dst, int off, long[] src, int n) {
+        for (int i = 0; i < n; i++) {
+            dst[off + i] = src[i];
+        }
+    }
+
+    @ExplodeLoop
+    private static void putRefs(Object[] dst, int off, Object[] src, int n) {
+        for (int i = 0; i < n; i++) {
+            dst[off + i] = src[i];
+        }
+    }
+
+    @ExplodeLoop
+    private static void putBytes(byte[] dst, int off, byte[] src, int n) {
+        for (int i = 0; i < n; i++) {
+            dst[off + i] = src[i];
+        }
     }
 
     /** Overwrites the sub-object at the given offsets with the whole of {@code src}. */

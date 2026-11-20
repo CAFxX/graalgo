@@ -109,6 +109,17 @@ public final class GoType {
     private volatile String str;
     private final ConcurrentHashMap<GoType, Object> itabs = new ConcurrentHashMap<>();
     private static final Object NO_ITAB = new Object();
+    /**
+     * The itab cache as compiled code reads it ({@link #itabFast}): indexed by the interface
+     * type's {@link #ifaceId}, holding an {@link Itab} or {@link #NO_ITAB}; null slots are not
+     * computed yet. Replaced (never mutated in place once published) under {@link #itabs}'s
+     * lock; a racy reader that sees an older or partially filled array takes the slow path.
+     */
+    private Object[] itabsById = NO_ITABS;
+    private static final Object[] NO_ITABS = new Object[0];
+    /** This interface type's index into the {@link #itabsById} of dynamic types; -1: none yet. */
+    private volatile int ifaceId = -1;
+    private static final java.util.concurrent.atomic.AtomicInteger IFACE_IDS = new java.util.concurrent.atomic.AtomicInteger();
     /** Display string override for package-name qualification; see {@link #str()}. */
     String pkgName;
     /** The descriptor image of this type, once built ({@link Descriptors}); null before. */
@@ -791,6 +802,59 @@ public final class GoType {
             itabs.put(iface, cached);
         }
         return cached == NO_ITAB ? null : (Itab) cached;
+    }
+
+    /**
+     * This interface type's dense id for {@link #itabFast}, assigned on first use (by the
+     * dispatch and assertion nodes' constructors, so compiled code reads it as a constant).
+     */
+    public int ifaceId() {
+        int id = ifaceId;
+        if (id < 0) {
+            synchronized (IFACE_IDS) {
+                id = ifaceId;
+                if (id < 0) {
+                    id = IFACE_IDS.getAndIncrement();
+                    ifaceId = id;
+                }
+            }
+        }
+        return id;
+    }
+
+    /**
+     * {@link #itab} without a boundary on the hit path: two loads and a type check, for
+     * megamorphic interface calls and assertions (gc reads the itab from the interface word;
+     * here the dynamic type's id-indexed cache stands in for it). {@code id} is
+     * {@code iface.ifaceId()}.
+     */
+    public Itab itabFast(GoType iface, int id) {
+        Object[] t = itabsById;
+        if (id < t.length) {
+            Object o = t[id];
+            if (o instanceof Itab it) {
+                return it;
+            } else if (o == NO_ITAB) {
+                return null;
+            }
+        }
+        return itabFill(iface, id);
+    }
+
+    @TruffleBoundary
+    private Itab itabFill(GoType iface, int id) {
+        Itab it = itab(iface);
+        synchronized (itabs) {
+            Object[] t = itabsById;
+            if (id >= t.length) {
+                t = java.util.Arrays.copyOf(t, Math.max(id + 1, t.length * 2));
+            } else {
+                t = t.clone();
+            }
+            t[id] = it == null ? NO_ITAB : it;
+            itabsById = t;
+        }
+        return it;
     }
 
     private Object buildItab(GoType iface) {

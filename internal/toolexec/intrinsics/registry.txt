@@ -87,6 +87,24 @@ replace math.Float64frombits MathIntrinsics func(uint64) float64
 replace math.Float32bits     MathIntrinsics func(float32) uint32
 replace math.Float32frombits MathIntrinsics func(uint32) float32
 
+# --- math and math/bits: the functions gc's compiler replaces by an
+# instruction on amd64 (ssagen intrinsics.go: math.sqrt; math/bits Len,
+# TrailingZeros, OnesCount (POPCNT, CPU-feature checked), RotateLeft, and
+# ReverseBytes as aliases of internal/runtime/sys.Bswap). Upstream's Go
+# bodies are software fallbacks (sqrt.go's bit-by-bit square root, table
+# lookups); the JVM intrinsifies the Java equivalents. performance.md. -----
+replace math.sqrt                 MathIntrinsics func(float64) float64
+replace math/bits.Len64           BitsIntrinsics func(uint64) int
+replace math/bits.Len32           BitsIntrinsics func(uint32) int
+replace math/bits.TrailingZeros64 BitsIntrinsics func(uint64) int
+replace math/bits.TrailingZeros32 BitsIntrinsics func(uint32) int
+replace math/bits.OnesCount64     BitsIntrinsics func(uint64) int
+replace math/bits.OnesCount32     BitsIntrinsics func(uint32) int
+replace math/bits.RotateLeft64    BitsIntrinsics func(uint64, int) uint64
+replace math/bits.RotateLeft32    BitsIntrinsics func(uint32, int) uint32
+replace math/bits.ReverseBytes64  BitsIntrinsics func(uint64) uint64
+replace math/bits.ReverseBytes32  BitsIntrinsics func(uint32) uint32
+
 # --- sync/atomic: the assembly functions (doc.go, doc_64.go) and the
 # pointer forms the runtime provides by //go:linkname
 # (runtime/atomic_pointer.go) ------------------------------------------------

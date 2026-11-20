@@ -2,7 +2,7 @@ package main
 
 // A recovered panic re-raised with the same pointer, re-boxed through a type
 // assertion (panic(r.(*E))), is "[recovered, repanicked]" under gc: the two
-// interface words are equal. Found by test/fuzz (BUG-0042).
+// interface words are equal. Found by test/fuzz (BUG-0043).
 
 type E struct{ code int }
 

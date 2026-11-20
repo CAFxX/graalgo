@@ -32,6 +32,7 @@ import graalgo.go.types.Itab;
 import graalgo.go.types.Method;
 import graalgo.go.values.Closure;
 import graalgo.go.values.Env;
+import graalgo.go.values.Flat;
 import graalgo.go.values.Iface;
 import graalgo.language.GoLanguage;
 import graalgo.runtime.Goexit;
@@ -438,10 +439,12 @@ public final class Calls {
     public abstract static class IfaceDispatch extends GoNode {
         final GoType iface;
         final int index;
+        final int ifaceId;
 
         IfaceDispatch(GoType iface, int index) {
             this.iface = iface;
             this.index = index;
+            this.ifaceId = iface.ifaceId();
         }
 
         public abstract Object execute(Iface recv, Object[] args);
@@ -451,9 +454,31 @@ public final class Calls {
                 @Bind Node node,
                 @Cached("recv.type") GoType cachedType,
                 @Cached("method(cachedType)") Method method,
+                @Cached("copyShape(method)") int shape,
                 @Cached("create(method.target())") DirectCallNode call) {
-            args[1] = Receivers.adapt(method, recv.data, node);
+            if (shape >= 0) {
+                // A value receiver: the callee's private copy, with the counts constant so an
+                // inlined callee's copy can be scalar-replaced (Flat.copyFixed).
+                args[1] = ((Flat) recv.data).copyFixed(shape & 0x3FF, (shape >>> 10) & 0x3FF, shape >>> 20);
+            } else {
+                args[1] = Receivers.adapt(method, recv.data, node);
+            }
             return call.call(args);
+        }
+
+        /**
+         * For a {@link Method#COPY} entry whose region counts fit 10 bits each, the counts packed
+         * as {@code nPrim | nRef << 10 | nByte << 20}; -1 otherwise.
+         */
+        static int copyShape(Method m) {
+            if (m.mode != Method.COPY) {
+                return -1;
+            }
+            GoType t = m.owner;
+            int np = t.nPrim();
+            int nr = t.nRef();
+            int nb = t.nByte();
+            return np < 1024 && nr < 1024 && nb < 1024 ? np | nr << 10 | nb << 20 : -1;
         }
 
         @Specialization(replaces = "cached")
@@ -464,7 +489,7 @@ public final class Calls {
         }
 
         Method method(GoType dyn) {
-            Itab itab = dyn.itab(iface);
+            Itab itab = dyn.itabFast(iface, ifaceId);
             return itab.methods[index];
         }
     }
