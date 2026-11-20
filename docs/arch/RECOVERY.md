@@ -75,6 +75,27 @@ branches below are history.
 | 2026-11-18 | **Re-issue (owner decision on the independent Fable review):** the four requirements locked that day without owner sign-off are superseded by requirements with corrected wording — `GG-0065` → GG-0068 (GODEBUG: what gc ignores is ignored; fail only on an unsupported knob's effective value from any source), `GG-0066` → GG-0069 (frontend unmodified; graalgo-tool refuses to run when built by another release), `GG-SCHED-0005` → GG-SCHED-0006 (slot *and* carrier accounting around every may-block host call; semaphore and poller parks; fail-fast bracket misuse), `GG-0067` split into GG-0070 (observable semantics incl. `panicnil` and caller frames, with [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (open-coded/chain mechanism, limit *L* pinned by a boundary test). **The owner signed off and locked all five on 2026-11-18** (`req lock`, after reading the independent Fable review); `GG-0063` (its only defect is the `GG-SCHED-0004` citation, resolved by the `superseded_by` chain) and `GG-0013` (cosmetic "vendored stdlib" wording) are left as is, not re-issued. `req lint` gains rule (e), a locked-text hash check | [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md) (re-issue section), ADR-0011 (status corrected), SPEC §3.2, §3.5, §4.5, §7.15, Appendix B |
 | 2026-11-19 | **Re-issue (owner decision):** `GG-0061` is superseded by GG-0072 (owner locked it 2026-11-19) because its locked text is false under ADR-0015 (one `long[]` plus one `Object[]` per struct, typed-Java-array-backed slices `{array, offset, len, cap}`): GG-0072 states the three regions (`long[]`, `Object[]`, `byte[]` for one-byte leaves), the one slice shape `{base, prim, ref, byt, len, cap}`, string windows into a `byte[]`, checked conversions with view pointers and header views, and keeps every other obligation; history ends "drafted for ADR-0015; awaiting owner sign-off" and it is **not locked** (GG-0062 is unchanged) | [ADR-0015](../dev/adr/ADR-0015-pointer-model-w13.md), SPEC §3.4, Appendix B |
 | 2026-11-20 | Direct handoff to the woken goroutine (gc's runnext) with a bounded handoff spin: a goroutine's wake is deferred and, if it parks within 20 µs, it hands the woken goroutine its slot and quantum through one HANDOFF token; requirements unchanged (WP-SCHED, lane sched-handoff) | SPEC §3.5, [ADR-0016](../dev/adr/ADR-0016-direct-handoff.md) |
+| 2026-11-20 | **Primary goal (owner statement):** run long-running Go programs — CPU-bound utilities to large I/O-bound servers — significantly faster than gc; start-up and short runs secondary. Operational thresholds (≥ 1.3× throughput, ≥ 2× lower p99.9, or ≥ 30 % less CPU vs the best gc leg incl. PGO, with memory and warmup guard rails), workload tiers T1–T4, the benchmark portfolio and the roadmap re-ordering below | SPEC §1.1, [north-star.md](north-star.md) |
+
+## Roadmap re-prioritization (2026-11-20, north star)
+
+The order of work is ranked against the primary goal
+([north-star.md](north-star.md) §6); the work packages below keep their
+scopes and gates. Measured on the realistic programs
+([test/bench/realistic/](../../test/bench/realistic/), north-star §4):
+goroutine creation is O(live goroutines) (one polyglot thread per
+goroutine), `regexp`/`encoding/json`'s scanner/`compress/flate` hit
+partial-evaluation failures and run interpreted, and the stdlib pipelines
+are 8–130× gc. **Up:** goroutine creation (new), PE failures (new, under
+WP-PERF), W8b sockets + poller (M4 `net`), the `crypto/*`/`hash/crc32`/
+`math/big` link floor and intrinsics, `net/http` (M4), WP-PERF re-aimed at
+the realistic programs, GC/heap defaults (new, with WP-PAR). **Middle:**
+`os/exec`/`os/signal` (GG-0064), `mmap`, WP-JFR, `runtime.Callers`
+(BUG-0047), WP-SCHED follow-ups. **Down:** WP-TMELIDE, WP-AOT/WP-MODE/
+WP-OSR, WP-ISO1/2, interop (GG-0003, GG-0005), WP-CGO1–3. M2/M3/M5 and
+the upgrade tooling are unchanged (drop-in track). Critical path to the
+first real server benchmarked against gc and the next six lanes:
+north-star §6.2–§6.3.
 
 ## Tracks
 

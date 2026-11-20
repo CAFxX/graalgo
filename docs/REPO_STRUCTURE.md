@@ -30,7 +30,7 @@ directory's README repeats its status.
 
 | Status | Directories |
 |---|---|
-| new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/) |
+| new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/), [test/bench/realistic/](../test/bench/realistic/README.md) |
 | shared | the runtime packages of [internal/backend/truffle/](../internal/backend/truffle/README.md) (`sched`, `runtime`, `safepoint`, `jfr`, `language`), [test/corpus/](../test/corpus/README.md), [test/lib/](../test/lib/), [test/java/](../test/java/), [test/snapshots/](../test/snapshots/README.md), [tools/req/](../tools/req/README.md), [tools/torture/](../tools/torture/), [requirements/](../requirements/), [.github/](../.github/) |
 | v1 | [cmd/graalgo/](../cmd/graalgo/README.md) (becomes the launcher), [internal/frontend/](../internal/frontend/README.md), [internal/driver/](../internal/driver/), [internal/vet/](../internal/vet/README.md), [internal/backend/interop/](../internal/backend/interop/README.md), `graalgo.{frontend,values,sched.launcher}` + `launcher.Main` in truffle, [graalgo-run](../internal/backend/graalgo-run), [graalgo-sync-run](../internal/backend/graalgo-sync-run), [tools/gate1/](../tools/gate1/README.md) |
 | v1-driven | [test/differential/](../test/differential/README.md) (`snapshot-check`), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz`, `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
@@ -448,6 +448,10 @@ directory's README repeats its status.
     [suite.py](../test/bench/suite.py) under gc, gc+PGO and graalgo (new
     path) with results checked against gc, warmup curves, steady-state
     medians and JSON (`make bench-suite`; not a gate).
+    [realistic/](../test/bench/realistic/README.md) holds whole-workload
+    programs (stdlib pipelines, allocation tail latency, goroutine scaling)
+    of [north-star.md](arch/north-star.md) on the same runner (`--dir`;
+    peak RSS, CPU time, `STAT` lines): `make bench-realistic`, not a gate.
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):
