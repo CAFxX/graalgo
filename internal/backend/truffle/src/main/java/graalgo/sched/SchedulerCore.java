@@ -33,6 +33,14 @@ import graalgo.jfr.ParkReason;
  *   <li>Armed-ticket discipline (P2-D7, GG-WAKE-0001): every park
  *       reserves a generation via {@link #armPark} BEFORE becoming
  *       visible to wakers; every admission does ack-before-unpark.
+ *   <li>Direct handoff (WP-SCHED, ADR-0016; gc's runnext): a goroutine's
+ *       {@link #unpark} of another is deferred as its
+ *       {@link GoroutineHandle#runnext}; if it parks within
+ *       {@link #HANDOFF_WINDOW_NANOS} it hands the woken goroutine its
+ *       in-flight slot and quantum (a HANDOFF token books it, the waker
+ *       admits it itself), else the wake goes through the drainer. The
+ *       drainer's slot count stays exact and never below the goroutines
+ *       actually running on slots.
  * </ul>
  *
  * <p>Threading: vthreads only offer to the drainer's inbox and park;
@@ -135,21 +143,24 @@ public final class SchedulerCore {
      *
      * @return true when the calling goroutine's own scheduler is exiting
      *         and the poll returned without freezing (pin section, fatal
-     *         reporter): the caller's next poll must be a full one again
-     *         ({@link #exitEpoch}).
+     *         reporter), or when the goroutine still holds a deferred wake
+     *         ({@link GoroutineHandle#runnext}, released by the first full
+     *         poll past {@link #HANDOFF_WINDOW_NANOS}): the caller's next
+     *         poll must be a full one again ({@link #exitEpoch}).
      */
     public static boolean pollCurrentThreadStatic() {
         // Common case first: a goroutine of the installed scheduler (one
         // ThreadLocal lookup, as before). Only a thread that is not one
         // pays the second lookup for its own scheduler.
         SchedulerCore sc = installed;
-        if (sc != null && sc.pollIfGoroutine()) {
-            return sc.exiting;
+        GoroutineHandle h;
+        if (sc != null && (h = sc.pollIfGoroutine()) != null) {
+            return sc.exiting || h.runnext != null;
         }
         SchedulerCore own = GOROUTINE_SCHEDULER.get();
         if (own != null && own != sc) {
-            own.pollCurrentThread();
-            return own.exiting;
+            h = own.pollIfGoroutine();
+            return own.exiting || (h != null && h.runnext != null);
         }
         return false;
     }
@@ -279,6 +290,7 @@ public final class SchedulerCore {
             throw new IllegalStateException(
                     "graalgo.sched: re-entrant ioEnter (goroutine already in blocking I/O)");
         }
+        flushRunnext(h);
         long t = armPark(h);
         h.ioStartNanos = System.nanoTime();
         h.ioParkEvent = JfrEvents.ioParkBegin();
@@ -324,7 +336,8 @@ public final class SchedulerCore {
 
     /**
      * Admission provenance summary (P2-M8): counts of WAKE-lane admissions
-     * by cause. Format: {@code direct=<n> stashed=<n> ioExit=<n>}.
+     * by cause, plus direct handoffs (admissions on the waker's slot).
+     * Format: {@code direct=<n> stashed=<n> ioExit=<n> handoff=<n>}.
      * {@code stashed} counts PARKED tokens that found a pre-arrived UNPARK
      * (legitimate, but looks like "re-admission with no UNPARK in flight"
      * to a timeline observer — the M6 watch item).
@@ -332,7 +345,8 @@ public final class SchedulerCore {
     public String wakeProvenance() {
         return "direct=" + drainer.wakeUnparkDirect.get()
                 + " stashed=" + drainer.wakeUnparkStashed.get()
-                + " ioExit=" + drainer.wakeIoExit.get();
+                + " ioExit=" + drainer.wakeIoExit.get()
+                + " handoff=" + drainer.wakeHandoff.get();
     }
 
     // ================= vthread side =================
@@ -352,6 +366,9 @@ public final class SchedulerCore {
      * token; the drainer re-admits through the run lane.
      */
     void quantumPark(GoroutineHandle h) {
+        // The slot's quantum is spent: a deferred wake goes to the drainer
+        // (its WAKE lane outranks this RESUME), never a handoff.
+        flushRunnext(h);
         long t = armPark(h);
         JfrEvents.notePark(h, ParkReason.QUANTUM);
         drainer.offer(new ResumeToken(ResumeToken.Kind.RESUME, h, t));
@@ -410,8 +427,29 @@ public final class SchedulerCore {
         // The Go stack a deadlock dump renders: the state live NOW (the
         // program root installs its own GoroutineState for main).
         h.state = GoroutineState.current();
-        drainer.offer(new ResumeToken(ResumeToken.Kind.PARKED, h, t));
-        awaitAck(h, t);
+        GoroutineHandle next = h.runnext;
+        if (next != null && exiting) {
+            // Process exit stops the world: no admission, handoffs included.
+            flushRunnext(h);
+            next = null;
+        }
+        if (next == null) {
+            drainer.offer(new ResumeToken(ResumeToken.Kind.PARKED, h, t));
+        } else {
+            // Direct handoff (gc runnext): the goroutine this one just woke
+            // runs next on this slot. Token first (the drainer then sees it
+            // before any later token of next's), then next's admission flag,
+            // then the unpark (ack-before-unpark, GG-WAKE-0001). next inherits
+            // the slot's quantum (gc: runnext inherits the time slice), so a
+            // ping-ponging pair yields the slot at the quantum like one
+            // goroutine would (GG-SCHED-0001, starvation freedom).
+            h.runnext = null;
+            drainer.offer(ResumeToken.handoff(h, t, next));
+            next.quantumDeadlineNanos = h.quantumDeadlineNanos;
+            next.handoff.set(true);
+            LockSupport.unpark(next.thread);
+        }
+        awaitAck(h, t, true, next != null);
         h.externalWake = false;
         Runnable action = h.wakeAction.getAndSet(null);
         if (action != null) {
@@ -438,7 +476,57 @@ public final class SchedulerCore {
      * Safe to call before the target parks.
      */
     public void unpark(GoroutineHandle h) {
-        drainer.offer(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        GoroutineHandle w = currentHandle.get();
+        if (w == null || w == h || !HANDOFF) {
+            // Not a goroutine of this scheduler (timer heap, netpoller,
+            // cleaner, a test's platform thread): through the drainer.
+            drainer.offer(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+            return;
+        }
+        // A goroutine woke h: defer the wake as its runnext (gc ready():
+        // the newest wake takes runnext, an older one goes to the queue).
+        // If w parks before the handoff window closes it hands h its slot
+        // (parkCurrent); otherwise flushRunnext releases h through the
+        // drainer as before.
+        GoroutineHandle prev = w.runnext;
+        w.runnext = h;
+        if (prev != null) {
+            drainer.offer(new ResumeToken(ResumeToken.Kind.UNPARK, prev, -1));
+        } else {
+            w.runnextSinceNanos = System.nanoTime();
+        }
+    }
+
+    /**
+     * How long a goroutine may keep a deferred wake ({@link GoroutineHandle#runnext})
+     * while it keeps running: its polls stay full meanwhile, and the first one past this
+     * window releases the wake through the drainer. gc protects a P's runnext from
+     * stealing for ~3 µs for the same reason (the waker usually blocks within
+     * nanoseconds — a channel ping-pong, a request/response); the window is wider here
+     * because the poll, not a timer, closes it. It only delays the woken goroutine,
+     * never the waker, and only while the waker runs on.
+     */
+    static final long HANDOFF_WINDOW_NANOS = 20_000L;
+
+    /**
+     * Direct handoff on/off ({@code -Dgraalgo.sched.handoff=false} turns it off: every
+     * wake goes through the drainer, as before WP-SCHED's handoff). For A/B measurement
+     * on one build (performance.md) and as a diagnostic switch; on by default.
+     */
+    static final boolean HANDOFF = !"false".equals(System.getProperty("graalgo.sched.handoff"));
+
+    /**
+     * Releases a deferred wake through the drainer (ordinary UNPARK): on every
+     * scheduler interaction of {@code h} other than a handoff park, so that every
+     * waker offers its wakee's UNPARK before its own park/exit token (the deadlock
+     * check's race-freedom argument, Drainer#detectDeadlock).
+     */
+    private void flushRunnext(GoroutineHandle h) {
+        GoroutineHandle g = h.runnext;
+        if (g != null) {
+            h.runnext = null;
+            drainer.offer(new ResumeToken(ResumeToken.Kind.UNPARK, g, -1));
+        }
     }
 
     /**
@@ -459,11 +547,14 @@ public final class SchedulerCore {
         pollIfGoroutine();
     }
 
-    /** {@link #pollCurrentThread}; false when the caller is not one of this scheduler's goroutines. */
-    private boolean pollIfGoroutine() {
+    /**
+     * {@link #pollCurrentThread}; null when the caller is not one of this
+     * scheduler's goroutines, else its handle.
+     */
+    private GoroutineHandle pollIfGoroutine() {
         GoroutineHandle h = currentHandle.get();
         if (h == null) {
-            return false;
+            return null;
         }
         // fix-redmaster-r43: never yield inside a pin section. In gc,
         // pinning disables preemption, so a pinned goroutine is not
@@ -474,7 +565,7 @@ public final class SchedulerCore {
         // yield simply moves to the first poll after unpin — the
         // deadline stays expired, so no quantum is lost.
         if (PinLock.isHeldByCurrentThread()) {
-            return true;
+            return h;
         }
         if (exiting) {
             if (h == fatalOwner) {
@@ -482,7 +573,7 @@ public final class SchedulerCore {
                 // Error()/String() already ran, world running, before it
                 // claimed the report): it must never quantum-park (no
                 // admission happens any more), so it runs to completion.
-                return true;
+                return h;
             }
             // Process exit in progress (main returned, os.Exit, fatal
             // panic/deadlock): freeze this goroutine at its safepoint so
@@ -492,17 +583,77 @@ public final class SchedulerCore {
             // reporter's fmt calls pin sync.Pool).
             freezeForExit();
         }
-        if (System.nanoTime() >= h.quantumDeadlineNanos) {
+        long now = System.nanoTime();
+        if (h.runnext != null && now - h.runnextSinceNanos >= HANDOFF_WINDOW_NANOS) {
+            // The waker kept running past the handoff window: release the
+            // deferred wake through the drainer (it may run elsewhere now).
+            flushRunnext(h);
+        }
+        if (now >= h.quantumDeadlineNanos) {
             quantumPark(h);
         }
-        return true;
+        return h;
     }
 
     private void awaitAck(GoroutineHandle h, long t) {
+        awaitAck(h, t, false, false);
+    }
+
+    /** Upper bound of one {@link #spinForHandoff}. */
+    static final long HANDOFF_SPIN_NANOS = 5_000L;
+
+    /** Goroutines spinning in {@link #spinForHandoff} right now. */
+    private final AtomicInteger handoffSpinners = new AtomicInteger();
+
+    /**
+     * After handing its slot to the goroutine it woke, a goroutine waits briefly on CPU for
+     * the answer before it unmounts: in a request/response exchange (channel ping-pong) the
+     * partner answers within a few µs with a handoff back, and a mounted waiter takes it
+     * without a virtual-thread park and remount (measured: 2000 Java-level round trips
+     * 9–16 ms → 2.2–2.9 ms median on a loaded host). The waiter holds no slot meanwhile (it
+     * gave it away) but does hold a CPU, so — like gc, whose Ms spin only while Ps are idle —
+     * it spins only while the drainer last saw idle slots, never more spinners than idle
+     * slots, and never longer than {@link #HANDOFF_SPIN_NANOS}.
+     */
+    private void spinForHandoff(GoroutineHandle h, long t) {
+        int n = handoffSpinners.incrementAndGet();
+        try {
+            if (n > drainer.freeSlots()) {
+                return;
+            }
+            long start = System.nanoTime();
+            int i = 0;
+            while (h.acked.get() < t && !h.handoff.get()) {
+                Thread.onSpinWait();
+                if ((++i & 15) == 0 && System.nanoTime() - start >= HANDOFF_SPIN_NANOS) {
+                    return;
+                }
+            }
+        } finally {
+            handoffSpinners.decrementAndGet();
+        }
+    }
+
+    /**
+     * Waits for admission of park generation {@code t}: the drainer's ack, or —
+     * for a {@link #parkCurrent} ({@code handoffOk}) — a waker's direct handoff
+     * ({@link GoroutineHandle#handoff}). A handoff targets the park its waker
+     * dequeued, which is always this goroutine's pending parkCurrent (wakers
+     * reach only goroutines that enqueued themselves and then park), so only
+     * parkCurrent consumes the flag.
+     */
+    private void awaitAck(GoroutineHandle h, long t, boolean handoffOk, boolean spinForHandoff) {
         // Early unpark is absorbed by the LockSupport permit; spurious
         // wakeups re-park on the acked < t condition. No wakeup is lost
-        // because the drainer sets acked BEFORE unparking (GG-WAKE-0001).
+        // because the drainer (or the handing-off waker) sets acked (the
+        // handoff flag) BEFORE unparking (GG-WAKE-0001).
+        if (spinForHandoff && h.acked.get() < t && !h.handoff.get()) {
+            spinForHandoff(h, t);
+        }
         while (h.acked.get() < t) {
+            if (handoffOk && h.handoff.get() && h.handoff.compareAndSet(true, false)) {
+                break;
+            }
             if (terminated) {
                 throw TERMINATED;
             }
@@ -637,6 +788,9 @@ public final class SchedulerCore {
                 // never a silently dead goroutine and a hung process.
                 recordCrash("internal error", e);
             } finally {
+                // A wake this goroutine deferred is released before its EXIT
+                // (the drainer must see the wakee's UNPARK first).
+                flushRunnext(h);
                 // P2-M6: every start gets an end, before the EXIT token.
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
                 GoroutineState.restore(prev);

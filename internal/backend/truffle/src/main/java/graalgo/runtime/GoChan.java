@@ -118,6 +118,20 @@ public class GoChan implements ChanOps.Chan {
 
     // ================= waiter records =================
 
+    /** {@link ChanWaiter#tryClaim}: the waker owns the waiter; complete and wake it. */
+    static final int CLAIM_WON = 0;
+    /**
+     * {@link ChanWaiter#tryClaim}: the waiter's selector holds its transient
+     * self-claim (mid-sweep on another channel, or completing there): keep the
+     * waiter enqueued and retry — no wake-up is in flight for it.
+     */
+    static final int CLAIM_BUSY = 1;
+    /**
+     * {@link ChanWaiter#tryClaim}: a waker on another channel owns the select
+     * (its wake-up is in flight): the waiter is dead and may be dropped.
+     */
+    static final int CLAIM_LOST = 2;
+
     /** A goroutine parked on this channel (plain or select case). */
     abstract static class ChanWaiter {
         final GoroutineHandle handle;
@@ -127,11 +141,16 @@ public class GoChan implements ChanOps.Chan {
         }
 
         /**
-         * Called under the channel monitor when this waiter is dequeued
-         * for a handoff. Returns true if it accepts (a select waiter may
-         * already be claimed by another channel — then it is dropped).
+         * Called under the channel monitor by a waker that wants to complete
+         * this waiter: {@link #CLAIM_WON}, {@link #CLAIM_BUSY} or
+         * {@link #CLAIM_LOST}. The outcome is decided by ONE atomic step on
+         * the claim (BUG-0038): a separate "is it self-claimed?" check before
+         * the claiming CAS lets the selector self-claim in between (it does so
+         * under ANOTHER channel's monitor), and the failed CAS then looks like
+         * "claimed by a waker" — the waiter is dropped with no wake-up in
+         * flight and the select parks forever.
          */
-        abstract boolean accept();
+        abstract int tryClaim();
     }
 
     /** Plain blocking send: carries the value; may be told to panic. */
@@ -146,8 +165,8 @@ public class GoChan implements ChanOps.Chan {
         }
 
         @Override
-        boolean accept() {
-            return true;
+        int tryClaim() {
+            return CLAIM_WON;
         }
     }
 
@@ -161,8 +180,8 @@ public class GoChan implements ChanOps.Chan {
         }
 
         @Override
-        boolean accept() {
-            return true;
+        int tryClaim() {
+            return CLAIM_WON;
         }
     }
 
@@ -311,33 +330,33 @@ public class GoChan implements ChanOps.Chan {
      */
     private static final ChanWaiter RETRY_WAIT = new ChanWaiter(null) {
         @Override
-        boolean accept() {
-            throw new AssertionError("RETRY sentinel must never be accepted");
+        int tryClaim() {
+            throw new AssertionError("RETRY sentinel must never be claimed");
         }
     };
 
     /**
-     * Dequeues the first accepting waiter, dropping select waiters
-     * already claimed by another channel (their wakeup is in flight).
-     * A self-claimed select waiter is SKIPPED (left enqueued) and, if
-     * no accepting waiter is found behind it, reported via
-     * {@link #RETRY_WAIT}: the caller must retry once the transient
-     * self-claim resolves. Dropping it, or treating the queue as
-     * empty and parking, strands its selector (CI run 41943236460
-     * lost wakeup). Returns null if the queue is empty (or holds only
-     * waker-claimed waiters, which are dropped).
+     * Dequeues the first waiter this waker claims ({@link ChanWaiter#tryClaim}),
+     * dropping select waiters already claimed by another channel (their wakeup
+     * is in flight). A self-claimed select waiter is SKIPPED (left enqueued)
+     * and, if no claimable waiter is found behind it, reported via
+     * {@link #RETRY_WAIT}: the caller must retry once the transient self-claim
+     * resolves. Dropping it, or treating the queue as empty and parking,
+     * strands its selector (CI run 41943236460, BUG-0038). Returns null if the
+     * queue is empty (or holds only waker-claimed waiters, which are dropped).
      */
     private ChanWaiter pollAccepting(Deque<ChanWaiter> q) {
         boolean sawSelfClaimed = false;
         Iterator<ChanWaiter> it = q.iterator();
         while (it.hasNext()) {
             ChanWaiter w = it.next();
-            if (w instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+            int c = w.tryClaim();
+            if (c == CLAIM_BUSY) {
                 sawSelfClaimed = true;
                 continue;
             }
             it.remove();
-            if (w.accept()) {
+            if (c == CLAIM_WON) {
                 return w;
             }
         }
@@ -501,11 +520,14 @@ public class GoChan implements ChanOps.Chan {
                     rw.ok = false;
                     sched.unpark(rw.handle);
                     rit.remove();
-                } else if (r instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+                    continue;
+                }
+                SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) r;
+                int c = sw.tryClaim();
+                if (c == CLAIM_BUSY) {
                     deferred.add(sw);
-                } else if (r.accept()) {
+                } else if (c == CLAIM_WON) {
                     // Select recv case: closed is always ready.
-                    SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) r;
                     sw.op.setResult(sw.caseIndex, zeroValue, false);
                     sched.unpark(sw.handle);
                     rit.remove();
@@ -517,19 +539,22 @@ public class GoChan implements ChanOps.Chan {
             Iterator<ChanWaiter> sit = sendWaiters.iterator();
             while (sit.hasNext()) {
                 ChanWaiter s = sit.next();
-                if (s instanceof SendWaiter sw) {
-                    sw.panicOnWake = true;
-                    sched.unpark(sw.handle);
+                if (s instanceof SendWaiter pw) {
+                    pw.panicOnWake = true;
+                    sched.unpark(pw.handle);
                     sit.remove();
-                } else if (s instanceof SelectOp.SelectCaseWaiter sw && sw.isSelfClaimed()) {
+                    continue;
+                }
+                SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) s;
+                int c = sw.tryClaim();
+                if (c == CLAIM_BUSY) {
                     deferred.add(sw);
-                } else if (s.accept()) {
+                } else if (c == CLAIM_WON) {
                     // Select send case on a channel being closed: poison.
                     // The select panics on resume ("send on closed
                     // channel"); see SelectOp. A select that already
-                    // completed via another case fails accept() and is
+                    // completed via another case is CLAIM_LOST and is
                     // simply dropped here.
-                    SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) s;
                     sw.op.setPoison(sw.caseIndex);
                     sched.unpark(sw.handle);
                     sit.remove();
@@ -552,13 +577,10 @@ public class GoChan implements ChanOps.Chan {
                     if (!q.contains(sw)) {
                         break; // Selector decided elsewhere and cleaned up.
                     }
-                    if (sw.isClaimedByWaker()) {
-                        q.remove(sw); // Decided elsewhere; drop.
-                        break;
-                    }
-                    if (sw.isSelfClaimed()) {
+                    int c = sw.tryClaim();
+                    if (c == CLAIM_BUSY) {
                         retry = true;
-                    } else if (sw.accept()) {
+                    } else if (c == CLAIM_WON) {
                         if (sw.isSend) {
                             sw.op.setPoison(sw.caseIndex);
                         } else {
@@ -568,7 +590,7 @@ public class GoChan implements ChanOps.Chan {
                         q.remove(sw);
                         break;
                     } else {
-                        q.remove(sw); // Lost the race to a waker claim; decided.
+                        q.remove(sw); // Claimed by a waker elsewhere; decided.
                         break;
                     }
                 }

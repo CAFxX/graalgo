@@ -73,6 +73,9 @@ Interleaved A/B, medians of best rounds (ms):
 | | `closures` | 3.18 | 2.21 | 0.73 |
 | Value-receiver copy with constant counts at interface call sites | `ifacemono` | 1.84 | 0.82 | 0.27 |
 | | `ifacepoly` | 1.50 | 0.75 | 0.38 |
+| WP-SCHED direct handoff (gc runnext) + bounded handoff spin (§3.1) | `chanpingpong` | 10.54 | 1.13 | 0.31 |
+| | `workerpool` | 0.80 | 0.81 | 0.50 |
+| | `mutex` | 0.74 | 0.76 | 0.60 |
 
 **WP-POLLCOST design.** The poll's fast path was a thread-slot read, a
 volatile `exitEpoch` read, a countdown decrement **and store**, and two
@@ -91,6 +94,28 @@ non-final loads and vectorization — P-B measured a poll-free `loop` at
 provable trip bound (strip-mining: poll once per 2^k iterations of an
 inner counted loop), a later item.
 
+### 3.1 Direct handoff (WP-SCHED, [ADR-0016](../dev/adr/ADR-0016-direct-handoff.md))
+
+Every park/unpark used to be two tokens through the drainer thread plus a
+virtual-thread unpark issued from that platform thread (an external
+submission to the carrier pool and, usually, a carrier wake-up). Now a
+goroutine's wake of another is deferred as its `runnext`; when the waker
+parks within 20 µs it hands the woken goroutine its in-flight slot and
+quantum directly (one HANDOFF token books it; the waker sets the target's
+handoff flag and unparks it from its own virtual thread), and then spins up
+to 5 µs for the answer before unmounting — only while the drainer saw idle
+slots, never more spinners than idle slots. Measured with the A/B switch
+`-Dgraalgo.sched.handoff=false` on one build (A = off, B = on, alternating,
+3 reps, load 13–15): `chanpingpong` best 10.5/9.3/22.0 → 1.24/1.02/1.13 ms,
+steady median 54.6/35.2/54.3 → 2.04/1.97/1.92 ms; `workerpool` and `mutex`
+unchanged (within noise). The handoff alone (no spin) gave 6.7/5.1/3.6 ms:
+the rest is the virtual-thread unmount/remount the spin avoids. A ping-pong
+pair at GOMAXPROCS 1 still yields the slot at the quantum (a handoff inherits
+the quantum deadline): a co-scheduled spinner gets 0.47 of the CPU
+(`WakeupRaceStressTest.testHandoffPairDoesNotStarveSpinner`). Remaining gap
+(3.6× gc): the Loom unpark/park of the partner on every hop when the spin
+misses, and the per-hop token through the drainer that keeps its books.
+
 ## 4. Current standing vs gc
 
 ### 4.1 Whole suite
@@ -106,7 +131,7 @@ is the reliable number).
 | `arraymat` | 0.78 | 0.78 | 1.87 | 1.34 | 2.4× | 1.7× | 1.7× | 159 |
 | `bintrees` | 38.76 | 37.32 | 19.59 | 21.58 | 0.7× | 0.6× | 0.6× | 501 |
 | `bytesops` | 2.23 | 2.09 | 10.10 | 7.61 | 5.0× | 3.4× | 3.6× | 563 |
-| `chanpingpong` | 0.31 | 0.27 | 106.61 | 8.19 | 342.8× | 26.6× | 30.8× | 225 |
+| `chanpingpong` | 0.31 | 0.27 | 106.61 | 1.13† | 342.8× | 3.6×† | 4.2×† | — |
 | `closures` | 0.73 | 0.73 | 7.37 | 2.31 | 10.0× | 3.1× | 3.1× | 240 |
 | `fannkuch` | 13.49 | 13.37 | 37.38 | 25.50 | 2.8× | 1.9× | 1.9× | 636 |
 | `fib` | 2.25 | 1.20 | 4.67 | 3.35 | 2.1× | 1.5× | 2.8× | 206 |
@@ -131,6 +156,8 @@ is the reliable number).
 | `structs` | 0.24 | 0.29 | 3.95 | 1.97 | 16.4× | 8.2× | 6.9× | 290 |
 | `workerpool` | 0.49 | 0.50 | 7.10 | 0.84 | 13.1× | 1.7× | 1.7× | 297 |
 
+† updated 2026-11-20 from the WP-SCHED A/B (§3.1; was 8.19 ms, 26.6×); the means below predate it.
+
 Geometric mean graalgo/gc: **4.49× before, 2.26× after** (2.37× against
 gc+PGO); median 3.2× → 1.9×. Process wall time is 4–6 s for every
 benchmark (4 s of rounds plus ~0.5–1 s of JVM start, Truffle warmup and
@@ -143,13 +170,13 @@ gaps are code quality, not deopt loops.
 
 ## 5. Gap analysis, ranked by expected leverage
 
-1. **Scheduler hop** (`chanpingpong` ~60×, `workerpool`, `mutex`): every
-   park/unpark is two tokens through the single drainer thread plus a
-   virtual-thread unpark; gc hands the P to the woken goroutine directly.
-   A direct-handoff fast path (unpark straight onto a free admission slot
-   when the drainer is idle and the cap allows) keeps GG-WAKE-0001's
-   ack-before-unpark but changes the drainer protocol: WP-SCHED territory,
-   with the model check RECOVERY asks for (and BUG-0038 open there).
+1. **Scheduler hop** (`chanpingpong` 3.6× after the WP-SCHED handoff, §3.1;
+   `workerpool` 1.7×, `mutex` 1.3×): a handoff hop still costs a virtual-thread
+   unpark/park when the 5 µs spin misses, and every hop still sends one token
+   to the drainer. Next: let the drainer learn handoffs lazily (batch the
+   bookkeeping) and keep `workerpool`'s buffered-channel wakes on the handoff
+   path (its producer rarely parks within the window). BUG-0038 is fixed.
+
 2. **Call overhead** (`fib`, `closures`, `spectralnorm`, `structs`): an
    `Object[]` argument array, boxed scalars and a boxed result per
    non-inlined call, plus the entry poll. Specialized fixed-arity call
