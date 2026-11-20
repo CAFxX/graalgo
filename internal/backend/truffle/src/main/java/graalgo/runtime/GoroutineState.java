@@ -128,6 +128,20 @@ public final class GoroutineState {
         setSlot(prev);
     }
 
+    /**
+     * Sets this thread's host holder to {@code next} and returns the previous value; the
+     * scheduler's carriers swap goroutines' states with it (they set the context slot
+     * themselves).
+     */
+    public static GoroutineState swapHolder(GoroutineState next) {
+        GoroutineState prev = HOLDER.get();
+        HOLDER.set(next);
+        return prev;
+    }
+
+    /** The result of this goroutine's last {@code select} (graalgo.runtime.ChanOps). */
+    public Object selectResult;
+
     private static void setSlot(GoroutineState s) {
         graalgo.language.GoContext c = graalgo.language.GoContext.activeOrNull();
         if (c != null && c.isEntered()) {

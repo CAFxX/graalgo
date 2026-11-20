@@ -86,6 +86,7 @@ public final class GcDifferentialTest {
         List<String> cmd = new ArrayList<>();
         cmd.add(javaBin);
         cmd.add("--enable-native-access=ALL-UNNAMED");
+        cmd.add("--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED");
         cmd.add("-Xss32m");
         cmd.add("-cp");
         cmd.add(System.getProperty("java.class.path"));

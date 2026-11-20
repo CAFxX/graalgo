@@ -49,8 +49,54 @@ import graalgo.jfr.ParkReason;
  * scheduler; unit tests use instances directly.
  */
 public final class SchedulerCore {
-    /** Builds one goroutine's unstarted carrier thread (see the constructor). */
+    /**
+     * Builds one goroutine's unstarted thread (thread mode), or one unstarted carrier thread
+     * (carrier mode: {@link #carriers} is non-null).
+     */
     private final Function<Runnable, Thread> goroutineThreads;
+
+    /**
+     * Carrier mode (ADR-0018, the default): goroutines are continuations on a few carrier
+     * threads, so spawning one costs the same however many are alive. Null in thread mode
+     * (one thread per goroutine: {@code -Dgraalgo.sched.goroutines=thread}, or a JVM that does
+     * not export {@code jdk.internal.vm} to the runtime).
+     */
+    private final Carriers carriers;
+
+    /**
+     * Live goroutines in carrier mode ({@link #terminate} unwinds them): an intrusive list
+     * through {@link GoroutineHandle#liveNext}/{@code livePrev}, guarded by
+     * {@link #quiescenceLock} (taken by spawn and exit anyway), so tracking a goroutine costs
+     * neither an allocation nor a hash-set resize.
+     */
+    private GoroutineHandle liveList;
+
+    /**
+     * Carrier mode is available: {@code java.base} exports {@code jdk.internal.vm} to the
+     * runtime ({@code --add-exports java.base/jdk.internal.vm=ALL-UNNAMED}, which every graalgo
+     * launcher passes).
+     */
+    public static final boolean CARRIER_MODE_AVAILABLE =
+            Object.class.getModule().isExported("jdk.internal.vm", SchedulerCore.class.getModule());
+
+    /**
+     * Carrier mode is the default for new schedulers: {@code -Dgraalgo.sched.goroutines=carrier}
+     * (opt-in while GG-0017's "1:1 virtual thread" wording stands, ADR-0018; the default is
+     * {@code thread}: one thread per goroutine). Read per scheduler, so a test can switch it.
+     */
+    public static boolean carrierModeDefault() {
+        return "carrier".equals(System.getProperty("graalgo.sched.goroutines", "thread"));
+    }
+
+    /** True when goroutines run as continuations on carrier threads. */
+    public boolean carrierMode() {
+        return carriers != null;
+    }
+
+    /** The carrier pool (carrier mode), or null; tests only. */
+    Carriers carriersForTest() {
+        return carriers;
+    }
 
     /**
      * Thrown out of a park into a goroutine when its scheduler is torn down
@@ -90,6 +136,10 @@ public final class SchedulerCore {
 
     private static Thread plainVirtualThread(Runnable body) {
         return Thread.ofVirtual().unstarted(body);
+    }
+
+    private static Thread plainPlatformThread(Runnable body) {
+        return Thread.ofPlatform().unstarted(body);
     }
 
     /** Default quantum: 10 ms (P2-D5, measured in spike 2b). */
@@ -194,7 +244,13 @@ public final class SchedulerCore {
      * @param quantumNanos quantum per admission, nanoseconds
      */
     public SchedulerCore(int gomaxprocs, long quantumNanos) {
-        this(gomaxprocs, quantumNanos, SchedulerCore::plainVirtualThread);
+        this(gomaxprocs, quantumNanos, carrierModeDefault());
+    }
+
+    private SchedulerCore(int gomaxprocs, long quantumNanos, boolean carrierMode) {
+        this(gomaxprocs, quantumNanos,
+                carrierMode ? SchedulerCore::plainPlatformThread : SchedulerCore::plainVirtualThread,
+                null, carrierMode);
     }
 
     /**
@@ -205,9 +261,26 @@ public final class SchedulerCore {
      */
     public SchedulerCore(int gomaxprocs, long quantumNanos,
             Function<Runnable, Thread> goroutineThreads) {
-        this.goroutineThreads = goroutineThreads;
+        this(gomaxprocs, quantumNanos, goroutineThreads, null, false);
+    }
+
+    /**
+     * @param threads builds unstarted threads: one per goroutine in thread mode, the carriers
+     *     in carrier mode
+     * @param carrierSlots in carrier mode inside a context: the calling carrier's context
+     *     thread-local slot (null outside a context)
+     * @param carrierMode run goroutines as continuations on carriers ({@link #carriers})
+     */
+    public SchedulerCore(int gomaxprocs, long quantumNanos, Function<Runnable, Thread> threads,
+            java.util.function.Supplier<graalgo.language.GoThreadSlot> carrierSlots, boolean carrierMode) {
+        this.goroutineThreads = threads;
         this.requestedCap = Math.max(1, gomaxprocs);
         this.carrierParallelism = Math.max(1, Runtime.getRuntime().availableProcessors());
+        if (carrierMode && !CARRIER_MODE_AVAILABLE) {
+            throw new IllegalStateException("graalgo.sched: carrier mode needs the JVM option "
+                    + "--add-exports java.base/jdk.internal.vm=ALL-UNNAMED");
+        }
+        this.carriers = carrierMode ? new Carriers(this, carrierParallelism, threads, carrierSlots) : null;
         // P2-D6: effective cap = min(GOMAXPROCS, carrier parallelism).
         this.cap = Math.min(requestedCap, carrierParallelism);
         this.quantumNanos = quantumNanos;
@@ -290,12 +363,21 @@ public final class SchedulerCore {
             throw new IllegalStateException(
                     "graalgo.sched: re-entrant ioEnter (goroutine already in blocking I/O)");
         }
+        if (carriers != null) {
+            // The goroutine stays on its carrier from here to ioExit (callers hold
+            // thread-confined resources around the system call: confined native memory).
+            Carriers.pinCurrent();
+        }
         flushRunnext(h);
         long t = armPark(h);
         h.ioStartNanos = System.nanoTime();
         h.ioParkEvent = JfrEvents.ioParkBegin();
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_ENTER, h, t));
         awaitAck(h, t);
+        if (carriers != null) {
+            // The goroutine blocks its carrier from here to ioExit: a spare takes its place.
+            carriers.beginBlocking();
+        }
     }
 
     /**
@@ -309,6 +391,9 @@ public final class SchedulerCore {
         if (!h.inIo.compareAndSet(true, false)) {
             throw new IllegalStateException(
                     "graalgo.sched: ioExit without ioEnter");
+        }
+        if (carriers != null) {
+            carriers.endBlocking();
         }
         long t = armPark(h);
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_EXIT, h, t));
@@ -325,6 +410,9 @@ public final class SchedulerCore {
         // exit. (ioStartNanos is taken unconditionally in ioEnter so a
         // recording started mid-syscall still observes the interval;
         // ~100ns on a syscall path is negligible.)
+        if (carriers != null) {
+            Carriers.unpinCurrent();
+        }
         graalgo.jfr.GoroutineParkEvent ioEvent = h.ioParkEvent;
         h.ioParkEvent = null;
         JfrEvents.ioParkEnd(h, ioEvent, System.nanoTime() - h.ioStartNanos);
@@ -447,7 +535,7 @@ public final class SchedulerCore {
             drainer.offer(ResumeToken.handoff(h, t, next));
             next.quantumDeadlineNanos = h.quantumDeadlineNanos;
             next.handoff.set(true);
-            LockSupport.unpark(next.thread);
+            wake(next, true);
         }
         awaitAck(h, t, true, next != null);
         h.externalWake = false;
@@ -647,7 +735,9 @@ public final class SchedulerCore {
         // wakeups re-park on the acked < t condition. No wakeup is lost
         // because the drainer (or the handing-off waker) sets acked (the
         // handoff flag) BEFORE unparking (GG-WAKE-0001).
-        if (spinForHandoff && h.acked.get() < t && !h.handoff.get()) {
+        if (spinForHandoff && carriers == null && h.acked.get() < t && !h.handoff.get()) {
+            // Carrier mode never spins: the goroutine handed off to runs next on this carrier
+            // once this one yields.
             spinForHandoff(h, t);
         }
         while (h.acked.get() < t) {
@@ -657,12 +747,46 @@ public final class SchedulerCore {
             if (terminated) {
                 throw TERMINATED;
             }
-            LockSupport.park();
+            parkSelf(h);
         }
         // P2-M6: commit the park event (if long enough) on resume. The
         // initial admission has no parked reason and emits nothing; the
         // goroutine-start event is emitted explicitly by spawn().
         JfrEvents.parkResumed(h);
+    }
+
+    /** Parks the calling goroutine until {@link #wake} (spurious returns possible). */
+    private void parkSelf(GoroutineHandle h) {
+        if (carriers != null) {
+            carriers.park(h);
+        } else {
+            LockSupport.park(this);
+        }
+    }
+
+    /**
+     * Unparks goroutine {@code h} (after its admission was published: GG-WAKE-0001).
+     * {@code handoff}: the caller is a goroutine handing {@code h} its slot right before it
+     * parks.
+     */
+    void wake(GoroutineHandle h, boolean handoff) {
+        if (carriers != null) {
+            carriers.unpark(h, handoff);
+        } else {
+            LockSupport.unpark(h.thread);
+        }
+    }
+
+    /** Carrier mount: the goroutine's thread-local view (Carriers#mount). */
+    void mountLocals(GoroutineHandle h) {
+        currentHandle.set(h);
+        GOROUTINE_SCHEDULER.set(this);
+    }
+
+    /** Carrier unmount. */
+    void unmountLocals() {
+        currentHandle.set(null);
+        GOROUTINE_SCHEDULER.set(null);
     }
 
     private GoroutineHandle requireHandle() {
@@ -734,10 +858,12 @@ public final class SchedulerCore {
             }
         }
         long t = armPark(h);
-        Thread vthread = goroutineThreads.apply(() -> {
-            currentHandle.set(h);
-            GOROUTINE_SCHEDULER.set(this);
-            h.thread = Thread.currentThread();
+        Runnable run = () -> {
+            if (carriers == null) {
+                currentHandle.set(h);
+                GOROUTINE_SCHEDULER.set(this);
+                h.thread = Thread.currentThread();
+            }
             GoroutineState state = new GoroutineState();
             h.state = state;
             GoroutineState prev = GoroutineState.install(state);
@@ -794,34 +920,78 @@ public final class SchedulerCore {
                 // P2-M6: every start gets an end, before the EXIT token.
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
                 GoroutineState.restore(prev);
-                currentHandle.remove();
-                GOROUTINE_SCHEDULER.remove();
+                if (carriers == null) {
+                    currentHandle.remove();
+                    GOROUTINE_SCHEDULER.remove();
+                }
                 if (!h.system) {
                     liveUser.decrementAndGet();
                 }
                 synchronized (quiescenceLock) {
+                    if (carriers != null) {
+                        unlinkLive(h);
+                    }
                     if (liveGoroutines.decrementAndGet() == 0) {
                         quiescenceLock.notifyAll();
                     }
                 }
                 drainer.offer(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
             }
-        });
-        vthread.setName("goroutine-" + h.id);
-        trackCarrier(vthread);
-        h.thread = vthread;
-        if (!system) {
-            liveUser.incrementAndGet();
+        };
+        if (carriers != null) {
+            // A continuation, parked until the drainer's first admission unparks it: no
+            // thread is created, so the cost does not grow with the live goroutine count.
+            carriers.prepare(h, run);
+            if (!system) {
+                liveUser.incrementAndGet();
+            }
+        } else {
+            Thread vthread = goroutineThreads.apply(run);
+            vthread.setName("goroutine-" + h.id);
+            trackCarrier(vthread);
+            h.thread = vthread;
+            if (!system) {
+                liveUser.incrementAndGet();
+            }
+            // Start BEFORE accounting: if start() throws, no slot is leaked
+            // and the live count is untouched. The vthread blocks in awaitAck
+            // until the drainer admits it, so early start is safe.
+            vthread.start();
         }
-        // Start BEFORE accounting: if start() throws, no slot is leaked
-        // and the live count is untouched. The vthread blocks in awaitAck
-        // until the drainer admits it, so early start is safe.
-        vthread.start();
         synchronized (quiescenceLock) {
+            if (carriers != null) {
+                linkLive(h);
+            }
             liveGoroutines.incrementAndGet();
         }
         drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
         return h;
+    }
+
+    /** Adds {@code h} to {@link #liveList}; quiescenceLock held. */
+    private void linkLive(GoroutineHandle h) {
+        GoroutineHandle head = liveList;
+        h.liveNext = head;
+        if (head != null) {
+            head.livePrev = h;
+        }
+        liveList = h;
+    }
+
+    /** Removes {@code h} from {@link #liveList}; quiescenceLock held. */
+    private void unlinkLive(GoroutineHandle h) {
+        GoroutineHandle prev = h.livePrev;
+        GoroutineHandle next = h.liveNext;
+        if (prev != null) {
+            prev.liveNext = next;
+        } else {
+            liveList = next;
+        }
+        if (next != null) {
+            next.livePrev = prev;
+        }
+        h.livePrev = null;
+        h.liveNext = null;
     }
 
     private final AtomicInteger panicCount = new AtomicInteger();
@@ -1283,11 +1453,47 @@ public final class SchedulerCore {
         drainer.stop();
         timerHeap.stop();
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
+        if (carriers != null) {
+            return terminateCarriers(deadline);
+        }
         for (Thread t : goroutineCarriers) {
             LockSupport.unpark(t);
         }
         java.util.List<Thread> stuck = new java.util.ArrayList<>();
         for (Thread t : goroutineCarriers) {
+            long left = (deadline - System.nanoTime()) / 1_000_000L;
+            if (left <= 0 || !t.join(java.time.Duration.ofMillis(left))) {
+                if (t.isAlive()) {
+                    stuck.add(t);
+                }
+            }
+        }
+        return stuck;
+    }
+
+    /**
+     * {@link #terminate} in carrier mode: every live goroutine is unparked and unwinds at its
+     * park; then the carriers stop. Returns the carriers still alive at {@code deadline} (one
+     * blocked under a goroutine in a system call).
+     */
+    private java.util.List<Thread> terminateCarriers(long deadline) throws InterruptedException {
+        java.util.List<GoroutineHandle> live = new java.util.ArrayList<>();
+        synchronized (quiescenceLock) {
+            for (GoroutineHandle h = liveList; h != null; h = h.liveNext) {
+                live.add(h);
+            }
+        }
+        for (GoroutineHandle h : live) {
+            carriers.unpark(h, false);
+        }
+        synchronized (quiescenceLock) {
+            long left;
+            while (liveGoroutines.get() != 0 && (left = (deadline - System.nanoTime()) / 1_000_000L) > 0) {
+                quiescenceLock.wait(left);
+            }
+        }
+        java.util.List<Thread> stuck = new java.util.ArrayList<>();
+        for (Thread t : carriers.stop()) {
             long left = (deadline - System.nanoTime()) / 1_000_000L;
             if (left <= 0 || !t.join(java.time.Duration.ofMillis(left))) {
                 if (t.isAlive()) {
@@ -1305,14 +1511,15 @@ public final class SchedulerCore {
      * No-op off scheduler goroutines.
      */
     public void freezeForExit() {
-        if (currentHandle.get() == null) {
+        GoroutineHandle h = currentHandle.get();
+        if (h == null) {
             return;
         }
         for (;;) {
             if (terminated) {
                 throw TERMINATED;
             }
-            LockSupport.park(this);
+            parkSelf(h);
         }
     }
 

@@ -29,8 +29,26 @@ public final class GoroutineHandle {
     /** Stable id, for logs and tests. */
     public final long id = ID_GEN.getAndIncrement();
 
-    /** The virtual thread running this goroutine; set before start. */
+    /** The thread running this goroutine (thread mode only; null on carriers); set before start. */
     public volatile Thread thread;
+
+    // ---- carrier mode (Carriers, ADR-0018) ----
+
+    /** The goroutine's continuation (a {@code jdk.internal.vm.Continuation}); null once done. */
+    Object cont;
+    /** Run state ({@code Carriers.RUNNING} ...), accessed through a VarHandle. */
+    volatile int runState;
+    /** Pending unpark permit, accessed through a VarHandle. */
+    volatile boolean permit;
+    /** The carrier the goroutine last ran on (its pinned park blocks that thread). */
+    Carriers.Carrier carrier;
+    /** The goroutine's {@code GoroutineState} holder value while unmounted. */
+    graalgo.runtime.GoroutineState savedState;
+    /** The goroutine's node-package {@code G} while unmounted. */
+    graalgo.go.runtime.G savedG;
+    /** The scheduler's live list (carrier mode; guarded by its quiescence lock). */
+    GoroutineHandle liveNext;
+    GoroutineHandle livePrev;
 
     /** Next park generation to reserve. */
     public final AtomicLong parkSeq = new AtomicLong(0);

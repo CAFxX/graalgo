@@ -36,7 +36,7 @@ done
 # the defect is the runtime's and the flag goes when a GraalVM pin has it
 # fixed.
 # shellcheck disable=SC2086
-exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m -XX:-UsePerfData -XX:G1HeapRegionSize=32m \
+exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m -XX:-UsePerfData -XX:G1HeapRegionSize=32m \
   -Djava.lang.invoke.MethodHandle.CUSTOMIZE_THRESHOLD=-1 ${GRAALGO_JAVA_OPTS:-} \
   --sun-misc-unsafe-memory-access=allow \
   -Djava.io.tmpdir="${TMPDIR:-/tmp}" \

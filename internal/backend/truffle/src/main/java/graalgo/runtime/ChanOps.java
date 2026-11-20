@@ -108,14 +108,14 @@ public final class ChanOps {
         }
         SelectOp op = new SelectOp(cases);
         int idx = op.execute();
-        SELECT_RESULT.set(new SelectResult(op.resultValue(), op.resultOk()));
+        setSelectResult(new SelectResult(op.resultValue(), op.resultOk()));
         return idx;
     }
 
     /** Value received by the last {@link #selectGo} on this thread. */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object selectRecvValue() {
-        SelectResult r = SELECT_RESULT.get();
+        SelectResult r = selectResult();
         if (r == null) {
             throw new IllegalStateException("selectRecvValue with no preceding selectGo");
         }
@@ -125,7 +125,7 @@ public final class ChanOps {
     /** Ok bit received by the last {@link #selectGo} on this thread. */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static boolean selectRecvOk() {
-        SelectResult r = SELECT_RESULT.get();
+        SelectResult r = selectResult();
         if (r == null) {
             throw new IllegalStateException("selectRecvOk with no preceding selectGo");
         }
@@ -134,7 +134,26 @@ public final class ChanOps {
 
     private record SelectResult(Object value, boolean ok) {}
 
+    /** Off goroutines (no GoroutineState): the calling thread's last result. */
     private static final ThreadLocal<SelectResult> SELECT_RESULT = new ThreadLocal<>();
+
+    /**
+     * Per goroutine, not per thread: goroutines share carrier threads, and a select's result
+     * is read after a safepoint that may switch goroutines.
+     */
+    private static void setSelectResult(SelectResult r) {
+        GoroutineState s = GoroutineState.current();
+        if (s != null) {
+            s.selectResult = r;
+        } else {
+            SELECT_RESULT.set(r);
+        }
+    }
+
+    private static SelectResult selectResult() {
+        GoroutineState s = GoroutineState.current();
+        return s != null ? (SelectResult) s.selectResult : SELECT_RESULT.get();
+    }
 
     /** One select case (channel + direction); frozen record. */
     public record SelectCase(Chan chan, boolean send, Object sendValue) {}

@@ -195,7 +195,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic pe-check-m1a test-m1r test-m1c test-m1d test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines pe-check-m1a test-m1r test-m1c test-m1d test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d
 
@@ -465,13 +465,28 @@ BENCH_ARGS ?=
 bench-realistic: build
 	GO="$(GO)" test/bench/suite.sh --dir test/bench/realistic --gc-env GOMAXPROCS=4 $(BENCH_ARGS)
 
+# Goroutine scaling (not a gate; north-star.md §4.3, ADR-0018): the realistic
+# `goroutines` program at each GOR_N of GOR_NS, gc against graalgo in carrier
+# mode (one thread per goroutine is quadratic: 100,000 take minutes to spawn).
+# 1,000,000 goroutines need a ~5 GB heap: GOR_JAVA_OPTS sets -Xmx12g; run it
+# alone on a shared host (minutes per N).
+GOR_NS ?= 10000 100000 1000000
+GOR_JAVA_OPTS ?= -Xmx12g -XX:ActiveProcessorCount=4 -Dgraalgo.sched.goroutines=carrier
+bench-goroutines: build
+	for n in $(GOR_NS); do \
+	  GOR_N=$$n GRAALGO_JAVA_OPTS="$(GOR_JAVA_OPTS)" GO="$(GO)" test/bench/suite.sh \
+	    --dir test/bench/realistic --gc-env GOMAXPROCS=4 --reps 1 $(BENCH_ARGS) goroutines || exit 1; \
+	done
+
 # Toolexec milestone M1r/M1b differential gate (per-push in `make all`): programs
 # that import standard-library packages, built through graalgo-tool against
 # graalgo's fork ([stdlib/](stdlib/): facade runtime, everything else
 # upstream's source) and run on the node package, compared with gc. See
-# test/m1r/run.sh. M1R_PROGRAMS narrows the run to the given programs.
+# test/m1r/run.sh. M1R_PROGRAMS narrows the run to the given programs and skips
+# test/m1r/carrier_mode.sh (carrier-mode goroutines, ADR-0018: spawn scaling).
 test-m1r: build
 	GO="$(GO)" test/m1r/run.sh $(M1R_PROGRAMS)
+	@if [ -z "$(strip $(M1R_PROGRAMS))" ]; then echo GO="$(GO)" test/m1r/carrier_mode.sh; GO="$(GO)" test/m1r/carrier_mode.sh; fi
 M1R_PROGRAMS ?=
 
 # The M1c gate (per-push in `make all`): sync's semaphores and notify lists,
@@ -599,7 +614,7 @@ JT_TRUFFLE_CP := $(JT_RUNNER):$(JT_BK)/truffle/out/test-classes:$(JT_BK)/truffle
 JT_RUNTIME_CP := $(JT_TRUFFLE_CP):$(JT_BK)/interop/out/classes
 JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
 JT_JAVA := $(or $(GRAALVM_HOME),$(HOME)/tools/graalvm-jdk-25)/bin/java
-JT_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
+JT_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
 JAVA_TEST_OPTS ?=
 # run_java_tests <module> <classpath> <classes> <extra -D props>
 define run_java_tests
@@ -612,7 +627,7 @@ endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
 JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.go.types.LeafTableTest graalgo.go.nodes.EntryPollTest graalgo.go.intrinsics.BytealgKernelTest
 JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
-JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
+JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.CarriersTest graalgo.sched.JfrParkCostTest
 JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
 JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest graalgo.p3reflect.GcMaskTest graalgo.p3reflect.MapKeyHashTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3sync.launcher.StackDepthLimitTest graalgo.p3sync.launcher.CallPathWarmupTest
 JAVA_SLOW_INTEROP := graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest

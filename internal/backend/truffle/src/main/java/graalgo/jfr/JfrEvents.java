@@ -114,7 +114,8 @@ public final class JfrEvents {
     public static void goroutineStart(GoroutineHandle h) {
         if (GoroutineStartEvent.enabled()) {
             Thread t = h.thread;
-            String name = t == null ? "" : t.getName();
+            // Carrier mode: goroutines have no thread of their own; the name thread mode gives.
+            String name = t == null ? "goroutine-" + h.id : t.getName();
             emitQuietly(() -> GoroutineStartEvent.emit(h.id, name));
         }
     }

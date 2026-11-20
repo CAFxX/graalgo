@@ -32,7 +32,7 @@ KEEP="${1:-}"
 [ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; exit 3; }
 # Same classpath as the truffle module's SCHED_RUN_CP.
 CP="$BK/truffle/out/classes:$BK/interop/out/classes:$(echo "$BK"/truffle/lib/*.jar | tr ' ' ':')"
-JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
+JAVA_FLAGS="--enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m"
 
 pass=0
 fail=0

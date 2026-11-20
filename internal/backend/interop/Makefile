@@ -35,7 +35,7 @@ TEST_CP := $(OUT_TEST):$(RUN_CP)
 P3FRONTEND := ../../frontend/p3frontend
 STDLIB_FORK := ../../../tools/stdlib-fork
 
-JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
+JAVA_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m
 # gofrontend location: ToolPaths' walk-up reaches internal/frontend/ unaided;
 # the explicit export is a harmless redundancy (a stale env var is skipped
 # via the isExecutable check). (Retired 2026-10-15: was a "# BRIDGE (frontend

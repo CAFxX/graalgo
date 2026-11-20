@@ -487,7 +487,7 @@ public final class SchedulerCoreTest {
         SchedulerCore.install(sched);
         try {
             AtomicBoolean actionRan = new AtomicBoolean();
-            AtomicReference<Thread> actionThread = new AtomicReference<>();
+            AtomicReference<GoroutineHandle> actionGoroutine = new AtomicReference<>();
             CountDownLatch resumed = new CountDownLatch(1);
             GoroutineHandle h = sched.spawn(() -> {
                 try {
@@ -497,15 +497,14 @@ public final class SchedulerCoreTest {
                 }
                 sched.parkCurrent(() -> {
                     actionRan.set(true);
-                    actionThread.set(Thread.currentThread());
+                    actionGoroutine.set(sched.currentGoroutine());
                 });
                 resumed.countDown();
             });
             sched.unpark(h); // before the goroutine parks
             assertTrue(resumed.await(5, TimeUnit.SECONDS), "resumed after early unpark");
             assertTrue(actionRan.get(), "wake action ran (dropped pre-fix)");
-            assertTrue(actionThread.get() != null && actionThread.get().isVirtual(),
-                    "wake action ran on the vthread");
+            assertTrue(actionGoroutine.get() == h, "wake action ran on the woken goroutine");
             sched.awaitQuiescence();
         } finally {
             SchedulerCore.install(null);

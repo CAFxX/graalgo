@@ -47,17 +47,32 @@ public final class GoContext {
     final Env env;
     private final TruffleContext truffleContext;
     private final boolean virtualThreads;
+    /** Goroutines are continuations on carriers (ADR-0018), not one thread each. */
+    private final boolean carrierMode;
 
     GoContext(GoLanguage language, Env env) {
         this.language = language;
         this.env = env;
         this.truffleContext = env.getContext();
-        String threads = env.getOptions().get(GoLanguage.GoroutineThreads);
+        // Unset: -Dgraalgo.sched.goroutines=carrier selects carrier mode (ADR-0018).
+        String threads = env.getOptions().hasBeenSet(GoLanguage.GoroutineThreads)
+                ? env.getOptions().get(GoLanguage.GoroutineThreads)
+                : SchedulerCore.carrierModeDefault() ? "carrier" : "virtual";
         switch (threads) {
-            case "virtual" -> virtualThreads = true;
-            case "platform" -> virtualThreads = false;
-            default -> throw new IllegalArgumentException(
-                    "go.GoroutineThreads must be 'virtual' or 'platform', got '" + threads + "'");
+            case "carrier" -> {
+                carrierMode = true;
+                virtualThreads = false;
+            }
+            case "virtual" -> {
+                carrierMode = false;
+                virtualThreads = true;
+            }
+            case "platform" -> {
+                carrierMode = false;
+                virtualThreads = false;
+            }
+            default -> throw new IllegalArgumentException("go.GoroutineThreads must be 'carrier', "
+                    + "'virtual' or 'platform', got '" + threads + "'");
         }
     }
 
@@ -199,7 +214,17 @@ public final class GoContext {
      * {@code go.GoroutineThreads=platform}.
      */
     private Function<Runnable, Thread> goroutineThreads() {
+        if (carrierMode) {
+            // Carriers: platform polyglot threads, a handful per program (Carriers).
+            return body -> env.newTruffleThreadBuilder(body).virtual(false).build();
+        }
         return body -> env.newTruffleThreadBuilder(body).virtual(virtualThreads).build();
+    }
+
+    /** A new scheduler for this context's goroutines. */
+    private SchedulerCore newScheduler(int gomaxprocs) {
+        return new SchedulerCore(gomaxprocs, SchedulerCore.DEFAULT_QUANTUM_NANOS, goroutineThreads(),
+                carrierMode ? language.threadSlot::get : null, carrierMode);
     }
 
     /**
@@ -247,8 +272,7 @@ public final class GoContext {
             if (gmp <= 0) {
                 gmp = Runtime.getRuntime().availableProcessors();
             }
-            SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS,
-                    goroutineThreads());
+            SchedulerCore sched = newScheduler(gmp);
             scheduler = sched;
             graalgo.go.runtime.GoProcess p =
                     new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types);
@@ -280,8 +304,7 @@ public final class GoContext {
             // gc's default: one P per CPU.
             gmp = Runtime.getRuntime().availableProcessors();
         }
-        SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS,
-                goroutineThreads());
+        SchedulerCore sched = newScheduler(gmp);
         scheduler = sched;
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
