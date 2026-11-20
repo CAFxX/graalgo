@@ -525,9 +525,73 @@ class Gen:
             return self.iface_stmt(ind)
         if k < 0.9:
             return self.generic_stmt(ind)
-        if k < 0.95:
+        if k < 0.93:
             return self.print_stmt(ind)
-        return self.decl(ind)
+        return self.extra_stmt(ind)
+
+    def extra_stmt(self, ind):
+        """Self-contained blocks for areas the expression grammar does not reach:
+        complex arithmetic, channels and goroutines (deterministic hand-offs),
+        defers on named results, float/interface map keys, slice-to-array
+        conversions, struct embedding. Each prints what it computed."""
+        r = self.r
+        p = '\t' * ind
+        k = r.randrange(6)
+        if k == 0:
+            ct = r.choice(['complex64', 'complex128'])
+            a, b = self.expr('float64'), self.expr('float64')
+            c, d = self.expr('float64'), self.expr('float64')
+            op = r.choice(['*', '/', '+', '-'])
+            body = ['x := %s(complex(%s, %s))' % (ct, a, b), 'y := %s(complex(%s, %s))' % (ct, c, d),
+                    'z := x %s y' % op, 'println("cplx", z, real(z), imag(z), z == x, x*x %s y)' % op]
+        elif k == 1:
+            t = r.choice(['int', 'int8', 'uint32', 'string', 'float64'])
+            vals = [self.expr(t) for _ in range(r.randint(1, 4))]
+            pr = 'strconv.Quote(v)' if t == 'string' else 'v'
+            # The values are computed before the goroutine starts: a panicking operand
+            # must not race the receiver's output.
+            body = ['vs := []%s{%s}' % (t, ', '.join(vals)),
+                    'ch := make(chan %s, %d)' % (t, r.randint(0, 3)), 'done := make(chan int)',
+                    'go func() {', '\tn := 0', '\tfor v := range ch {', '\t\tprintln("recv", %s)' % pr,
+                    '\t\tn++', '\t}', '\tdone <- n', '}()']
+            body += ['for _, v := range vs {', '\tch <- v', '}']
+            body += ['close(ch)', 'println("received", <-done)', 'v, ok := <-ch',
+                     'println("closed", %s, ok)' % pr]
+        elif k == 2:
+            t = r.choice(['int', 'int16', 'uint64', 'string'])
+            e1, e2 = self.expr(t), self.expr(t)
+            pr = 'strconv.Quote(%s)' if t == 'string' else '%s'
+            body = ['f := func(a %s) (res %s, n int) {' % (t, t),
+                    '\tdefer func() {', '\t\tif r := recover(); r != nil {', '\t\t\tn = -1', '\t\t}',
+                    '\t\tres += a', '\t\tn++', '\t}()',
+                    '\tfor i := 0; i < 2; i++ {', '\t\tdefer func() { n += i }()', '\t}',
+                    '\tif a == %s {' % e2, '\t\tpanic("eq")', '\t}', '\treturn a, 10', '}',
+                    'r1, n1 := f(%s)' % e1, 'println("named", %s, n1)' % (pr % 'r1')]
+        elif k == 3:
+            xs = [self.expr('float64') for _ in range(r.randint(1, 4))]
+            body = ['m := map[float64]int{}', 'mi := map[any]int{}']
+            for i, x in enumerate(xs):
+                body += ['m[%s] += %d' % (x, i + 1), 'mi[%s] = %d' % (x, i), 'mi[int64(%d)] = %d' % (i, i)]
+            body += ['m[math.Copysign(0, -1)] += 100', 'm[0] += 1000', 'm[math.NaN()] = 7',
+                     'keys := make([]float64, 0, len(m))', 'nans := 0', 'for k := range m {',
+                     '\tif k != k {', '\t\tnans++', '\t\tcontinue', '\t}', '\tkeys = append(keys, k)',
+                     '}', 'println("nans", nans)', 'slices.Sort(keys)', 'for _, k := range keys {',
+                     '\tprintln("fkey", k, math.Signbit(k), m[k])', '}', 'println("ikeys", len(mi), len(m))']
+        elif k == 4:
+            t = r.choice(['int', 'uint8', 'string', 'float32'])
+            vals = ', '.join(self.expr(t) for _ in range(r.randint(0, 5)))
+            n = r.randint(0, 4)
+            pr = 'strconv.Quote(a[i])' if t == 'string' else 'a[i]'
+            body = ['s := []%s{%s}' % (t, vals), 'a := [%d]%s(s[ix(%s, len(s)+1):])' % (n, t, self.expr('int')),
+                    'p := (*[%d]%s)(s)' % (min(n, 1), t), 'for i := range a {', '\tprintln("arr", i, %s)' % pr,
+                    '}', 'println("aptr", p != nil, len(s))']
+        else:
+            body = ['type inner struct{ a, b int }', 'type outer struct {', '\tinner', '\tb string', '\tR Rect',
+                    '}', 'o := outer{inner{%s, %s}, %s, %s}' % (self.expr('int'), self.expr('int'),
+                                                             self.expr('string'), self.literal('Rect')),
+                    'o2 := o', 'o2.a++', 'o2.inner.b--', 'o2.R.W *= 2',
+                    'println("embed", o.a, o.inner.b, strconv.Quote(o.b), o.R.Area(), o2.a, o2.inner.b, o == o2, o.inner == inner{o2.a - 1, o2.inner.b + 1})']
+        return [p + '{'] + [p + '\t' + l for l in body] + [p + '}']
 
     def decl(self, ind):
         t = self.any_type()
@@ -663,7 +727,9 @@ class Gen:
                 return [p + '%s[%s] = %s' % (n, self.index_expr(0, n), self.expr(el))]
             if k < 0.65:
                 a, b = r.randint(0, 2), r.randint(0, 4)
-                return [p + '%s = %s[%d:%d]' % (n, n, min(a, b), max(a, b))]
+                # Bounded by len: past len the result depends on cap, which depends on
+                # gc's escape analysis (BUG-0027); the panic text names cap too.
+                return [p + '%s = %s[min(%d, len(%s)):min(%d, len(%s))]' % (n, n, min(a, b), n, max(a, b), n)]
             if k < 0.72:
                 m = self.new(t)
                 return [p + '%s := slices.Clone(%s)' % (m, n), p + '_ = %s' % m]
