@@ -520,6 +520,25 @@ class MainVerdictTest(unittest.TestCase):
         self.assertLess(out.index("broken link(s)"),
                         out.index("unverifiable link(s)"))
 
+    def test_main_fetches_each_url_once_and_reports_every_site(self):
+        calls = []
+
+        def verdict(u):
+            calls.append(u)
+            return False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "a.md").write_text("[x](https://example.com/dead)\n")
+            Path(tmp, "b.md").write_text("[y](https://example.com/dead)\n")
+            with mock.patch.object(cml, "check_external", side_effect=verdict), \
+                    mock.patch.object(sys, "argv", ["check_markdown_links.py", tmp]):
+                buf = io.StringIO()
+                with redirect_stdout(buf):
+                    code = cml.main()
+        self.assertEqual(code, 1)
+        self.assertEqual(calls, ["https://example.com/dead"])
+        self.assertIn("2 broken link(s)", buf.getvalue())
+
     def test_main_transient_only_warns_and_passes(self):
         # 2026-11-20: an unverifiable URL (bot wall, rate limit,
         # outage) is a warning, not a failure.
