@@ -23,9 +23,21 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
   `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
   and the new path's gates `test-m1a` (import-free corpus vs gc through
-  the `-toolexec` path) and `pe-check-m1a`. CI
+  the `-toolexec` path), `pe-check-m1a`, `test-m1w13`, `test-imgcheck`,
+  `test-m1r` and `test-m1c` (the Makefile header is the exact list). CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).
+- `make pre-land` — **the pre-land checklist; a lane runs it in full
+  before reporting done**: `make all`, then `check-links-external` (the
+  markdown-links workflow: every external URL, network; local `make
+  check` skips them) and `test-diffharness` (ci.yml's harness self-test),
+  then CI's drift check. Never a hand-picked subset of targets: gates
+  share inputs (a new `test/m1a/programs` file is also an input of
+  `test-toolexec`'s reference-interpreter differential), so "the gate for
+  my area passed" is not evidence. Per-push CI outside `pre-land`: only
+  the path-filtered `conformance.yml` (needs a full GOROOT/test tree) and
+  `fuzz-newpath.yml` (`make fuzz-newpath`; run it when `test/fuzz/`
+  changes).
 - `make check` — the static gates: pinned-jar checksums; placeholder,
   debug-leftover, v1-netpoller, off-heap/NIO (only `graalgo.syscall` may use
   `MemorySegment`/`Arena`/`java.nio.channels`) and pin-surface grep gates;
@@ -99,7 +111,12 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - Commit with **explicit pathspecs**; never `git add -A` or a bare
   `git commit -a`. Never `git stash` in a tree someone else may be using.
 - Push only when the coordinator asks; watch CI to a verdict before calling
-  a lane done.
+  a lane done. A lane's report states that `make pre-land` passed (with
+  its duration) on the commit it hands over.
+- The coordinator watches **every** workflow of every push to `master`
+  (`gh run list --commit <sha>`) to a verdict before the next merge; a
+  red `master` is fixed (or the push reverted) before anything else
+  lands.
 
 ## 5. Correctness contract
 

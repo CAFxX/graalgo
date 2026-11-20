@@ -88,6 +88,9 @@
 #   SchedTestRunner, IfaceTestRunner). It takes 30+ minutes and runs in
 #   local verification and the weekly CI job, not per-push.
 #   `make test-java-slow` — weekly CI job.
+#   `make check-links-external`, `make test-diffharness` — per-push CI
+#   (markdown-links.yml, ci.yml's harness self-test) outside `make all`;
+#   `make pre-land` runs `all`, both, and CI's drift check.
 #   `make fuzz-newpath` — the differential fuzzer of the new path
 #   ([test/fuzz/](test/fuzz/)): the hand-written adversarial corpus plus N
 #   generated programs from SEED, each vs live gc (~1 s a program); nightly
@@ -187,7 +190,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite pe-check-m1a test-m1r test-m1c test-m1w13 fuzz-newpath goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite pe-check-m1a test-m1r test-m1c test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c
 
@@ -272,6 +275,30 @@ check-repo:
 	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
 	python3 .github/scripts/check_markdown_links.py --skip-external
 	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
+
+# The rest of per-push CI that `make all` does not cover (2026-11-20: lanes
+# that ran a hand-picked subset of the gates landed a girinterp regression
+# and dead-looking external links; both reddened master).
+#   check-links-external  the markdown-links workflow: check-repo's link
+#                         check plus every external URL (~1 min, network)
+#   test-diffharness      ci.yml's harness self-test (~12 min): the diffharness
+#                         comparator gc-vs-gc on the corpus (no false
+#                         positives, rerun stability, mutation sensitivity)
+#   pre-land              what a lane runs before reporting done: `make
+#                         all`, both of the above, then ci.yml's drift
+#                         check (no modified or untracked file left behind)
+# Not covered (needs a full GOROOT/test tree, ~10 min): conformance.yml's
+# test/differential/run_conformance.sh, path-filtered on push.
+check-links-external:
+	python3 .github/scripts/check_markdown_links.py
+
+test-diffharness: build
+	DH_TIMEOUT=$${DH_TIMEOUT:-90} ./test/differential/run.sh
+
+pre-land: all check-links-external test-diffharness
+	git diff --exit-code
+	@if [ -n "$$(git status --porcelain --untracked-files=all)" ]; then \
+	  echo "DRIFT: modified or untracked files:"; git status --porcelain --untracked-files=all; exit 1; fi
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
