@@ -10,6 +10,9 @@
 
 graalgo compiles Go to GraalVM Truffle AST nodes — a JIT-compiled Go
 toolchain that is a drop-in replacement for `go`.
+Its goal: run long-running Go programs, from CPU-bound utilities to large
+servers, significantly faster than gc does
+([docs/arch/north-star.md](docs/arch/north-star.md)).
 
 Quickstart:
 
