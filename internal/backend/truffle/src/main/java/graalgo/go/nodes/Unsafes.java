@@ -84,9 +84,9 @@ public final class Unsafes {
                     }
                 }
             } else if (p instanceof Ptr q) {
-                GoType t = q.obj.type;
+                GoType t = q.obj().type;
                 for (Hit h : hs) {
-                    if (h.type == t && h.prim == q.prim && h.ref == q.ref && h.byt == q.byt) {
+                    if (h.type == t && h.prim == q.prim() && h.ref == q.ref() && h.byt == q.byt()) {
                         return p;
                     }
                 }
@@ -97,8 +97,8 @@ public final class Unsafes {
                 Hit h = null;
                 if (p instanceof Flat f && f.type != null) {
                     h = new Hit(f.type, 0, 0, 0);
-                } else if (p instanceof Ptr r && r.obj.type != null && r.obj.type.kind != GoType.BACKING) {
-                    h = new Hit(r.obj.type, r.prim, r.ref, r.byt);
+                } else if (p instanceof Ptr r && r.obj().type != null && r.obj().type.kind != GoType.BACKING) {
+                    h = new Hit(r.obj().type, r.prim(), r.ref(), r.byt());
                 }
                 if (h != null) {
                     CompilerDirectives.transferToInterpreterAndInvalidate();
