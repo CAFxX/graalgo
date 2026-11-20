@@ -1,0 +1,2 @@
+reason: runtime/cgo needs cgo support in the frontend (a C toolchain and cgo call lowering); the import itself cannot type-check/emit in frontend/v1 scope
+retest: frontend supports cgo (import runtime/cgo builds and links)

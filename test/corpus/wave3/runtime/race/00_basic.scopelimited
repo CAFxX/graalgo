@@ -1,0 +1,2 @@
+reason: runtime/race needs a race detector in the runtime; the import arms detector hooks that do not exist in the frontend scope
+retest: frontend/runtime gains race-detector support (import runtime/race builds)
