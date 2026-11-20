@@ -64,7 +64,7 @@ def parse(name, text):
         m = LINE.match(ln)
         if not m or m.group(2) != name:
             continue
-        kind, rest = m.group(1), m.group(3)
+        kind, rest = m.group(1), m.group(3) or ''
         if kind == 'ROUND':
             rounds.append(int(rest.split()[1]))
         elif kind == 'RESULT':
@@ -75,6 +75,7 @@ def parse(name, text):
 
 
 def run(cmd, env, timeout):
+    """Runs cmd; returns (status, combined stderr+stdout, wall seconds)."""
     t0 = time.monotonic()
     try:
         r = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=timeout,
@@ -82,7 +83,8 @@ def run(cmd, env, timeout):
         status, out = r.returncode, r.stderr + r.stdout
     except subprocess.TimeoutExpired as e:
         status = 'timeout'
-        out = (e.stderr or b'').decode('utf-8', 'replace') if isinstance(e.stderr, bytes) else (e.stderr or '')
+        err = e.stderr
+        out = err.decode('utf-8', 'replace') if isinstance(err, bytes) else (err or '')
     return status, out, time.monotonic() - t0
 
 
@@ -91,8 +93,8 @@ def ms(ns):
 
 
 def steady(rounds):
-    tail = rounds[len(rounds) // 2:]
-    return statistics.median(tail) if tail else None
+    """The median of the last half of the rounds (rounds is never empty)."""
+    return statistics.median(rounds[len(rounds) // 2:])
 
 
 def time_to_peak(rounds):
@@ -184,7 +186,7 @@ def main():
             sys.stderr.write(str(e) + '\n')
         summ = {'verdict': verdict, 'result': want}
         for leg, recs in b.items():
-            ok = [r for r in recs if r['status'] == 0 and r['rounds_ns']]
+            ok = [r for r in recs if r['status'] == 0 and r['rounds_ns'] and r['best_ns'] is not None]
             if not ok:
                 continue
             s = {'best_ms': ms(min(r['best_ns'] for r in ok)),
