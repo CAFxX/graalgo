@@ -176,6 +176,13 @@ func ix(i, n int) int {
 	return i
 }
 
+func clip(s string) string {
+	if len(s) > 256 {
+		return s[:256]
+	}
+	return s
+}
+
 func f2i(x float64) int64 {
 	if x != x || x > 1e15 || x < -1e15 {
 		return -7
@@ -200,6 +207,7 @@ func run(name string, f func()) {
 }
 
 var _ = math.MaxInt8
+var _ = clip
 var _ = strings.ToUpper
 var _ = slices.Sort[[]int]
 var _ = sort.Ints
@@ -617,8 +625,12 @@ class Gen:
             if op in ('<<=', '>>='):
                 return [p + '%s %s %s' % (n, op, r.randint(0, 70))]
             return [p + '%s %s %s' % (n, op, self.expr(t))]
-        if t == 'string' and r.random() < 0.3:
-            return [p + '%s += %s' % (n, self.expr('string'))]
+        if t == 'string':
+            # clip: a string assigned from itself in nested loops grows
+            # geometrically (gc needs gigabytes too); a generator issue, not a finding.
+            if r.random() < 0.3:
+                return [p + '%s = clip(%s + %s)' % (n, n, self.expr('string'))]
+            return [p + '%s = clip(%s)' % (n, self.expr('string'))]
         if r.random() < 0.15:
             vs2 = [v for v in vs if v[1] == t and v[0] != n]
             if vs2:
