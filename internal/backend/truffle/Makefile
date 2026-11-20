@@ -137,8 +137,9 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUN_CP)" -d $(OUT_TEST) $(SRC_TEST)
 	touch $(OUT_TEST)/.built
 
-# Grep gates (done-gate 5 discipline), the pin-audit smoke, and the
-# gofrontend check (gofmt/vet/tests/vendoring diff gate).
+# Grep gates (done-gate 5 discipline) and the pin-audit smoke. (The
+# gofrontend check — gofmt/vet/tests/vendoring diff — is the root `make
+# check`'s own step; it ran here too, a second identical ~60 s run.)
 #
 # debug-leftover exclusions: the launchers (Main, SchedMain) print usage and
 # diagnostics to stderr by design. SchedulerCore's panic/crash reporting and
@@ -224,8 +225,6 @@ check: main $(OUT_TEST)/.built
 	@# NB: the tail must cover the whole report + the CHILD_FAIL summary block
 	@# PinAudit prints last on a failed tests leg (2026-11-04: the CI failure
 	@# named no test because the tail showed only the verdict lines).
-	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="
-	cd $(GO_FRONTEND_DIR) && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh check
 
 # P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
 # suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
