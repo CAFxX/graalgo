@@ -376,3 +376,19 @@ intrinsic reflect.typeChanOf    ReflectIntrinsics func(*internal/abi.Type, int) 
 intrinsic reflect.typeMapOf     ReflectIntrinsics func(*internal/abi.Type, *internal/abi.Type) *internal/abi.Type
 intrinsic reflect.typeFuncOf    ReflectIntrinsics func([]*internal/abi.Type, []*internal/abi.Type, bool) *internal/abi.Type
 intrinsic reflect.typeStructOf  ReflectIntrinsics func([]string, []string, []string, []*internal/abi.Type, []bool) *internal/abi.Type
+
+# --- internal/godebug and syscall's environment hooks: what the runtime
+# provides by //go:linkname (runtime/runtime.go godebug_setUpdate,
+# godebug_registerMetric, godebug_setNewIncNonDefault, syscall_runtimeSetenv;
+# runtime/os_linux.go write) -------------------------------------------------
+intrinsic internal/godebug.setUpdate           GodebugIntrinsics func(func(string, string))
+intrinsic internal/godebug.registerMetric      GodebugIntrinsics func(string, func() uint64)
+intrinsic internal/godebug.setNewIncNonDefault GodebugIntrinsics func(func(string) func())
+intrinsic runtime.write                        GodebugIntrinsics func(uintptr, unsafe.Pointer, int32) int32
+intrinsic syscall.runtimeSetenv                GodebugIntrinsics func(string, string)
+intrinsic syscall.runtimeUnsetenv              GodebugIntrinsics func(string)
+
+# --- weak: weak pointers the runtime provides by //go:linkname
+# (runtime/mheap.go), as JVM weak references ---------------------------------
+intrinsic weak.runtime_registerWeakPointer WeakIntrinsics func(unsafe.Pointer) unsafe.Pointer
+intrinsic weak.runtime_makeStrongFromWeak  WeakIntrinsics func(unsafe.Pointer) unsafe.Pointer

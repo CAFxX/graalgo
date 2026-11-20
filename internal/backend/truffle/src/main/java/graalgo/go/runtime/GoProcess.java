@@ -36,6 +36,8 @@ public final class GoProcess {
      * as gc runs it at the start of every collection; null until {@code sync} initializes.
      */
     public volatile graalgo.go.values.Closure poolCleanup;
+    /** {@code internal/godebug}'s update hook ({@code setUpdate}): called with the GODEBUG setting when it changes. */
+    public volatile graalgo.go.values.Closure godebugUpdate;
 
     public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
         this.globals = globals;

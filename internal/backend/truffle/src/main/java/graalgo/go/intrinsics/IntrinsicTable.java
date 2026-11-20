@@ -17,7 +17,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "455195459ab10b49";
+    public static final String HASH = "19f049a59e81adcb";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -42,6 +42,12 @@ public final class IntrinsicTable {
                 return new R_internal_bytealg_IndexString(language);
             case "internal/bytealg.MakeNoZero":
                 return new R_internal_bytealg_MakeNoZero(language);
+            case "internal/godebug.registerMetric":
+                return new R_internal_godebug_registerMetric(language);
+            case "internal/godebug.setNewIncNonDefault":
+                return new R_internal_godebug_setNewIncNonDefault(language);
+            case "internal/godebug.setUpdate":
+                return new R_internal_godebug_setUpdate(language);
             case "internal/poll.runtime_Semacquire":
                 return new R_internal_poll_runtime_Semacquire(language);
             case "internal/poll.runtime_Semrelease":
@@ -298,6 +304,8 @@ public final class IntrinsicTable {
                 return new R_runtime_randn(language);
             case "runtime.runtimeError":
                 return new R_runtime_runtimeError(language);
+            case "runtime.write":
+                return new R_runtime_write(language);
             case "sync.fatal":
                 return new R_sync_fatal(language);
             case "sync.runtime_Semacquire":
@@ -418,6 +426,10 @@ public final class IntrinsicTable {
                 return new R_syscall_rawSyscallNoError(language);
             case "syscall.rawVforkSyscall":
                 return new R_syscall_rawVforkSyscall(language);
+            case "syscall.runtimeSetenv":
+                return new R_syscall_runtimeSetenv(language);
+            case "syscall.runtimeUnsetenv":
+                return new R_syscall_runtimeUnsetenv(language);
             case "syscall.runtime_envs":
                 return new R_syscall_runtime_envs(language);
             case "time.Sleep":
@@ -434,6 +446,10 @@ public final class IntrinsicTable {
                 return new R_time_runtimeNow(language);
             case "time.stopTimer":
                 return new R_time_stopTimer(language);
+            case "weak.runtime_makeStrongFromWeak":
+                return new R_weak_runtime_makeStrongFromWeak(language);
+            case "weak.runtime_registerWeakPointer":
+                return new R_weak_runtime_registerWeakPointer(language);
             default:
                 return null;
         }
@@ -585,6 +601,48 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return BytealgIntrinsics.internal_bytealg_MakeNoZero(this, (long) a[1]);
+        }
+    }
+
+    /** {@code internal/godebug.registerMetric}: {@code func(string, func() uint64)}. */
+    static final class R_internal_godebug_registerMetric extends Root {
+        R_internal_godebug_registerMetric(GoLanguage language) {
+            super(language, "internal/godebug.registerMetric");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.internal_godebug_registerMetric(this, (Str) a[1], a[2]);
+            return null;
+        }
+    }
+
+    /** {@code internal/godebug.setNewIncNonDefault}: {@code func(func(string) func())}. */
+    static final class R_internal_godebug_setNewIncNonDefault extends Root {
+        R_internal_godebug_setNewIncNonDefault(GoLanguage language) {
+            super(language, "internal/godebug.setNewIncNonDefault");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.internal_godebug_setNewIncNonDefault(this, a[1]);
+            return null;
+        }
+    }
+
+    /** {@code internal/godebug.setUpdate}: {@code func(func(string, string))}. */
+    static final class R_internal_godebug_setUpdate extends Root {
+        R_internal_godebug_setUpdate(GoLanguage language) {
+            super(language, "internal/godebug.setUpdate");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.internal_godebug_setUpdate(this, a[1]);
+            return null;
         }
     }
 
@@ -2269,6 +2327,19 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.write}: {@code func(uintptr, unsafe.Pointer, int32) int32}. */
+    static final class R_runtime_write extends Root {
+        R_runtime_write(GoLanguage language) {
+            super(language, "runtime.write");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return GodebugIntrinsics.runtime_write(this, (long) a[1], a[2], (long) a[3]);
+        }
+    }
+
     /** {@code sync.fatal}: {@code func(string)}. */
     static final class R_sync_fatal extends Root {
         R_sync_fatal(GoLanguage language) {
@@ -3065,6 +3136,34 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code syscall.runtimeSetenv}: {@code func(string, string)}. */
+    static final class R_syscall_runtimeSetenv extends Root {
+        R_syscall_runtimeSetenv(GoLanguage language) {
+            super(language, "syscall.runtimeSetenv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.syscall_runtimeSetenv(this, (Str) a[1], (Str) a[2]);
+            return null;
+        }
+    }
+
+    /** {@code syscall.runtimeUnsetenv}: {@code func(string)}. */
+    static final class R_syscall_runtimeUnsetenv extends Root {
+        R_syscall_runtimeUnsetenv(GoLanguage language) {
+            super(language, "syscall.runtimeUnsetenv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.syscall_runtimeUnsetenv(this, (Str) a[1]);
+            return null;
+        }
+    }
+
     /** {@code syscall.runtime_envs}: {@code func() []string}. */
     static final class R_syscall_runtime_envs extends Root {
         R_syscall_runtime_envs(GoLanguage language) {
@@ -3163,6 +3262,32 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return TimeIntrinsics.time_stopTimer(this, a[1]);
+        }
+    }
+
+    /** {@code weak.runtime_makeStrongFromWeak}: {@code func(unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_weak_runtime_makeStrongFromWeak extends Root {
+        R_weak_runtime_makeStrongFromWeak(GoLanguage language) {
+            super(language, "weak.runtime_makeStrongFromWeak");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return WeakIntrinsics.weak_runtime_makeStrongFromWeak(this, a[1]);
+        }
+    }
+
+    /** {@code weak.runtime_registerWeakPointer}: {@code func(unsafe.Pointer) unsafe.Pointer}. */
+    static final class R_weak_runtime_registerWeakPointer extends Root {
+        R_weak_runtime_registerWeakPointer(GoLanguage language) {
+            super(language, "weak.runtime_registerWeakPointer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return WeakIntrinsics.weak_runtime_registerWeakPointer(this, a[1]);
         }
     }
 }
