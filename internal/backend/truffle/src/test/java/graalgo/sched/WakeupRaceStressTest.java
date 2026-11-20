@@ -224,4 +224,70 @@ public final class WakeupRaceStressTest {
         assertEquals((long) receivers * perReceiver, received.get(),
                 "receiver-herd total receives");
     }
+
+    /**
+     * BUG-0038 (torture leg F6): a {@code select} receiving on {@code ping}
+     * and {@code quit} races a plain {@code ping} send on every round. While
+     * the selector sweeps {@code quit} it holds its transient self-claim; a
+     * sender claiming the selector's {@code ping} waiter in that window must
+     * keep the waiter (and retry), never drop it as "claimed by a waker" —
+     * that strands both goroutines parked with no wake-up in flight. Half the
+     * pairs end with a send on {@code quit}, half with a close (the close path
+     * classifies select waiters the same way). On the pre-fix code a single
+     * repetition (32 pairs x 300 rounds) hung in 2 of 3 runs; four fresh
+     * schedulers make a miss unlikely (the quiescence timeout reports it).
+     * The deterministic form of the race is SelectSelfClaimTest's
+     * {@code *SelfClaimedInClaimWindow} tests.
+     */
+    public void testSelectRecvRacesSend() throws Exception {
+        for (int rep = 0; rep < 4; rep++) {
+            selectRecvRacesSendOnce();
+        }
+    }
+
+    private void selectRecvRacesSendOnce() throws Exception {
+        final int pairs = 32, rounds = 300;
+        final AtomicLong ponged = new AtomicLong();
+        final AtomicLong bad = new AtomicLong();
+        withScheduler(4, SchedulerCore.DEFAULT_QUANTUM_NANOS, () -> {
+            for (int i = 0; i < pairs; i++) {
+                final boolean closeQuit = (i & 1) == 1;
+                GoChan ping = new GoChan(0, 0L);
+                GoChan pong = new GoChan(0, 0L);
+                GoChan quit = new GoChan(0, 0L);
+                sched.spawn(() -> {
+                    for (;;) {
+                        int idx = graalgo.runtime.ChanOps.selectGo(
+                                new graalgo.runtime.ChanOps.SelectCase[]{
+                                    new graalgo.runtime.ChanOps.SelectCase(ping, false, null),
+                                    new graalgo.runtime.ChanOps.SelectCase(quit, false, null),
+                                });
+                        if (idx == 1) {
+                            if (graalgo.runtime.ChanOps.selectRecvOk() == closeQuit) {
+                                bad.incrementAndGet(); // ok must be !closed
+                            }
+                            return;
+                        }
+                        pong.send((Long) graalgo.runtime.ChanOps.selectRecvValue() + 1);
+                    }
+                });
+                sched.spawn(() -> {
+                    for (long k = 0; k < rounds; k++) {
+                        ping.send(k);
+                        if ((Long) pong.recv().value() != k + 1) {
+                            bad.incrementAndGet();
+                        }
+                        ponged.incrementAndGet();
+                    }
+                    if (closeQuit) {
+                        quit.close();
+                    } else {
+                        quit.send(0L);
+                    }
+                });
+            }
+        });
+        assertEquals((long) pairs * rounds, ponged.get(), "select/send ping-pong rounds");
+        assertEquals(0, bad.get(), "select/send ping-pong wrong values or ok bits");
+    }
 }

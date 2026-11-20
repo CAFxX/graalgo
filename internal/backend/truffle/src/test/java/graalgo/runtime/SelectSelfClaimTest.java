@@ -260,6 +260,114 @@ public final class SelectSelfClaimTest {
     }
 
     /**
+     * Installs a one-shot {@link SelectOp#claimRaceHookForTest} that puts op
+     * into SELF_CLAIM inside the waker's claim window — exactly what a
+     * selector sweeping ANOTHER channel (under that channel's monitor) does
+     * between the waker reading UNCLAIMED and its claiming CAS (BUG-0038).
+     */
+    private static void selfClaimInClaimWindow(SelectOp op) {
+        AtomicBoolean fired = new AtomicBoolean();
+        SelectOp.claimRaceHookForTest = () -> {
+            if (fired.compareAndSet(false, true)) {
+                try {
+                    setSelfClaim(op);
+                } catch (Exception e) {
+                    throw new AssertionError(e);
+                }
+            }
+        };
+    }
+
+    /**
+     * BUG-0038: the selector self-claims while a sender is claiming its
+     * waiter. The sender's failed CAS raced a SELF_CLAIM, not a waker: it
+     * must report RETRY and keep the waiter. (The pre-fix code peeked
+     * "self-claimed?" before the CAS, then took the failed CAS for a waker
+     * claim and dropped the waiter: the select parked forever — leg F6.)
+     */
+    public void testTrySendKeepsWaiterSelfClaimedInClaimWindow() throws Exception {
+        SchedulerCore sched = installScheduler();
+        try {
+            GoChan ch = new GoChan(0, 0L);
+            SelectOp op = new SelectOp(new ChanOps.SelectCase[]{
+                    new ChanOps.SelectCase(ch, false, null)});
+            enqueueWaiter(op, ch, false, null, null);
+            selfClaimInClaimWindow(op);
+            GoChan.SendAttempt a;
+            synchronized (ch) {
+                a = ch.trySend(1L, sched);
+            }
+            assertTrue(a == GoChan.SendAttempt.RETRY,
+                    "send racing a self-claim must RETRY, got " + a);
+            assertEquals(1, ch.recvWaitersCount(),
+                    "a waiter self-claimed in the claim window must stay enqueued");
+        } finally {
+            SelectOp.claimRaceHookForTest = null;
+            SchedulerCore.install(null);
+        }
+    }
+
+    /** BUG-0038, receive side: tryRecv racing a self-claim keeps the send waiter. */
+    public void testTryRecvKeepsWaiterSelfClaimedInClaimWindow() throws Exception {
+        SchedulerCore sched = installScheduler();
+        try {
+            GoChan ch = new GoChan(0, 0L);
+            SelectOp op = new SelectOp(new ChanOps.SelectCase[]{
+                    new ChanOps.SelectCase(ch, true, 5L)});
+            enqueueWaiter(op, ch, true, 5L, null);
+            selfClaimInClaimWindow(op);
+            GoChan.RecvAttempt a;
+            synchronized (ch) {
+                a = ch.tryRecv(sched);
+            }
+            assertTrue(a.retry() && a.result() == null,
+                    "recv racing a self-claim must retry");
+            assertEquals(1, ch.sendWaitersCount(),
+                    "a waiter self-claimed in the claim window must stay enqueued");
+        } finally {
+            SelectOp.claimRaceHookForTest = null;
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * BUG-0038, close side: close() racing a self-claim defers the waiter
+     * (retrying until the self-claim resolves) instead of dropping it.
+     */
+    public void testCloseDefersWaiterSelfClaimedInClaimWindow() throws Exception {
+        SchedulerCore sched = installScheduler();
+        try {
+            GoChan ch = new GoChan(0, 0L);
+            SelectOp op = new SelectOp(new ChanOps.SelectCase[]{
+                    new ChanOps.SelectCase(ch, false, null)});
+            GoroutineHandle h = sched.spawn(() ->
+                    SchedulerCore.current().parkCurrent(null, ParkReason.CHANNEL));
+            SelectOp.SelectCaseWaiter w = enqueueWaiter(op, ch, false, null, h);
+            selfClaimInClaimWindow(op);
+            AtomicBoolean closerDone = new AtomicBoolean(false);
+            Thread closer = new Thread(() -> {
+                ChanOps.close(ch);
+                closerDone.set(true);
+            });
+            closer.start();
+            Thread.sleep(150);
+            assertTrue(!closerDone.get(),
+                    "close must keep retrying the waiter while the self-claim is held");
+            assertEquals(1, ch.recvWaitersCount(),
+                    "close must not drop a waiter self-claimed in the claim window");
+            setUnclaimed(op);
+            closer.join(5000);
+            assertTrue(closerDone.get(), "close must return after the claim resolves");
+            assertTrue(w.isClaimedByWaker(), "close's retry must claim the waiter");
+            assertEquals(0, ch.recvWaitersCount(), "claimed waiter removed");
+            awaitQuiescence(sched);
+        } finally {
+            SelectOp.claimRaceHookForTest = null;
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Guard: an UNCLAIMED select send waiter still counts as a live
      * waiter for readiness (the scan must not over-exclude).
      */
