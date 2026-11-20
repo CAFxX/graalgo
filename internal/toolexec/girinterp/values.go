@@ -332,8 +332,39 @@ func (in *Interp) chanID(c *Chan) int {
 	return id
 }
 
+// mapKeyError is gc's check of a key that is looked up in or deleted
+// from a nil or empty map, which does not hash it: a key whose hashing
+// would panic (an interface holding an unhashable dynamic type, directly
+// or in a struct field or array element) panics with the runtime's
+// unhashableTypeError, whose text has no "runtime error: " prefix and a
+// colon (BUG-0041). Hashing it on a non-empty map panics with the
+// errorString writeKey raises instead.
+func (in *Interp) mapKeyError(v Value, t *RType) {
+	u := t.Under()
+	switch u.Kind {
+	case KStruct:
+		for i, f := range u.Fields {
+			in.mapKeyError(v.(*Struct).F[i], f.Type)
+		}
+	case KArray:
+		for _, e := range v.(*Array).E {
+			in.mapKeyError(e, u.Elem)
+		}
+	case KInterface:
+		x := v.(Iface)
+		if x.T == nil {
+			return
+		}
+		if !in.comparable(x.T) {
+			in.panicValue(Iface{T: in.plainErrType(), V: "hash of unhashable type: " + x.T.Str})
+		}
+		in.mapKeyError(x.V, x.T)
+	}
+}
+
 func (m *Map) lookup(in *Interp, k Value, kt *RType) (Value, bool) {
-	if m == nil {
+	if m == nil || m.n == 0 {
+		in.mapKeyError(k, kt)
 		return nil, false
 	}
 	if i, ok := m.index[in.hashKey(k, kt)]; ok {
@@ -345,6 +376,12 @@ func (m *Map) lookup(in *Interp, k Value, kt *RType) (Value, bool) {
 func (m *Map) set(in *Interp, k Value, kt *RType, v Value) {
 	h := in.hashKey(k, kt)
 	if i, ok := m.index[h]; ok {
+		// Assigning to an existing entry also stores the new key: keys
+		// that are equal but distinguishable (+0 and -0, interfaces
+		// holding them) leave the last one written, as gc's mapassign
+		// does for NeedKeyUpdate types (BUG-0042). For every other key
+		// type the replacement is unobservable.
+		m.keys[i] = copyVal(k)
 		store(&m.vals[i], v)
 		return
 	}
@@ -356,7 +393,8 @@ func (m *Map) set(in *Interp, k Value, kt *RType, v Value) {
 }
 
 func (m *Map) del(in *Interp, k Value, kt *RType) {
-	if m == nil {
+	if m == nil || m.n == 0 {
+		in.mapKeyError(k, kt)
 		return
 	}
 	h := in.hashKey(k, kt)
@@ -926,9 +964,39 @@ func (in *Interp) convert(v Value, from, to *RType) Value {
 		if s.A == nil {
 			return (*Value)(nil)
 		}
-		panic(interpError("slice to array pointer aliasing is not modelled"))
+		return in.arrayPtr(s, n)
 	}
 	return v // identical underlying types (or pointer/chan/func of such)
+}
+
+// arrayPtr is (*[n]T)(s) for a non-nil slice s with len >= n: an *Array
+// whose elements are the slice's backing slots themselves (a Go subslice
+// of s.A), so writes through either side, and pointers to elements taken
+// through either side, alias (BUG-0039). Converting the same elements
+// again yields the same pointer, as in gc, where both are &s[0]; a
+// zero-length result past the last slot is fresh each time (pointers to
+// distinct zero-size variables may or may not be equal).
+func (in *Interp) arrayPtr(s Slice, n int64) *Value {
+	var k arrayPtrKey
+	if s.Off < len(s.A) {
+		k = arrayPtrKey{base: &s.A[s.Off], n: n}
+		if p, ok := in.arrayPtrs[k]; ok {
+			return p
+		}
+	}
+	var v Value = &Array{E: s.A[s.Off : s.Off+int(n) : s.Off+int(n)]}
+	p := &v
+	if k.base != nil {
+		in.arrayPtrs[k] = p
+	}
+	return p
+}
+
+// arrayPtrKey identifies the array a slice-to-array-pointer conversion
+// denotes: its first element slot and its length.
+type arrayPtrKey struct {
+	base *Value
+	n    int64
 }
 
 func isInteger(k Kind) bool  { return k >= KInt && k <= KUintptr }
