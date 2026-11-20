@@ -15,6 +15,9 @@ stderr and exit status.
   re-runs defer programs with every function forced onto the chain
 - [bench.sh](bench.sh) / [bench.py](bench.py) — [test/bench/](../bench/README.md)
   workloads without std (`make bench-m1a`) and the PE gate (`make pe-check-m1a`)
+- [pe_std.sh](pe_std.sh) / [pe/stdhot.go](pe/stdhot.go) — the PE gate's second
+  half: the std paths of [test/bench/realistic/](../bench/realistic/README.md)
+  hot with zero failed compilations, plus a generated planted violation
 
 **Add a test:** a self-contained `package main` in [programs/](programs/)
 (no imports; report with `println`). **Not here:** std programs

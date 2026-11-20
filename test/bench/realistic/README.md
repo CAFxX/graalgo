@@ -19,5 +19,8 @@ peak RSS and CPU time per leg; `STAT` lines collected).
 
 GC matrix: `BENCH_ARGS='--gg-variant par=-XX:+UseParallelGC --gg-variant
 zgc=-XX:+UseZGC allocmix'`. They need the M1d stdlib (`fmt`, `reflect`,
-`os`); on a tree without it the graalgo leg fails at link. Add a program:
+`os`); on a tree without it the graalgo leg fails at link. `make pe-report` ([pe-report.sh](pe-report.sh), [pe_report.py](pe_report.py))
+runs each program once with Truffle compilation tracing and prints the
+failed compilations (root, reason) and the roots deoptimized or invalidated
+most often; the target is zero failures. Add a program:
 a directory with `main.go` calling `h.Run` from `graalgo/bench/h`.

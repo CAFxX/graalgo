@@ -301,22 +301,34 @@ public final class GoType {
         return nByte;
     }
 
+    /**
+     * The layout, computed once (again after {@link #expectLayout} records gc's). The slow path
+     * is a boundary: partial evaluation of a node that asks a non-constant type for its layout
+     * must not inline the recursion through defined types ("Too deep inlining" failed the
+     * compilation of functions slicing an array of a defined type).
+     */
     private void layout() {
-        if (kind == NAMED) {
-            GoType t = u();
-            nPrim = t.nPrim();
-            nRef = t.nRef();
-            nByte = t.nByte;
-            gcSize = t.gcSize;
-            gcAlign = declaredAlign > 0 ? declaredAlign : t.gcAlign;
-            if (expectedLayout != null) {
-                checkExpectedLayout(t);
-            }
+        if (!laidOut) {
+            layoutSlow();
+        }
+    }
+
+    @TruffleBoundary
+    private void layoutSlow() {
+        if (kind != NAMED) {
+            computeLayout();
             return;
         }
-        if (!laidOut) {
-            computeLayout();
+        GoType t = u();
+        nPrim = t.nPrim();
+        nRef = t.nRef();
+        nByte = t.nByte;
+        gcSize = t.gcSize;
+        gcAlign = declaredAlign > 0 ? declaredAlign : t.gcAlign;
+        if (expectedLayout != null) {
+            checkExpectedLayout(t);
         }
+        laidOut = true;
     }
 
     /**
@@ -340,6 +352,9 @@ public final class GoType {
                 System.arraycopy(offsets, 0, e, 2, offsets.length);
                 expectedLayout = e;
                 declaredAlign = align;
+                if (kind == NAMED) {
+                    laidOut = false;
+                }
             }
         }
     }
