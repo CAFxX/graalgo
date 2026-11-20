@@ -43,6 +43,9 @@ public final class Drainer {
     private final java.util.Map<Long, Long> parked = new java.util.HashMap<>();
     // handle id -> pending unpark arrived before the PARKED token.
     private final java.util.Set<Long> unparkPending = new java.util.HashSet<>();
+    // handle ids a HANDOFF already admitted (on the waker's slot) before
+    // their PARKED token arrived: that PARKED only releases the old slot.
+    private final java.util.Set<Long> handedOff = new java.util.HashSet<>();
     // handle ids currently in blocking I/O (P2-M3, GG-0063): slot
     // released, vthread blocked in the syscall (not parked). IO_EXIT
     // re-admits through the WAKE lane.
@@ -70,6 +73,8 @@ public final class Drainer {
     public final java.util.concurrent.atomic.AtomicLong wakeUnparkDirect = new java.util.concurrent.atomic.AtomicLong();
     public final java.util.concurrent.atomic.AtomicLong wakeUnparkStashed = new java.util.concurrent.atomic.AtomicLong();
     public final java.util.concurrent.atomic.AtomicLong wakeIoExit = new java.util.concurrent.atomic.AtomicLong();
+    /** Direct handoffs booked (HANDOFF tokens): admissions on the waker's slot, not a lane's. */
+    public final java.util.concurrent.atomic.AtomicLong wakeHandoff = new java.util.concurrent.atomic.AtomicLong();
 
     Drainer(SchedulerCore sched) {
         this.sched = sched;
@@ -213,19 +218,27 @@ public final class Drainer {
                                     + " parked while in blocking I/O");
                 }
                 inflight--;
-                if (unparkPending.remove(token.handle.id)) {
-                    // Wakeup arrived first: admit immediately through the
-                    // priority lane (no wakeup lost).
-                    wakeUnparkStashed.incrementAndGet();
-                    wakeFifo.addLast(new ResumeToken(
-                            ResumeToken.Kind.WAKE, token.handle, token.generation));
-                } else {
-                    parked.put(token.handle.id, token.generation);
-                    parkedHandles.put(token.handle.id, token.handle);
-                    if (token.handle.externalWake) {
-                        externalParked.add(token.handle.id);
-                    }
+                bookPark(token.handle, token.generation);
+            }
+            case HANDOFF -> {
+                // The parker's slot passes to the target: no inflight change.
+                GoroutineHandle target = token.target;
+                if (inIo.contains(token.handle.id) || inIo.contains(target.id)) {
+                    throw new AssertionError("handoff g" + token.handle.id + " -> g" + target.id
+                            + " involves a goroutine in blocking I/O");
                 }
+                if (parked.remove(target.id) != null) {
+                    parkedHandles.remove(target.id);
+                    externalParked.remove(target.id);
+                } else if (!handedOff.add(target.id)) {
+                    throw new AssertionError("duplicate handoff to g" + target.id);
+                }
+                if (unparkPending.contains(target.id)) {
+                    throw new AssertionError("handoff to g" + target.id + " with an UNPARK pending");
+                }
+                wakeHandoff.incrementAndGet();
+                admissions++;
+                bookPark(token.handle, token.generation);
             }
             case UNPARK -> {
                 Long gen = parked.remove(token.handle.id);
@@ -274,6 +287,32 @@ public final class Drainer {
     }
 
     /**
+     * Books a park (the goroutine of a PARKED token, or a HANDOFF's parker,
+     * whose slot the caller has already accounted): already admitted when a
+     * HANDOFF to it came first (it runs on that waker's slot, and the slot
+     * it held until now was released or passed on by the caller); woken at
+     * once through the priority lane when its UNPARK came first; else
+     * recorded as parked.
+     */
+    private void bookPark(GoroutineHandle h, long generation) {
+        if (handedOff.remove(h.id)) {
+            return;
+        }
+        if (unparkPending.remove(h.id)) {
+            // Wakeup arrived first: admit immediately through the
+            // priority lane (no wakeup lost).
+            wakeUnparkStashed.incrementAndGet();
+            wakeFifo.addLast(new ResumeToken(ResumeToken.Kind.WAKE, h, generation));
+        } else {
+            parked.put(h.id, generation);
+            parkedHandles.put(h.id, h);
+            if (h.externalWake) {
+                externalParked.add(h.id);
+            }
+        }
+    }
+
+    /**
      * One drainer iteration: route, admit, check. The cap is read ONCE
      * and both admission and the invariant check use that value: a
      * concurrent {@code runtime.GOMAXPROCS} change lands between
@@ -286,6 +325,21 @@ public final class Drainer {
         route(token);
         admit(cap);
         checkInvariants(cap);
+        int free = cap - inflight;
+        if (free != freeSlots) {
+            freeSlots = free;
+        }
+    }
+
+    /**
+     * Idle admission slots as of the drainer's last step ({@code cap - inflight}; lanes
+     * are empty whenever it is positive). A hint for {@code SchedulerCore#spinForHandoff},
+     * never for admission.
+     */
+    private volatile int freeSlots;
+
+    int freeSlots() {
+        return freeSlots;
     }
 
     private void admit(int cap) {
@@ -370,7 +424,8 @@ public final class Drainer {
     private void detectDeadlock() {
         if (!sched.deadlockArmed() || inflight != 0 || !wakeFifo.isEmpty() || !initFifo.isEmpty()
                 || !runFifo.isEmpty() || !inIo.isEmpty() || !externalParked.isEmpty()
-                || !unparkPending.isEmpty() || !inbox.isEmpty() || sched.isExiting()) {
+                || !unparkPending.isEmpty() || !handedOff.isEmpty() || !inbox.isEmpty()
+                || sched.isExiting()) {
             return;
         }
         boolean timers = sched.timerHeap().hasPending();
@@ -409,13 +464,18 @@ public final class Drainer {
             for (Long id : inIo) {
                 ioSorted.add(name.apply(id));
             }
+            java.util.TreeSet<String> handedSorted = new java.util.TreeSet<>();
+            for (Long id : handedOff) {
+                handedSorted.add(name.apply(id));
+            }
             StringBuilder sb = new StringBuilder();
             sb.append("inflight=").append(inflight)
               .append(";admissions=").append(admissions)
               .append(";max=").append(maxInflightObserved)
               .append(";parked=").append(parkedSorted)
               .append(";pending=").append(pendingSorted)
-              .append(";io=").append(ioSorted);
+              .append(";io=").append(ioSorted)
+              .append(";handedOff=").append(handedSorted);
             sb.append(";wake=");
             for (ResumeToken t : wakeFifo) {
                 sb.append(t.kind).append(":").append(name.apply(t.handle.id))
@@ -435,7 +495,8 @@ public final class Drainer {
                   .append(":").append(t.generation).append(",");
             }
             sb.append(";prov=").append(wakeUnparkDirect.get()).append("/")
-              .append(wakeUnparkStashed.get()).append("/").append(wakeIoExit.get());
+              .append(wakeUnparkStashed.get()).append("/").append(wakeIoExit.get())
+              .append("/").append(wakeHandoff.get());
             return sb.toString();
         }
     }

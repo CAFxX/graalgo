@@ -65,7 +65,28 @@ public final class TimeChanLenCapTest {
             if (System.currentTimeMillis() > deadline) {
                 throw new AssertionError("timed out waiting for: " + what);
             }
-            Thread.sleep(5);
+            pause(5);
+        }
+    }
+
+    /**
+     * Sleeps {@code ms}: scheduler-aware on a goroutine (GG-SCHED-0006 — a
+     * goroutine must never JVM-block outside the scheduler: it would hold its
+     * slot, and a wake it just issued stays deferred as its runnext, ADR-0016),
+     * a plain sleep elsewhere.
+     */
+    private static void pause(long ms) throws InterruptedException {
+        SchedulerCore sc = SchedulerCore.installedOrNull();
+        boolean onGoroutine;
+        try {
+            onGoroutine = sc != null && sc.currentGoroutine() != null;
+        } catch (IllegalStateException notAGoroutine) {
+            onGoroutine = false;
+        }
+        if (onGoroutine) {
+            graalgo.runtime.Timers.sleep(ms * 1_000_000L);
+        } else {
+            Thread.sleep(ms);
         }
     }
 
@@ -131,7 +152,7 @@ public final class TimeChanLenCapTest {
             assertLenCapZero(ch, "pre-fire");
 
             // Fire at 50ms; the translator delivers within microseconds.
-            Thread.sleep(150);
+            pause(150);
             assertLenCapZero(ch, "fired-undrained");
 
             // gc 1.23+: Stop on fired-undrained drains and reports true.
@@ -179,7 +200,7 @@ public final class TimeChanLenCapTest {
         withScheduler(() -> inGoroutine(SchedulerCore.current(), () -> {
             GoTimerT t = new GoTimerT(GoTimer.newTimer(5_000_000_000L), false, null, TIME_DESC);
             assertTrue(t.stop(), "stop before fire -> true");
-            Thread.sleep(100);
+            pause(100);
             assertFalse(isRecvReady(t.userChannel()), "no delivery after stop");
             waitUntil(() -> P3TimeRuntime.backgroundLive() == 0, 5_000,
                     "translator exited after stop");

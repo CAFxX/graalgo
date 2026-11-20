@@ -51,6 +51,18 @@ public final class ResumeToken {
          */
         IO_EXIT,
         /**
+         * Direct handoff (WP-SCHED, gc's runnext): {@link #handle} parks
+         * (generation {@link #generation}, like PARKED) and gives its
+         * in-flight slot to {@link #target}, whose pending park it wakes
+         * itself (the target's {@code handoff} flag, then
+         * {@code LockSupport.unpark}) right after offering this token. The
+         * drainer keeps the slot count unchanged and books the target as
+         * admitted: removed from the parked record, or — when the target's
+         * PARKED token is still to come — remembered so that PARKED only
+         * releases the target's old slot.
+         */
+        HANDOFF,
+        /**
          * No goroutine: re-evaluate scheduler-global conditions (a
          * GOMAXPROCS change may allow admissions; the last external waker
          * — a timer — retired, so deadlock must be re-checked). Carries
@@ -66,6 +78,7 @@ public final class ResumeToken {
         this.kind = Kind.POKE;
         this.handle = null;
         this.generation = -1;
+        this.target = null;
     }
 
     /** A {@link Kind#POKE} token. */
@@ -76,18 +89,41 @@ public final class ResumeToken {
     public final Kind kind;
     public final GoroutineHandle handle;
     public final long generation;
+    /** {@link Kind#HANDOFF} only: the goroutine receiving the slot (else null). */
+    public final GoroutineHandle target;
 
     public ResumeToken(Kind kind, GoroutineHandle handle, long generation) {
-        if (kind == null || handle == null) {
-            throw new IllegalArgumentException("token kind and handle must not be null");
+        if (kind == null || handle == null || kind == Kind.HANDOFF) {
+            throw new IllegalArgumentException(
+                    "token kind and handle must not be null (HANDOFF tokens: handoff())");
         }
         this.kind = kind;
         this.handle = handle;
         this.generation = generation;
+        this.target = null;
+    }
+
+    private ResumeToken(GoroutineHandle parker, long generation, GoroutineHandle target) {
+        this.kind = Kind.HANDOFF;
+        this.handle = parker;
+        this.generation = generation;
+        this.target = target;
+    }
+
+    /**
+     * A {@link Kind#HANDOFF} token: {@code parker} parks at {@code generation}
+     * and {@code target} receives its in-flight slot.
+     */
+    public static ResumeToken handoff(GoroutineHandle parker, long generation, GoroutineHandle target) {
+        if (parker == null || target == null || parker == target) {
+            throw new IllegalArgumentException("handoff needs two distinct handles");
+        }
+        return new ResumeToken(parker, generation, target);
     }
 
     @Override
     public String toString() {
-        return "ResumeToken(" + kind + ", g" + (handle == null ? "-" : handle.id) + ", gen=" + generation + ")";
+        return "ResumeToken(" + kind + ", g" + (handle == null ? "-" : handle.id) + ", gen=" + generation
+                + (target == null ? "" : ", to g" + target.id) + ")";
     }
 }
