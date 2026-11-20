@@ -996,9 +996,13 @@ public final class Unsafe {
         if (i.type.isPointerShaped() || i.type.carrier() == GoType.C_FLAT) {
             return i.data;
         }
+        Object w = i.word();
+        if (w != null) {
+            return w;
+        }
         Flat box = i.type.zeroFlat();
         Values.store(i.type, box, 0, 0, 0, i.data);
-        return box;
+        return i.cacheWord(box); // one word per value, as gc's (BUG-0044)
     }
 
     /** The interface slot content for a type word and a data word (the inverse of the two above). */

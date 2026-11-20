@@ -1,9 +1,9 @@
 package main
 
-// BUG-0044: atomic.Value.CompareAndSwap compares the current value with
-// old through an interface rebuilt word by word (efaceWords); under graalgo
-// the comparison fails for equal values, so CAS reports false and does not
-// swap. Found by test/fuzz (corpus/control/atomic_types.go).
+// atomic.Value.CompareAndSwap reads the stored interface's data word and
+// CASes that same word: the data word of a boxed scalar (string, int) must
+// be one pointer for the value's life, as gc's is (BUG-0044, found by
+// test/fuzz). Struct and pointer values are their own words.
 
 import "sync/atomic"
 
