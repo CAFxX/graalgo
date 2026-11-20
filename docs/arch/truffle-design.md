@@ -43,7 +43,7 @@ Evidence labels used throughout:
 |---|---|---|
 | T1 | One `GoLanguage extends TruffleLanguage<GoContext>`, id `go`, registered for the byte MIME type `application/x-graalgo-bundle`. `parse()` takes a **linked bundle** (toolexec design §4.2), never Go source text. | The frontend is `go/types` in a Go process (GG-0069); the JVM only ever sees typed IR. |
 | T2 | `contextPolicy = SHARED`. The AST, type descriptors, itabs, function units and the intrinsic table belong to the language instance; globals, package-init state, scheduler, timers, OS state and the unsafe handle table belong to `GoContext`. No node holds context state. | Required for multi-context engines, image-heap pre-initialization and engine caching; single-context runs lose nothing because `ContextReference.get(node)` folds to a constant on a bound engine. |
-| T3 | Goroutines stay virtual threads (SPEC §3.5) but are created with `Env.newTruffleThreadBuilder(r).virtual(true)`, and the goroutine ↔ thread binding goes through one `ContextThreadLocal`. A context option selects platform threads instead. | A thread that runs guest code must be entered in the context. `[PROTO]` it works on the pin; it is experimental upstream and ~10× more expensive to create than a bare virtual thread, so §2.6 adds thread recycling. |
+| T3 | Goroutines stay virtual threads (SPEC §3.5) but are created with `Env.newTruffleThreadBuilder(r).virtual(true)`, and the goroutine ↔ thread binding goes through one `ContextThreadLocal`. A context option selects platform threads instead, or (opt-in, [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md)) continuations on a few carrier threads. | A thread that runs guest code must be entered in the context. `[PROTO]` it works on the pin; it is experimental upstream and ~10× more expensive to create than a bare virtual thread, so §2.6 adds thread recycling. Creating a polyglot thread is O(live polyglot threads) on the pin (§2.6 item 6): carrier mode avoids it. |
 | T4 | **REJECTED (2026-11-18, [ADR-0013](../dev/adr/ADR-0013-a7-rejected.md)): prototype P-B failed, so SPEC AMENDMENT A7 is not adopted; `Safepoint.poll()` stays and SPEC is unchanged. The proposal below is kept as the record; the poll's cost is WP-POLLCOST (RECOVERY.md). (Was: accepted conditionally on P-B `[OPEN]`: the owner switches only if P-B validates.)** (GG-SCHED-0001, GG-0017, SPEC §3.5 require `Safepoint.poll()` at loop back-edges and function entries; §14.1). Proposal: preemption moves from `ThreadLocal` + `System.nanoTime()` at every back-edge to **Truffle safepoints**: a monitor thread submits a `ThreadLocalAction` to a goroutine whose quantum expired; the action performs the quantum park. | Compiled loops carry no scheduler code at all; debugger suspend, cancellation and stack sampling use the same mechanism. `[PROTO]` delivered and parked on virtual threads. Fallback in §2.7. |
 | T5 | Every node class is written against the conventions of §11: statically typed expression families, one small DSL node per operation and carrier, `@Cached` inline caches only at the four genuinely dynamic sites of SPEC §3.3, `@TruffleBoundary` on every runtime entry that is not PE-safe. | This is what makes PE succeed by construction instead of by repair. `[PROTO]` the pattern compiles with the pinned DSL processor and JIT-compiles. |
 | T6 | The node factory, not the DSL, selects operations by type. Sized integers are carried as `int` (≤ 32 bit) or `long` (64 bit) in canonical extended form; narrowing wrap is a separate tiny node. | Go types are static; no type discovery is needed and no boxing or specialization explosion occurs. |
@@ -389,6 +389,19 @@ Decisions:
    shows the caller-frame limitation hurts the inspector; native images, where
    Truffle maps virtual threads to platform threads anyway (§7.4); and
    bisecting Loom-related problems.
+6. **`go.GoroutineThreads=carrier`** (or `-Dgraalgo.sched.goroutines=carrier`;
+   opt-in, [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md)): goroutines
+   are `jdk.internal.vm.Continuation`s run by a few platform polyglot
+   carrier threads, entered once each. `[PROTO]` measured on the pin: a
+   polyglot thread per goroutine makes creation O(live goroutines) —
+   `TruffleThreadBuilder.build()` runs
+   `PolyglotContextImpl.checkAllThreadAccesses`, a loop over every
+   registered thread (and a thread entering through `TruffleContext.enter`
+   runs `collectDeadThreads`, the same loop) — so 10⁵ goroutines took
+   162 s to spawn; carriers spawn 10⁶ in ~12 s. The carrier is the polyglot
+   thread, so its `M` (§2.5) is swapped to the mounted goroutine's `G` and
+   state on every mount. Making it the default needs GG-0017 superseded
+   (ADR-0018).
 
 Upstream status `[DOC]`, changelog 24.1 (GR-40931): "Virtual threads with a
 polyglot context are now experimentally supported on HotSpot. Experimental

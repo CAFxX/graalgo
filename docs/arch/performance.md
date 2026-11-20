@@ -351,5 +351,7 @@ goroutine scaling and the compilation evidence: [north-star.md](north-star.md) �
 Geomean of the six pipelines: 27× gc (steady), 19× (best rounds) — against
 the micro-suite's 1.4× (§4). New gap items, ahead of §5's list: partial-
 evaluation failures in `goto` blocks (`Ctl.GotoBlock`), goroutine creation
-O(live goroutines) (north-star §4.3), reflection-heavy paths.
+O(live goroutines) (north-star §4.3; fixed in the opt-in carrier mode,
+[ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md): flat, 6× gc per spawn,
+`make bench-goroutines`), reflection-heavy paths.
 

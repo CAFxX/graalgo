@@ -300,6 +300,22 @@ first problem; creation is. 1M goroutines under graalgo is blocked on
 that fix, not on the 2 GB heap (the explicit heap-scaling run was
 therefore not attempted).
 
+**Carrier mode (2026-11-20, opt-in, [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md)):**
+`make bench-goroutines` (gc vs graalgo with
+`-Dgraalgo.sched.goroutines=carrier`; host load 15–18, `nice -n 19`) and,
+for 1M, the lane's scratch spawn program (`-Xmx10g`, once):
+
+| N | gc spawn | graalgo spawn | gc bytes/goroutine idle | graalgo bytes/goroutine idle | gc round | graalgo round (best of 3) |
+|---:|---:|---:|---:|---:|---:|---:|
+| 10,000 | 36 ms | 0.24 s (6.7×) | 2,765 | 13,700 (heap-growth noise) | 3.3 ms | 139 ms (42×) |
+| 100,000 | 0.20 s | 1.24 s (6.1×) | 2,749 | 4,710 (1.7×) | 58 ms | 2.69 s (47×) |
+| 1,000,000 | 1.9 s | 11.5 s (6.0×) | 2,757 | 2,289 (0.83×), peak RSS 4.0 GB | 0.23 s (wake+exit) | 76 s (wake+exit, first round) |
+
+Spawn is flat in the live count (the `spawn_flat` gate); the heap per idle
+goroutine is ~2.3 KB (frozen stack 1.26 KB). The round is dominated by the
+wake: one deoptimization per goroutine in the first round (ADR-0018) and
+the drainer hops per wake and exit.
+
 ### 4.4 Footprint baselines
 
 | Program | gc | graalgo |
@@ -390,22 +406,25 @@ the AOT/hybrid modes (Native Image's SubstrateVM heap) can approach gc.
 
 ### 5.3 Goroutine scalability
 
-- **Today (§4.3):** goroutine creation costs O(live goroutines) because
+- **Cause (§4.3):** goroutine creation costs O(live goroutines) because
   every goroutine is a polyglot thread: `TruffleThreadBuilder.build()` →
-  `PolyglotContextImpl.checkAllThreadAccesses` iterates a `WeakHashMap` of
-  all the context's threads `[VERIFIED]` (JFR, 40k goroutines: 2,045 of
-  ~3,400 samples). 100k goroutines take 162 s to spawn (gc: 0.16 s), 1M is
-  out of reach. Idle cost: ~4.7 KB per parked goroutine at 100k (gc
-  2.7 KB).
-- **Options:** (a) one polyglot thread per carrier, goroutine virtual
-  threads entering the context through a cheaper path — needs Truffle's
-  support for many short-lived threads (ask upstream; check whether
-  `checkAllThreadAccesses` can be skipped when the language allows
-  multi-threading from the start); (b) a pool of context-entered virtual
-  threads reused across goroutines (amortizes churn, the server pattern;
-  does not fix 1M live); (c) goroutines as continuations on a fixed set of
-  entered threads (`jdk.internal.vm.Continuation`: internal API, rejected
-  for now). (a) is the structural fix and the first item of lane L1 (§6.3).
+  `PolyglotContextImpl.checkAllThreadAccesses` loops over every registered
+  thread `[VERIFIED]` (JFR, 40k goroutines: 2,045 of ~3,400 samples; Truffle
+  25.0.4 sources). Option (a) — virtual threads entering the context through
+  `TruffleContext.enter` — hits the same loop (`collectDeadThreads` on every
+  new thread's first enter) and keeps every entered thread registered;
+  (b) — reusing entered threads — bounds registrations by the peak live
+  count only.
+- **Done (opt-in, [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md),
+  2026-11-20):** option (c), goroutines as `jdk.internal.vm.Continuation`s
+  on a few polyglot carrier threads (`-Dgraalgo.sched.goroutines=carrier`).
+  Creation no longer depends on the live count: 100k spawn in 1.0–1.5 s
+  (thread mode 162 s; gc 0.18–0.20 s: 6–7× on a loaded host), 1M in 11.5 s
+  (gc 1.9 s) at 2.3 KB per idle goroutine (gc 2.76 KB), peak RSS 4.0 GB.
+  Default needs GG-0017 superseded (owner). Open: the per-goroutine spawn
+  path (6× gc), and a whole lifecycle round (spawn, park, broadcast wake,
+  exit) still 30–45× gc — the wake is one deoptimization per goroutine in
+  the first round (ADR-0018 "mass deoptimization") plus the drainer hops.
 - **Park/unpark:** the scheduler hop (`chanpingpong` 3× gc after the
   WP-SCHED handoff) matters to servers only per request (≈ 2–4 hops); the
   creation cost above dominates first.
@@ -508,7 +527,7 @@ Work package ids as in [RECOVERY.md](RECOVERY.md) and
 | Item | Move | Why (north star) |
 |---|---|---|
 | Land M1d (`wt/fmt/path`) | **first** | every realistic benchmark needs `fmt`/`reflect`/`os` |
-| Goroutine creation O(1) (new, §5.3) | **up: top** | T2–T4 are impossible at 10k+ goroutines; measured quadratic |
+| Goroutine creation O(1) (new, §5.3) | **up: top** — done as opt-in carrier mode (ADR-0018); default awaits GG-0017's supersession | T2–T4 are impossible at 10k+ goroutines in thread mode; measured quadratic |
 | PE failures on `goto` blocks and deep inlining (new, §4.1) | **up: top** | `regexp`, `encoding/json`'s scanner, `compress/flate` run interpreted: 20–130× gc |
 | W8b sockets + poller on sockets (M4 `net`) | **up** (before the rest of M4) | the T2 floor |
 | crypto link floor + intrinsics, `hash/crc32`, `math/big` (M4 `crypto/*`) | **up**, split: link floor first, speed second | `net/http` does not link without `crypto/tls`; gzip/png/T3 need crc32 |
@@ -553,6 +572,10 @@ value is the profile it gives, ranked against §5.8's speculation list.
 
 1. **`sched-spawn` (T2 runtime lane):** L1 — goroutine creation O(1) in
    live goroutines; idle memory per goroutine; re-run §4.3 incl. 1M.
+   **Landed 2026-11-20 as opt-in carrier mode (ADR-0018):** flat and 6–7× gc
+   per spawn at 100k (the L1 bar of ≤ 10×, linear: met; the lane brief's 5×:
+   not yet), idle 1.7× gc at 100k and 0.83× at 1M. Default: owner decision
+   on GG-0017.
 2. **`m4-net` (T4 syscall lane):** L2 — socket roles, poller on sockets,
    loopback echo benchmark (the viability check of §5.4).
 3. **`m4-crypto` (T1 intrinsics lane):** L3 — link floor for `crypto/*`,

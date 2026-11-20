@@ -581,6 +581,18 @@ until measured: gating work item **P-F** ([truffle-design.md](truffle-design.md)
 §13.2: minimal language image with 10⁴ goroutine threads on the pinned
 `native-image`). Re-test trigger: each GraalVM pin bump.
 
+**Goroutines as continuations on carrier threads** `[OPEN]` (2026-11-20,
+[ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md)): on the pinned Truffle,
+creating a polyglot thread walks every registered thread, so one virtual
+thread per goroutine makes spawning O(live goroutines) — 10⁵ goroutines take
+minutes to start, against the north-star's servers with huge goroutine
+counts. The opt-in carrier mode (`-Dgraalgo.sched.goroutines=carrier`) runs
+each goroutine as a `jdk.internal.vm.Continuation` on a few polyglot carrier
+threads, with the token discipline, preemption and in-flight cap above
+unchanged. It is not the default: GG-0017's locked text maps each goroutine
+1:1 to a virtual thread; flipping the default needs the owner to supersede it
+(ADR-0018 proposes the text).
+
 **Channels** = Java objects (lock, circular buffer over a typed array, two
 wait-queues of scheduler-parked virtual threads); **select** ports
 `runtime/select.go` logic (lock channels in address order, poll, park one

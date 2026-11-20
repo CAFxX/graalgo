@@ -15,7 +15,7 @@ peak RSS and CPU time per leg; `STAT` lines collected).
 | `reqpipe` | handler-shaped: JSON decode, regexp check, map under a mutex, JSON encode through `bufio`/`io.Writer` |
 | `deflate` | `compress/flate` round trip of 1 MiB of text |
 | `allocmix` | live heap ~100 MB plus allocation churn; unit-latency p50/p99/p99.9/max |
-| `goroutines` | `GOR_N` goroutines: spawn, idle RSS per goroutine, lifecycle rounds |
+| `goroutines` | `GOR_N` goroutines: spawn, idle RSS per goroutine, lifecycle rounds (`make bench-goroutines`: 10k/100k/1M, graalgo in carrier mode, ADR-0018) |
 
 GC matrix: `BENCH_ARGS='--gg-variant par=-XX:+UseParallelGC --gg-variant
 zgc=-XX:+UseZGC allocmix'`. They need the M1d stdlib (`fmt`, `reflect`,
