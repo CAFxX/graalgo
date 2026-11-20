@@ -1,0 +1,2 @@
+reason: plugin loading needs graalgo support for -buildmode=plugin shared objects; a gc-built .so cannot be opened by the frontend/runtime
+retest: frontend/runtime supports plugin.Open on graalgo-built plugins

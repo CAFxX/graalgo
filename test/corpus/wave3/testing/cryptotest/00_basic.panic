@@ -1,0 +1,1 @@
+panic: cryptotest: SetGlobalRandom used in a non-test binary
