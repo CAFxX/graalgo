@@ -1,5 +1,8 @@
 # Fast debug cycle
 
+> **Status: shared tool; `fast-run` is v1** (it runs `graalgo.launcher.Main`
+> through gofrontend). `fast-build`/`fast-test` serve both paths.
+
 **Target:** edit → rebuild → run → result in a few seconds.
 
 ## Usage

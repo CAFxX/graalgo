@@ -1,5 +1,10 @@
 # graalgo.launcher
 
+> **Status: mixed.** This README documents the **v1** `graalgo-run` CLI
+> (`Main`, deleted at M3). The new path's entry point in this package is
+> `BundleMain`, run by [graalgo-bundle-run](../../../../../../graalgo-bundle-run);
+> package split: [the module README](../../../../../README.md).
+
 The `graalgo-run` command-line interface (PLAN.md §5 CLI contract).
 
 ## Contract
