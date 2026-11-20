@@ -27,6 +27,10 @@
 //	                and matches gc: a pass, not STALE
 //	      INFRA     the run failed for an infrastructure reason (e.g. a
 //	                corrupted frontend export) on every retry               -> fail, exit 3
+//	    A backend with "lazyBuild" (graalgo) runs each program without its
+//	    build step first and re-runs only a diverging one with build+run
+//	    (whose outcome is the verdict); diverging without the build step
+//	    but matching with it counts against -retry-budget (a flake).
 //	    With -verify-ref, the reference backend is re-run too and any
 //	    difference from the snapshot is REF-DRIFT (upstream behavior
 //	    change or an unrecorded corpus edit) -> fail.
@@ -303,7 +307,8 @@ func trunc(s string, n int) string {
 
 // runAll executes every program under the backend, jobs-at-a-time, and
 // returns the outcomes in program order.
-func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, workRoot string, jobs int) []harness.Outcome {
+func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, workRoot string, jobs int,
+	run func(*harness.Config, *harness.Backend, harness.Program, string) harness.Outcome) []harness.Outcome {
 	outs := make([]harness.Outcome, len(progs))
 	if jobs < 1 {
 		jobs = 1
@@ -316,7 +321,7 @@ func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, wo
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			outs[i] = harness.RunProgram(cfg, b, p, workRoot)
+			outs[i] = run(cfg, b, p, workRoot)
 		}(i, p)
 	}
 	wg.Wait()
@@ -396,7 +401,7 @@ func cmdSnapshotRecord(args []string) error {
 		Normalizer: snapshotNormalizer,
 	}
 	for r := 0; r < sf.runs; r++ {
-		outs := runAll(cfg, b, progs, workRoot, sf.jobs)
+		outs := runAll(cfg, b, progs, workRoot, sf.jobs, harness.RunProgram)
 		for i, p := range progs {
 			e := entryFromOutcome(p, outs[i], corpusRoot)
 			if e.SourceSHA256, err = sourceHash(p); err != nil {
@@ -476,27 +481,44 @@ func cmdSnapshotCheck(args []string) error {
 		if err != nil {
 			return err
 		}
-		outs := runAll(cfg, rb, live, workRoot, sf.jobs)
+		outs := runAll(cfg, rb, live, workRoot, sf.jobs, harness.RunProgram)
 		for i, p := range live {
 			if d := diffEntries(want[p.Name], entryFromOutcome(p, outs[i], corpusRoot)); d != "" {
 				verdicts = append(verdicts, verdict{p.Name, "REF-DRIFT", rb.Name + ": " + d})
 			}
 		}
 	}
+	// A LazyBuild backend runs without its build step first; a program
+	// that then diverges is re-run with the build (the verdict's outcome).
+	first := harness.RunProgram
+	if b.LazyBuild {
+		first = harness.RunSkippingBuild
+	}
 	var outs []harness.Outcome
 	if !sf.failFast {
-		outs = runAll(cfg, b, live, workRoot, sf.jobs)
+		outs = runAll(cfg, b, live, workRoot, sf.jobs, first)
 	}
 	for i, p := range live {
 		var oc harness.Outcome
 		if sf.failFast {
-			oc = harness.RunProgram(cfg, b, p, workRoot)
+			oc = first(cfg, b, p, workRoot)
 		} else {
 			oc = outs[i]
 		}
 		got := entryFromOutcome(p, oc, corpusRoot)
 		d := diffBehavior(want[p.Name], got)
 		retried := false
+		if d != "" && b.LazyBuild {
+			full := entryFromOutcome(p, harness.RunProgram(cfg, b, p, workRoot), corpusRoot)
+			if fd := diffBehavior(want[p.Name], full); fd == "" {
+				// diverged without the build step, matched with it: a flake
+				// (or a build-step dependence), never silently a pass
+				fmt.Printf("RETRY %-28s run without the build step diverged, build+run matched: %s\n", p.Name, d)
+				retried = true
+			}
+			got = full
+			d = diffBehavior(want[p.Name], got)
+		}
 		for try := 0; d != "" && isInfra(got) && try < sf.retries; try++ {
 			fmt.Printf("RETRY %-28s infrastructure signature: %s\n", p.Name, d)
 			retried = true

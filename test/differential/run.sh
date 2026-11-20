@@ -54,17 +54,17 @@ echo "== [0/5] toolchain =="
 go version
 command -v go
 
-echo "== [1/5] build =="
+echo "== [1/4] build =="
 # NOTE: $OUTDIR (.tmp/) holds generated mutants and reports; it is not source
 # and is deliberately excluded from the build/vet/test patterns below.
 go build ./cmd/... ./internal/... ./corpus/...
 
-echo "== [2/5] vet + gofmt =="
+echo "== [2/4] vet + gofmt =="
 go vet ./cmd/... ./internal/... ./corpus/...
 gofmt -l $(find . -name '*.go' -not -path './testdata/_broken/*' -not -path './.tmp/*') | tee "$OUTDIR/gofmt.txt"
 test ! -s "$OUTDIR/gofmt.txt"
 
-echo "== [3/5] unit tests =="
+echo "== [3/4] unit tests =="
 go test -count=1 ./internal/... 2>&1 | tee "$OUTDIR/unit-tests.log"
 # (go test exits non-zero on failure; set -e stops here)
 
@@ -76,21 +76,18 @@ if [ -n "${DH_TIMEOUT:-}" ]; then
 fi
 
 # graalgo-vs-gc is NOT compared here: that is `make snapshot-check`
-# (gc snapshot + reviewed expected divergences). This step and the next
-# self-test the comparator on gc-vs-gc only: no false positives on the
-# unmutated corpus, no flakiness, and sensitivity to mutated corpus
-# programs. Mutation of graalgo itself (SPEC 5.7) is tools/mutation.
-echo "== [4/5] green run: unmutated corpus, gc-a vs gc-b =="
-go run ./cmd/diffharness run \
-  -config backends-p3.json -corpus corpus -backends gc-a,gc-b \
-  "${TIMEOUT_ARGS[@]}" \
-  -out "$OUTDIR/green.json" 2>&1 | tee "$OUTDIR/green.log"
-
-echo "== [5/5] comparator self-test: rerun control + corpus-mutation red-green (gc-vs-gc) =="
+# (gc snapshot + reviewed expected divergences). This step self-tests the
+# comparator on gc-vs-gc only: no false positives on the unmutated corpus
+# (gc-a vs gc-b), no flakiness (gc-a rerun), and sensitivity to mutated
+# corpus programs. Mutation of graalgo itself (SPEC 5.7) is tools/mutation.
+# (A separate `diffharness run` green pass used to precede this one: it
+# repeated validate's step 1 exactly — 2 of the 6 builds+runs per program.)
+# DH_JOBS: programs built and run concurrently (default 1).
+echo "== [4/4] comparator self-test: green run + rerun control + corpus-mutation red-green (gc-vs-gc) =="
 rm -rf "$OUTDIR/mutants" && mkdir -p "$OUTDIR/mutants"
 go run ./cmd/diffharness validate \
-  -config backends-p3.json -corpus corpus \
-  "${TIMEOUT_ARGS[@]}" \
+  -config backends-p3.json -corpus corpus -backends gc-a,gc-b \
+  "${TIMEOUT_ARGS[@]}" -jobs "${DH_JOBS:-1}" \
   -mutations mutations.txt -workdir "$OUTDIR/mutants" \
   -out "$OUTDIR/validate.json" 2>&1 | tee "$OUTDIR/validate.log"
 

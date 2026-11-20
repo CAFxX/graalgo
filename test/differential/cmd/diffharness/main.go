@@ -38,6 +38,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"diffharness/internal/harness"
@@ -297,11 +298,15 @@ func cmdValidate(args []string) error {
 	rf := baseFlags(fs)
 	mutationsFile := fs.String("mutations", "mutations.txt", "mutation manifest (lines: CLASS TARGET)")
 	workdir := fs.String("workdir", "", "working directory for mutants (required)")
+	jobs := fs.Int("jobs", 1, "parallel programs")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *workdir == "" {
 		return fmt.Errorf("-workdir is required")
+	}
+	if *jobs < 1 {
+		return fmt.Errorf("-jobs must be >= 1, got %d", *jobs)
 	}
 	cfg, err := loadCfg(rf)
 	if err != nil {
@@ -310,6 +315,10 @@ func cmdValidate(args []string) error {
 	if len(cfg.Backends) < 2 {
 		return fmt.Errorf("validate needs at least 2 backends (reference + alternate)")
 	}
+	// Only the reference and the alternate are compared: running a third
+	// configured backend (backends-p3.json's graalgo: two JVMs a program)
+	// would cost minutes for outcomes nothing reads.
+	cfg.Backends = cfg.Backends[:2]
 	progs, _, err := loadCorpus(rf, cfg)
 	if err != nil {
 		return err
@@ -339,10 +348,23 @@ func cmdValidate(args []string) error {
 	// mutant against the ORIGINAL program's outcome under the SAME backend.
 	// (Comparing mutant-vs-mutant across backends would be vacuous: two
 	// identical backends running the same mutant must agree.)
+	// (2) Rerun control: the reference backend once more on the same
+	// program, compared with its green-run outcome — catches harness/corpus
+	// flakiness. Programs run -jobs at a time (each worker owns its
+	// program's work dirs); verdicts print in corpus order.
+	type progRuns struct {
+		outs  []harness.Outcome
+		rerun harness.Outcome
+	}
+	runs := make([]progRuns, len(progs))
+	forEach(len(progs), *jobs, func(i int) {
+		runs[i].outs = runOne(cfg, progs[i], workRoot)
+		runs[i].rerun = harness.RunProgram(cfg, &cfg.Backends[0], progs[i], workRoot)
+	})
 	fmt.Println("== [1/3] green run: unmutated corpus ==")
 	origOut := map[string]harness.Outcome{}
-	for _, p := range progs {
-		outs := runOne(cfg, p, workRoot)
+	for i, p := range progs {
+		outs := runs[i].outs
 		origOut[p.Name] = outs[0]
 		c := harness.Compare(outs[0], outs[1])
 		rep.GreenRun = append(rep.GreenRun, c)
@@ -356,13 +378,9 @@ func cmdValidate(args []string) error {
 	}
 	fmt.Printf("green: %d programs, %d divergences (want 0)\n", len(progs), rep.GreenDiverged)
 
-	// (2) Rerun control: same program twice under the reference backend —
-	// expects zero divergences; catches harness/corpus flakiness.
 	fmt.Println("== [2/3] rerun control: ref backend twice ==")
-	for _, p := range progs {
-		a := harness.RunProgram(cfg, &cfg.Backends[0], p, workRoot)
-		b := harness.RunProgram(cfg, &cfg.Backends[0], p, workRoot)
-		c := harness.Compare(a, b)
+	for i, p := range progs {
+		c := harness.Compare(runs[i].outs[0], runs[i].rerun)
 		rep.RerunControl = append(rep.RerunControl, c)
 		if !c.Same {
 			rep.RerunDiverged++
@@ -380,8 +398,12 @@ func cmdValidate(args []string) error {
 	if err != nil {
 		return err
 	}
-	for _, m := range manifest {
-		res := mutationResult{Class: m.class, Target: m.target}
+	type mutRun struct {
+		mut    *mutate.Mutation
+		mutOut harness.Outcome
+	}
+	mruns := make([]mutRun, len(manifest))
+	for i, m := range manifest {
 		p, ok := byName[m.target]
 		if !ok {
 			return fmt.Errorf("manifest: unknown target program %q", m.target)
@@ -394,18 +416,27 @@ func cmdValidate(args []string) error {
 		if err != nil {
 			return fmt.Errorf("manifest %s %s: %w", m.class, m.target, err)
 		}
-		res.Description = mut.Description
+		mruns[i].mut = mut
+	}
+	forEach(len(manifest), *jobs, func(i int) {
+		m := manifest[i]
 		mdir := filepath.Join(*workdir, m.class+"__"+m.target)
-		if err := os.MkdirAll(mdir, 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(mdir, "main.go"), mut.Src, 0o644); err != nil {
-			return err
-		}
 		mp := harness.Program{Name: m.class + "__" + m.target, Dir: mdir, Main: filepath.Join(mdir, "main.go")}
+		if err := os.MkdirAll(mdir, 0o755); err != nil {
+			mruns[i].mutOut = harness.Outcome{Program: mp.Name, BuildLog: err.Error()}
+			return
+		}
+		if err := os.WriteFile(mp.Main, mruns[i].mut.Src, 0o644); err != nil {
+			mruns[i].mutOut = harness.Outcome{Program: mp.Name, BuildLog: err.Error()}
+			return
+		}
 		// Oracle question: does the comparator flag a behavioral change in
 		// the program? Compare ORIGINAL vs MUTANT under the SAME backend.
-		mutOut := harness.RunProgram(cfg, &cfg.Backends[0], mp, workRoot)
+		mruns[i].mutOut = harness.RunProgram(cfg, &cfg.Backends[0], mp, workRoot)
+	})
+	for i, m := range manifest {
+		mut, mutOut := mruns[i].mut, mruns[i].mutOut
+		res := mutationResult{Class: m.class, Target: m.target, Description: mut.Description}
 		c := harness.Compare(origOut[m.target], mutOut)
 		res.Detected = !c.Same
 		res.Reasons = c.Reasons
@@ -438,6 +469,22 @@ func cmdValidate(args []string) error {
 }
 
 type manifestEntry struct{ class, target string }
+
+// forEach calls f(0..n-1), at most jobs at a time, and returns when all
+// calls have returned.
+func forEach(n, jobs int, f func(i int)) {
+	sem := make(chan struct{}, jobs)
+	var wg sync.WaitGroup
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		sem <- struct{}{}
+		go func(i int) {
+			defer func() { <-sem; wg.Done() }()
+			f(i)
+		}(i)
+	}
+	wg.Wait()
+}
 
 // cmdTypeparam implements the test/typeparam differential adapter (M6/D2).
 func cmdTypeparam(args []string) error {

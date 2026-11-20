@@ -51,6 +51,15 @@ type Backend struct {
 	// source file as an operand needs a separator ("--") so the program's
 	// arguments are not read as more source files. A gc binary needs none.
 	ArgsPrefix []string `json:"argsPrefix,omitempty"`
+	// LazyBuild: a check (snapshot check) runs the program without the
+	// build step first (RunSkippingBuild) and pays for the separate build
+	// only when that run diverges from the reference — then the verdict
+	// comes from the full build+run, exactly as without LazyBuild, and a
+	// full run that matches where the lazy one diverged is reported as a
+	// flake. For a launcher whose build step is a whole second run of the
+	// frontend and the JVM (graalgo-sync-run --check), a matching program
+	// costs one JVM instead of two.
+	LazyBuild bool `json:"lazyBuild,omitempty"`
 }
 
 // NoiseSets are the named stderr-noise filter sets a backend may opt into.
