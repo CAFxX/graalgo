@@ -100,6 +100,8 @@ func TestParseErrors(t *testing.T) {
 		"0 read block struct(syscall.Rlimit,16,rw)", // bad direction
 		"0 read block struct(,16,in)",               // no type
 		"0 read block\n0 read block",                // duplicate
+		"8 lseek rd val val val",                    // rd without a buffer
+		"76 truncate wr cstr bytes(1,in)",           // wr without a descriptor at a1
 	} {
 		if _, err := Parse(line); err == nil {
 			t.Errorf("Parse(%q) accepted", line)

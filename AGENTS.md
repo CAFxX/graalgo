@@ -21,7 +21,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
   `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
   and the new path's gates `test-m1a` (import-free corpus vs gc through
-  the `-toolexec` path) and `pe-check-m1a`. CI
+  the `-toolexec` path), `pe-check-m1a`, `test-m1w13`, `test-imgcheck`,
+  `test-m1r`, `test-m1c` and `test-m1d` (std from upstream's source vs gc:
+  pointer model, descriptor images, leaf packages, `sync`/`time`/syscalls,
+  `os`/`reflect`/`fmt`). CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).
 - `make check` — the static gates: pinned-jar checksums; placeholder,

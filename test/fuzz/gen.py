@@ -4,8 +4,10 @@ differential fuzzer of the -toolexec path (test/fuzz/run.py).
 
 Derived from tools/fuzz-soak/gen/generator.py (the v1 path's generator),
 retargeted to what the new path supports today:
-  - output through the builtin println only (fmt does not link yet), so
-    every program's observable output is its stderr;
+  - output through the builtin println only, so every program's
+    observable output is its stderr (fmt links since toolexec M1d — the
+    hand-written corpus has fmt programs, test/fuzz/corpus/stdlib/fmt_*.go
+    — but the generator's printing is not converted yet);
   - imports limited to packages that link: strconv, strings, slices, sort,
     math;
   - the language beyond gen-1: generics (a fixed prelude of generic

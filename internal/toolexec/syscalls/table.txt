@@ -24,6 +24,13 @@
 # BLOCK  "block" when the call may block indefinitely (the executor releases
 #        the goroutine's scheduler slot and runs the downcall off the
 #        carrier pool, GG-SCHED-0006), "-" otherwise
+#        "rd" / "wr": a may-block transfer on the descriptor a1 — as
+#        "block", except that the executor first asks poll(2) whether the
+#        descriptor is readable / writable now and, when it is (and, for
+#        wr, the buffer is at most PIPE_BUF bytes, which a writable pipe
+#        takes whole), runs the call inline: it returns without waiting.
+#        Regular files and terminals are always ready, so file and
+#        console I/O costs one downcall, not a thread hand-off.
 # ROLE   one per argument word that the call uses, a1 first:
 #          val                    an integer
 #          cstr                   pointer to NUL-terminated bytes (in)
@@ -49,13 +56,13 @@
 #        to values that hold pointers (writev's []Iovec, sendmsg's Msghdr),
 #        the socket family, ioctl, getrandom.
 
-0   read       block  val bytes(3,out,result) val
-1   write      block  val bytes(3,in) val
+0   read       rd     val bytes(3,out,result) val
+1   write      wr     val bytes(3,in) val
 3   close      -      val
 5   fstat      -      val struct(syscall.Stat_t,144,out)
 8   lseek      -      val val val
-17  pread64    block  val bytes(3,out,result) val val
-18  pwrite64   block  val bytes(3,in) val val
+17  pread64    rd     val bytes(3,out,result) val val
+18  pwrite64   wr     val bytes(3,in) val val
 32  dup        -      val
 33  dup2       -      val val
 39  getpid     -

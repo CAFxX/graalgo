@@ -157,3 +157,31 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   node package records no call positions yet. `internal/reflectlite` uses
   them only for the method name in its `ValueError` panics, which therefore
   read `unknown method`.
+
+## `os`, `reflect`, `fmt` and the runtime facade (`-toolexec` path; toolexec M1c/M1d)
+
+- **Finalizers and cleanups never run.** `runtime.SetFinalizer`,
+  `runtime.AddCleanup` and `Cleanup.Stop` do nothing: an `os.File` that is
+  never closed keeps its descriptor until the process exits. gc gives no
+  guarantee that a finalizer runs, so a program correct under gc is correct
+  here; one that relies on finalization for resource limits is not.
+- **`runtime.Callers` reports no frames** (BUG-0047), like `runtime.Caller`:
+  reflect panics that name the calling method say `unknown method`, and
+  `log`'s `Lshortfile` prints `???:0`.
+- **System calls outside the role table are fatal errors**, never guesses
+  ([table.txt](../../internal/toolexec/syscalls/table.txt)): sockets,
+  `writev`, `sendmsg`, `ioctl`, `getrandom`, the `fcntl` lock commands,
+  `mmap`. `os/exec` and `os.StartProcess` return `ENOSYS` (`function not
+  implemented`) until the spawn helper of GG-0064.
+- **SIGPIPE:** a write to a broken stdout/stderr pipe ends the process with
+  exit status 141, the status a shell reports for death by SIGPIPE; the
+  process does not die of the signal.
+- **`reflect.StructOf` types have no promoted methods**; upstream supports
+  them only for some embedded-field shapes and panics for the rest.
+- **GODEBUG defaults** from `//go:debug` lines and `go.mod` are not recorded
+  at link time: `internal/godebug` sees the environment's setting only.
+  `runtime/metrics` has no `/godebug/non-default-behavior` samples.
+- **Blocking I/O cost:** a `read`/`write` whose descriptor is not ready
+  (an empty pipe, a full one, a terminal waiting for input) is handed to a
+  thread outside the scheduler; ready descriptors — regular files always —
+  cost one downcall.

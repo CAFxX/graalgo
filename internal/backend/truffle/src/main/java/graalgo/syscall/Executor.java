@@ -65,6 +65,30 @@ public final class Executor {
         return t;
     });
 
+    /** A write of at most this many bytes to a writable pipe does not wait (POSIX PIPE_BUF on linux). */
+    private static final long PIPE_BUF = 4096;
+    private static final short POLLIN = 0x1;
+    private static final short POLLOUT = 0x4;
+    private static final MethodHandle POLL = LINKER.downcallHandle(LINKER.defaultLookup().find("poll").orElseThrow(),
+            FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT));
+
+    /**
+     * Whether {@code fd} is readable ('r') or writable ('w') now: {@code poll(2)} with a zero
+     * timeout. An error condition on the descriptor counts as ready — the call reports it at once.
+     */
+    private static boolean readyNow(long fd, int mode) {
+        try (Arena a = Arena.ofConfined()) {
+            // struct pollfd { int fd; short events; short revents; }
+            MemorySegment p = a.allocate(8, 4);
+            p.set(ValueLayout.JAVA_INT, 0, (int) fd);
+            p.set(ValueLayout.JAVA_SHORT, 4, mode == 'r' ? POLLIN : POLLOUT);
+            int n = (int) POLL.invokeExact(p, 1L, 0);
+            return n > 0 && p.get(ValueLayout.JAVA_SHORT, 6) != 0;
+        } catch (Throwable t) {
+            throw new IllegalStateException("poll downcall failed", t);
+        }
+    }
+
     /** The raw result: {@code r1} and {@code errno} (0 on success). */
     private record Raw(long r1, long errno) {}
 
@@ -194,6 +218,13 @@ public final class Executor {
     private static Raw call(Entry e, long nr, long[] w) {
         SchedulerCore sched = SchedulerCore.installedOrNull();
         if (!e.mayBlock || sched == null || !sched.onGoroutine()) {
+            return invoke(nr, w);
+        }
+        if (e.ready != 0 && (e.ready == 'r' || w[e.lenArg] <= PIPE_BUF) && readyNow(w[0], e.ready)) {
+            // The descriptor is ready: the transfer returns without waiting (a regular file,
+            // a terminal, a pipe with data or room), so it needs neither the slot release nor
+            // the thread hand-off. Another process may take the readiness between the poll and
+            // the call; the call then waits on the carrier for that one transfer.
             return invoke(nr, w);
         }
         sched.ioEnter();

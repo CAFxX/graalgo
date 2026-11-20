@@ -227,6 +227,15 @@ goroutines are virtual threads behind one drainer (item 1 halves it at best).
 
 - `fmt` and real programs (M1d onward): the suite avoids `fmt`/`os`; a
   realistic interface-heavy benchmark (SPEC §2.6.1's falsifier) needs them.
+  First numbers with the real `fmt` (lane fmt-path, 2026-11-20, one run
+  each, shared host, `-Xmx2g -XX:ActiveProcessorCount=4`): hello world
+  through `fmt.Println` 0.82 s wall, 242 MB RSS (the `println` hello
+  world 0.58 s, 189 MB; gc < 0.01 s, 2 MB) — the bundle carries `reflect`,
+  `os`, `internal/poll` and `syscall` (4.9 MB) and their initializers run;
+  200,000 `fmt.Println("line", i)` to a file 1.1 s, to a pipe 0.7 s (gc
+  0.06 s and 0.17 s). Before the executor asked `poll(2)` for readiness
+  and ran ready transfers inline, the same loop took 24 s: every `write`
+  released the scheduler slot and crossed to a platform thread.
 - Native-image / AOT modes (P-D, P-F): no numbers yet; GG-0050's
   "performant without the JIT" is open.
 - PGO-guided inlining parity, escape analysis across non-inlined calls,

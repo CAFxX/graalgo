@@ -51,7 +51,7 @@ func (t *Table) Java() string {
 				roles = append(roles, fmt.Sprintf("Role.struct(%d, %t)", r.Size, r.Dir == Out))
 			}
 		}
-		p("        BY_NR[%d] = new Entry(%d, %q, %t, new Role[] {%s});\n", e.Nr, e.Nr, e.Name, e.MayBlock, strings.Join(roles, ", "))
+		p("        BY_NR[%d] = new Entry(%d, %q, %t, %d, new Role[] {%s});\n", e.Nr, e.Nr, e.Name, e.MayBlock, e.Ready, strings.Join(roles, ", "))
 	}
 	p("    }\n\n")
 	p("    /** The entry of system call {@code nr}, or null if the table has none. */\n")
