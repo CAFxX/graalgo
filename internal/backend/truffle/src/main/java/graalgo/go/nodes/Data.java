@@ -19,6 +19,7 @@ import graalgo.go.runtime.Values;
 import graalgo.go.types.GoType;
 import graalgo.go.values.Flat;
 import graalgo.go.values.GoMap;
+import graalgo.go.values.Ptr;
 import graalgo.go.values.Slice;
 import graalgo.go.values.Str;
 import graalgo.runtime.GoErrors.BoundsCode;
@@ -263,6 +264,39 @@ public final class Data {
     }
 
     /** {@code a[lo:hi:max]} on an addressable array (or through a pointer to one). */
+    /**
+     * {@code (*[N]T)(s)} — and, loaded through, {@code [N]T(s)}: a pointer to the slice's first
+     * element; gc panics with {@code boundsConvert} when {@code len(s) < N}. A nil slice
+     * converts to a nil pointer (N is 0 then); for the array conversion ({@code value}) it
+     * yields a zero array instead, there being nothing to load.
+     */
+    public static final class SliceToArrayPtr extends Ref {
+        @Child private Expr x;
+        private final GoType array;
+        private final long n;
+        private final boolean value;
+
+        public SliceToArrayPtr(Expr x, GoType array, boolean value) {
+            this.x = x;
+            this.array = array;
+            this.n = array.u().len;
+            this.value = value;
+        }
+
+        @Override
+        public Object executeGeneric(VirtualFrame frame) {
+            Slice s = (Slice) x.executeGeneric(frame);
+            int len = s == null ? 0 : s.len;
+            if (len < n) {
+                throw Panics.bounds(this, BoundsCode.CONVERT, len, n, true);
+            }
+            if (s == null || s.base == null) {
+                return value ? array.zeroFlat() : null;
+            }
+            return Ptr.make(s.base, s.prim, s.ref, s.byt);
+        }
+    }
+
     public static final class SliceOfArray extends Ref {
         private final GoType elem;
         @Child private Loc array;
@@ -891,15 +925,23 @@ public final class Data {
         @Child private Expr m;
         @Child private Expr key;
 
-        public MapDeleteG(Expr m, Expr key) {
+        private final GoType keyType;
+        private final boolean checkKey;
+
+        public MapDeleteG(Expr m, Expr key, GoType keyType) {
             this.m = m;
             this.key = key;
+            this.keyType = keyType;
+            this.checkKey = Values.hashMightPanic(keyType);
         }
 
         @Override
         public void executeVoid(VirtualFrame frame) {
             GoMap map = (GoMap) m.executeGeneric(frame);
             Object k = key.executeGeneric(frame);
+            if (checkKey && (map == null || map.len() == 0)) {
+                Panics.checkMapKey(this, keyType, k);
+            }
             if (map != null) {
                 try {
                     map.delete(map.find(k));
@@ -933,7 +975,12 @@ public final class Data {
         private final GoType val;
         private final boolean primKey;
 
-        public MapGetOk(Expr m, Expr key, GoType val, boolean primKey) {
+        private final GoType keyType;
+        private final boolean checkKey;
+
+        public MapGetOk(Expr m, Expr key, GoType keyType, GoType val, boolean primKey) {
+            this.keyType = keyType;
+            this.checkKey = Values.hashMightPanic(keyType);
             this.m = m;
             this.key = key;
             this.val = val;
@@ -944,6 +991,9 @@ public final class Data {
         public Object executeGeneric(VirtualFrame frame) {
             GoMap map = (GoMap) m.executeGeneric(frame);
             Object k = key.executeGeneric(frame);
+            if (checkKey && (map == null || map.len() == 0)) {
+                Panics.checkMapKey(this, keyType, k);
+            }
             try {
                 return lookup(map, k);
             } catch (Values.Uncomparable u) {

@@ -3,6 +3,7 @@ package graalgo.go.loader;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
+import graalgo.go.runtime.Panics;
 import graalgo.go.runtime.Unsafe;
 import graalgo.go.runtime.Values;
 import graalgo.go.types.GoType;
@@ -43,7 +44,13 @@ final class TypeHash extends RootNode {
     @TruffleBoundary
     private long hash(Object p, long seed) {
         // The finalizer of SplitMix64: every input bit reaches every output bit.
-        long z = Values.hash(key, Unsafe.loadThrough(this, p, key)) + seed * 0x9E3779B97F4A7C15L;
+        long z;
+        try {
+            z = Values.hash(key, Unsafe.loadThrough(this, p, key)) + seed * 0x9E3779B97F4A7C15L;
+        } catch (Values.Uncomparable u) {
+            // gc's typehash: an interface holding an unhashable dynamic type panics.
+            throw Panics.unhashable(this, u.type);
+        }
         z = (z ^ (z >>> 30)) * 0xBF58476D1CE4E5B9L;
         z = (z ^ (z >>> 27)) * 0x94D049BB133111EBL;
         return z ^ (z >>> 31);

@@ -125,7 +125,14 @@ public final class GoMap {
     @TruffleBoundary
     public int put(Object k) {
         int e = find(k);
-        return e >= 0 ? e : insert(Values.hash(keyType, k), 0, k);
+        if (e >= 0) {
+            // gc's NeedKeyUpdate: assigning to an existing entry stores the new key, which an
+            // equal key can tell apart (+0/-0, and through interfaces and struct fields). For
+            // every other key type the two are identical, so storing it unconditionally is gc.
+            krefs[e] = k;
+            return e;
+        }
+        return insert(Values.hash(keyType, k), 0, k);
     }
 
     @TruffleBoundary

@@ -47,6 +47,12 @@ final class RuntimeIntrinsics {
         return Runtime.getRuntime().availableProcessors();
     }
 
+    /** gc's gcount: the goroutines that exist, blocked ones included, the runtime's own not. */
+    @TruffleBoundary
+    static long runtime_NumGoroutine(Node node) {
+        return SchedulerCore.current().numGoroutines();
+    }
+
     /** Terminates the calling goroutine after running its deferred calls (GG-0070). */
     static void runtime_Goexit(Node node) {
         graalgo.runtime.Goexit.goexit();

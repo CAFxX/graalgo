@@ -204,6 +204,29 @@ public final class Values {
 
     // ---------------------------------------------------------------- hashing
 
+    /**
+     * gc's {@code abi.MapType.HashMightPanic}: whether hashing a key of type {@code t} can fail
+     * (only through an interface, possibly nested in a struct or array).
+     */
+    public static boolean hashMightPanic(GoType t) {
+        GoType u = t.u();
+        switch (u.kind) {
+            case GoType.INTERFACE:
+                return true;
+            case GoType.ARRAY:
+                return u.len > 0 && hashMightPanic(u.elem);
+            case GoType.STRUCT:
+                for (Field f : u.fields) {
+                    if (!f.name.equals("_") && hashMightPanic(f.type)) {
+                        return true;
+                    }
+                }
+                return false;
+            default:
+                return false;
+        }
+    }
+
     /** A hash consistent with {@link #equal} for a value of static type {@code t}. */
     @TruffleBoundary
     public static int hash(GoType t, Object v) {

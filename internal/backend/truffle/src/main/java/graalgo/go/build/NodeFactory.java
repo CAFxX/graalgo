@@ -785,7 +785,7 @@ public final class NodeFactory {
                     return (p, r, b) -> new Mem.MapGetI(asRef(m.get()), raw(kt, k.get()), vt.zeroFlat(), p, r, b,
                             aux);
                 }
-                return (p, r, b) -> new Mem.MapGetG(asRef(m.get()), k.get(), vt.zeroFlat(), p, r, b, aux);
+                return (p, r, b) -> new Mem.MapGetG(asRef(m.get()), k.get(), kt, vt.zeroFlat(), p, r, b, aux);
             }
             default:
                 return null;
@@ -845,7 +845,7 @@ public final class NodeFactory {
                 Expr load() {
                     Loc loc = primKey(kt)
                             ? new Mem.MapGetI(asRef(m.get()), raw(kt, k.get()), mt.elem.zeroFlat(), 0, 0, 0, aux)
-                            : new Mem.MapGetG(asRef(m.get()), k.get(), mt.elem.zeroFlat(), 0, 0, 0, aux);
+                            : new Mem.MapGetG(asRef(m.get()), k.get(), kt, mt.elem.zeroFlat(), 0, 0, 0, aux);
                     return NodeFactory.load(t, loc);
                 }
 
@@ -1507,7 +1507,7 @@ public final class NodeFactory {
             return new Data.StrIndex(expr(ix.x()), i64(ix.index()), !ty(ix.index()).u().isUnsigned());
         }
         if (xt.kind == GoType.MAP && ix.commaOk()) {
-            return new Data.MapGetOk(expr(ix.x()), expr(ix.index()), xt.elem, primKey(xt.mapKey));
+            return new Data.MapGetOk(expr(ix.x()), expr(ix.index()), xt.mapKey, xt.elem, primKey(xt.mapKey));
         }
         GoType elem = xt.kind == GoType.MAP ? xt.elem : xt.kind == GoType.POINTER ? xt.elem.u().elem : xt.elem;
         return load(elem, indexLoc(ix, null).make(0, 0, 0));
@@ -1613,6 +1613,11 @@ public final class NodeFactory {
             return t.elem.u().kind == GoType.UINT8 ? new Data.StrToBytes(x, t.elem) : new Data.StrToRunes(x, t.elem);
         } else if (t.kind == GoType.UNSAFE_POINTER && f.isInteger()) {
             return new Unsafes.IntToPtr(asI64(x));
+        } else if (f.kind == GoType.SLICE && t.kind == GoType.ARRAY) {
+            Mem.Aux aux = aux();
+            return load(to, new Mem.PtrLoc(new Data.SliceToArrayPtr(x, t, true), to, 0, 0, 0, aux));
+        } else if (f.kind == GoType.SLICE && t.kind == GoType.POINTER) {
+            return new Data.SliceToArrayPtr(x, t.elem, false);
         } else if (t.kind == GoType.POINTER && f.kind == GoType.UNSAFE_POINTER) {
             // The checked identity of ADR-0015 decision 1 (the reverse direction is the identity).
             return new Unsafes.ToPtr(x, t.elem, false);
@@ -2212,7 +2217,7 @@ public final class NodeFactory {
                 GoType kt = ty(a[0]).u().mapKey;
                 Expr m = a0.get();
                 Expr k = given != null ? given[1] : expr(a[1]);
-                return primKey(kt) ? new Data.MapDeleteI(m, raw(kt, k)) : new Data.MapDeleteG(m, k);
+                return primKey(kt) ? new Data.MapDeleteI(m, raw(kt, k)) : new Data.MapDeleteG(m, k, kt);
             }
             case Gir.Builtin.CLEAR: {
                 GoType t = ty(a[0]).u();
