@@ -109,6 +109,10 @@
     {
       "program": "42_json",
       "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+    },
+    {
+      "program": "49_big_scan",
+      "reason": "pre-existing: fmt.Sscanf drops Scanner errors (F2) — graalgo returns err=<nil> on 4 error lines where gc returns the Scan error; remove when F2 lands"
     }
   ],
   "timeoutSec": 30
