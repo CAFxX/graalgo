@@ -8,7 +8,7 @@ beat gc **with PGO** on it, or it is struck. Linked from
 
 ## 1. The suite
 
-[test/bench/suite/](../../test/bench/suite/) — 27 `package main` programs,
+[test/bench/suite/](../../test/bench/suite/) — 28 `package main` programs,
 one directory each, on one harness ([suite/h](../../test/bench/suite/h/h.go)):
 the clock is `runtime.nanotime` by `//go:linkname` and output is `println`,
 so the programs need nothing the new path cannot run yet. Each program runs
@@ -22,7 +22,7 @@ panics) and the best round.
 | integer / float loops | `loop`, `floatloop`, `mandelbrot`, `fannkuch` |
 | slices and arrays | `slicesum`, `sliceappend`, `matmul` (`[][]float64`), `arraymat` (`[N][N]int` values) |
 | structs and methods | `structs` (value/pointer receivers, `&s[i]`), `nbody` |
-| interface dispatch | `ifacemono`, `ifacepoly` (3 types), `ifacemega` (8 types) |
+| interface dispatch | `ifacemono`, `ifacepoly` (3 types), `ifacemega` (8 types), `ifacesplit` (one helper, 5 callers × 5 types: splitting) |
 | maps | `mapint`, `mapstr` |
 | strings and bytes | `strbuild`, `striter`, `strconv`, `bytesops`, `sort` |
 | scheduler | `chanpingpong`, `workerpool`, `mutex` |
@@ -92,7 +92,84 @@ back-edge poll is removed. Remaining cost on `loop`: the poll keeps a call
 non-final loads and vectorization — P-B measured a poll-free `loop` at
 1.0 ms. Closing that needs the poll out of counted inner loops with a
 provable trip bound (strip-mining: poll once per 2^k iterations of an
-inner counted loop), a later item.
+inner counted loop) — done by lane perf-calls, §3.1.
+
+### 3.1 Lane perf-calls (2026-11-20): loop shape, call overhead, splitting
+
+Two interleaved A/B rounds over the whole suite (3 reps each, medians of
+best rounds, ms; load 11–16). Round 1: 77f31b62 → strip-mining. Round 2:
+strip-mining → leaf entry polls + splitting + bytealg kernels.
+
+| Change | Benchmark | before | after | gc |
+|---|---|---:|---:|---:|
+| Strip-mined polls in counted loops | `loop` | 6.66 | 0.85 | 4.83 |
+| | `slicesum` | 6.64 | 1.96 | 1.53 |
+| | `matmul` | 1.46 | 0.62 | 0.39 |
+| | `arraymat` | 1.34 | 0.66 | 0.77 |
+| | `sliceappend` | 2.75 | 2.03 | 1.75 |
+| No entry poll in call-free functions | `closures` | 2.17 | 0.90 | 0.73 |
+| | `ifacemono` | 0.67 | 0.31 | 0.27 |
+| | `ifacepoly` | 0.58 | 0.34 | 0.38 |
+| | `spectralnorm` | 1.87 | 1.22 | 1.19 |
+| | `structs` | 2.00 | 1.66 | 0.24 |
+| Splitting (`cloneUninitialized` by GIR re-decode) | `ifacesplit` (new) | 0.64 | 0.06 | 0.05 |
+| Word-at-a-time `IndexByte`/`Count`/`Index` | `bytesops` | 6.76 | 5.38 | 2.12 |
+| Interface calls share the data word with read-only value receivers | `ifacemega` | 3.30 | 2.31 | 0.33 |
+
+Geomean graalgo/gc over the suite: 2.27 → 1.85 (round 1), 1.96 → 1.58
+(round 2; the two rounds' "before" columns differ by host load).
+The receiver change has its own A/B (interface benchmarks only, load 11).
+
+**Strip-mining.** A counted loop — `for …; i < X; i++` over a signed integer
+the body never assigns, X built from constants, unassigned locals and `len`
+of unassigned slice/string/array locals; range over a slice, array or signed
+int — runs in compiled code as strips of at most 1024 iterations (at most
+2^15 node executions) of an inner loop tested only at its head, then polls
+once ([Ctl.java](../../internal/backend/truffle/src/main/java/graalgo/go/nodes/Ctl.java)
+`Repeat.strip`). The inner loop has no call and no volatile load, so Graal
+hoists guards and vectorizes it: `loop` is now 5.7× faster than gc. The
+interpreter keeps the per-iteration poll (OSR counts stay exact).
+[preempt_spin.go](../../test/m1r/programs/preempt_spin.go) has counted-loop
+spinners and times out with the strip's poll removed.
+
+**Leaf entry polls.** A function whose body contains no call skips its entry
+poll; loops poll themselves and every recursion cycle passes a calling
+function's entry. The win is mostly closures and interface methods inlined
+into hot loops, where the inlined entry poll was the loop's only memory
+barrier.
+
+**Splitting.** `ifacesplit` is SPEC §2.6.1's helper case: one function
+ranges over `[]Shape` and calls `Area`, five callers pass slices of five
+types. Without splitting the helper's call site is megamorphic (0.63 ms with
+`-Dpolyglot.engine.Splitting=false`); with it `engine.TraceSplitting` shows
+one copy of `total` per caller and each inlines its one `Area` (0.06 ms, at
+gc). `sort` does not move: its helpers are reached through one call site
+each.
+
+**Negative results** (measured, not landed):
+
+- An inner strip loop tested at its *end* (`do … while`): 2–3× slower than
+  the per-iteration poll it replaced on `slicesum`/`matmul` — Graal treats
+  only head-tested loops as counted. Two Truffle `LoopNode`s nested (strip
+  loop as its own `LoopNode`): slower still. An int countdown instead of the
+  `long` index as the strip's induction variable: no change.
+- Polling when `idx & (strip-1) == 0` inside the single loop: the slow-path
+  call stays in the loop body; `slicesum` 4.0, `matmul` 1.04 ms — barely
+  better than polling every iteration.
+- Strip-mining only innermost loops: no difference.
+- `matmul` stays 1.5× gc: a poll-free build (no back-edge poll at all) runs
+  it in 0.21 ms (vectorized), the strip-mined one in 0.58 ms; the Java inner
+  loop inside the `LoopNode` body is optimized less well than a `LoopNode`
+  loop. Not understood yet (needs an IGV look at the vectorizer's decision).
+- Truffle's recursive inlining depth (`compiler.InliningRecursionDepth`,
+  default 2): 4 takes `fib` 3.27 → 2.70 ms and `bintrees` −10 %, 6 takes
+  `fib` to 2.24 (gc; gc+PGO 1.20) — but `bintrees`' `main.work` then
+  compiles in 1.2–1.4 s instead of 0.16 s with 5–7× the code size, and
+  `sort`/`fannkuch` do not move. Not adopted; a per-function policy (deeper
+  only for small self-recursive bodies) would be the way to take `fib`.
+- Megamorphic interface calls: with the receiver copy gone, what remains of
+  `ifacemega` (7× gc) is the `IndirectCallNode` with its argument array and
+  the itab load; not attacked here.
 
 ### 3.1 Direct handoff (WP-SCHED, [ADR-0016](../dev/adr/ADR-0016-direct-handoff.md))
 
@@ -120,53 +197,56 @@ misses, and the per-hop token through the drainer that keeps its books.
 
 ### 4.1 Whole suite
 
-Best rounds, ms; one rep each (load average 17–21 at the start, 13 at the
-end); "before" is master 545a5ab3 (2026-11-19), "after" this lane's head.
-`gc+PGO` profiles a whole run of the same program. Single-rep ratios move
-by up to ~25 % with host load (`ifacemega` here; its interleaved A/B in §3
-is the reliable number).
+Best rounds, ms; one rep each (`make bench-suite BENCH_ARGS="--pgo --reps 1"`,
+load average 10 at the start, 13 at the end). "before" is the previous
+table's graalgo column (77f31b62, one rep, load 13–21), "after" lane
+perf-calls' head (strip-mining, leaf entry polls, splitting, read-only
+receivers, bytealg kernels, merged with master). `gc+PGO` profiles a whole
+run of the same program. Single-rep ratios move by up to ~25 % with host
+load; §3 and §3.1 hold the interleaved A/B numbers.
+
+† `chanpingpong` re-measured on this lane merged with master's WP-SCHED handoff (§3.1; the
+rest of the table was measured before the merge; before the merge its "after" was 10.81 ms, 35.1×).
 
 | Benchmark | gc | gc+PGO | before | after | before/gc | after/gc | after/gc+PGO | time to peak (ms) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
-| `arraymat` | 0.78 | 0.78 | 1.87 | 1.34 | 2.4× | 1.7× | 1.7× | 159 |
-| `bintrees` | 38.76 | 37.32 | 19.59 | 21.58 | 0.7× | 0.6× | 0.6× | 501 |
-| `bytesops` | 2.23 | 2.09 | 10.10 | 7.61 | 5.0× | 3.4× | 3.6× | 563 |
-| `chanpingpong` | 0.31 | 0.27 | 106.61 | 1.13† | 342.8× | 3.6×† | 4.2×† | — |
-| `closures` | 0.73 | 0.73 | 7.37 | 2.31 | 10.0× | 3.1× | 3.1× | 240 |
-| `fannkuch` | 13.49 | 13.37 | 37.38 | 25.50 | 2.8× | 1.9× | 1.9× | 636 |
-| `fib` | 2.25 | 1.20 | 4.67 | 3.35 | 2.1× | 1.5× | 2.8× | 206 |
-| `floatloop` | 7.99 | 7.97 | 8.72 | 7.91 | 1.1× | 1.0× | 1.0× | 318 |
-| `ifacemega` | 0.33 | 0.33 | 4.13 | 4.54 | 12.7× | 13.9× | 13.9× | 258 |
-| `ifacemono` | 0.27 | 0.25 | 2.23 | 0.82 | 8.2× | 3.0× | 3.3× | 410 |
-| `ifacepoly` | 0.38 | 0.33 | 1.80 | 0.74 | 4.7× | 1.9× | 2.3× | 178 |
-| `loop` | 4.84 | 4.36 | 14.58 | 7.17 | 3.2× | 1.5× | 1.6× | 218 |
-| `mandelbrot` | 2.14 | 2.18 | 5.32 | 2.81 | 2.5× | 1.3× | 1.3× | 179 |
-| `mapint` | 7.59 | 7.03 | 3.63 | 3.51 | 0.5× | 0.5× | 0.5× | 376 |
-| `mapstr` | 0.88 | 0.87 | 1.39 | 1.28 | 1.6× | 1.5× | 1.5× | 212 |
-| `matmul` | 0.39 | 0.39 | 2.42 | 1.45 | 6.3× | 3.7× | 3.7× | 287 |
-| `mutex` | 0.60 | 0.61 | 0.98 | 0.77 | 1.6× | 1.3× | 1.3× | 327 |
-| `nbody` | 4.79 | 4.12 | 236.92 | 11.86 | 49.6× | 2.5× | 2.9× | 501 |
-| `sliceappend` | 2.05 | 2.15 | 3.79 | 2.82 | 1.6× | 1.4× | 1.3× | 393 |
-| `slicesum` | 1.53 | 1.52 | 11.58 | 6.66 | 7.6× | 4.4× | 4.4× | 179 |
-| `sort` | 7.87 | 7.80 | 20.98 | 15.70 | 2.7× | 2.0× | 2.0× | 1104 |
-| `spectralnorm` | 1.19 | 1.20 | 5.01 | 1.61 | 4.2× | 1.4× | 1.3× | 124 |
-| `strbuild` | 0.34 | 0.32 | 0.99 | 0.78 | 2.3× | 2.3× | 2.4× | 318 |
-| `strconv` | 1.14 | 1.25 | 3.45 | 2.05 | 3.0× | 1.8× | 1.6× | 927 |
-| `striter` | 1.37 | 1.22 | 9.08 | 5.41 | 6.7× | 3.9× | 4.4× | 447 |
-| `structs` | 0.24 | 0.29 | 3.95 | 1.97 | 16.4× | 8.2× | 6.9× | 290 |
-| `workerpool` | 0.49 | 0.50 | 7.10 | 0.84 | 13.1× | 1.7× | 1.7× | 297 |
+| `arraymat` | 0.77 | 0.78 | 1.34 | 0.66 | 1.7× | 0.9× | 0.8× | 274 |
+| `bintrees` | 30.85 | 27.86 | 21.58 | 16.84 | 0.7× | 0.5× | 0.6× | 392 |
+| `bytesops` | 2.21 | 1.98 | 7.61 | 5.37 | 3.5× | 2.4× | 2.7× | 362 |
+| `chanpingpong` | 0.31 | 0.27 | 8.19 | 0.94† | 26.6× | 3.0×† | 3.3×† | 622 |
+| `closures` | 0.73 | 0.73 | 2.31 | 0.90 | 3.1× | 1.2× | 1.2× | 208 |
+| `fannkuch` | 12.85 | 12.61 | 25.50 | 24.09 | 2.0× | 1.9× | 1.9× | 683 |
+| `fib` | 2.23 | 1.19 | 3.35 | 3.42 | 1.5× | 1.5× | 2.9× | 1159 |
+| `floatloop` | 7.97 | 8.06 | 7.91 | 8.01 | 1.0× | 1.0× | 1.0× | 138 |
+| `ifacemega` | 0.33 | 0.33 | 4.54 | 2.34 | 13.9× | 7.1× | 7.2× | 451 |
+| `ifacemono` | 0.27 | 0.24 | 0.82 | 0.31 | 3.0× | 1.1× | 1.3× | 163 |
+| `ifacepoly` | 0.38 | 0.33 | 0.74 | 0.30 | 1.9× | 0.8× | 0.9× | 129 |
+| `ifacesplit` | 0.05 | 0.05 | — | 0.06 | — | 1.3× | 1.3× | 126 |
+| `loop` | 4.55 | 4.35 | 7.17 | 0.88 | 1.6× | 0.2× | 0.2× | 216 |
+| `mandelbrot` | 2.11 | 2.17 | 2.81 | 2.65 | 1.3× | 1.3× | 1.2× | 143 |
+| `mapint` | 6.96 | 7.00 | 3.51 | 3.47 | 0.5× | 0.5× | 0.5× | 928 |
+| `mapstr` | 0.88 | 0.88 | 1.28 | 1.29 | 1.5× | 1.5× | 1.5× | 183 |
+| `matmul` | 0.39 | 0.50 | 1.45 | 0.59 | 3.8× | 1.5× | 1.2× | 400 |
+| `mutex` | 0.60 | 0.60 | 0.77 | 0.75 | 1.3× | 1.3× | 1.3× | 263 |
+| `nbody` | 4.77 | 3.94 | 11.86 | 10.47 | 2.5× | 2.2× | 2.7× | 1111 |
+| `sliceappend` | 1.84 | 1.83 | 2.82 | 1.93 | 1.5× | 1.0× | 1.1× | 379 |
+| `slicesum` | 1.52 | 1.52 | 6.66 | 1.91 | 4.4× | 1.3× | 1.3× | 168 |
+| `sort` | 7.78 | 7.83 | 15.70 | 14.84 | 2.0× | 1.9× | 1.9× | 1051 |
+| `spectralnorm` | 1.19 | 1.20 | 1.61 | 1.22 | 1.4× | 1.0× | 1.0× | 157 |
+| `strbuild` | 0.51 | 0.35 | 0.78 | 0.75 | 1.5× | 1.5× | 2.1× | 368 |
+| `strconv` | 1.13 | 1.07 | 2.05 | 2.12 | 1.8× | 1.9× | 2.0× | 980 |
+| `striter` | 1.33 | 1.21 | 5.41 | 5.26 | 4.1× | 3.9× | 4.4× | 421 |
+| `structs` | 0.24 | 0.29 | 1.97 | 1.69 | 8.2× | 7.0× | 5.9× | 224 |
+| `workerpool` | 0.51 | 0.50 | 0.84 | 0.72 | 1.7× | 1.4× | 1.4× | 253 |
 
-† updated 2026-11-20 from the WP-SCHED A/B (§3.1; was 8.19 ms, 26.6×); the means below predate it.
-
-Geometric mean graalgo/gc: **4.49× before, 2.26× after** (2.37× against
-gc+PGO); median 3.2× → 1.9×. Process wall time is 4–6 s for every
-benchmark (4 s of rounds plus ~0.5–1 s of JVM start, Truffle warmup and
-compilation); time to peak is 0.1–1.1 s. PGO matters to gc only on `fib`
-(2.25 → 1.20 ms: profile-guided inlining of the recursion) and a little on
-`nbody`, `loop`, `chanpingpong` — elsewhere it is within noise, so "beat
-gc+PGO" and "beat gc" are the same bar on this suite today. `--trace` on the slowest eight shows
-no failed compilation and at most 5 deoptimizations per run: the remaining
-gaps are code quality, not deopt loops.
+Geometric mean graalgo/gc: **2.26× before, 1.42× after** (1.50× against
+gc+PGO; median 1.3×; on the 27 benchmarks of the previous table 2.28× →
+1.43× in this run). graalgo is now ahead of gc+PGO on `loop` (0.2×,
+vectorized), `arraymat`, `mapint`, `bintrees` and at parity on `ifacepoly`,
+`floatloop`, `spectralnorm`, `ifacemono`, `sliceappend`; `ifacesplit` is
+within 1.3× (splitting; 13× without it). PGO matters to gc only on `fib`
+(2.23 → 1.19 ms), `nbody` and `strbuild` here. Process wall time is 1–5 s;
+time to peak 0.1–1.2 s.
 
 ## 5. Gap analysis, ranked by expected leverage
 
@@ -176,36 +256,39 @@ gaps are code quality, not deopt loops.
    to the drainer. Next: let the drainer learn handoffs lazily (batch the
    bookkeeping) and keep `workerpool`'s buffered-channel wakes on the handoff
    path (its producer rarely parks within the window). BUG-0038 is fixed.
-
-2. **Call overhead** (`fib`, `closures`, `spectralnorm`, `structs`): an
-   `Object[]` argument array, boxed scalars and a boxed result per
-   non-inlined call, plus the entry poll. Specialized fixed-arity call
-   nodes and an unboxed return slot, and eliding the entry poll of
-   functions without call sites (every call cycle still contains a polling
-   entry), are the next items.
-3. **Loop shape** (`slicesum` ~4×, `loop`, `matmul` ~4×): the poll's slow
-   call in every iteration (above), and `Slice` headers re-read through the
-   frame; strip-mined polls and hoisting of the immutable header fields.
-4. **Splitting** (`sort` 2×, every library helper taking a func or an
-   interface): `isCloningAllowed` is false today, so a helper's inline
-   caches are shared by all callers and go megamorphic in real programs.
-   The design (truffle-design §4.7) wants `cloneUninitialized` by GIR
-   re-decode; that is the key enabler of SPEC §2.6.1's devirtualization
-   cascade beyond micro-benchmarks.
-5. **Megamorphic dispatch** (`ifacemega` ~10×): the itab is now two loads,
-   but the call is an `IndirectCallNode` with an argument array; gc's is an
-   indirect call with register arguments.
-6. **Strings/bytes** (`bytesops` 5×, `striter`): `Str` windows and
-   per-byte loops over `byte[]`; the `internal/bytealg` kernels are Go
-   loops where gc has SIMD assembly — JDK-intrinsic replacements
-   (`Arrays.mismatch`, `indexOf`) are the cheap wins.
+2. **Value structs** (`structs` ~7×, `nbody` ~2×): struct values are
+   `Flat` objects with `long[]`/`Object[]` regions; copies that escape
+   analysis cannot scalar-replace (non-inlined calls, stores into slices)
+   allocate twice. Candidates: callee-side copies only when the callee
+   writes its parameter (the receiver analysis of §3.1 generalized to all
+   struct parameters), and single-region layouts for all-scalar structs.
+3. **Recursion and call overhead** (`fib` 1.5×, 2.7× gc+PGO): the
+   remaining cost is Truffle's recursion inlining depth (§3.1 negative
+   result: a global depth of 6 reaches gc at 5–7× code size) and the
+   boxed `Object[]` calling convention of non-inlined calls. Next: a
+   per-function inlining policy for small self-recursive bodies.
+4. **Strings** (`striter` ~4×, `bytesops` 2.5×, `strconv` 1.8×): range over
+   a string decodes rune by rune through a node; `for i := 0; i < len(g)`
+   over a *global* is not strip-mined (globals are not provably invariant);
+   `strings.Fields`/`Split` are Go loops over `Str` windows.
+5. **Megamorphic dispatch** (`ifacemega` 7×): `IndirectCallNode` plus an
+   argument array per call; gc's is an indirect call with register
+   arguments. A per-site cache of more than 3 entries keyed by type id
+   (8 types here) would turn it back into direct calls.
+6. **Loop vectorization parity** (`matmul` 1.5×): the strip-mined inner
+   loop is a Java loop in the `LoopNode` body and vectorizes less well than
+   a poll-free `LoopNode` loop (0.58 vs 0.21 ms); needs an IGV look.
+7. **Splitting in real programs**: on, with Truffle's default budget;
+   `ifacesplit` shows the cascade. `sort` reaches each helper through one
+   call site, so nothing splits there; an `fmt`/`io.Reader` benchmark is
+   the next falsifier (§7).
 
 ## 6. Where beating gc is plausible, and where it is not
 
 Already ahead (steady state): `mapint` (~0.5×: the JVM's allocation and
 `GoMap` beat gc's swiss table on this mix), `bintrees` (~0.7×: TLAB
 allocation and a generational GC beat gc's non-moving collector on
-allocation-heavy trees). These are real but not the SPEC §2.6 thesis.
+allocation-heavy trees), `loop` (0.2× gc+PGO: Graal vectorizes the strip-mined inner loop, gc does not vectorize) and `arraymat` (0.8×). `loop` is the first SPEC §2.6-style win (a JIT optimization gc lacks) and beats gc+PGO on its named benchmark; the others are runtime-library effects, real but not the SPEC §2.6 thesis.
 
 **Plausible** (no evidence yet — each needs its falsifying benchmark to beat
 gc+PGO): long-running servers whose hot paths go through interfaces

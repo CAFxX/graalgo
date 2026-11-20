@@ -114,7 +114,7 @@ jobs:
         # the nightly mutation.yml.
         env:
           DH_TIMEOUT: "90"
-        run: ./test/differential/run.sh
+        run: make test-diffharness
 
   full-suite:
     # The long differential suite, excluded from per-push CI by design

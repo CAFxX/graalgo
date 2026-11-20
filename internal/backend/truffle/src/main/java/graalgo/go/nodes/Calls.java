@@ -15,6 +15,7 @@ import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.NodeUtil;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.profiles.BranchProfile;
 import graalgo.go.nodes.N.Expr;
@@ -56,12 +57,19 @@ import java.util.function.Supplier;
 public final class Calls {
     private Calls() {}
 
-    /** A Go function body. */
+    /**
+     * A Go function body. Its entry polls the scheduler safepoint (GG-SCHED-0001) only when the
+     * body contains a call: loops poll at their back-edges or strip ends, so a function without
+     * calls runs a bounded stretch of code before its first poll, and every recursion cycle
+     * passes through the entry of a function that does call (gc's analogue: a leaf function
+     * has no stack-bound check in its prologue).
+     */
     public static class FuncRoot extends RootNode {
         private final String name;
         @Children private final Stmt[] prologue;
         @Child private Stmt body;
         @Child private Expr result;
+        private final boolean poll;
 
         public FuncRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
                 Expr result) {
@@ -70,11 +78,88 @@ public final class Calls {
             this.prologue = prologue;
             this.body = body;
             this.result = result;
+            this.poll = calls(body) || calls(result) || callsAny(prologue);
+        }
+
+        /**
+         * Whether {@code n}'s subtree can call Go code: a call, deferred or {@code go} call, or
+         * range-over-func loop. Intrinsics are calls of their own roots, so they count.
+         */
+        static boolean calls(Node n) {
+            if (n == null) {
+                return false;
+            }
+            if (n instanceof Call || n instanceof CallClosure || n instanceof IfaceCall || n instanceof Prepared
+                    || n instanceof graalgo.go.nodes.RangeFunc || n instanceof Dispatch || n instanceof IfaceDispatch
+                    || n instanceof DirectCallNode || n instanceof IndirectCallNode) {
+                return true;
+            }
+            return !NodeUtil.forEachChild(n, c -> !calls(c));
+        }
+
+        private static boolean callsAny(Node[] ns) {
+            for (Node n : ns) {
+                if (calls(n)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private boolean readOnlyReceiver;
+
+        /** Set by the factory: the body never writes or escapes its struct/array value receiver. */
+        public final void setReadOnlyReceiver(boolean v) {
+            this.readOnlyReceiver = v;
+        }
+
+        /**
+         * Whether a call through an interface may pass the interface's data word itself as this
+         * method's value receiver: Go never mutates an interface's data, and the body does not.
+         */
+        public static boolean sharesReceiver(Method m) {
+            return m.mode == Method.COPY && m.target().getRootNode() instanceof FuncRoot f && f.readOnlyReceiver;
+        }
+
+        /** Builds this function's tree afresh; set by the factory (null: no splitting). */
+        private Supplier<FuncRoot> rebuild;
+
+        public final void setRebuild(Supplier<FuncRoot> rebuild) {
+            this.rebuild = rebuild;
+        }
+
+        /**
+         * Splitting (SPEC §2.6.1, truffle-design §4.7): a call site of a function whose inline
+         * caches went polymorphic can get a copy of its own, with caches specialized to that
+         * site's types — the devirtualization cascade from user code into library helpers.
+         */
+        @Override
+        public final boolean isCloningAllowed() {
+            return rebuild != null;
+        }
+
+        @Override
+        protected final boolean isCloneUninitializedSupported() {
+            return rebuild != null;
+        }
+
+        /** A copy with fresh inline caches: the body decoded again from GIR (no AST cloning). */
+        @Override
+        protected final RootNode cloneUninitialized() {
+            FuncRoot r = rebuild.get();
+            return r;
+        }
+
+        /** Whether the entry polls (tests: a function without calls does not). */
+        public final boolean pollsAtEntry() {
+            return poll;
         }
 
         @Override
         public Object execute(VirtualFrame frame) {
-            Safepoint.poll(this);
+            if (poll) {
+                Safepoint.poll(this);
+            }
             enter(frame);
             runBody(frame);
             return result(frame);
@@ -344,6 +429,13 @@ public final class Calls {
 
     // ---------------------------------------------------------------- calls
 
+    /**
+     * Stress mode of the splitting machinery: every static call site splits its callee at once,
+     * so every function a program calls runs as a copy built by {@code cloneUninitialized} (the
+     * m1 corpora under {@code -Dgraalgo.go.forceSplit=true} must still match gc).
+     */
+    static final boolean FORCE_SPLIT = Boolean.getBoolean("graalgo.go.forceSplit");
+
     /** A call of a statically known function or method: a direct call, target built lazily. */
     public static final class Call extends Ref {
         private final Supplier<RootCallTarget> target;
@@ -372,6 +464,9 @@ public final class Calls {
             if (call == null) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 call = insert(DirectCallNode.create(target.get()));
+                if (FORCE_SPLIT) {
+                    call.cloneCallTarget();
+                }
             }
             if (forward) {
                 passRecover(this, frame, a);
@@ -456,7 +551,9 @@ public final class Calls {
                 @Cached("method(cachedType)") Method method,
                 @Cached("copyShape(method)") int shape,
                 @Cached("create(method.target())") DirectCallNode call) {
-            if (shape >= 0) {
+            if (shape == SHARE) {
+                args[1] = recv.data;
+            } else if (shape >= 0) {
                 // A value receiver: the callee's private copy, with the counts constant so an
                 // inlined callee's copy can be scalar-replaced (Flat.copyFixed).
                 args[1] = ((Flat) recv.data).copyFixed(shape & 0x3FF, (shape >>> 10) & 0x3FF, shape >>> 20);
@@ -468,11 +565,17 @@ public final class Calls {
 
         /**
          * For a {@link Method#COPY} entry whose region counts fit 10 bits each, the counts packed
-         * as {@code nPrim | nRef << 10 | nByte << 20}; -1 otherwise.
+         * as {@code nPrim | nRef << 10 | nByte << 20}; {@link #SHARE} when the callee only reads
+         * its receiver ({@link FuncRoot#sharesReceiver}); -1 otherwise.
          */
+        static final int SHARE = -2;
+
         static int copyShape(Method m) {
             if (m.mode != Method.COPY) {
                 return -1;
+            }
+            if (FuncRoot.sharesReceiver(m)) {
+                return SHARE;
             }
             GoType t = m.owner;
             int np = t.nPrim();
@@ -484,7 +587,7 @@ public final class Calls {
         @Specialization(replaces = "cached")
         Object megamorphic(Iface recv, Object[] args, @Cached IndirectCallNode call) {
             Method m = method(recv.type);
-            args[1] = Receivers.adapt(m, recv.data, this);
+            args[1] = FuncRoot.sharesReceiver(m) ? recv.data : Receivers.adapt(m, recv.data, this);
             return call.call(m.target(), args);
         }
 

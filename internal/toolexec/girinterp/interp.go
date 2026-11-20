@@ -43,6 +43,7 @@ type Interp struct {
 	nanKeys       int
 	ptrIDs        map[*Value]int
 	chanIDs       map[*Chan]int
+	arrayPtrs     map[arrayPtrKey]*Value // slice-to-array-pointer conversions (arrayPtr)
 	closures      map[closureKey]*Closure
 	rtErrType     *RType
 	plainErr      *RType
@@ -94,6 +95,7 @@ func New(files []*ir.File, stdout, stderr io.Writer) (*Interp, error) {
 		pkgs: map[string]*Pkg{}, types: map[string]*RType{}, typedefs: map[string]*typeDef{},
 		structMethods: map[string]*typeDef{}, stdout: stdout, stderr: stderr, MaxSteps: 200_000_000,
 		ptrIDs: map[*Value]int{}, chanIDs: map[*Chan]int{}, closures: map[closureKey]*Closure{},
+		arrayPtrs: map[arrayPtrKey]*Value{},
 	}
 	for _, f := range files {
 		if err := f.Validate(); err != nil {
