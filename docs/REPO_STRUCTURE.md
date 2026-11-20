@@ -208,6 +208,10 @@ directory's README repeats its status.
       [graalgo-bundle-run](../internal/backend/graalgo-bundle-run)
       (`graalgo.launcher.BundleMain`). Design notes:
       [truffle-design.md §15](arch/truffle-design.md).
+      [src/test/java/graalgo/conventions/](../internal/backend/truffle/src/test/java/graalgo/conventions/)
+      is the class-file checker of the Truffle coding conventions
+      (`NodeConventionsTest`, its planted-violation `fixtures/` and the
+      shrink-only `allowlist.txt`; [truffle-design.md §16](arch/truffle-design.md)).
     - [gir/](../internal/backend/gir/) — the Java GIR decoder/encoder
       (JDK-only, own [Makefile](../internal/backend/gir/Makefile));
       `Gir.java`/`GirCodec.java` are generated from
