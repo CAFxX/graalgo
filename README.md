@@ -31,6 +31,9 @@ plan is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md).
 
 ## Repository layout
 
+**Start at [docs/MAP.md](docs/MAP.md)** — where to look for each common
+task, the data flow of the new path, and which directories are legacy v1.
+
 The repo is organized by **function**, not by research phase. The full map —
 directory tree with one-line descriptions, the old→new mapping table, layout
 principles, and what is intentionally not in the repo — is
@@ -48,7 +51,8 @@ The short version:
   nodes + runtime, [gir/](internal/backend/gir/) — Java GIR codec,
   [interop/](internal/backend/interop/)), [driver/](internal/driver/) (v1
   build orchestration), [vet/](internal/vet/) (v1 `graalgo vet` analyzers).
-- [stdlib/](stdlib/) — `patches/` (minimal diffs vs upstream Go).
+- [stdlib/](stdlib/) — the new path's std fork: `fork/` (replaced
+  packages: the facade `runtime`) and `patches/` (minimal diffs vs upstream Go).
 - [test/](test/) — `corpus/`, `differential/` (run vs `gc`, byte-compare),
   `e2e/` (real published modules), `snapshots/` (gc behavior baselines),
   `regression/`, `jit/`, `java/`.

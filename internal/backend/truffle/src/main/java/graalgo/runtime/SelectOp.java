@@ -76,11 +76,32 @@ public final class SelectOp {
         }
 
         /**
-         * Tries to claim this select operation for the waking channel.
-         * Exactly one waker across all channels wins.
+         * Tries to claim this select operation for the waking channel
+         * (caller holds this waiter's channel monitor). Exactly one waker
+         * across all channels wins. The outcome comes from the claim value
+         * the failed CAS actually raced with, never from an earlier peek
+         * (BUG-0038): UNCLAIMED → retry the CAS; SELF_CLAIM →
+         * {@link GoChan#CLAIM_BUSY} (the selector is mid-sweep on another
+         * channel and holds no wake-up: keep the waiter); a waiter →
+         * {@link GoChan#CLAIM_LOST} (terminal: that waker's unpark is in
+         * flight).
          */
-        boolean claim() {
-            return op.claim.compareAndSet(UNCLAIMED, this);
+        @Override
+        int tryClaim() {
+            for (;;) {
+                Object c = op.claim.get();
+                if (c == UNCLAIMED) {
+                    Runnable hook = claimRaceHookForTest;
+                    if (hook != null) {
+                        hook.run();
+                    }
+                    if (op.claim.compareAndSet(UNCLAIMED, this)) {
+                        return GoChan.CLAIM_WON;
+                    }
+                    continue; // raced with a claim: classify what won
+                }
+                return c == SELF_CLAIM ? GoChan.CLAIM_BUSY : GoChan.CLAIM_LOST;
+            }
         }
 
         /** Non-mutating check: has another channel already claimed us? */
@@ -89,31 +110,26 @@ public final class SelectOp {
         }
 
         /**
-         * Non-mutating check: is the claim held transiently by the
-         * selecting goroutine itself (block-phase sweep)? No wakeup is
-         * in flight for such a waiter: wakers must preserve it, never
-         * drop it — dropping it strands the selector, whose sweep never
-         * revisits this channel and which then parks with no future
-         * event to wake it (CI run 41943236460 lost wakeup).
-         */
-        boolean isSelfClaimed() {
-            return op.claim.get() == SELF_CLAIM;
-        }
-
-        /**
          * Non-mutating check: has a waker on another channel won the
          * claim? Only then is a wakeup in flight and the waiter safe
-         * for a waker to drop.
+         * for a waker to drop. (A waker claim is terminal, so this peek
+         * cannot go stale; there is deliberately no "is it self-claimed?"
+         * peek — a self-claim is transient and is only ever classified by
+         * {@link #tryClaim}'s CAS, BUG-0038.)
          */
         boolean isClaimedByWaker() {
             return op.claim.get() instanceof SelectCaseWaiter;
         }
-
-        @Override
-        boolean accept() {
-            return claim();
-        }
     }
+
+    /**
+     * Test-only (SelectSelfClaimTest): runs inside a waker's
+     * {@link SelectCaseWaiter#tryClaim} between reading UNCLAIMED and the
+     * claiming CAS — the window in which the selector may self-claim on
+     * another channel. Set and cleared by the test on the waker's own thread;
+     * null in production (one plain static load on the waiter-handoff path).
+     */
+    static Runnable claimRaceHookForTest;
 
     /** Called by the winning waker under the channel monitor, pre-unpark. */
     void setResult(int caseIndex, Object value, boolean ok) {

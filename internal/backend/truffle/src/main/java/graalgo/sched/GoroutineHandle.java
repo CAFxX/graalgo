@@ -53,6 +53,30 @@ public final class GoroutineHandle {
     final AtomicLong acked = new AtomicLong(-1);
 
     /**
+     * Direct handoff (WP-SCHED, gc's runnext): set by a waker that hands
+     * this goroutine its in-flight slot as it parks itself
+     * ({@code SchedulerCore.parkCurrent}); consumed by this goroutine's
+     * pending {@code parkCurrent}, which it admits in place of the drainer's
+     * ack. Set BEFORE the waker's {@code LockSupport.unpark} (GG-WAKE-0001's
+     * ack-before-unpark).
+     */
+    final java.util.concurrent.atomic.AtomicBoolean handoff =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
+     * The goroutine this one woke and has not yet released (gc's runnext):
+     * its wake is deferred so that, if this goroutine parks next, it hands
+     * its slot to that goroutine directly instead of two drainer round
+     * trips. Owner thread only. Flushed as an ordinary UNPARK on every other
+     * scheduler interaction (quantum park, I/O enter, exit, a second wake)
+     * and by the first full poll after {@code SchedulerCore#HANDOFF_WINDOW_NANOS}.
+     */
+    GoroutineHandle runnext;
+
+    /** nanoTime when {@link #runnext} was set (owner thread only). */
+    long runnextSinceNanos;
+
+    /**
      * JFR park tracking (P2-M6, WS F): reason + start nanos for the
      * current park, set by {@code JfrEvents.notePark} before the park
      * becomes visible, consumed by {@code JfrEvents.parkResumed} on

@@ -177,6 +177,18 @@ strong baseline (mid-stack inlining since 1.12, PGO inlining + devirtualization,
 good EA, excellent BCE) `[HIST]`. **Every claimed win must beat gc *with* PGO on
 its named falsifying benchmark, or the claim is struck from the docs** `[DECIDED]`.
 
+Exploratory candidate — hardware transactional lock elision `[PROPOSAL]`
+(owner request 2026-11-20; PHASES §7, WP-TMELIDE): adaptively run contended
+`sync.Mutex`/`RWMutex` critical sections as HTM transactions on hardware that
+ships usable HTM (today only Intel RTM on TAA-unaffected Xeons `[VERIFIED]`),
+with upstream's lock as the fallback. No supported JVM path emits the
+instructions (HotSpot's RTM locking was removed in JDK 24; Graal never had it
+`[VERIFIED]`), and uncontended locks get slower, so it is never "everywhere".
+Same rule as every item here: it must beat plain-lock gc+PGO on a named
+benchmark (mutex-protected map, read-mostly `RWMutex` cache) on TM-capable
+hardware, or it is struck. Evidence and experimental design:
+[htm-lock-elision.md](../../research/phase5-opt-survey/htm-lock-elision.md).
+
 #### 2.6.1 Primary optimization thesis: the devirtualization cascade
 
 Carlo's thesis, adopted `[DECIDED]` as the program's primary optimization bet
@@ -459,6 +471,20 @@ non-terminating: `InterruptedException` is swallowed and the loop continues
 carrier count and the FJP never floods; observed drainer utilization 1.91% at
 10,000 goroutines `[VERIFIED]` (archived `logs/quiescence_10k.log`: `drainerUtilPct=1.91`), so the drainer is not the
 bottleneck.
+
+**Direct handoff (gc's runnext)** `[DECIDED]` (amended 2026-11-20,
+[ADR-0016](../dev/adr/ADR-0016-direct-handoff.md)). A goroutine's wake of
+another is deferred as its `runnext`; if the waker parks within a short
+window it hands the woken goroutine its in-flight slot and its quantum
+deadline: one HANDOFF token books both at the drainer (slot count
+unchanged), then the waker sets the target's handoff flag and unparks it
+itself (token before flag, flag before unpark — GG-WAKE-0001). Otherwise
+the wake reaches the drainer as an UNPARK at the waker's next scheduler
+interaction or full poll after the window. The drainer's in-flight count
+never falls below the goroutines running on slots, so the cap assert still
+bounds parallelism; lane order governs drainer admissions, and a handoff
+runs ahead of them only within the inherited quantum. After a handoff park
+the waiter spins ≤ 5 µs for the answer, only while slots are idle.
 
 **In-flight cap = GOMAXPROCS**, enforced as a hard assert in the drainer
 `[DECIDED]`. Spike 2b's `maxTrueParallel` never exceeded the cap (caps 1 and 2,

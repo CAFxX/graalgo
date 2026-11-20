@@ -67,26 +67,47 @@ import java.util.Set;
  * re-park. Real vthread/carrier scheduling, GC, and JIT are out of scope.
  * The channel/select/timer logic that DECIDES when to unpark is out of
  * scope: pairing is given by the scripts. {@code armed} is write-only
- * dead state (the spike-2b external-waker protocol was never implemented;
- * every wakeup routes through the drainer).
+ * dead state (the spike-2b external-waker protocol was never implemented).
+ * Every wakeup is booked by the drainer; a direct handoff (WP-SCHED,
+ * {@code Op.HANDOFF}) additionally admits its target through the target's
+ * {@code handoff} flag, modeled as "a parkCurrent wait also ends by
+ * consuming the flag". After every action the explorer also checks that
+ * the drainer never counts fewer goroutines in flight than run on slots
+ * (the cap assert's premise); the handoff scripts and the seeded
+ * flag-before-token bug exercise both checks.
  */
 public final class WakeupModelTest {
 
     // ================= script language =================
 
-    enum Op { INIT, PARK, RESUME, IOENTER, IOEXIT, UNPARK, EXIT }
+    /**
+     * {@code HANDOFF(t)} is SchedulerCore.parkCurrent with a deferred wake of
+     * goroutine t (WP-SCHED direct handoff): arm, offer the HANDOFF token,
+     * then set t's handoff flag — one atomic model action (the drainer never
+     * reads the flag, so splitting it only delays t). Enabled only while t
+     * can be a waker's target: parked or about to park (a real waker only
+     * reaches a goroutine through the waiter it enqueued before parking).
+     */
+    enum Op { INIT, PARK, RESUME, IOENTER, IOEXIT, UNPARK, EXIT, HANDOFF }
 
-    /** One scripted action; {@code target} is the goroutine index for UNPARK. */
+    /** One scripted action; {@code target} is the goroutine index for UNPARK/HANDOFF. */
     static final class Step {
         final Op op;
         final int target;
         Step(Op op, int target) { this.op = op; this.target = target; }
         static Step s(Op op) { return new Step(op, -1); }
         static Step u(int target) { return new Step(Op.UNPARK, target); }
+        static Step h(int target) { return new Step(Op.HANDOFF, target); }
         @Override public String toString() {
-            return op + (op == Op.UNPARK ? "(g" + target + ")" : "");
+            return op + (op == Op.UNPARK || op == Op.HANDOFF ? "(g" + target + ")" : "");
         }
     }
+
+    /**
+     * Seeded-bug switch for {@link #testModelDetectsFlagBeforeToken}: the
+     * waker sets the target's handoff flag BEFORE offering its HANDOFF token.
+     */
+    static boolean seedFlagBeforeToken;
 
     enum Expect { DONE, WAIT, RUNNING }
 
@@ -115,10 +136,17 @@ public final class WakeupModelTest {
         final ResumeToken.Kind kind;
         final int g;
         final long gen;
+        /** HANDOFF: the goroutine receiving the slot; else -1. */
+        final int target;
         Tok(ResumeToken.Kind kind, int g, long gen) {
-            this.kind = kind; this.g = g; this.gen = gen;
+            this(kind, g, gen, -1);
         }
-        @Override public String toString() { return kind + "(g" + g + "," + gen + ")"; }
+        Tok(ResumeToken.Kind kind, int g, long gen, int target) {
+            this.kind = kind; this.g = g; this.gen = gen; this.target = target;
+        }
+        @Override public String toString() {
+            return kind + "(g" + g + "," + gen + (target < 0 ? "" : "->g" + target) + ")";
+        }
     }
 
     static final int RUNNING = 0, WAIT = 1, DONE = 2;
@@ -132,6 +160,12 @@ public final class WakeupModelTest {
         final int[] pc;
         final int[] st;
         final long[] waitGen;
+        /** The current wait is a parkCurrent (PARK/HANDOFF): a handoff flag may end it. */
+        final boolean[] parkWait;
+        /** Between IOENTER and IOEXIT: running without a slot. */
+        final boolean[] inIo;
+        /** Seeded bug only: the HANDOFF's flag is out, its token not yet. */
+        final boolean[] flagSet;
         int driverPc;
 
         Exec(Script sc) {
@@ -156,6 +190,9 @@ public final class WakeupModelTest {
             pc = new int[n];
             st = new int[n]; // all RUNNING; first step (INIT) moves to WAIT
             waitGen = new long[n];
+            parkWait = new boolean[n];
+            inIo = new boolean[n];
+            flagSet = new boolean[n];
         }
     }
 
@@ -164,27 +201,73 @@ public final class WakeupModelTest {
         int n = e.handles.size();
         if (code == n + 1) {
             Tok t = e.inbox.pollFirst();
-            e.sched.drainer().processOneForTest(
-                    new ResumeToken(t.kind, e.handles.get(t.g), t.gen));
+            e.sched.drainer().processOneForTest(t.kind == ResumeToken.Kind.HANDOFF
+                    ? ResumeToken.handoff(e.handles.get(t.g), t.gen, e.handles.get(t.target))
+                    : new ResumeToken(t.kind, e.handles.get(t.g), t.gen));
         } else if (code == n) {
             Step s = e.driver.get(e.driverPc++);
             offer(e, -1, s);
         } else {
-            Step s = e.fullProgs.get(code).get(e.pc[code]++);
-            offer(e, code, s);
+            Step s = e.fullProgs.get(code).get(e.pc[code]);
+            if (s.op == Op.HANDOFF && seedFlagBeforeToken && !e.flagSet[code]) {
+                // Seeded bug, first half: the flag goes out on its own.
+                e.handles.get(s.target).handoff.set(true);
+                e.flagSet[code] = true;
+            } else {
+                e.pc[code]++;
+                e.flagSet[code] = false;
+                offer(e, code, s);
+            }
         }
-        // awaitAck spin, modeled: a waiter observes acked>=gen.
+        // awaitAck spin, modeled: a waiter observes acked>=gen, or — in a
+        // parkCurrent — consumes a waker's handoff flag.
         for (int i = 0; i < n; i++) {
-            if (e.st[i] == WAIT && e.handles.get(i).acked.get() >= e.waitGen[i]) {
+            if (e.st[i] != WAIT) {
+                continue;
+            }
+            GoroutineHandle h = e.handles.get(i);
+            if (h.acked.get() >= e.waitGen[i]
+                    || (e.parkWait[i] && h.handoff.compareAndSet(true, false))) {
                 e.st[i] = RUNNING;
             }
+        }
+        // Slot accounting is conservative: the drainer never counts fewer
+        // goroutines in flight than actually run on a slot (else it could
+        // admit past the cap). Not-yet-spawned and in-I/O goroutines hold
+        // no slot.
+        int running = 0;
+        for (int i = 0; i < n; i++) {
+            if (e.st[i] == RUNNING && e.pc[i] > 0 && !e.inIo[i]) {
+                running++;
+            }
+        }
+        int inflight = e.sched.drainer().inflightForTest();
+        if (running > inflight) {
+            throw new AssertionError("slot accounting: " + running
+                    + " goroutines run on slots but the drainer counts " + inflight);
         }
     }
 
     static void offer(Exec e, int actor, Step s) {
         int g = (s.op == Op.UNPARK) ? s.target : actor;
         GoroutineHandle h = e.handles.get(g);
+        if (s.op == Op.IOENTER) {
+            e.inIo[g] = true;
+        } else if (s.op == Op.IOEXIT) {
+            e.inIo[g] = false;
+        }
         switch (s.op) {
+            case HANDOFF -> {
+                GoroutineHandle target = e.handles.get(s.target);
+                long t = e.sched.armPark(h);
+                e.inbox.addLast(new Tok(ResumeToken.Kind.HANDOFF, g, t, s.target));
+                if (!seedFlagBeforeToken) {
+                    target.handoff.set(true);
+                }
+                e.waitGen[g] = t;
+                e.parkWait[g] = true;
+                e.st[g] = WAIT;
+            }
             case INIT, PARK, RESUME, IOENTER, IOEXIT -> {
                 long t = e.sched.armPark(h);
                 ResumeToken.Kind k = switch (s.op) {
@@ -197,6 +280,7 @@ public final class WakeupModelTest {
                 };
                 e.inbox.addLast(new Tok(k, g, t));
                 e.waitGen[g] = t;
+                e.parkWait[g] = s.op == Op.PARK;
                 e.st[g] = WAIT;
             }
             case UNPARK -> e.inbox.addLast(new Tok(ResumeToken.Kind.UNPARK, g, -1));
@@ -213,6 +297,10 @@ public final class WakeupModelTest {
         int n = e.handles.size();
         for (int i = 0; i < n; i++) {
             if (e.st[i] == RUNNING && e.pc[i] < e.fullProgs.get(i).size()) {
+                Step s = e.fullProgs.get(i).get(e.pc[i]);
+                if (s.op == Op.HANDOFF && !reachable(e, s.target)) {
+                    continue;
+                }
                 out.add(i);
             }
         }
@@ -225,17 +313,36 @@ public final class WakeupModelTest {
         return out;
     }
 
+    /**
+     * Can a waker reach goroutine t now (a HANDOFF's precondition)? t has
+     * enqueued its waiter: it waits in a park, or runs with a park
+     * (PARK/HANDOFF) as its next step.
+     */
+    static boolean reachable(Exec e, int t) {
+        if (e.st[t] == WAIT) {
+            return e.parkWait[t];
+        }
+        if (e.st[t] != RUNNING || e.pc[t] == 0 || e.pc[t] >= e.fullProgs.get(t).size()) {
+            return false;
+        }
+        Op next = e.fullProgs.get(t).get(e.pc[t]).op;
+        return next == Op.PARK || next == Op.HANDOFF;
+    }
+
     /** Full concrete-state signature for the visited set. */
     static String signature(Exec e) {
         StringBuilder sb = new StringBuilder();
         int n = e.handles.size();
         for (int i = 0; i < n; i++) {
             sb.append(e.pc[i]).append(',').append(e.st[i]).append(',')
-              .append(e.waitGen[i]).append(';');
+              .append(e.waitGen[i]).append(',').append(e.parkWait[i] ? 'p' : '-')
+              .append(e.inIo[i] ? 'i' : '-').append(e.flagSet[i] ? 'f' : '-')
+              .append(e.handles.get(i).handoff.get() ? 'h' : '-').append(';');
         }
         sb.append('d').append(e.driverPc).append(';');
         for (Tok t : e.inbox) {
-            sb.append(t.kind).append(':').append(t.g).append(':').append(t.gen).append(';');
+            sb.append(t.kind).append(':').append(t.g).append(':').append(t.gen)
+              .append(':').append(t.target).append(';');
         }
         for (int i = 0; i < n; i++) {
             sb.append('a').append(e.handles.get(i).acked.get())
@@ -502,6 +609,80 @@ public final class WakeupModelTest {
                         Step.s(Op.PARK), Step.s(Op.EXIT))),
                 List.of(Step.u(0)),
                 List.of(Expect.DONE)));
+    }
+
+    // ================= direct handoff (WP-SCHED) =================
+
+    /**
+     * Direct handoff: g1 parks handing its slot to g0 (parked, or about to
+     * park — both token orders), then is woken by the driver (whose UNPARK
+     * may also precede g1's HANDOFF token).
+     */
+    public void testModelHandoffBasic() {
+        explore(script("handoff-basic", 2,
+                List.of(List.of(Step.s(Op.PARK), Step.s(Op.EXIT)),
+                        List.of(Step.h(0), Step.s(Op.EXIT))),
+                List.of(Step.u(1)),
+                List.of(Expect.DONE, Expect.DONE)));
+    }
+
+    /**
+     * Ping-pong by handoff: g1 hands its slot to g0, g0 answers by handing
+     * it back, and g1 finally wakes g0's second park. The target of a
+     * handoff may itself park by handoff (its park token is then a HANDOFF,
+     * not a PARKED). (Every wake comes from a goroutine that is causally
+     * after the park it targets: a driver UNPARK could reach an earlier park
+     * and make two wakers for one park, which no channel does.)
+     */
+    public void testModelHandoffPingPong() {
+        explore(script("handoff-pingpong", 2,
+                List.of(List.of(Step.s(Op.PARK), Step.h(1), Step.s(Op.EXIT)),
+                        List.of(Step.h(0), Step.u(0), Step.s(Op.EXIT))),
+                List.of(),
+                List.of(Expect.DONE, Expect.DONE)));
+    }
+
+    /**
+     * A handoff chain: g2 hands to g1, g1 hands to g0; g0 then wakes g1 and
+     * g2 and parks again, woken by g2. The target's second park must never
+     * be taken for the handed-off one.
+     */
+    public void testModelHandoffChainRepark() {
+        explore(script("handoff-chain-repark", 2,
+                List.of(List.of(Step.s(Op.PARK), Step.u(1), Step.u(2), Step.s(Op.PARK),
+                                Step.s(Op.EXIT)),
+                        List.of(Step.s(Op.PARK), Step.h(0), Step.s(Op.EXIT)),
+                        List.of(Step.h(1), Step.u(0), Step.s(Op.EXIT))),
+                List.of(),
+                List.of(Expect.DONE, Expect.DONE, Expect.DONE)));
+    }
+
+    /**
+     * Seeded bug (red-green guard for the handoff protocol): a waker that
+     * sets the target's handoff flag before offering its HANDOFF token lets
+     * the target run and park again first; the drainer then books the
+     * stale HANDOFF against the NEW park, whose real wake-up is lost (or
+     * the slot accounting runs behind). The explorer must find it.
+     */
+    public void testModelDetectsFlagBeforeToken() {
+        Script sc = script("handoff-flag-before-token", 2,
+                List.of(List.of(Step.s(Op.PARK), Step.u(1), Step.s(Op.PARK), Step.s(Op.EXIT)),
+                        List.of(Step.h(0), Step.u(0), Step.s(Op.EXIT))),
+                List.of(),
+                List.of(Expect.DONE, Expect.DONE));
+        explore(sc); // correct protocol: no counterexample
+        boolean failed = false;
+        seedFlagBeforeToken = true;
+        try {
+            explore(sc);
+        } catch (AssertionError ae) {
+            failed = ae.getMessage().contains("LOST WAKEUP")
+                    || ae.getMessage().contains("slot accounting")
+                    || ae.getMessage().contains("drainer invariant");
+        } finally {
+            seedFlagBeforeToken = false;
+        }
+        assertTrue(failed, "explorer must find the flag-before-token handoff bug");
     }
 
     // ================= M6 watch-item: directed re-test =================

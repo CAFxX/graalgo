@@ -224,4 +224,140 @@ public final class WakeupRaceStressTest {
         assertEquals((long) receivers * perReceiver, received.get(),
                 "receiver-herd total receives");
     }
+
+    /**
+     * Direct handoff starvation freedom (WP-SCHED, GG-SCHED-0001): at
+     * GOMAXPROCS 1 a channel ping-pong pair passes the only slot back and
+     * forth by direct handoff, never through the drainer's lanes. The pair
+     * must still yield the slot at the quantum (a handoff inherits the
+     * slot's quantum deadline), so a CPU-bound spinner queued in the run
+     * lane gets its share: here at least a fifth of the wall time (about
+     * half is expected). A handoff that granted a fresh quantum would let
+     * the pair hold the slot forever and the spinner would get none.
+     */
+    public void testHandoffPairDoesNotStarveSpinner() throws Exception {
+        final long runNanos = 600_000_000L;
+        final long quantum = 2_000_000L;
+        final AtomicLong spinnerRunNanos = new AtomicLong();
+        final AtomicLong rounds = new AtomicLong();
+        final java.util.concurrent.atomic.AtomicBoolean stop =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        final long[] window = new long[2];
+        withScheduler(1, quantum, () -> {
+            GoChan ping = new GoChan(0, 0L);
+            GoChan pong = new GoChan(0, 0L);
+            sched.spawn(() -> {
+                for (;;) {
+                    GoChan.RecvResult r = ping.recv();
+                    if (!r.ok()) {
+                        return;
+                    }
+                    pong.send(r.value());
+                    graalgo.safepoint.Safepoint.poll();
+                }
+            });
+            sched.spawn(() -> {
+                window[0] = System.nanoTime();
+                while (!stop.get()) {
+                    ping.send(1L);
+                    pong.recv();
+                    rounds.incrementAndGet();
+                    graalgo.safepoint.Safepoint.poll();
+                }
+                ping.close();
+            });
+            sched.spawn(() -> {
+                long last = System.nanoTime();
+                long ran = 0;
+                long start = last;
+                while (last - start < runNanos) {
+                    graalgo.safepoint.Safepoint.poll();
+                    long now = System.nanoTime();
+                    if (now - last < 50_000L) {
+                        ran += now - last; // still mounted: count it as run time
+                    }
+                    last = now;
+                }
+                spinnerRunNanos.set(ran);
+                window[1] = System.nanoTime();
+                stop.set(true);
+            });
+        });
+        long wall = window[1] - window[0];
+        double share = (double) spinnerRunNanos.get() / wall;
+        System.out.printf("  [handoff-fairness] spinner share %.2f of %d ms, pair rounds %d%n",
+                share, wall / 1_000_000, rounds.get());
+        if (share < 0.2) {
+            throw new AssertionError("ping-pong pair starved the spinner: share " + share);
+        }
+        if (rounds.get() == 0) {
+            throw new AssertionError("spinner starved the ping-pong pair");
+        }
+    }
+
+    /**
+     * BUG-0038 (torture leg F6): a {@code select} receiving on {@code ping}
+     * and {@code quit} races a plain {@code ping} send on every round. While
+     * the selector sweeps {@code quit} it holds its transient self-claim; a
+     * sender claiming the selector's {@code ping} waiter in that window must
+     * keep the waiter (and retry), never drop it as "claimed by a waker" —
+     * that strands both goroutines parked with no wake-up in flight. Half the
+     * pairs end with a send on {@code quit}, half with a close (the close path
+     * classifies select waiters the same way). On the pre-fix code a single
+     * repetition (32 pairs x 300 rounds) hung in 2 of 3 runs; four fresh
+     * schedulers make a miss unlikely (the quiescence timeout reports it).
+     * The deterministic form of the race is SelectSelfClaimTest's
+     * {@code *SelfClaimedInClaimWindow} tests.
+     */
+    public void testSelectRecvRacesSend() throws Exception {
+        for (int rep = 0; rep < 4; rep++) {
+            selectRecvRacesSendOnce();
+        }
+    }
+
+    private void selectRecvRacesSendOnce() throws Exception {
+        final int pairs = 32, rounds = 300;
+        final AtomicLong ponged = new AtomicLong();
+        final AtomicLong bad = new AtomicLong();
+        withScheduler(4, SchedulerCore.DEFAULT_QUANTUM_NANOS, () -> {
+            for (int i = 0; i < pairs; i++) {
+                final boolean closeQuit = (i & 1) == 1;
+                GoChan ping = new GoChan(0, 0L);
+                GoChan pong = new GoChan(0, 0L);
+                GoChan quit = new GoChan(0, 0L);
+                sched.spawn(() -> {
+                    for (;;) {
+                        int idx = graalgo.runtime.ChanOps.selectGo(
+                                new graalgo.runtime.ChanOps.SelectCase[]{
+                                    new graalgo.runtime.ChanOps.SelectCase(ping, false, null),
+                                    new graalgo.runtime.ChanOps.SelectCase(quit, false, null),
+                                });
+                        if (idx == 1) {
+                            if (graalgo.runtime.ChanOps.selectRecvOk() == closeQuit) {
+                                bad.incrementAndGet(); // ok must be !closed
+                            }
+                            return;
+                        }
+                        pong.send((Long) graalgo.runtime.ChanOps.selectRecvValue() + 1);
+                    }
+                });
+                sched.spawn(() -> {
+                    for (long k = 0; k < rounds; k++) {
+                        ping.send(k);
+                        if ((Long) pong.recv().value() != k + 1) {
+                            bad.incrementAndGet();
+                        }
+                        ponged.incrementAndGet();
+                    }
+                    if (closeQuit) {
+                        quit.close();
+                    } else {
+                        quit.send(0L);
+                    }
+                });
+            }
+        });
+        assertEquals((long) pairs * rounds, ponged.get(), "select/send ping-pong rounds");
+        assertEquals(0, bad.get(), "select/send ping-pong wrong values or ok bits");
+    }
 }

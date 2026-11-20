@@ -1,5 +1,9 @@
 # `internal/vet` — static analyzers for `graalgo vet`
 
+> **Status: v1, deleted at M3.** On the new path `go vet` runs the stock
+> analyzers through the `-toolexec` wrapper
+> ([toolexec-design.md](../../docs/arch/toolexec-design.md) §2.5, §9.1).
+
 This package implements `go vet`-style static analyzers that run as part of
 `graalgo vet`. Each analyzer inspects the parsed AST and type information
 (via `go/parser` and `go/types`) and reports diagnostics.

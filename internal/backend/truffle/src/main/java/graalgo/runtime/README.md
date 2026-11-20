@@ -1,5 +1,13 @@
 # graalgo.runtime
 
+> **Status: shared runtime, README v1-era.** The package is the runtime
+> library both pipelines execute (panics, channels, timers, scheduler-backed
+> surfaces); `Intrinsics` and the v1 adapters are deleted at M3. The scope
+> notes below date from Phase 1. The new path's runtime entry points are in
+> [graalgo/go/runtime/](../go/runtime/) and
+> [graalgo/go/intrinsics/](../go/intrinsics/); package split:
+> [the module README](../../../../../README.md).
+
 Runtime entry points callable from generated Truffle ASTs
 ([Runtime.java](Runtime.java)).
 
