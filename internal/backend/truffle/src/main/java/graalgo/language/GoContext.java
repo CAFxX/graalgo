@@ -221,6 +221,11 @@ public final class GoContext {
     /** The bundle run of this context (package variables, scheduler adapter), or null. */
     private graalgo.go.runtime.GoProcess process;
 
+    /** The program's argv ({@code os.Args}): {@code argv[0]} as invoked, then its arguments. */
+    public String[] applicationArguments() {
+        return env.getApplicationArguments();
+    }
+
     /** The running bundle's context-level state; only valid while a bundle runs. */
     public graalgo.go.runtime.GoProcess process() {
         return process;

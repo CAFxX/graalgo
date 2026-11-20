@@ -208,7 +208,7 @@ func TestRepositoryFork(t *testing.T) {
 	for _, r := range f.Replaced {
 		replaced = append(replaced, r.ImportPath)
 	}
-	if got := strings.Join(replaced, " "); got != "runtime runtime/race" {
+	if got := strings.Join(replaced, " "); got != "internal/runtime/maps runtime runtime/race" {
 		t.Errorf("replaced packages = %q; update this test and the fork-size record in docs/arch/toolexec-design.md §13 together", got)
 	}
 	audit, err := f.Audit()

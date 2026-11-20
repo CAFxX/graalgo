@@ -263,3 +263,93 @@ intrinsic time.Sleep                        TimeIntrinsics func(time.Duration)
 intrinsic time.newTimer                     TimeIntrinsics func(int64, int64, func(interface {}, uintptr, int64), interface {}, unsafe.Pointer) *time.Timer
 intrinsic time.stopTimer                    TimeIntrinsics func(*time.Timer) bool
 intrinsic time.resetTimer                   TimeIntrinsics func(*time.Timer, int64, int64) bool
+
+# ============================================================================
+# fmt-path lane (wt/fmt/path): os, internal/poll, reflect and what fmt
+# reaches (toolexec M1c/M1d; W8b, W9b). One delimited block, so that
+# concurrent lanes' sections merge cleanly.
+# ============================================================================
+
+# --- runtime (facade): the system call internal/syscall/unix reaches by
+# //go:linkname (upstream runtime/os_linux.go) ---------------------------------
+intrinsic runtime.fcntl SyscallIntrinsics func(int32, int32, int32) (int32, int32)
+
+# --- syscall: the assembly entries beside Syscall6 (asm_linux_amd64.s).
+# rawVforkSyscall is the clone(2) of fork/exec, which GG-0064 replaces by the
+# posix_spawn helper: it fails with ENOSYS until then (docs/arch/limitations.md).
+intrinsic syscall.rawSyscallNoError SyscallIntrinsics func(uintptr, uintptr, uintptr, uintptr) (uintptr, uintptr)
+intrinsic syscall.rawVforkSyscall   SyscallIntrinsics func(uintptr, uintptr, uintptr, uintptr) (uintptr, syscall.Errno)
+
+# --- os: what the runtime provides by //go:linkname (runtime/runtime.go
+# os_runtime_args, runtime/proc.go os_beforeExit, runtime/os_linux.go
+# os_sigpipe / ignoreSIGSYS / restoreSIGSYS, runtime/rand.go) ----------------
+intrinsic os.runtime_args       OsIntrinsics func() []string
+intrinsic os.runtime_beforeExit OsIntrinsics func(int)
+intrinsic os.runtime_rand       OsIntrinsics func() uint64
+intrinsic os.sigpipe            OsIntrinsics func()
+intrinsic os.ignoreSIGSYS       OsIntrinsics func()
+intrinsic os.restoreSIGSYS      OsIntrinsics func()
+
+# --- internal/poll: the semaphores of fdMutex (runtime/sema.go) and the
+# runtime poller (runtime/netpoll.go; GG-0063): an epoll instance driven
+# through graalgo.syscall, goroutines parked through the scheduler's
+# poller-park path (GG-SCHED-0006) ---------------------------------------------
+intrinsic internal/poll.runtime_Semacquire  PollIntrinsics func(*uint32)
+intrinsic internal/poll.runtime_Semrelease  PollIntrinsics func(*uint32)
+intrinsic internal/poll.runtime_pollServerInit PollIntrinsics func()
+intrinsic internal/poll.runtime_pollOpen    PollIntrinsics func(uintptr) (uintptr, int)
+intrinsic internal/poll.runtime_pollClose   PollIntrinsics func(uintptr)
+intrinsic internal/poll.runtime_pollReset   PollIntrinsics func(uintptr, int) int
+intrinsic internal/poll.runtime_pollWait    PollIntrinsics func(uintptr, int) int
+intrinsic internal/poll.runtime_pollWaitCanceled PollIntrinsics func(uintptr, int)
+intrinsic internal/poll.runtime_pollSetDeadline  PollIntrinsics func(uintptr, int64, int)
+intrinsic internal/poll.runtime_pollUnblock PollIntrinsics func(uintptr)
+intrinsic internal/poll.runtime_isPollServerDescriptor PollIntrinsics func(uintptr) bool
+
+# --- internal/abi, internal/runtime/sys: the functions gc's compiler
+# replaces (abi/funcpc.go, sys/intrinsics.go). A "pc" is the uintptr handle
+# of the func value; the caller's pc is unknown (0), as for runtime.Caller ---
+intrinsic internal/abi.FuncPCABI0        ReflectIntrinsics func(interface {}) uintptr
+intrinsic internal/abi.FuncPCABIInternal ReflectIntrinsics func(interface {}) uintptr
+intrinsic internal/runtime/sys.GetCallerPC ReflectIntrinsics func() uintptr
+
+# --- internal/runtime/maps (facade, stdlib/fork/internal/runtime/maps): the
+# step of reflect's map iterator over the backend's map object ---------------
+intrinsic internal/runtime/maps.iterNext ReflectIntrinsics func(*internal/abi.MapType, *internal/runtime/maps.Map, unsafe.Pointer) (unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)
+
+# --- reflect (W9b): what the runtime provides by //go:linkname (upstream
+# runtime/runtime1.go, mbarrier.go, iface.go, chan.go, map.go, malloc.go,
+# type.go); reflect itself is upstream's source over descriptor images -------
+intrinsic reflect.resolveNameOff ReflectIntrinsics func(unsafe.Pointer, int32) unsafe.Pointer
+intrinsic reflect.resolveTypeOff ReflectIntrinsics func(unsafe.Pointer, int32) unsafe.Pointer
+intrinsic reflect.resolveTextOff ReflectIntrinsics func(unsafe.Pointer, int32) unsafe.Pointer
+intrinsic reflect.addReflectOff  ReflectIntrinsics func(unsafe.Pointer) int32
+intrinsic reflect.compiledTypelinks ReflectIntrinsics func() ([]*internal/abi.Type, [][]*internal/abi.Type)
+intrinsic reflect.unsafe_New     ReflectIntrinsics func(*internal/abi.Type) unsafe.Pointer
+intrinsic reflect.typedmemmove   ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer)
+intrinsic reflect.ifaceE2I       ReflectIntrinsics func(*internal/abi.Type, interface {}, unsafe.Pointer)
+intrinsic reflect.chanlen        ReflectIntrinsics func(unsafe.Pointer) int
+intrinsic reflect.maplen         ReflectIntrinsics func(unsafe.Pointer) int
+intrinsic reflect.chanclose      ReflectIntrinsics func(unsafe.Pointer)
+intrinsic reflect.verifyNotInHeapPtr ReflectIntrinsics func(uintptr) bool
+intrinsic reflect.adjustAIXGCDataForRuntime ReflectIntrinsics func(*uint8) *uint8
+# methodValueCall (asm_amd64.s) is only ever named as a func value, the code
+# pointer upstream compares a method value's code with; calling it is the
+# call path of W9b.
+intrinsic reflect.methodValueCall ReflectIntrinsics func()
+intrinsic reflect.unsafe_NewArray ReflectIntrinsics func(*internal/abi.Type, int) unsafe.Pointer
+intrinsic reflect.typedmemclr     ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer)
+intrinsic reflect.typedarrayclear ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, int)
+intrinsic reflect.typedslicecopy  ReflectIntrinsics func(*internal/abi.Type, internal/unsafeheader.Slice, internal/unsafeheader.Slice) int
+intrinsic reflect.growslice       ReflectIntrinsics func(*internal/abi.Type, internal/unsafeheader.Slice, int) internal/unsafeheader.Slice
+intrinsic reflect.unsafeslice     ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, int)
+intrinsic reflect.makemap         ReflectIntrinsics func(*internal/abi.Type, int) unsafe.Pointer
+intrinsic reflect.mapaccess       ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer) unsafe.Pointer
+intrinsic reflect.mapaccess_faststr ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, string) unsafe.Pointer
+intrinsic reflect.mapassign0      ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer, unsafe.Pointer)
+intrinsic reflect.mapassign_faststr0 ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, string, unsafe.Pointer)
+intrinsic reflect.mapdelete       ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, unsafe.Pointer)
+intrinsic reflect.mapdelete_faststr ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, string)
+intrinsic reflect.mapclear        ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer)
+intrinsic reflect.makechan        ReflectIntrinsics func(*internal/abi.Type, int) unsafe.Pointer
+intrinsic reflect.chancap         ReflectIntrinsics func(unsafe.Pointer) int

@@ -151,6 +151,16 @@ public final class Executor {
         return new Object[] {raw.r1, 0L, raw.errno};
     }
 
+    /**
+     * A system call whose three argument words are integers by the Go signature of its caller
+     * (the runtime's own {@code fcntl}); never blocks. Returns {@code {r1, errno}}.
+     */
+    @TruffleBoundary
+    public static long[] values(long nr, long a1, long a2, long a3) {
+        Raw raw = invoke(nr, new long[] {a1, a2, a3, 0, 0, 0});
+        return new long[] {raw.r1, raw.errno};
+    }
+
     /** The bytes of the C string at {@code off} with its NUL, which must lie inside the object. */
     private static byte[] cString(Node node, Entry e, int i, Flat obj, long off, long room) {
         int max = (int) Math.min(room, Integer.MAX_VALUE);

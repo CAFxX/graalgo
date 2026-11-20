@@ -617,7 +617,12 @@ func link(args []string) {
 	if err != nil {
 		var le *golink.Error
 		if errors.As(err, &le) {
-			const show = 10
+			// GRAALGO_LINK_WORKLIST=1 prints every problem: the linker
+			// worklist of a package that does not link yet.
+			show := 10
+			if os.Getenv("GRAALGO_LINK_WORKLIST") != "" {
+				show = len(le.Problems)
+			}
 			for i, problem := range le.Problems {
 				if i == show {
 					fmt.Fprintf(os.Stderr, "graalgo-tool: link: ... and %d more (is the standard library graalgo's fork? design §5.1)\n", len(le.Problems)-show)

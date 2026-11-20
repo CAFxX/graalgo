@@ -31,6 +31,34 @@ final class SyscallIntrinsics {
     }
 
     /**
+     * {@code syscall.rawSyscallNoError(trap, a1, a2, a3) (r1, r2)}: upstream's assembly entry for
+     * the calls that cannot fail (getpid, getuid, ...); through the role table like every other.
+     */
+    static Object syscall_rawSyscallNoError(Node node, long trap, long a1, long a2, long a3) {
+        Object[] r = graalgo.syscall.Executor.syscall6(node, trap, a1, a2, a3, 0, 0, 0);
+        return new Object[] {r[0], r[1]};
+    }
+
+    /**
+     * {@code syscall.rawVforkSyscall(trap, a1, a2, a3) (r1, err)}: the clone(2) of fork/exec.
+     * A JVM process cannot fork; GG-0064 replaces the fork/exec glue by a posix_spawn helper.
+     * Until then the call fails with ENOSYS, so {@code os.StartProcess} returns an error
+     * (docs/arch/limitations.md).
+     */
+    static Object syscall_rawVforkSyscall(Node node, long trap, long a1, long a2, long a3) {
+        return new Object[] {0L, 38L};
+    }
+
+    /**
+     * {@code runtime.fcntl(fd, cmd, arg) (ret, errno)}, which internal/syscall/unix reaches by
+     * {@code //go:linkname}: three integers by its signature, so no word is a pointer.
+     */
+    static Object runtime_fcntl(Node node, long fd, long cmd, long arg) {
+        long[] r = graalgo.syscall.Executor.values(72, fd, cmd, arg);
+        return r[1] != 0 ? new Object[] {-1L, r[1]} : new Object[] {(long) (int) r[0], 0L};
+    }
+
+    /**
      * gc's {@code entersyscall}/{@code exitsyscall} release and re-acquire the P around every
      * {@code syscall.Syscall}. Here the executor brackets by the role table's may-block bit
      * (slot released, carrier left; GG-SCHED-0006), which covers the calls that can block and

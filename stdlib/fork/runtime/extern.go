@@ -30,7 +30,10 @@ func Caller(skip int) (pc uintptr, file string, line int, ok bool)
 // directly is discouraged, as is using [FuncForPC] on any of the
 // returned PCs, since these cannot account for inlining or return
 // program counter adjustment.
-func Callers(skip int, pc []uintptr) int
+//
+// graalgo: the node package records no call positions yet
+// (docs/arch/limitations.md), so no frame is reported, as for [Caller].
+func Callers(skip int, pc []uintptr) int { return 0 }
 
 // GOROOT returns the root of the Go tree. It uses the
 // GOROOT environment variable, if set at process start,

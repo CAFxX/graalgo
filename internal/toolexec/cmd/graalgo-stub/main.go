@@ -33,8 +33,9 @@ func main() {
 		fatal(fmt.Errorf("no runner recorded at link time; set GRAALGO_RUNNER"))
 	}
 	// The runner receives the executable (it locates the bundle through
-	// the trailer) followed by the program's own arguments.
-	argv := append([]string{runner, exe}, os.Args[1:]...)
+	// the trailer) followed by the program's own argv, argv[0] as this
+	// process was invoked included: os.Args of the Go program.
+	argv := append([]string{runner, exe}, os.Args...)
 	fatal(syscall.Exec(runner, argv, os.Environ()))
 }
 

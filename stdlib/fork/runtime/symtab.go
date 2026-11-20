@@ -52,7 +52,7 @@ type Frame struct {
 // CallersFrames takes a slice of PC values returned by [Callers] and
 // prepares to return function/file/line information.
 // Do not change the slice until you are done with the [Frames].
-func CallersFrames(callers []uintptr) *Frames
+func CallersFrames(callers []uintptr) *Frames { return &Frames{} }
 
 // Next returns a [Frame] representing the next call frame in the slice
 // of PC values. If it has already returned all call frames, Next
@@ -63,7 +63,9 @@ func CallersFrames(callers []uintptr) *Frames
 // returned one.
 //
 // See the [Frames] example for idiomatic usage.
-func (ci *Frames) Next() (frame Frame, more bool)
+//
+// graalgo: [Callers] reports no frames, so there is never a next one.
+func (ci *Frames) Next() (frame Frame, more bool) { return Frame{}, false }
 
 // A Func represents a Go function in the running binary.
 type Func struct {

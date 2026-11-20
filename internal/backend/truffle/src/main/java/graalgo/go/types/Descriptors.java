@@ -372,7 +372,7 @@ public final class Descriptors {
     }
 
     /** gc's PtrDataSize: the length of the prefix of a value that can hold pointers. */
-    static long ptrBytes(GoType t) {
+    public static long ptrBytes(GoType t) {
         GoType u = t.u();
         switch (u.kind) {
             case GoType.STRING, GoType.SLICE, GoType.POINTER, GoType.UNSAFE_POINTER, GoType.MAP, GoType.CHAN, GoType.FUNC:

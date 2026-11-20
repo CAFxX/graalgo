@@ -94,3 +94,21 @@ func init() {
 // 1 integer overflow. Facade-private; retired when error.go is kept from
 // upstream.
 func runtimeError(code int) error
+
+// staticuint64s is upstream's table of the small integers (runtime/iface.go),
+// which reflect reads through getStaticuint64s (//go:linkname in
+// reflect/value.go) to make the data word of a small integer without
+// allocating.
+var staticuint64s [256]uint64
+
+func init() {
+	for i := range staticuint64s {
+		staticuint64s[i] = uint64(i)
+	}
+}
+
+func getStaticuint64s() *[256]uint64 { return &staticuint64s }
+
+// fcntl is the system call internal/syscall/unix reaches by //go:linkname
+// (upstream runtime/os_linux.go): the result and the errno.
+func fcntl(fd, cmd, arg int32) (ret int32, errno int32)

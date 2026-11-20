@@ -118,7 +118,7 @@ func setup(t *testing.T) *env {
 	}
 	// A stand-in runner: proves the stub's hand-off (argv, exit status)
 	// without needing the JVM backend.
-	script := "#!/bin/sh\necho \"runner exe=$1 args=$2,$3\"\nexit 7\n"
+	script := "#!/bin/sh\necho \"runner exe=$1 argv0=$2 args=$3,$4\"\nexit 7\n"
 	if err := os.WriteFile(e.fakeRun, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -221,13 +221,16 @@ func TestBuildThroughToolexec(t *testing.T) {
 	// the program's arguments, and the runner's exit status is the
 	// program's.
 	cmd := exec.Command(exe, "a", "b")
+	// argv[0] as invoked, not the resolved executable, is the program's
+	// os.Args[0] (BUG-0029).
+	cmd.Args[0] = "invoked-as"
 	cmd.Env = append(os.Environ(), "GRAALGO_RUNNER=")
 	out, err := cmd.CombinedOutput()
 	ee, ok := err.(*exec.ExitError)
 	if !ok || ee.ExitCode() != 7 {
 		t.Errorf("exit = %v, want status 7", err)
 	}
-	if want := "runner exe=" + exe + " args=a,b\n"; string(out) != want {
+	if want := "runner exe=" + exe + " argv0=invoked-as args=a,b\n"; string(out) != want {
 		t.Errorf("output = %q, want %q", out, want)
 	}
 }

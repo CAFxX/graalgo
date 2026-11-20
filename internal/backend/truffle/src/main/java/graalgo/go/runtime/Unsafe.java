@@ -973,6 +973,16 @@ public final class Unsafe {
     // ---------------------------------------------------------------- interface headers
 
     /**
+     * Whether {@code t} is a struct or array type that gc stores directly in an interface's
+     * data word ({@code abi.TFlagDirectIface}: size == pointer bytes == one word): its one leaf
+     * is a pointer word.
+     */
+    @TruffleBoundary
+    public static boolean directFlat(GoType t) {
+        return t.carrier() == GoType.C_FLAT && t.gcSize() == 8 && Descriptors.ptrBytes(t) == 8;
+    }
+
+    /**
      * The type word of an interface slot: the dynamic type's descriptor image (W9a; the type
      * itself in a program without {@code internal/abi}), nil for a nil interface.
      */
@@ -993,8 +1003,12 @@ public final class Unsafe {
             return r.data;
         }
         Iface i = (Iface) slot;
-        if (i.type.isPointerShaped() || i.type.carrier() == GoType.C_FLAT) {
+        if (i.type.isPointerShaped()) {
             return i.data;
+        } else if (i.type.carrier() == GoType.C_FLAT) {
+            // gc stores a one-pointer-word struct or array (struct{p *T}, [1]func()) directly:
+            // its data word is that pointer, not a pointer to the value (abi.TFlagDirectIface).
+            return directFlat(i.type) ? ((Flat) i.data).refs[0] : i.data;
         }
         Object w = i.word();
         if (w != null) {
@@ -1017,6 +1031,11 @@ public final class Unsafe {
         }
         if (t.u().kind != GoType.POINTER && t.isPointerShaped()) {
             return new Iface(t, data); // a map, channel, function or unsafe.Pointer: the word itself
+        }
+        if (directFlat(t)) {
+            Flat v = t.zeroFlat();
+            v.refs[0] = data;
+            return new Iface(t, v);
         }
         // The two words are written one at a time, so a type word may meet the data word of
         // the value it replaces. They form an interface value when the data word points at

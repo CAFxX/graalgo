@@ -13,7 +13,8 @@ import org.graalvm.polyglot.io.ByteSequence;
 
 /**
  * Runs a program linked by {@code graalgo-tool} (toolexec-design §4.2): the launcher stub execs
- * this runner with the executable's path followed by the program's arguments. The bundle is
+ * this runner with the executable's path, then the {@code argv[0]} the program was invoked with
+ * and the program's arguments ({@code os.Args}). The bundle is
  * located through the executable's trailer ({@code offset | length | "GGB1"}) and evaluated as
  * a byte source of the bundle MIME type; the process exits with the program's status.
  */
@@ -21,12 +22,13 @@ public final class BundleMain {
     private BundleMain() {}
 
     public static void main(String[] args) throws IOException {
-        if (args.length < 1) {
-            fail("usage: graalgo-bundle-run <linked executable> [program arguments]");
+        if (args.length < 2) {
+            fail("usage: graalgo-bundle-run <linked executable> <argv[0]> [program arguments]");
         }
         byte[] bundle = readBundle(args[0]);
         int status;
-        try (Context context = GoPolyglot.newContext(gomaxprocs(), args, java.util.List.of())) {
+        try (Context context = GoPolyglot.newContext(gomaxprocs(),
+                java.util.Arrays.copyOfRange(args, 1, args.length), java.util.List.of())) {
             Source source = Source.newBuilder(GoLanguage.ID, ByteSequence.create(bundle), args[0])
                     .mimeType(GoLanguage.BUNDLE_MIME).buildLiteral();
             status = context.eval(source).asInt();
