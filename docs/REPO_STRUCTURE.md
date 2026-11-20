@@ -1,5 +1,8 @@
 # Repository structure
 
+> **Looking for where to make a change? Start at [MAP.md](MAP.md)** (task →
+> place, data flow, legacy list, names). This file is the full annotated tree.
+
 graalgo is organized by **function**, not by research phase. New code never
 gets a phase name; the remaining phase-named paths are legacy: the archived
 [docs/arch/phases/](arch/phases/) records, the frozen
@@ -14,6 +17,24 @@ the research era.
 
 Related: [Makefile](../Makefile) (root build entry point),
 [.github/workflows/](../.github/workflows/) (CI).
+
+## Status at a glance
+
+**new** = the `-toolexec` product path; **shared** = used by both paths,
+stays after M3; **v1** = deleted at M3
+([toolexec-design.md §9.1](arch/toolexec-design.md#91-m3-delete-inventory-w11));
+**v1-driven** = not deleted, but runs programs through the v1 launchers
+today and must be re-pointed at M3
+([ADR-0017](dev/adr/ADR-0017-repo-layout.md), proposed). Each listed
+directory's README repeats its status.
+
+| Status | Directories |
+|---|---|
+| new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/) |
+| shared | the runtime packages of [internal/backend/truffle/](../internal/backend/truffle/README.md) (`sched`, `runtime`, `safepoint`, `jfr`, `language`), [test/corpus/](../test/corpus/README.md), [test/lib/](../test/lib/), [test/java/](../test/java/), [test/snapshots/](../test/snapshots/README.md), [tools/req/](../tools/req/README.md), [tools/torture/](../tools/torture/), [requirements/](../requirements/), [.github/](../.github/) |
+| v1 | [cmd/graalgo/](../cmd/graalgo/README.md) (becomes the launcher), [internal/frontend/](../internal/frontend/README.md), [internal/driver/](../internal/driver/), [internal/vet/](../internal/vet/README.md), [internal/backend/interop/](../internal/backend/interop/README.md), `graalgo.{frontend,values,sched.launcher}` + `launcher.Main` in truffle, [graalgo-run](../internal/backend/graalgo-run), [graalgo-sync-run](../internal/backend/graalgo-sync-run), [tools/gate1/](../tools/gate1/README.md) |
+| v1-driven | [test/differential/](../test/differential/README.md) (`snapshot-check`), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz`, `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
+| history | [docs/arch/](arch/) `phases/`, `reviews/`, `spikes/`, `research/`, FEASIBILITY, PHASES, frontend-v1/v2; [docs/spec/](spec/); [research/](../research/); [test/spikes/](../test/spikes/) |
 
 ## Directory tree
 
@@ -424,6 +445,8 @@ Related: [Makefile](../Makefile) (root build entry point),
     descview's Java sources).
 - [docs/](../docs/)
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
+  - [MAP.md](../docs/MAP.md) — the task-oriented entry point (task →
+    place, data flow, legacy list, naming).
   - [arch/](../docs/arch/) — architecture documentation, consolidated from
     the research-era [SPEC.md](arch/SPEC.md), [PHASES.md](arch/PHASES.md), and
     [FEASIBILITY.md](arch/FEASIBILITY.md).
