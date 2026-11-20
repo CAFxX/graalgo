@@ -17,7 +17,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "45b87ffeadce82a3";
+    public static final String HASH = "1e550227b1bedecf";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -126,6 +126,8 @@ public final class IntrinsicTable {
                 return new R_runtime_Gosched(language);
             case "runtime.NumCPU":
                 return new R_runtime_NumCPU(language);
+            case "runtime.NumGoroutine":
+                return new R_runtime_NumGoroutine(language);
             case "runtime.cmpstring":
                 return new R_runtime_cmpstring(language);
             case "runtime.entersyscall":
@@ -973,6 +975,18 @@ public final class IntrinsicTable {
         @Override
         public Object execute(VirtualFrame frame) {
             return RuntimeIntrinsics.runtime_NumCPU(this);
+        }
+    }
+
+    /** {@code runtime.NumGoroutine}: {@code func() int}. */
+    static final class R_runtime_NumGoroutine extends Root {
+        R_runtime_NumGoroutine(GoLanguage language) {
+            super(language, "runtime.NumGoroutine");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return RuntimeIntrinsics.runtime_NumGoroutine(this);
         }
     }
 
