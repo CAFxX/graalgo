@@ -1,0 +1,36 @@
+# Exceptions to the Truffle coding conventions (truffle-design.md §16), checked by
+# graalgo.conventions.NodeConventionsTest (make test-java-fast).
+#
+# Format: RULE binary.ClassName[#member] | reason
+# The list only shrinks: an entry the code no longer needs fails the test as STALE
+# (delete it), and check_ratchets.py's java-conventions counter holds the entry
+# count to the base commit's. A new exception is a fix you could not make — say why.
+
+# --- B3: PE-hostile JDK calls on a compiled path
+B3-boundary graalgo.go.intrinsics.SyncIntrinsics#runtime_rand | ThreadLocalRandom.current().nextLong() is two Thread-field accesses PE inlines; a boundary would put a call on every runtime.rand (map seeds, select order, sync.Pool)
+B3-boundary graalgo.go.intrinsics.SyncIntrinsics#runtime_randn | as runtime_rand
+
+# --- R1: immutable carriers that stay classes
+R1-record graalgo.values.GoTypeDescriptor | v1 value model (graalgo.values; in scope through SchedulerCore's v1 type-name path): identity-compared type descriptor, frozen and deleted at M3 (toolexec-design §9.1)
+
+# --- S1: process-wide mutable statics (set once at start-up or by the scheduler)
+S1-static graalgo.language.GoContext#active | the live context (ContextPolicy EXCLUSIVE); GoLanguage/GoContext are §11 S1's named exception
+S1-static graalgo.language.GoContext#runningContext | the context whose program is running, guarded by the class lock; §11 S1's named exception
+S1-static graalgo.runtime.Intrinsics#itabProvider | v1 runtime hook installed by the interop launcher at start-up; frozen, deleted at M3
+S1-static graalgo.runtime.Intrinsics#wyrandState | v1 runtime's racy-by-design fastrand state (as gc's); frozen, deleted at M3
+S1-static graalgo.runtime.Panic#panicNilOldBehavior | GODEBUG=panicnil, written once by GoDebug.apply() before the program runs, read only on the panic path
+S1-static graalgo.runtime.PanicRendering#methodText | v1 renderer hook installed by the interop launcher; read only on the crash-report path
+S1-static graalgo.sched.SchedTrace#daemon | the GODEBUG=schedtrace daemon thread, started once
+S1-static graalgo.sched.SchedulerCore#exitEpoch | process exit epoch, written under the class lock; read by the full (boundary) poll only
+S1-static graalgo.sched.SchedulerCore#installed | the process's scheduler, installed once per run; read behind boundaries
+S1-static graalgo.sched.SchedulerCore#pollEpoch | the safepoint poll epoch (WP-POLLCOST): one volatile load is the whole poll fast path by design
+S1-static graalgo.sched.SchedulerCore#pollTickNanos | poll-ticker period, written under the class lock when a quantum is configured
+S1-static graalgo.sched.SchedulerCore#pollTicker | the poll-ticker daemon, started once under the class lock
+S1-static graalgo.sched.launcher.GcTrace#listener | the GODEBUG=gctrace GC listener, installed once
+S1-static graalgo.sched.launcher.GoDebug#registryKnobs | lazily loaded GODEBUG registry (immutable once published)
+S1-static graalgo.sched.launcher.GoDebug#registryRemoved | lazily loaded GODEBUG registry (immutable once published)
+S1-static graalgo.sched.launcher.GoDebug#registryVersion | lazily loaded GODEBUG registry version
+S1-static graalgo.syscall.Poller#epfd | the process's epoll descriptor, created on first use (GG-0063)
+
+# --- S2: non-final statics read on a compiled path
+S2-static-read graalgo.sched.SchedulerCore#pollEpoch | the poll fast path: compare the shared epoch with the thread's last-seen epoch (performance.md WP-POLLCOST)
