@@ -59,32 +59,12 @@ public final class GoDebug {
     }
 
     /** One registry knob. */
-    public static final class Knob {
-        public final String name;
-        public final Disposition disposition;
-        public final int defaultValue;
-        public final String summary;
-        public final String justification;
-
-        Knob(String name, Disposition disposition, int defaultValue,
-             String summary, String justification) {
-            this.name = name;
-            this.disposition = disposition;
-            this.defaultValue = defaultValue;
-            this.summary = summary;
-            this.justification = justification;
-        }
+    public record Knob(String name, Disposition disposition, int defaultValue, String summary,
+            String justification) {
     }
 
     /** One removed (gc-deleted) knob with its "old value" predicate. */
-    static final class RemovedKnob {
-        final String name;
-        final List<String> oldValues;
-
-        RemovedKnob(String name, List<String> oldValues) {
-            this.name = name;
-            this.oldValues = oldValues;
-        }
+    record RemovedKnob(String name, List<String> oldValues) {
     }
 
     /** Parsed, validated GODEBUG settings: knob name → int32 value. */

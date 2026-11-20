@@ -7,6 +7,7 @@ import graalgo.go.nodes.N.GoNode;
 import graalgo.go.nodes.N.I64;
 import graalgo.go.nodes.N.Ref;
 import graalgo.go.nodes.N.Stmt;
+import com.oracle.truffle.api.CompilerDirectives;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import graalgo.go.runtime.Panics;
 import graalgo.go.runtime.Unsafe;
@@ -83,11 +84,11 @@ public final class Mem {
          * {@link Unsafe}.
          */
         public Flat viewObj(VirtualFrame frame) {
-            throw new IllegalStateException("not a view location");
+            throw CompilerDirectives.shouldNotReachHere("not a view location");
         }
 
         public long viewOff(VirtualFrame frame) {
-            throw new IllegalStateException("not a view location");
+            throw CompilerDirectives.shouldNotReachHere("not a view location");
         }
 
         /** The regions a value of type {@code t} occupies. */
@@ -233,7 +234,7 @@ public final class Mem {
         private Flat resolveView(VirtualFrame frame, Object o) {
             if (o instanceof View v) {
                 viewed.enter();
-                return view(frame, v.obj, v.off + pathOff());
+                return view(frame, v.obj(), v.off() + pathOff());
             }
             nil.enter();
             throw o == null ? Panics.nilDeref(this) : Panics.fatal(this, Unsafe.INVALID);
@@ -252,8 +253,8 @@ public final class Mem {
                 return flat;
             } else if (o instanceof Ptr q) {
                 interior.enter();
-                set(frame, q.prim + p, q.ref + r, q.byt + b);
-                return q.obj;
+                set(frame, q.prim() + p, q.ref() + r, q.byt() + b);
+                return q.obj();
             }
             return resolveView(frame, o);
         }
@@ -265,7 +266,7 @@ public final class Mem {
                 return Ptr.make(flat, p, r, b);
             } else if (o instanceof Ptr q) {
                 interior.enter();
-                return Ptr.make(q.obj, q.prim + p, q.ref + r, q.byt + b);
+                return Ptr.make(q.obj(), q.prim() + p, q.ref() + r, q.byt() + b);
             }
             resolveView(frame, o);
             return Unsafe.typed(this, viewObj(frame), viewOff(frame), type, null);
@@ -303,23 +304,23 @@ public final class Mem {
         public Flat resolve(VirtualFrame frame) {
             Slice s = (Slice) slice.executeGeneric(frame);
             long i = index.executeLong(frame);
-            if (Long.compareUnsigned(i, s.len) >= 0) {
+            if (Long.compareUnsigned(i, s.len()) >= 0) {
                 outOfRange.enter();
-                throw Panics.index(this, i, s.len, signed);
+                throw Panics.index(this, i, s.len(), signed);
             }
-            set(frame, s.prim + (int) i * np + p, s.ref + (int) i * nr + r, s.byt + (int) i * nb + b);
-            return s.base;
+            set(frame, s.prim() + (int) i * np + p, s.ref() + (int) i * nr + r, s.byt() + (int) i * nb + b);
+            return s.base();
         }
 
         @Override
         public Object addr(VirtualFrame frame, GoType type) {
             Slice s = (Slice) slice.executeGeneric(frame);
             long i = index.executeLong(frame);
-            if (Long.compareUnsigned(i, s.len) >= 0) {
+            if (Long.compareUnsigned(i, s.len()) >= 0) {
                 outOfRange.enter();
-                throw Panics.index(this, i, s.len, signed);
+                throw Panics.index(this, i, s.len(), signed);
             }
-            return Ptr.make(s.base, s.prim + (int) i * np + p, s.ref + (int) i * nr + r, s.byt + (int) i * nb + b);
+            return Ptr.make(s.base(), s.prim() + (int) i * np + p, s.ref() + (int) i * nr + r, s.byt() + (int) i * nb + b);
         }
     }
 

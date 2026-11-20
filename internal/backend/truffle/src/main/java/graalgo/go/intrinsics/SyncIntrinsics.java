@@ -231,7 +231,7 @@ final class SyncIntrinsics {
         if (l instanceof Flat f) {
             return Ptr.make(f, 1, 0, 0);
         } else if (l instanceof Ptr p) {
-            return Ptr.make(p.obj, p.prim + 1, p.ref, p.byt);
+            return Ptr.make(p.obj(), p.prim() + 1, p.ref(), p.byt());
         }
         return Unsafe.pointer(Unsafe.referent(l), Unsafe.offset(l) + 4);
     }

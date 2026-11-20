@@ -8,12 +8,5 @@ package graalgo.go.values;
  * through the referent's leaf table ({@code runtime.Unsafe}); typed code holds a {@link Flat} or
  * a {@link Ptr} and never sees one.
  */
-public final class View {
-    public final Flat obj;
-    public final long off;
-
-    public View(Flat obj, long off) {
-        this.obj = obj;
-        this.off = off;
-    }
+public record View(Flat obj, long off) {
 }

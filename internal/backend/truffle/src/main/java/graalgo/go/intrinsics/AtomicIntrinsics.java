@@ -1,5 +1,6 @@
 package graalgo.go.intrinsics;
 
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.Panics;
@@ -42,51 +43,53 @@ final class AtomicIntrinsics {
      * under the referent's monitor — atomic among view accesses, which is all a location that
      * needs a view gets. Results as the slot operations give them (And/Or: the old value).
      */
+    @TruffleBoundary
     private static long viewScalar(Node node, View w, int kind, int op, long a, long b) {
         GoType t = GoProcess.get(node).types.basic(kind);
-        synchronized (w.obj) {
-            long old = Unsafe.loadScalar(node, w.obj, w.off, t);
+        synchronized (w.obj()) {
+            long old = Unsafe.loadScalar(node, w.obj(), w.off(), t);
             switch (op) {
                 case V_LOAD:
                     return old;
                 case V_STORE, V_SWAP:
-                    Unsafe.storeScalar(node, w.obj, w.off, t, a);
+                    Unsafe.storeScalar(node, w.obj(), w.off(), t, a);
                     return old;
                 case V_COMPAREANDSWAP:
                     if (old != a) {
                         return 0;
                     }
-                    Unsafe.storeScalar(node, w.obj, w.off, t, b);
+                    Unsafe.storeScalar(node, w.obj(), w.off(), t, b);
                     return 1;
                 case V_ADD:
-                    Unsafe.storeScalar(node, w.obj, w.off, t, old + a);
-                    return Unsafe.loadScalar(node, w.obj, w.off, t);
+                    Unsafe.storeScalar(node, w.obj(), w.off(), t, old + a);
+                    return Unsafe.loadScalar(node, w.obj(), w.off(), t);
                 case V_AND:
-                    Unsafe.storeScalar(node, w.obj, w.off, t, old & a);
+                    Unsafe.storeScalar(node, w.obj(), w.off(), t, old & a);
                     return old;
                 default:
-                    Unsafe.storeScalar(node, w.obj, w.off, t, old | a);
+                    Unsafe.storeScalar(node, w.obj(), w.off(), t, old | a);
                     return old;
             }
         }
     }
 
     /** As {@link #viewScalar} for a pointer word: a reference leaf or a word of a header (atomic.Value). */
+    @TruffleBoundary
     private static Object viewPointer(Node node, View w, int op, Object a, Object b) {
         GoType t = GoProcess.get(node).types.basic(GoType.UNSAFE_POINTER);
-        synchronized (w.obj) {
-            Object old = Unsafe.loadRef(node, w.obj, w.off, t);
+        synchronized (w.obj()) {
+            Object old = Unsafe.loadRef(node, w.obj(), w.off(), t);
             switch (op) {
                 case V_LOAD:
                     return old;
                 case V_STORE, V_SWAP:
-                    Unsafe.storeRef(node, w.obj, w.off, t, a);
+                    Unsafe.storeRef(node, w.obj(), w.off(), t, a);
                     return old;
                 default:
                     if (!Ptr.same(old, a)) {
                         return Boolean.FALSE;
                     }
-                    Unsafe.storeRef(node, w.obj, w.off, t, b);
+                    Unsafe.storeRef(node, w.obj(), w.off(), t, b);
                     return Boolean.TRUE;
             }
         }
@@ -107,7 +110,7 @@ final class AtomicIntrinsics {
 
     private static long[] prims(Node node, Object addr) {
         if (addr instanceof Ptr p) {
-            return p.obj.prims;
+            return p.obj().prims;
         } else if (addr == null) {
             throw Panics.nilDeref(node);
         }
@@ -115,12 +118,12 @@ final class AtomicIntrinsics {
     }
 
     private static int index(Object addr) {
-        return addr instanceof Ptr p ? p.prim : 0;
+        return addr instanceof Ptr p ? p.prim() : 0;
     }
 
     private static Object[] refs(Node node, Object addr) {
         if (addr instanceof Ptr p) {
-            return p.obj.refs;
+            return p.obj().refs;
         } else if (addr == null) {
             throw Panics.nilDeref(node);
         }
@@ -128,7 +131,7 @@ final class AtomicIntrinsics {
     }
 
     private static int refIndex(Object addr) {
-        return addr instanceof Ptr p ? p.ref : 0;
+        return addr instanceof Ptr p ? p.ref() : 0;
     }
 
     static long sync_atomic_SwapInt32(Node node, Object addr, long v) {

@@ -28,7 +28,7 @@ final class RuntimeIntrinsics {
         if (cleanup != null) {
             graalgo.runtime.sync.PinLock.LOCK.lock();
             try {
-                cleanup.target.call(new Object[] {cleanup.env});
+                cleanup.target().call(new Object[] {cleanup.env()});
             } finally {
                 graalgo.runtime.sync.PinLock.LOCK.unlock();
             }

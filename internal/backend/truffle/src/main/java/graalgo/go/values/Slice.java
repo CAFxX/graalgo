@@ -11,22 +11,6 @@ package graalgo.go.values;
  * this is the one slice shape: a {@code []byte} addresses {@code base.bytes} whether the backing
  * object was made for it or is a struct with an inlined {@code [N]byte} (ADR-0015 decision 3).
  */
-public final class Slice {
+public record Slice(Flat base, int prim, int ref, int byt, int len, int cap) {
     public static final Slice NIL = new Slice(null, 0, 0, 0, 0, 0);
-
-    public final Flat base;
-    public final int prim;
-    public final int ref;
-    public final int byt;
-    public final int len;
-    public final int cap;
-
-    public Slice(Flat base, int prim, int ref, int byt, int len, int cap) {
-        this.base = base;
-        this.prim = prim;
-        this.ref = ref;
-        this.byt = byt;
-        this.len = len;
-        this.cap = cap;
-    }
 }

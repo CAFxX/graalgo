@@ -91,7 +91,7 @@ public final class RangeFunc extends Stmt {
             if (f == null) {
                 throw Panics.nilDeref(this);
             }
-            dispatch.execute(f.target, new Object[] {f.env, new Closure(yield, env)});
+            dispatch.execute(f.target(), new Object[] {f.env(), new Closure(yield, env)});
         } finally {
             if (owner) {
                 frame.setObject(anchorSlot, null);

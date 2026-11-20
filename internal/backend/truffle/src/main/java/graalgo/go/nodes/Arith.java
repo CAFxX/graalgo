@@ -372,7 +372,7 @@ public final class Arith {
     public abstract static class EqComplex extends CmpRef {
         @Specialization
         static boolean op(Complex a, Complex b) {
-            return a.re == b.re && a.im == b.im;
+            return a.re() == b.re() && a.im() == b.im();
         }
     }
     public abstract static class Concat extends BinRef {
@@ -396,31 +396,31 @@ public final class Arith {
     public abstract static class AddC extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex(a.re + b.re, a.im + b.im);
+            return new Complex(a.re() + b.re(), a.im() + b.im());
         }
     }
     public abstract static class SubC extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex(a.re - b.re, a.im - b.im);
+            return new Complex(a.re() - b.re(), a.im() - b.im());
         }
     }
     public abstract static class MulC extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex(a.re * b.re - a.im * b.im, a.re * b.im + a.im * b.re);
+            return new Complex(a.re() * b.re() - a.im() * b.im(), a.re() * b.im() + a.im() * b.re());
         }
     }
     public abstract static class AddC64 extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex((float) (a.re + b.re), (float) (a.im + b.im));
+            return new Complex((float) (a.re() + b.re()), (float) (a.im() + b.im()));
         }
     }
     public abstract static class SubC64 extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex((float) (a.re - b.re), (float) (a.im - b.im));
+            return new Complex((float) (a.re() - b.re()), (float) (a.im() - b.im()));
         }
     }
     /**
@@ -431,7 +431,7 @@ public final class Arith {
     public abstract static class MulC64 extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex((float) (a.re * b.re - a.im * b.im), (float) (a.re * b.im + a.im * b.re));
+            return new Complex((float) (a.re() * b.re() - a.im() * b.im()), (float) (a.re() * b.im() + a.im() * b.re()));
         }
     }
     public abstract static class NegI64 extends UnI64 {
@@ -759,7 +759,7 @@ public final class Arith {
 
         @Override
         public boolean executeBoolean(VirtualFrame frame) {
-            return ((Slice) x.executeGeneric(frame)).base == null;
+            return ((Slice) x.executeGeneric(frame)).base() == null;
         }
     }
 
@@ -781,29 +781,29 @@ public final class Arith {
             Complex a = (Complex) l.executeGeneric(frame);
             Complex b = (Complex) r.executeGeneric(frame);
             Complex q = div(a, b);
-            return single ? new Complex((float) q.re, (float) q.im) : q;
+            return single ? new Complex((float) q.re(), (float) q.im()) : q;
         }
 
         /** runtime.complex128div. */
         private static Complex div(Complex n, Complex m) {
             double e;
             double f;
-            if (Math.abs(m.re) >= Math.abs(m.im)) {
-                double ratio = m.im / m.re;
-                double denom = m.re + ratio * m.im;
-                e = (n.re + n.im * ratio) / denom;
-                f = (n.im - n.re * ratio) / denom;
+            if (Math.abs(m.re()) >= Math.abs(m.im())) {
+                double ratio = m.im() / m.re();
+                double denom = m.re() + ratio * m.im();
+                e = (n.re() + n.im() * ratio) / denom;
+                f = (n.im() - n.re() * ratio) / denom;
             } else {
-                double ratio = m.re / m.im;
-                double denom = m.im + ratio * m.re;
-                e = (n.re * ratio + n.im) / denom;
-                f = (n.im * ratio - n.re) / denom;
+                double ratio = m.re() / m.im();
+                double denom = m.im() + ratio * m.re();
+                e = (n.re() * ratio + n.im()) / denom;
+                f = (n.im() * ratio - n.re()) / denom;
             }
             if (Double.isNaN(e) && Double.isNaN(f)) {
-                double a = n.re;
-                double b = n.im;
-                double c = m.re;
-                double d = m.im;
+                double a = n.re();
+                double b = n.im();
+                double c = m.re();
+                double d = m.im();
                 if (c == 0 && d == 0 && (!Double.isNaN(a) || !Double.isNaN(b))) {
                     e = Math.copySign(Double.POSITIVE_INFINITY, c) * a;
                     f = Math.copySign(Double.POSITIVE_INFINITY, c) * b;
@@ -835,7 +835,7 @@ public final class Arith {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Complex c = (Complex) x.executeGeneric(frame);
-            return new Complex(-c.re, -c.im);
+            return new Complex(-c.re(), -c.im());
         }
     }
 
@@ -864,7 +864,7 @@ public final class Arith {
 
         @Override
         public double executeDouble(VirtualFrame frame) {
-            return ((Complex) x.executeGeneric(frame)).re;
+            return ((Complex) x.executeGeneric(frame)).re();
         }
     }
 
@@ -877,7 +877,7 @@ public final class Arith {
 
         @Override
         public double executeDouble(VirtualFrame frame) {
-            return ((Complex) x.executeGeneric(frame)).im;
+            return ((Complex) x.executeGeneric(frame)).im();
         }
     }
 
@@ -892,7 +892,7 @@ public final class Arith {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Complex c = (Complex) x.executeGeneric(frame);
-            return new Complex((float) c.re, (float) c.im);
+            return new Complex((float) c.re(), (float) c.im());
         }
     }
 }
