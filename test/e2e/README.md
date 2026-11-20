@@ -1,5 +1,8 @@
 # End-to-end: real published Go modules via graalgo
 
+> **Status: v1-driven** (runs v1's `P3SyncMain`); to be re-pointed at the
+> new path at M3 ([ADR-0017](../../docs/dev/adr/ADR-0017-repo-layout.md)).
+
 This directory holds end-to-end proofs: real published Go modules compiled
 **as-published** (never patched), with output byte-identical to `go run`
 (gc 1.27.1).

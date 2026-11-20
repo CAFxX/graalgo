@@ -1,7 +1,9 @@
 # AGENTS.md — operating manual for graalgo
 
 This is the working contract for agents (and humans) editing this repo.
-Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md). The
+**Start at [docs/MAP.md](docs/MAP.md)**: task → place, the new path's data
+flow, and what is legacy v1 (deleted at M3 — never build on it). Full
+annotated tree: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md). The
 current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 [docs/arch/SPEC.md](docs/arch/SPEC.md) is authoritative.
 
