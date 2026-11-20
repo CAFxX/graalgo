@@ -30,6 +30,8 @@ import (
 //	  detail: free text (bug id / what retires the entry)
 //	  signature: 3f2a9c0d1e4b5a6c   # optional: DiffSignature of the
 //	                                # expected divergence (global review G2)
+//	  timing: true                  # optional: the outcome depends on host
+//	                                # speed (see below)
 //	groups:                         # optional: one cause, many files
 //	- group: v1-multi-file
 //	  reason: deferred-parity
@@ -46,6 +48,15 @@ import (
 // divergence of a listed program (a fresh crash, a different wrong output)
 // would still read as EXPECTED. A gate that enforces pinning reports a
 // changed signature as a divergence and an unpinned entry as a failure.
+//
+// timing: true marks an entry whose program is a wall-clock check (a timeout,
+// a "too slow" assertion): on a slow or loaded host it diverges, on a fast
+// one it matches gc. Such an entry is not STALE when it matches gc (the
+// gate reports it as TIMING, a pass); while it diverges it is judged exactly
+// as any other entry (its pinned signature, or its `unpinned (<why>)`
+// marker). The marker is not an escape hatch: RegisterProblems requires a
+// BUG id, a detail and a signature, and the number of timing entries is a
+// shrink-only ratchet (.github/scripts/check_ratchets.py, "timing-excl").
 
 // ReasonCodes is the closed reason-code vocabulary of SPEC §5.6.
 var ReasonCodes = []string{"backend-specific", "unspecified-behavior", "deferred-parity"}
@@ -67,6 +78,9 @@ type ReviewedExclusion struct {
 	Detail    string `json:"detail"`
 	Signature string `json:"signature,omitempty"`
 	Group     string `json:"group,omitempty"`
+	// Timing marks an entry whose outcome depends on host speed: matching
+	// gc is a pass (TIMING), not STALE.
+	Timing bool `json:"timing,omitempty"`
 }
 
 // DiffSignature is the short content hash a `signature:` line pins: the
@@ -189,6 +203,14 @@ func ParseReviewedExclusions(name, text string) (version string, excl map[string
 			cur.Detail = val("detail:")
 		case strings.HasPrefix(t, "signature:") && inEntry:
 			cur.Signature = val("signature:")
+		case strings.HasPrefix(t, "timing:") && inEntry:
+			switch v := val("timing:"); v {
+			case "true":
+				cur.Timing = true
+			case "false":
+			default:
+				errs = append(errs, fmt.Sprintf("line %d: timing: must be true or false, got %q", i+1, v))
+			}
 		default:
 			errs = append(errs, fmt.Sprintf("line %d: unrecognized line %q", i+1, t))
 		}
@@ -252,6 +274,9 @@ func RegisterProblems(name string, excl map[string]ReviewedExclusion, bugs map[s
 				problems = append(problems, fmt.Sprintf("%s: %s: cites %s, which is not in the bug register", name, f, id))
 			}
 		}
+		if x.Timing {
+			problems = append(problems, timingProblems(name, f, x, requireSignature)...)
+		}
 		if x.Reason != "deferred-parity" {
 			continue
 		}
@@ -261,6 +286,25 @@ func RegisterProblems(name string, excl map[string]ReviewedExclusion, bugs map[s
 		if requireSignature && x.Group == "" && !IsPinned(x.Signature) && !unpinnedSig.MatchString(x.Signature) {
 			problems = append(problems, fmt.Sprintf("%s: %s: deferred-parity entry pins no signature (a 16-hex DiffSignature, or `unpinned (<why>)` when the text is not reproducible)", name, f))
 		}
+	}
+	return problems
+}
+
+// timingProblems checks the entries marked `timing: true`: the marker
+// exempts an entry from STALE, so it must say why (a bug-register id and a
+// detail) and keep the entry's divergence judged (a signature, pinned or
+// explicitly `unpinned (<why>)`, in a register that runs its entries); a
+// group entry cannot be timing (one cause, many files: no single program).
+func timingProblems(name, f string, x ReviewedExclusion, requireSignature bool) []string {
+	var problems []string
+	if x.Group != "" {
+		problems = append(problems, fmt.Sprintf("%s: %s: timing: true is for a single program, not a group entry", name, f))
+	}
+	if strings.TrimSpace(x.Detail) == "" || !bugRef.MatchString(x.Detail) {
+		problems = append(problems, fmt.Sprintf("%s: %s: timing: true needs a detail citing the BUG id (docs/dev/bugs.md) that explains the host-speed dependence", name, f))
+	}
+	if requireSignature && !IsPinned(x.Signature) && !unpinnedSig.MatchString(x.Signature) {
+		problems = append(problems, fmt.Sprintf("%s: %s: timing: true entry pins no signature (a 16-hex DiffSignature, or `unpinned (<why>)`)", name, f))
 	}
 	return problems
 }

@@ -99,6 +99,15 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   [srctest-exclusions.yaml](test/differential/srctest-exclusions.yaml),
   [typeparam-exclusions.yaml](test/differential/typeparam-exclusions.yaml)
   and [tools/stdlib-fork/exclusions.yaml](tools/stdlib-fork/exclusions.yaml).
+- **Timing-dependent programs.** A listed program that is a wall-clock check
+  (a timeout, a "too slow" assertion: its outcome follows host speed and
+  load, so a perf win or a faster runner makes it match gc) carries
+  `timing: true`: matching gc is reported `TIMING` ("passes
+  (timing-dependent)"), not STALE, while a divergence is still judged by
+  the entry's signature. The marker needs a `BUG-NNNN` in the detail and a
+  signature, and the count of marked entries is the shrink-only
+  `timing-excl` ratchet (`.github/scripts/ratchet_budget.json`): never use
+  it for a program that fails for any other reason.
 
 ## 4. Worktrees and commits
 

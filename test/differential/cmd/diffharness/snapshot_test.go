@@ -212,6 +212,12 @@ func TestSrctestVerdictSignature(t *testing.T) {
 		{typeparam.Comparison{Same: false, Expected: "deferred-parity", ExpectedSig: pinned, Reasons: []string{"exit code 2 != 0"}}, "DIVERGE"},
 		{typeparam.Comparison{Same: false, Expected: "deferred-parity", Reasons: reasons}, "EXPECTED"},
 		{typeparam.Comparison{Same: true, Expected: "deferred-parity"}, "STALE"},
+		// A timing-dependent entry that matches gc passes; one that does not
+		// is still judged by its signature, and an unlisted match is MATCH.
+		{typeparam.Comparison{Same: true, Expected: "deferred-parity", Timing: true}, "TIMING"},
+		{typeparam.Comparison{Same: false, Expected: "deferred-parity", Timing: true, ExpectedSig: pinned, Reasons: reasons}, "EXPECTED"},
+		{typeparam.Comparison{Same: false, Expected: "deferred-parity", Timing: true, ExpectedSig: pinned, Reasons: []string{"exit code 2 != 0"}}, "DIVERGE"},
+		{typeparam.Comparison{Same: true, Timing: true}, "MATCH"},
 		{typeparam.Comparison{Infra: true}, "INFRA"},
 	} {
 		if got := srctestVerdict(c.c); got != c.want {
@@ -229,5 +235,24 @@ func TestMutantStatus(t *testing.T) {
 	}
 	if s, ok := mutantStatus(true, true); !ok || s != "DETECTED" {
 		t.Errorf("detected: %s %v", s, ok)
+	}
+}
+
+// The corpus snapshot gate honors `timing: true` the same way: matching gc is
+// TIMING (a pass) for a timing entry and STALE for any other.
+func TestClassifyTimingEntry(t *testing.T) {
+	exp := map[string]harness.ReviewedExclusion{
+		"slow":  {File: "slow", Reason: "deferred-parity", Detail: "BUG-0001", Timing: true},
+		"plain": {File: "plain", Reason: "deferred-parity", Detail: "BUG-0001"},
+	}
+	for _, c := range []struct{ name, diff, want string }{
+		{"slow", "", "TIMING"},
+		{"plain", "", "STALE"},
+		{"slow", "stdout differs", "UNPINNED"},
+		{"other", "", "MATCH"},
+	} {
+		if got := classify(c.name, c.diff, false, exp).kind; got != c.want {
+			t.Errorf("classify(%s, %q): got %s want %s", c.name, c.diff, got, c.want)
+		}
 	}
 }

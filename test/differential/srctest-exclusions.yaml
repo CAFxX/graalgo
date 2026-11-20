@@ -38,7 +38,12 @@
 #       `srctest run -files` (JOBS=1, -Xmx2g): blank.go EXPECTED as pinned,
 #       the others match gc and are not listed — the earlier reports
 #       predate version 4.
-version: 5
+#   6 (2026-11-20, timing-excl lane): `timing: true` marker (a wall-clock
+#       program passes on a fast host, diverges on a slow or loaded one, so
+#       "matches gc" is not STALE: reported TIMING) on maplinear.go
+#       (BUG-0023; the CI conformance run turned STALE after the perf work)
+#       and gc2.go (BUG-0032). Still reason-coded, BUG-cited and signed.
+version: 6
 exclusions:
 - file: append.go
   reason: deferred-parity
@@ -110,8 +115,9 @@ exclusions:
   signature: 2b3f360a53c9cbf6
 - file: gc2.go
   reason: deferred-parity
-  detail: BUG-0032 (runtime.GC() is a ~27 ms JVM full GC over the v1 pipeline's ~410 MB live heap; 800 calls exceed the 90 s timeout at JOBS=4 on the CI runner — a JOBS=1 local run takes ~25 s, matches gc and reports this entry STALE); observed: timeout: ref=false alt=true
+  detail: BUG-0032 (runtime.GC() is a ~27 ms JVM full GC over the v1 pipeline's ~410 MB live heap; 800 calls exceed the 90 s timeout at JOBS=4 on the CI runner — a JOBS=1 local run takes ~25 s, matches gc and reports this entry TIMING, a pass); observed: timeout: ref=false alt=true
   signature: 4ba13b35783be537
+  timing: true
 - file: gcgort.go
   reason: deferred-parity
   detail: BUG-0017 (runtime-internal function or linkname missing); observed: stderr differs at line 1: ref="" alt="graalgo-run: fatal internal error in goroutine: graalgo.frontend.FrontendException: linkname: no intrinsic regis
@@ -178,8 +184,9 @@ exclusions:
   signature: 85418e455db28fc1
 - file: maplinear.go
   reason: deferred-parity
-  detail: BUG-0023 (map insert timing check); observed: stderr differs at line 1: ref="" alt="panic: NaN: too slow: 60000 inserts: 1.995063159s; 120000 inserts: 8.153337816s"
+  detail: BUG-0023 (map insert timing check; passes on a fast host, diverges on a slow or loaded one); observed: stderr differs at line 1: ref="" alt="panic: NaN: too slow: 60000 inserts: 1.995063159s; 120000 inserts: 8.153337816s"
   signature: unpinned (measured timings in the text; on a slow host the program times out instead — local 2026-11-18: timeout: ref=false alt=true)
+  timing: true
 - file: maymorestack.go
   reason: deferred-parity
   detail: BUG-0011 (trace/caller rendering: unqualified names, relative paths); observed: stderr differs at line 5: ref="\t{WORK}/src/maymorestack.go/main.go:27" alt="\tmain.go:27"

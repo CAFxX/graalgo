@@ -96,6 +96,7 @@ func Scan(testDir string, yamlExcl map[string]typeparam.Exclusion) ([]typeparam.
 			// failure) once it matches gc.
 			tf.Expected = x.Reason
 			tf.ExpectedSig = x.Signature
+			tf.Timing = x.Timing
 			tf.Detail = "expected divergence (" + ExclusionsFileName() + "): " + x.Detail
 		}
 		out = append(out, tf)

@@ -1,6 +1,7 @@
 package typeparam
 
 import (
+	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
@@ -39,5 +40,36 @@ func TestLoadExclusionsEdgeCases(t *testing.T) {
 		if got != w {
 			t.Errorf("%s = %+v, want %+v", f, got, w)
 		}
+	}
+}
+
+// The `timing: true` marker reaches the scanned file (the verdict code reads
+// it from the comparison, which copies it from here).
+func TestScanCarriesTimingMarker(t *testing.T) {
+	dir := t.TempDir()
+	src := "// run\n\npackage main\n\nfunc main() {}\n"
+	for _, n := range []string{"slow.go", "plain.go"} {
+		if err := os.WriteFile(filepath.Join(dir, n), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	y := filepath.Join(dir, "x.yaml")
+	if err := os.WriteFile(y, []byte("version: 1\nexclusions:\n- file: slow.go\n  reason: deferred-parity\n  detail: BUG-0001\n  timing: true\n- file: plain.go\n  reason: deferred-parity\n  detail: BUG-0001\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, excl, err := LoadExclusions(y)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := Scan(dir, excl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		got[f.Name] = f.Timing
+	}
+	if !got["slow.go"] || got["plain.go"] {
+		t.Fatalf("timing marker not carried per file: %v", got)
 	}
 }

@@ -544,10 +544,13 @@ func cmdTypeparamRun(args []string) error {
 		if v == "STALE" {
 			fmt.Printf("\n           - listed in %s (%s) but matches gc: prune the entry", filepath.Base(*exclusions), c.Expected)
 		}
+		if v == "TIMING" {
+			fmt.Printf("\n           - passes (timing-dependent): listed `timing: true` in %s (%s), matches gc on this host", filepath.Base(*exclusions), c.Expected)
+		}
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
 		}
-		if v != "STALE" && v != "INFRA" {
+		if v != "STALE" && v != "INFRA" && v != "TIMING" {
 			fmt.Printf("\n           = signature %s", harness.DiffSignature(strings.Join(c.Reasons, "\n")))
 		}
 		fmt.Println()
@@ -561,8 +564,8 @@ func cmdTypeparamRun(args []string) error {
 	if err := typeparam.WriteReportJSON(*out, comps, notrun); err != nil {
 		return err
 	}
-	fmt.Printf("typeparam run: %d comparisons: match=%d expected=%d diverge=%d stale=%d infra=%d; %d not programs; report %s\n",
-		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], notrun, *out)
+	fmt.Printf("typeparam run: %d comparisons: match=%d expected=%d diverge=%d stale=%d infra=%d timing-pass=%d; %d not programs; report %s\n",
+		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], counts["TIMING"], notrun, *out)
 	if bad := counts["DIVERGE"] + counts["STALE"]; bad > 0 {
 		return fmt.Errorf("%d divergences (unlisted divergences / stale entries)", bad)
 	}
@@ -682,10 +685,13 @@ func cmdSrctestRun(args []string) error {
 		if v == "STALE" {
 			fmt.Printf("\n           - listed in %s (%s) but matches gc: prune the entry", filepath.Base(*exclusions), c.Expected)
 		}
+		if v == "TIMING" {
+			fmt.Printf("\n           - passes (timing-dependent): listed `timing: true` in %s (%s), matches gc on this host", filepath.Base(*exclusions), c.Expected)
+		}
 		for _, r := range c.Reasons {
 			fmt.Printf("\n           - %s", r)
 		}
-		if v != "STALE" && v != "INFRA" {
+		if v != "STALE" && v != "INFRA" && v != "TIMING" {
 			fmt.Printf("\n           = signature %s", harness.DiffSignature(strings.Join(c.Reasons, "\n")))
 		}
 		fmt.Println()
@@ -699,8 +705,8 @@ func cmdSrctestRun(args []string) error {
 	if err := typeparam.WriteReportJSON(*out, comps, notrun); err != nil {
 		return err
 	}
-	fmt.Printf("srctest run: %d compared: match=%d expected=%d diverge=%d stale=%d infra=%d; %d not programs; report %s\n",
-		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], notrun, *out)
+	fmt.Printf("srctest run: %d compared: match=%d expected=%d diverge=%d stale=%d infra=%d timing-pass=%d; %d not programs; report %s\n",
+		len(comps), counts["MATCH"], counts["EXPECTED"], counts["DIVERGE"], counts["STALE"], counts["INFRA"], counts["TIMING"], notrun, *out)
 	if bad := counts["DIVERGE"] + counts["STALE"]; bad > 0 {
 		return fmt.Errorf("%d unexpected results (unlisted divergences / stale entries)", bad)
 	}
@@ -713,11 +719,14 @@ func cmdSrctestRun(args []string) error {
 // srctestVerdict classifies one srctest/typeparam comparison: MATCH,
 // EXPECTED (listed and diverging as pinned), DIVERGE (unlisted divergence,
 // or a listed one whose pinned signature changed — G2), STALE (listed but
-// matching gc), INFRA (no verdict).
+// matching gc), TIMING (listed `timing: true` and matching gc: a pass, the
+// outcome depends on host speed), INFRA (no verdict).
 func srctestVerdict(c typeparam.Comparison) string {
 	switch {
 	case c.Infra:
 		return "INFRA"
+	case c.Same && c.Expected != "" && c.Timing:
+		return "TIMING"
 	case c.Same && c.Expected != "":
 		return "STALE"
 	case c.Same:
