@@ -1,5 +1,10 @@
 # graalgo driver
 
+> **Status: v1, replaced at M3.** This is the custom 5-command driver over
+> the v1 pipeline. At the M3 cutover `cmd/graalgo` becomes the thin launcher
+> of [internal/toolexec/cmd/graalgo-launcher/](../../internal/toolexec/cmd/graalgo-launcher/README.md);
+> do not add features here. Map: [docs/MAP.md](../../docs/MAP.md).
+
 The `graalgo` command: a drop-in replacement for the `go` command that
 routes through graalgo's Truffle backend.
 

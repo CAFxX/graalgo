@@ -1,5 +1,7 @@
 # Gate 1: `go test ./...` Trial Harness
 
+> **Status: v1, deleted at M3** ([toolexec-design.md](../../docs/arch/toolexec-design.md) §9.1).
+
 Phase-3 Gate 1 conformance trial: run upstream Go stdlib tests via graalgo
 and compare against gc 1.27.1.
 

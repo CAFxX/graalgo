@@ -1,5 +1,10 @@
 # diffharness — differential-vs-gc smoke harness
 
+> **Status: shared harness, v1-driven gates.** "The product launcher" below
+> is v1's `graalgo-sync-run` ([backends-p3.json](backends-p3.json)); the
+> new path's gates are `test/m1*` ([docs/MAP.md](../../docs/MAP.md)). The
+> gc snapshot and the exclusion registers carry over to the new path at M3.
+
 The conformance net for graalgo (SPEC §5.1/§5.5): compile and run the same
 corpus programs under gc and graalgo, compare observables, report
 divergences.
