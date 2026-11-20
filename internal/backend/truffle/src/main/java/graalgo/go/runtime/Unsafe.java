@@ -945,21 +945,53 @@ public final class Unsafe {
         return s;
     }
 
+    /**
+     * The slice in a slot of type {@code []elem} after its data word is written. The words of a
+     * header are written one at a time and in any order (reflect's {@code Value.Slice} writes
+     * the length and capacity of a {@code []unsafe.Pointer} first and then the data pointer of
+     * a slice of another element type), so:
+     * <ul>
+     * <li>a length and capacity written before the data stand ({@link #sliceWithLenCap} keeps
+     * them on a slice without storage);
+     * <li>when the storage at {@code p} is not made of {@code elem} leaves, the slot holds an
+     * <em>untyped header</em> — the location of {@code p} with the length and capacity as
+     * written — which names the same data word ({@link #sliceData}) and is read back through
+     * the type the reader gives ({@link #loadRef} composes the slice from the words, checked
+     * against the storage). Indexing it as {@code []elem} is the misuse it would be under gc.
+     * </ul>
+     */
     private static Slice sliceWithData(Node n, Slice old, Object p, GoType elem) {
         if (p == null) {
-            return Slice.NIL;
+            return old.len == 0 && old.cap == 0 ? Slice.NIL : new Slice(null, 0, 0, 0, old.len, old.cap);
+        } else if (!isFlatPointer(p)) {
+            throw Panics.fatal(n, STRADDLES);
         }
         Flat obj = referent(p);
-        long avail = elem.gcSize() == 0 ? old.cap : (extent(obj) - offset(p)) / elem.gcSize();
-        return sliceOver(n, p, Math.min(old.len, avail), Math.min(old.cap, avail), elem, STRADDLES);
+        long off = offset(p);
+        GoType lt = layout(obj);
+        boolean typed = elem.gcSize() == 0 || elem.nLeaves() == 0;
+        if (!typed) {
+            // One element decides: storage repeats per element (sliceOver checks the rest).
+            typed = off + elem.gcSize() <= extent(obj) ? coincides(lt, off, elem) : off == extent(obj);
+        }
+        if (typed) {
+            long avail = elem.gcSize() == 0 ? old.cap : (extent(obj) - off) / elem.gcSize();
+            return sliceOver(n, p, Math.min(old.len, avail), Math.min(old.cap, avail), elem, STRADDLES);
+        }
+        Leaf l = lt.leafAt(off);
+        if (l == null || l.gcOff != off) {
+            throw Panics.fatal(n, STRADDLES);
+        }
+        return new Slice(obj, l.prim, l.ref, l.byt, old.len, old.cap);
     }
 
     private static Slice sliceWithLenCap(Node n, Slice old, long len, long cap) {
         if (old.base == null) {
-            if (len != 0 || cap != 0) {
+            if (len < 0 || cap < 0 || len > Integer.MAX_VALUE || cap > Integer.MAX_VALUE) {
                 throw Panics.fatal(n, STRADDLES);
             }
-            return old;
+            // No storage yet: the words stand until the data word arrives (sliceWithData).
+            return len == 0 && cap == 0 ? Slice.NIL : new Slice(null, 0, 0, 0, (int) len, (int) cap);
         }
         // The capacity may grow back up to the end of the storage; the length follows it.
         Slice s = new Slice(old.base, old.prim, old.ref, old.byt, (int) Math.min(len, Integer.MAX_VALUE),
@@ -1019,6 +1051,29 @@ public final class Unsafe {
         return i.cacheWord(box); // one word per value, as gc's (BUG-0045)
     }
 
+    /**
+     * Whether the leaves at {@code off} are the gc words of a header of kind {@code u} (slice:
+     * pointer, int, int; string: pointer, int) rather than a leaf of that kind.
+     */
+    private static boolean headerWords(Flat obj, long off, GoType u) {
+        int ints = u.kind == GoType.SLICE ? 2 : u.kind == GoType.STRING ? 1 : -1;
+        if (ints < 0) {
+            return false;
+        }
+        GoType lt = layout(obj);
+        Leaf p = lt.leafAt(off);
+        if (p == null || p.gcOff != off || p.type.nRef() != 1 || !p.type.isPointerShaped()) {
+            return false;
+        }
+        for (int i = 1; i <= ints; i++) {
+            Leaf l = lt.leafAt(off + 8L * i);
+            if (l == null || l.gcOff != off + 8L * i || l.type.nPrim() != 1 || l.type.gcSize() != 8) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** The interface slot content for a type word and a data word (the inverse of the two above). */
     @TruffleBoundary
     public static Object makeIface(Node n, Object typ, Object data) {
@@ -1049,7 +1104,14 @@ public final class Unsafe {
         }
         Flat obj = referent(data);
         long off = offset(data);
-        if (off + pointee.gcSize() > extent(obj) || !coincides(layout(obj), off, pointee)) {
+        if (off + pointee.gcSize() > extent(obj)) {
+            return new RawIface(typ, data);
+        } else if (!coincides(layout(obj), off, pointee)) {
+            if (t.u().kind != GoType.POINTER && headerWords(obj, off, t.u())) {
+                // A slice or string spelled out as its words (reflect.MakeSlice points a
+                // []T Value at an unsafeheader.Slice): the value those words compose.
+                return new Iface(t, loadRef(n, obj, off, t));
+            }
             return new RawIface(typ, data);
         }
         Object p = typed(n, obj, off, pointee, data);

@@ -3,6 +3,7 @@ package syscalls
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // Check verifies t against the standard library's call sites (Scan) and
@@ -15,8 +16,9 @@ import (
 //     roles to another system call);
 //   - at every argument position of every site, the site passes what the
 //     entry declares: val for val (a word declared as a value but passed
-//     a pointer would reach the kernel as a handle integer), cstr for cstr,
-//     a byte buffer for bytes;
+//     a pointer would reach the kernel as a handle integer; a sel role is
+//     a value the executor also restricts to the listed ones), cstr for
+//     cstr, a byte buffer for bytes;
 //   - a bytes role's length argument is uintptr(len(b)) of the very slice
 //     the pointer points into (a length taken from elsewhere could run past
 //     the Go object);
@@ -68,7 +70,10 @@ func Check(t *Table, sites []Site) []string {
 			continue
 		}
 		for _, s := range ss {
-			if s.Name != e.Name && s.Name != e.Name+"trap" { // internal/syscall/unix's fooTrap constants
+			// internal/syscall/unix names its numbers fooTrap; the kernel's name
+			// may carry a prefix the Go constant drops (fstatatTrap is newfstatat).
+			trap, isTrap := strings.CutSuffix(s.Name, "trap")
+			if s.Name != e.Name && !(isTrap && trap != "" && strings.HasSuffix(e.Name, trap)) {
 				bad(e, "%s issues %d as SYS_%s, not %s", s.Pos, e.Nr, s.Name, e.Name)
 			}
 			for i, got := range s.Roles {
@@ -81,9 +86,9 @@ func Check(t *Table, sites []Site) []string {
 				}
 				r := e.Roles[i]
 				switch r.Kind {
-				case Val:
+				case Val, Sel:
 					if got != "val" {
-						bad(e, "%s passes %s at %s, declared val", s.Pos, got, arg)
+						bad(e, "%s passes %s at %s, declared %s", s.Pos, got, arg, r)
 					}
 				case CStr:
 					if got != "cstr" {

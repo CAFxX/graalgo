@@ -30,6 +30,10 @@ const (
 	// fixed size (an Rlimit, a Timespec): copied in, and back after a
 	// successful call when the kernel writes it.
 	Struct
+	// Sel: an integer that selects what the call's other words mean (the
+	// command of fcntl): only the listed values are executed, with the
+	// roles of the entry; any other value is a fatal error.
+	Sel
 )
 
 // Dir is the direction of a buffer.
@@ -52,12 +56,20 @@ type Role struct {
 	// its size in bytes; Dir is the direction.
 	Type string
 	Size int64
+	// Sel: the values the executor accepts.
+	Values []int64
 }
 
 func (r Role) String() string {
 	switch r.Kind {
 	case CStr:
 		return "cstr"
+	case Sel:
+		v := make([]string, len(r.Values))
+		for i, x := range r.Values {
+			v[i] = strconv.FormatInt(x, 10)
+		}
+		return "sel(" + strings.Join(v, ",") + ")"
 	case Struct:
 		d := "in"
 		if r.Dir == Out {
@@ -177,6 +189,17 @@ func parseRole(s string) (Role, error) {
 		return Role{Kind: Val}, nil
 	case "cstr":
 		return Role{Kind: CStr}, nil
+	}
+	if strings.HasPrefix(s, "sel(") && strings.HasSuffix(s, ")") {
+		r := Role{Kind: Sel}
+		for _, v := range strings.Split(s[len("sel("):len(s)-1], ",") {
+			n, err := strconv.ParseInt(v, 0, 64)
+			if err != nil {
+				return Role{}, fmt.Errorf("%s: want sel(VALUE,...)", s)
+			}
+			r.Values = append(r.Values, n)
+		}
+		return r, nil
 	}
 	if strings.HasPrefix(s, "struct(") && strings.HasSuffix(s, ")") {
 		p := strings.Split(s[len("struct("):len(s)-1], ",")

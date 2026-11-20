@@ -1,7 +1,10 @@
 package syscalls
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -62,6 +65,8 @@ func TestCheckCatchesPlantedErrors(t *testing.T) {
 		{"struct of the wrong type", "302 prlimit64 - val val struct(syscall.Timespec,16,in) struct(syscall.Rlimit,16,out)", "passes ptr:syscall.Rlimit at a3, declared struct(syscall.Timespec,16,in)"},
 		{"struct declared val", "302 prlimit64 - val val val struct(syscall.Rlimit,16,out)", "passes ptr:syscall.Rlimit at a3, declared val"},
 		{"struct pointer undeclared", "302 prlimit64 - val val struct(syscall.Rlimit,16,in)", "passes ptr:syscall.Rlimit at a4, which the entry does not declare"},
+		{"selector passed a pointer", "0 read block val sel(1,2) val", "passes buf:byte at a2, declared sel(1,2)"},
+		{"trap constant of another call", "262 unlinkat - val cstr struct(syscall.Stat_t,144,out) val", "as SYS_fstatattrap, not unlinkat"},
 		{"struct with pointers", "46 sendmsg - val struct(syscall.Msghdr,56,in) val", "syscall.Msghdr at a2 holds pointers"},
 	}
 	for _, p := range planted {
@@ -109,5 +114,24 @@ func TestJavaUpToDate(t *testing.T) {
 	}
 	if got != Default.Java() {
 		t.Fatalf("%s is stale: run `go generate ./syscalls` in internal/toolexec", JavaPath)
+	}
+}
+
+// TestDumpSites writes every scanned site, sorted by number, to the file
+// SYSCALLS_DUMP names (skipped without it): the source-derived roles a new
+// table entry is written from.
+func TestDumpSites(t *testing.T) {
+	out := os.Getenv("SYSCALLS_DUMP")
+	if out == "" {
+		t.Skip("SYSCALLS_DUMP not set")
+	}
+	sites := append([]Site(nil), stdSites(t)...)
+	sort.SliceStable(sites, func(i, j int) bool { return sites[i].Nr < sites[j].Nr })
+	var b strings.Builder
+	for _, s := range sites {
+		fmt.Fprintf(&b, "%d %s %s %s roles=%v buf=%q len=%q size=%v\n", s.Nr, s.Name, s.Func, s.Pos, s.Roles, s.Buf, s.Len, s.Size)
+	}
+	if err := os.WriteFile(out, []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

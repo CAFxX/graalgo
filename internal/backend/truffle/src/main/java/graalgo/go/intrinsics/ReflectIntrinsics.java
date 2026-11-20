@@ -1,7 +1,20 @@
 package graalgo.go.intrinsics;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
+import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
+import graalgo.go.runtime.GoProcess;
+import graalgo.go.runtime.Receivers;
+import graalgo.go.types.Method;
+import graalgo.go.values.Env;
+import graalgo.go.values.TypedChan;
+import graalgo.language.GoLanguage;
+import graalgo.runtime.ChanOps;
+import graalgo.runtime.GoErrorValue;
+import graalgo.runtime.PanicException;
 import graalgo.go.nodes.Data;
 import graalgo.go.runtime.Panics;
 import graalgo.go.runtime.Unsafe;
@@ -84,12 +97,12 @@ final class ReflectIntrinsics {
     }
 
     /**
-     * {@code addReflectOff(ptr)}: registers a name or type made at run time ({@code StructOf},
-     * {@code FuncOf}, ...) so that an offset can name it.
+     * {@code addReflectOff(ptr)}: an offset that names an object reflect made or found at run
+     * time (a field's type, a name), resolved by {@code resolveNameOff}/{@code resolveTypeOff}.
      */
     @TruffleBoundary
     static long reflect_addReflectOff(Node node, Object ptr) {
-        throw Panics.fatal(node, "reflect: types made at run time are not supported (graalgo)");
+        return GoProcess.get(node).types.descriptors.addOff(ptr);
     }
 
     /**
@@ -97,12 +110,86 @@ final class ReflectIntrinsics {
      * pointer, slice, map, channel or func type itself. None is recorded.
      */
     static Object reflect_compiledTypelinks(Node node) {
-        return new Object[] {null, null};
+        return new Object[] {Slice.NIL, Slice.NIL};
     }
 
     /** AIX only; never called on the tracked platform. */
     static Object reflect_adjustAIXGCDataForRuntime(Node node, Object p) {
         return p;
+    }
+
+    // ---------------------------------------------------------------- type constructors
+
+    /** The descriptor image of an interned type. */
+    private static Object image(Node node, GoType t) {
+        return GoProcess.get(node).types.descriptors.typeWord(t);
+    }
+
+    private static GoType[] types(Node node, Object slice) {
+        Slice s = (Slice) slice;
+        GoType[] out = new GoType[s.len];
+        for (int i = 0; i < s.len; i++) {
+            out[i] = type(node, s.base.refs[s.ref + i]);
+        }
+        return out;
+    }
+
+    /** {@code typePointerTo(elem)} (the patched {@code (*rtype).ptrTo}): the descriptor of {@code *elem}. */
+    @TruffleBoundary
+    static Object reflect_typePointerTo(Node node, Object elem) {
+        return image(node, GoProcess.get(node).types.pointer(type(node, elem)));
+    }
+
+    /** {@code typeSliceOf(elem)} ({@code SliceOf}). */
+    @TruffleBoundary
+    static Object reflect_typeSliceOf(Node node, Object elem) {
+        return image(node, GoProcess.get(node).types.slice(type(node, elem)));
+    }
+
+    /** {@code typeArrayOf(length, elem)} ({@code ArrayOf}). */
+    @TruffleBoundary
+    static Object reflect_typeArrayOf(Node node, long length, Object elem) {
+        return image(node, GoProcess.get(node).types.array(length, type(node, elem)));
+    }
+
+    /** {@code typeChanOf(elem, dir)} ({@code ChanOf}); dir is reflect's ChanDir (1 recv, 2 send, 3 both). */
+    @TruffleBoundary
+    static Object reflect_typeChanOf(Node node, Object elem, long dir) {
+        // GIR's ChanDir: 1 both, 2 send, 3 recv.
+        int d = dir == 3 ? 1 : dir == 2 ? 2 : 3;
+        return image(node, GoProcess.get(node).types.chan(d, type(node, elem)));
+    }
+
+    /** {@code typeMapOf(key, elem)} ({@code MapOf}). */
+    @TruffleBoundary
+    static Object reflect_typeMapOf(Node node, Object key, Object elem) {
+        return image(node, GoProcess.get(node).types.map(type(node, key), type(node, elem)));
+    }
+
+    /** {@code typeFuncOf(in, out, variadic)} ({@code FuncOf}). */
+    @TruffleBoundary
+    static Object reflect_typeFuncOf(Node node, Object in, Object out, boolean variadic) {
+        return image(node, GoProcess.get(node).types.func(types(node, in), types(node, out), variadic));
+    }
+
+    /**
+     * {@code typeStructOf(names, pkgPaths, tags, types, embedded)} ({@code StructOf}, after
+     * upstream's validation of the fields).
+     */
+    @TruffleBoundary
+    static Object reflect_typeStructOf(Node node, Object names, Object pkgPaths, Object tags, Object types,
+            Object embedded) {
+        Slice n = (Slice) names;
+        Slice p = (Slice) pkgPaths;
+        Slice g = (Slice) tags;
+        Slice e = (Slice) embedded;
+        GoType[] ts = types(node, types);
+        GoType.Field[] fields = new GoType.Field[n.len];
+        for (int i = 0; i < n.len; i++) {
+            fields[i] = new GoType.Field(n.base.refs[n.ref + i].toString(), p.base.refs[p.ref + i].toString(), ts[i],
+                    e.base.bytes[e.byt + i] != 0, g.base.refs[g.ref + i].toString());
+        }
+        return image(node, GoProcess.get(node).types.struct(fields));
     }
 
     // ---------------------------------------------------------------- memory
@@ -387,6 +474,21 @@ final class ReflectIntrinsics {
         }
     }
 
+    /**
+     * {@code typehash(t, p, h) uintptr}: the hash of the value of type t at p, seeded with h (the
+     * hasher of a map type made by {@code MapOf}).
+     */
+    @TruffleBoundary
+    static long reflect_typehash(Node node, Object rtype, Object p, long h) {
+        GoType t = type(node, rtype);
+        try {
+            int v = t.gcSize() == 0 ? 0 : Values.hash(t, Unsafe.loadThrough(node, p, t));
+            return (h * 31 + v) * 0x9E3779B97F4A7C15L;
+        } catch (Values.Uncomparable u) {
+            throw Panics.unhashable(node, u.type);
+        }
+    }
+
     // ---------------------------------------------------------------- channels (run-time helpers)
 
     /** {@code makechan(typ, size)}. */
@@ -396,7 +498,7 @@ final class ReflectIntrinsics {
         if (size < 0 || size > Integer.MAX_VALUE) {
             throw Panics.plain(node, "makechan: size out of range");
         }
-        return new GoChan((int) size, t.elem.zero());
+        return new TypedChan(t.elem, (int) size);
     }
 
     @TruffleBoundary
@@ -404,7 +506,317 @@ final class ReflectIntrinsics {
         return ch == null ? 0 : ((GoChan) ch).capacity();
     }
 
+    /** The element type of a channel made by this node package. */
+    private static GoType chanElem(Object ch) {
+        return ((TypedChan) ch).elem;
+    }
+
+    private static RuntimeException convert(Node node, PanicException e) {
+        return Panics.of(node, (GoErrorValue) e.goValue());
+    }
+
+    /**
+     * Stores a channel element at {@code p}: the address of a variable of the element type, or
+     * (reflect's {@code &val.ptr}) of a pointer word for a pointer-shaped element.
+     */
+    private static void storeElem(Node node, Object p, GoType elem, Object v) {
+        if (elem.gcSize() != 0) {
+            Unsafe.storeThrough(node, p, elem, v);
+        }
+    }
+
+    /**
+     * {@code chanrecv(ch, nb, val) (selected, received)}: receives into {@code *val}; with
+     * {@code nb} it does not block ({@code selected} false when nothing was ready).
+     */
+    @TruffleBoundary
+    static Object reflect_chanrecv(Node node, Object ch, boolean nb, Object val) {
+        if (ch == null) {
+            if (nb) {
+                return new Object[] {false, false};
+            }
+            GoProcess.get(node).blockForever("chan receive (nil chan)");
+        }
+        GoChan c = (GoChan) ch;
+        GoType elem = chanElem(ch);
+        if (nb) {
+            ChanOps.SelectCase[] cases = {new ChanOps.SelectCase(c, false, null), new ChanOps.SelectCase(null, false, null)};
+            if (ChanOps.selectGo(cases) != 0) {
+                return new Object[] {false, false};
+            }
+            boolean ok = ChanOps.selectRecvOk();
+            storeElem(node, val, elem, ok ? ChanOps.selectRecvValue() : elem.zero());
+            return new Object[] {true, ok};
+        }
+        GoChan.RecvResult r = ChanOps.recvOk(c);
+        storeElem(node, val, elem, r.ok() ? r.value() : elem.zero());
+        return new Object[] {true, r.ok()};
+    }
+
+    /** {@code chansend0(ch, val, nb) bool}: sends {@code *val}; with {@code nb} it does not block. */
+    @TruffleBoundary
+    static boolean reflect_chansend0(Node node, Object ch, Object val, boolean nb) {
+        if (ch == null) {
+            if (nb) {
+                return false;
+            }
+            GoProcess.get(node).blockForever("chan send (nil chan)");
+        }
+        GoChan c = (GoChan) ch;
+        GoType elem = chanElem(ch);
+        Object v = elem.gcSize() == 0 ? elem.zero() : Unsafe.loadThrough(node, val, elem);
+        try {
+            if (nb) {
+                ChanOps.SelectCase[] cases = {new ChanOps.SelectCase(c, true, v), new ChanOps.SelectCase(null, false, null)};
+                return ChanOps.selectGo(cases) == 0;
+            }
+            ChanOps.send(c, v);
+            return true;
+        } catch (PanicException e) {
+            throw convert(node, e);
+        }
+    }
+
+    /**
+     * {@code rselect(cases []runtimeSelect) (chosen int, recvOK bool)}: a select statement over
+     * the cases ({@code dir} 1 send, 2 receive, 3 default; {@code val} the address the element
+     * is sent from or received into).
+     */
+    @TruffleBoundary
+    static Object reflect_rselect(Node node, Object casesSlice) {
+        Slice s = (Slice) casesSlice;
+        GoType ct = s.len == 0 ? null : s.base.type.elem.u();
+        int n = s.len;
+        int def = -1;
+        ChanOps.SelectCase[] cases = new ChanOps.SelectCase[n];
+        Object[] vals = new Object[n];
+        GoChan[] chans = new GoChan[n];
+        int[] order = new int[n];
+        int m = 0;
+        for (int i = 0; i < n; i++) {
+            int p = s.prim + i * ct.nPrim();
+            int r = s.ref + i * ct.nRef();
+            long dir = s.base.prims[p + ct.fields[0].primOff];
+            Object ch = s.base.refs[r + ct.fields[2].refOff];
+            Object val = s.base.refs[r + ct.fields[3].refOff];
+            vals[i] = val;
+            if (dir == 3) {
+                def = i;
+                continue;
+            }
+            // A nil channel is never ready: a private channel nobody else holds.
+            GoChan c = ch == null ? new GoChan(0, null) : (GoChan) ch;
+            chans[i] = ch == null ? null : c;
+            Object v = null;
+            if (dir == 1 && ch != null) {
+                GoType elem = chanElem(ch);
+                v = elem.gcSize() == 0 ? elem.zero() : Unsafe.loadThrough(node, val, elem);
+            }
+            order[m] = i;
+            cases[m++] = new ChanOps.SelectCase(c, dir == 1, v);
+        }
+        if (def >= 0) {
+            order[m] = def;
+            cases[m++] = new ChanOps.SelectCase(null, false, null);
+        } else if (m == 0) {
+            GoProcess.get(node).blockForever("select (no cases)");
+        }
+        int k;
+        try {
+            k = ChanOps.selectGo(java.util.Arrays.copyOf(cases, m));
+        } catch (PanicException e) {
+            throw convert(node, e);
+        }
+        int chosen = order[k];
+        boolean recvOk = false;
+        long dir = s.base.prims[s.prim + chosen * ct.nPrim() + ct.fields[0].primOff];
+        if (dir == 2) {
+            recvOk = ChanOps.selectRecvOk();
+            GoType elem = chanElem(chans[chosen]);
+            storeElem(node, vals[chosen], elem, recvOk ? ChanOps.selectRecvValue() : elem.zero());
+        }
+        return new Object[] {(long) chosen, recvOk};
+    }
+
     // ---------------------------------------------------------------- call path
+
+    private static GoType funcType(Node node, Object rtype) {
+        GoType t = type(node, rtype).u();
+        if (t.kind != GoType.FUNC) {
+            throw new IllegalStateException("not a func type: " + t.str());
+        }
+        return t;
+    }
+
+    /** The carrier values at the addresses in {@code args}, after {@code lead} leading slots. */
+    private static Object[] loadArgs(Node node, GoType ft, Object args, int lead) {
+        Slice a = (Slice) args;
+        if (a.len != ft.params.length) {
+            throw new IllegalStateException("reflect call: " + a.len + " arguments for " + ft.str());
+        }
+        Object[] out = new Object[lead + a.len];
+        for (int i = 0; i < a.len; i++) {
+            GoType pt = ft.params[i];
+            out[lead + i] = pt.gcSize() == 0 ? pt.zero() : Unsafe.loadThrough(node, a.base.refs[a.ref + i], pt);
+        }
+        return out;
+    }
+
+    private static void storeResults(Node node, GoType ft, Object rets, Object result) {
+        Slice r = (Slice) rets;
+        int n = ft.results.length;
+        for (int i = 0; i < n; i++) {
+            GoType rt = ft.results[i];
+            if (rt.gcSize() != 0) {
+                Unsafe.storeThrough(node, r.base.refs[r.ref + i], rt, n == 1 ? result : ((Object[]) result)[i]);
+            }
+        }
+    }
+
+    /**
+     * {@code callFunc(t, fn, args, rets)} (the patched {@code Value.call}): calls the func value
+     * {@code fn} of type {@code t} with the values at the addresses in {@code args} and stores
+     * its results at the addresses in {@code rets}.
+     */
+    @TruffleBoundary
+    static void reflect_callFunc(Node node, Object rtype, Object fn, Object args, Object rets) {
+        GoType ft = funcType(node, rtype);
+        Closure c = (Closure) fn;
+        Object[] a = loadArgs(node, ft, args, 1);
+        a[0] = c.env;
+        storeResults(node, ft, rets, c.target.call(a));
+    }
+
+    /**
+     * {@code callMethodByName(rcvr, name, t, args, rets)}: calls the method {@code name} of the
+     * dynamic type of {@code rcvr} on it, as a call through an interface does.
+     */
+    @TruffleBoundary
+    static void reflect_callMethodByName(Node node, Object rcvr, Str name, Object rtype, Object args, Object rets) {
+        GoType ft = funcType(node, rtype);
+        Iface r = (Iface) rcvr;
+        Method m = r == null ? null : r.type.findMethod(name.toString());
+        if (m == null) {
+            throw new IllegalStateException("reflect call: no method " + name + " on " + (r == null ? "nil" : r.type.str()));
+        }
+        Object[] a = loadArgs(node, ft, args, 2);
+        a[1] = Receivers.adapt(m, r.data, node);
+        storeResults(node, ft, rets, m.target().call(a));
+    }
+
+    private static final FrameDescriptor FUNC_ENV = Env.layout(2);
+
+    /**
+     * {@code makeFuncValue(t, impl) unsafe.Pointer}: a func value of type {@code t} whose call
+     * runs {@code impl(args, rets []unsafe.Pointer)} with the addresses of copies of its
+     * arguments and of zeroed result variables ({@code MakeFunc}, method values).
+     */
+    @TruffleBoundary
+    static Object reflect_makeFuncValue(Node node, Object rtype, Object impl) {
+        MaterializedFrame env = Env.create(FUNC_ENV);
+        Env.set(env, 0, funcType(node, rtype));
+        Env.set(env, 1, impl);
+        GoLanguage lang = GoLanguage.get(node);
+        return new Closure(lang.runtimeTypes().sharedTarget("reflect.makeFuncValue.func", () -> new MadeFuncRoot(lang)), env);
+    }
+
+    /** The code of every func value {@link #reflect_makeFuncValue} returns: env {@code [func type, impl]}. */
+    private static final class MadeFuncRoot extends RootNode {
+        MadeFuncRoot(GoLanguage language) {
+            super(language);
+        }
+
+        @Override
+        public String getName() {
+            return "reflect.makeFuncStub";
+        }
+
+        @Override
+        public boolean isInternal() {
+            return true;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return run((GoType) Env.get(a[0], 0), (Closure) Env.get(a[0], 1), a);
+        }
+
+        @TruffleBoundary
+        private Object run(GoType ft, Closure impl, Object[] a) {
+            GoType ptr = GoProcess.get(this).types.basic(GoType.UNSAFE_POINTER);
+            int nin = ft.params.length;
+            int nout = ft.results.length;
+            Flat args = Data.backing(ptr, nin);
+            for (int i = 0; i < nin; i++) {
+                args.refs[i] = boxed(ft.params[i], a[1 + i]);
+            }
+            Flat rets = Data.backing(ptr, nout);
+            for (int i = 0; i < nout; i++) {
+                rets.refs[i] = ft.results[i].zeroFlat();
+            }
+            impl.target.call(impl.env, new Slice(args, 0, 0, 0, nin, nin), new Slice(rets, 0, 0, 0, nout, nout));
+            if (nout == 0) {
+                return null;
+            }
+            Object[] out = new Object[nout];
+            for (int i = 0; i < nout; i++) {
+                GoType rt = ft.results[i];
+                out[i] = rt.gcSize() == 0 ? rt.zero() : Values.load(rt, (Flat) rets.refs[i], 0, 0, 0);
+            }
+            return nout == 1 ? out[0] : out;
+        }
+    }
+
+    private static final FrameDescriptor METHOD_ENV = Env.layout(1);
+
+    /**
+     * {@code methodFunc(t, name) unsafe.Pointer}: the func value of the method expression
+     * {@code T.name} ({@code Type.Method(i).Func}): its first argument is the receiver.
+     */
+    @TruffleBoundary
+    static Object reflect_methodFunc(Node node, Object rtype, Str name) {
+        GoType t = type(node, rtype);
+        Method m = t.findMethod(name.toString());
+        if (m == null) {
+            throw new IllegalStateException("reflect: no method " + name + " on " + t.str());
+        }
+        MaterializedFrame env = Env.create(METHOD_ENV);
+        Env.set(env, 0, m);
+        GoLanguage lang = GoLanguage.get(node);
+        return new Closure(lang.runtimeTypes().sharedTarget("reflect.methodFunc.func", () -> new MethodExprRoot(lang)), env);
+    }
+
+    /** The code of every func value {@link #reflect_methodFunc} returns: env {@code [Method]}. */
+    private static final class MethodExprRoot extends RootNode {
+        MethodExprRoot(GoLanguage language) {
+            super(language);
+        }
+
+        @Override
+        public String getName() {
+            return "reflect.methodFunc.func1";
+        }
+
+        @Override
+        public boolean isInternal() {
+            return true;
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return run(frame.getArguments());
+        }
+
+        @TruffleBoundary
+        private Object run(Object[] a) {
+            Method m = (Method) Env.get(a[0], 0);
+            Object[] b = a.clone();
+            b[0] = null;
+            b[1] = Receivers.adapt(m, a[1], this);
+            return m.target().call(b);
+        }
+    }
 
     /**
      * {@code reflect.methodValueCall}: upstream's assembly trampoline behind a method value made

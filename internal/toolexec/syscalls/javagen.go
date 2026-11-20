@@ -39,6 +39,12 @@ func (t *Table) Java() string {
 				roles = append(roles, "Role.VAL")
 			case CStr:
 				roles = append(roles, "Role.CSTR")
+			case Sel:
+				v := make([]string, len(r.Values))
+				for i, x := range r.Values {
+					v[i] = fmt.Sprintf("%dL", x)
+				}
+				roles = append(roles, "Role.sel("+strings.Join(v, ", ")+")")
 			case Bytes:
 				roles = append(roles, fmt.Sprintf("Role.bytes(%d, %t, %t)", r.LenArg, r.Dir == Out, r.FilledResult))
 			case Struct:

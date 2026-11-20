@@ -353,3 +353,26 @@ intrinsic reflect.mapdelete_faststr ReflectIntrinsics func(*internal/abi.Type, u
 intrinsic reflect.mapclear        ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer)
 intrinsic reflect.makechan        ReflectIntrinsics func(*internal/abi.Type, int) unsafe.Pointer
 intrinsic reflect.chancap         ReflectIntrinsics func(unsafe.Pointer) int
+intrinsic reflect.chanrecv        ReflectIntrinsics func(unsafe.Pointer, bool, unsafe.Pointer) (bool, bool)
+intrinsic reflect.chansend0       ReflectIntrinsics func(unsafe.Pointer, unsafe.Pointer, bool) bool
+intrinsic reflect.rselect         ReflectIntrinsics func([]reflect.runtimeSelect) (int, bool)
+# --- reflect's call path (stdlib/patches/reflect: Value.call, callReflect,
+# callMethod, methodReceiver, makeMethodValue, MakeFunc, (*rtype).Method call
+# these in place of gc's ABI frames, itab slots and text offsets;
+# abi-spike.md §1.5) ------------------------------------------------------------
+intrinsic reflect.callFunc         ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, []unsafe.Pointer, []unsafe.Pointer)
+intrinsic reflect.callMethodByName ReflectIntrinsics func(interface {}, string, *internal/abi.Type, []unsafe.Pointer, []unsafe.Pointer)
+intrinsic reflect.makeFuncValue    ReflectIntrinsics func(*internal/abi.Type, func([]unsafe.Pointer, []unsafe.Pointer)) unsafe.Pointer
+intrinsic reflect.methodFunc       ReflectIntrinsics func(*internal/abi.Type, string) unsafe.Pointer
+intrinsic reflect.typehash        ReflectIntrinsics func(*internal/abi.Type, unsafe.Pointer, uintptr) uintptr
+# --- reflect's type constructors (stdlib/patches/reflect: ptrTo, SliceOf,
+# ArrayOf, ChanOf, MapOf, FuncOf and StructOf intern the type in the
+# runtime's type table instead of filling a descriptor of their own, so a
+# type has one descriptor whoever asked for it; abi-spike.md §1.5 item 1) ----
+intrinsic reflect.typePointerTo ReflectIntrinsics func(*internal/abi.Type) *internal/abi.Type
+intrinsic reflect.typeSliceOf   ReflectIntrinsics func(*internal/abi.Type) *internal/abi.Type
+intrinsic reflect.typeArrayOf   ReflectIntrinsics func(int, *internal/abi.Type) *internal/abi.Type
+intrinsic reflect.typeChanOf    ReflectIntrinsics func(*internal/abi.Type, int) *internal/abi.Type
+intrinsic reflect.typeMapOf     ReflectIntrinsics func(*internal/abi.Type, *internal/abi.Type) *internal/abi.Type
+intrinsic reflect.typeFuncOf    ReflectIntrinsics func([]*internal/abi.Type, []*internal/abi.Type, bool) *internal/abi.Type
+intrinsic reflect.typeStructOf  ReflectIntrinsics func([]string, []string, []string, []*internal/abi.Type, []bool) *internal/abi.Type

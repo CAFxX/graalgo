@@ -103,6 +103,9 @@ public final class Executor {
         try (Arena arena = Arena.ofConfined()) {
             for (int i = 0; i < roles.length; i++) {
                 Role r = roles[i];
+                if (r.allowed != null && !listed(r.allowed, a[i])) {
+                    throw fail(node, e, i, "is " + a[i] + ", a selector the role table does not list");
+                }
                 if (r.kind == Role.K_VAL || a[i] == 0) {
                     continue; // a value, or a nil pointer (the kernel answers EFAULT where it matters)
                 }
@@ -159,6 +162,15 @@ public final class Executor {
     public static long[] values(long nr, long a1, long a2, long a3) {
         Raw raw = invoke(nr, new long[] {a1, a2, a3, 0, 0, 0});
         return new long[] {raw.r1, raw.errno};
+    }
+
+    private static boolean listed(long[] allowed, long v) {
+        for (long x : allowed) {
+            if (x == v) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** The bytes of the C string at {@code off} with its NUL, which must lie inside the object. */

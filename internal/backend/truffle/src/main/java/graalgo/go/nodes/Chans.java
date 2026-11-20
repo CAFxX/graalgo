@@ -51,7 +51,7 @@ public final class Chans {
 
         @TruffleBoundary
         private GoChan create(int c) {
-            return new GoChan(c, elem.zero());
+            return new graalgo.go.values.TypedChan(elem, c);
         }
     }
 
