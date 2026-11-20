@@ -171,11 +171,11 @@ separately (time to peak, CPU spent in warmup).
 | T1 | gzip/gunzip of a corpus; sha256sum; AES-GCM seal/open | stdlib programs (planned, `test/bench/realistic/`) | Silesia-like corpus | MB/s, CPU | after crc32/crypto intrinsics |
 | T1 | goldmark (Markdown → HTML), gjson/encoding-json-heavy CLI, scc (line counter) | `github.com/yuin/goldmark`, `github.com/tidwall/gjson`, `github.com/boyter/scc` at pinned versions | a docs tree, a JSON dump, the Go source tree | wall, MB/s | after the module path (test/e2e on the new path) |
 | T1 | Hugo site build | `github.com/gohugoio/hugo` (non-extended, pinned) | a 5k-page generated site, `--renderToMemory` | wall for repeated builds in one process (server mode) | T4-scale capability (os/exec optional, Callers) |
-| T2 | JSON API: decode, validate, map lookup, encode | own server, stdlib `net/http` (planned `test/bench/servers/`) | open-loop HTTP/1.1 keep-alive, 1k–10k connections | req/s at saturation, p99/p99.9 at 50 % and 70 % load, CPU/req, RSS | after net + crypto link floor (§6.2) |
+| T2 | JSON API: decode, validate, map lookup, encode | own server, stdlib `net/http` (`test/bench/servers/` (planned)) | open-loop HTTP/1.1 keep-alive, 1k–10k connections | req/s at saturation, p99/p99.9 at 50 % and 70 % load, CPU/req, RSS | after net + crypto link floor (§6.2) |
 | T2 | static files, reverse proxy | stdlib `http.FileServer`, `httputil.ReverseProxy` | same | same + MB/s | same |
 | T2 | gRPC unary + streaming | `google.golang.org/grpc` + protobuf, pinned | ghz-style client built with gc | same | after T2 floor + reflect speed |
 | T3 | bbolt fill/read, pebble ycsb-A/C, badger, modernc sqlite | pinned modules | the projects' own bench drivers | ops/s, p99, RSS | after mmap/pread/fsync roles, crc32, asm tags |
-| T4 | etcd put/range | `go.etcd.io/etcd` pinned + its `tools/benchmark` | 3-node on one host, then a real cluster | req/s, p99, RSS | after T2 + T3 + signals |
+| T4 | etcd put/range | `go.etcd.io/etcd` pinned + its benchmark tool (etcd repo, tools/benchmark) | 3-node on one host, then a real cluster | req/s, p99, RSS | after T2 + T3 + signals |
 | T4 | Prometheus ingest + PromQL | pinned; `avalanche` as the load | 1M series | samples/s, query p99, RSS | after T3 |
 | T4 | Caddy reverse proxy / file server | pinned | same as T2 | same as T2 | after T2 + TLS |
 | T4 | kube-apiserver + etcd (kwok-simulated nodes) | pinned Kubernetes release | kwok 1k nodes, 30k pods churn | API p99, RSS, CPU | after T4 floor (exec, signals, Callers) |
@@ -564,7 +564,7 @@ value is the profile it gives, ranked against §5.8's speculation list.
    table in performance.md.
 5. **`m4-http` (T1 + T4 lane), after 2 and 3:** L4 + L5 — `net/http`
    differential and the first T2 benchmark with the load harness
-   (`test/bench/servers/`, planned).
+   (`test/bench/servers/` (planned)).
 6. **`perf-mem` (T2 runtime lane):** GC/heap defaults (§5.1: compact
    headers, `GOMEMLIMIT`-derived `-Xmx`, collector), single-region flat
    layouts for all-scalar structs, footprint vs gc on `allocmix` and
