@@ -119,6 +119,25 @@ public final class GoProcess {
         sched.requestExit(2);
     }
 
+    /**
+     * gc's repanic test, {@code *efaceOf(&p.link.arg) == *efaceOf(&p.arg)}: the two interface
+     * words are equal. The same boxed value is; so is a re-boxed pointer-shaped value (gc stores
+     * it in the data word itself) with the same type and address — {@code panic(r.(*T))} after
+     * {@code r := recover()}. Any other re-boxing gets a new data word under gc.
+     */
+    private static boolean sameEface(Object a, Object b) {
+        if (a == b) {
+            return true;
+        }
+        if (a instanceof Iface x && b instanceof Iface y && x.type.key.equals(y.type.key)) {
+            int k = x.type.u().kind;
+            if (k == GoType.POINTER || k == GoType.UNSAFE_POINTER || k == GoType.CHAN) {
+                return Values.equal(x.type, x.data, y.data);
+            }
+        }
+        return false;
+    }
+
     /** gc printpanics: oldest first, later panics indented, recovery annotations. */
     private String renderChain(GoPanic top) {
         List<GoPanic> chain = new ArrayList<>();
@@ -129,7 +148,7 @@ public final class GoProcess {
         boolean[] repanicked = new boolean[n];
         String[] text = new String[n];
         for (int i = 0; i < n; i++) {
-            if (i + 1 < n && chain.get(i + 1).value == chain.get(i).value) {
+            if (i + 1 < n && sameEface(chain.get(i + 1).value, chain.get(i).value)) {
                 repanicked[i + 1] = true;
                 continue;
             }

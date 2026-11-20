@@ -83,6 +83,22 @@ public final class Panics {
                 "runtime.errorString", null, null));
     }
 
+    /**
+     * gc's {@code maps.mapKeyError}: a lookup or delete on a nil or empty map does not hash, it
+     * checks the key, and an unhashable one panics with {@code maps.unhashableTypeError}, whose
+     * text lacks the {@code "runtime error: "} prefix and has a colon (a non-empty map hashes and
+     * panics with {@link #unhashable}). Call only when {@link Values#hashMightPanic} holds.
+     */
+    @TruffleBoundary
+    public static void checkMapKey(Node n, GoType keyType, Object k) {
+        try {
+            Values.hash(keyType, k);
+        } catch (Values.Uncomparable u) {
+            throw of(n, new GoErrorValue("hash of unhashable type: " + u.type.str(), false,
+                    "maps.unhashableTypeError", null, null));
+        }
+    }
+
     /** Failed {@code x.(T)}: {@code dyn} null for a nil interface. */
     @TruffleBoundary
     public static GoPanic typeAssert(Node n, GoType iface, GoType dyn, GoType target) {

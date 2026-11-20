@@ -423,10 +423,15 @@ public final class Arith {
             return new Complex((float) (a.re - b.re), (float) (a.im - b.im));
         }
     }
+    /**
+     * complex64 product: gc widens the parts to float64, computes products and sums there and
+     * rounds each part to float32 once (ssagen: "Compute in Float64 to minimize cancellation
+     * error"); rounding every product separately differs in the last bit.
+     */
     public abstract static class MulC64 extends BinRef {
         @Specialization
         static Object op(Complex a, Complex b) {
-            return new Complex((float) ((float) (a.re * b.re) - (float) (a.im * b.im)), (float) ((float) (a.re * b.im) + (float) (a.im * b.re)));
+            return new Complex((float) (a.re * b.re - a.im * b.im), (float) (a.re * b.im + a.im * b.re));
         }
     }
     public abstract static class NegI64 extends UnI64 {

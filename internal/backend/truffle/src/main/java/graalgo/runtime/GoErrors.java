@@ -26,7 +26,9 @@ public final class GoErrors {
         SLICE3_ALEN("slice bounds out of range [::%x] with length %y", "slice bounds out of range [::%x]"),
         SLICE3_ACAP("slice bounds out of range [::%x] with capacity %y", "slice bounds out of range [::%x]"),
         SLICE3_B("slice bounds out of range [:%x:%y]", "slice bounds out of range [:%x:]"),
-        SLICE3_C("slice bounds out of range [%x:%y:]", "slice bounds out of range [%x::]");
+        SLICE3_C("slice bounds out of range [%x:%y:]", "slice bounds out of range [%x::]"),
+        CONVERT("cannot convert slice with length %x to array or pointer to array with length %y",
+                "cannot convert slice with length %x to array or pointer to array with length %y");
 
         final String fmt;
         final String negFmt;

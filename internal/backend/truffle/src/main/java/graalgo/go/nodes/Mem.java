@@ -439,8 +439,13 @@ public final class Mem {
         private final int r;
         private final int b;
 
-        public MapGetG(Ref map, Expr key, Flat zero, int p, int r, int b, Aux aux) {
+        private final GoType keyType;
+        private final boolean checkKey;
+
+        public MapGetG(Ref map, Expr key, GoType keyType, Flat zero, int p, int r, int b, Aux aux) {
             super(aux);
+            this.keyType = keyType;
+            this.checkKey = Values.hashMightPanic(keyType);
             this.map = map;
             this.key = key;
             this.zero = zero;
@@ -453,6 +458,9 @@ public final class Mem {
         public Flat resolve(VirtualFrame frame) {
             GoMap m = (GoMap) map.executeGeneric(frame);
             Object k = key.executeGeneric(frame);
+            if (checkKey && (m == null || m.len() == 0)) {
+                Panics.checkMapKey(this, keyType, k);
+            }
             int e = m == null ? -1 : find(m, k);
             if (e < 0) {
                 set(frame, p, r, b);

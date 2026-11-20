@@ -3,6 +3,7 @@ package graalgo.go.loader;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
+import graalgo.go.runtime.Panics;
 import graalgo.go.runtime.Unsafe;
 import graalgo.go.runtime.Values;
 import graalgo.go.types.GoType;
@@ -40,6 +41,11 @@ final class TypeEqual extends RootNode {
 
     @TruffleBoundary
     private boolean equal(Object p, Object q) {
-        return Values.equal(type, Unsafe.loadThrough(this, p, type), Unsafe.loadThrough(this, q, type));
+        try {
+            return Values.equal(type, Unsafe.loadThrough(this, p, type), Unsafe.loadThrough(this, q, type));
+        } catch (Values.Uncomparable u) {
+            // gc's efaceeq/ifaceeq: an interface holding an uncomparable dynamic type panics.
+            throw Panics.uncomparable(this, u.type);
+        }
     }
 }
