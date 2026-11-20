@@ -460,6 +460,20 @@ carrier count and the FJP never floods; observed drainer utilization 1.91% at
 10,000 goroutines `[VERIFIED]` (archived `logs/quiescence_10k.log`: `drainerUtilPct=1.91`), so the drainer is not the
 bottleneck.
 
+**Direct handoff (gc's runnext)** `[DECIDED]` (amended 2026-11-20,
+[ADR-0016](../dev/adr/ADR-0016-direct-handoff.md)). A goroutine's wake of
+another is deferred as its `runnext`; if the waker parks within a short
+window it hands the woken goroutine its in-flight slot and its quantum
+deadline: one HANDOFF token books both at the drainer (slot count
+unchanged), then the waker sets the target's handoff flag and unparks it
+itself (token before flag, flag before unpark — GG-WAKE-0001). Otherwise
+the wake reaches the drainer as an UNPARK at the waker's next scheduler
+interaction or full poll after the window. The drainer's in-flight count
+never falls below the goroutines running on slots, so the cap assert still
+bounds parallelism; lane order governs drainer admissions, and a handoff
+runs ahead of them only within the inherited quantum. After a handoff park
+the waiter spins ≤ 5 µs for the answer, only while slots are idle.
+
 **In-flight cap = GOMAXPROCS**, enforced as a hard assert in the drainer
 `[DECIDED]`. Spike 2b's `maxTrueParallel` never exceeded the cap (caps 1 and 2,
 including mixed I/O+compute) `[VERIFIED]` (prototype scope); production
