@@ -6,15 +6,21 @@ Fails on:
     resolved relative to the doc's own directory),
   - dangling #anchors (no matching heading in the target file,
     GitHub slug rules),
-  - dead external URLs (non-2xx/3xx on HEAD, 10s timeout). Transient
-    transport failures (connection reset, timeout, 5xx/429) are retried
-    with backoff before a URL is declared dead.
+  - dead external URLs: a definitive "gone" answer (404/410, DNS
+    NXDOMAIN, connection refused, or any other 4xx that is not a
+    bot-protection/rate-limit signal).
 
 External verdicts are tri-state: True (alive), False (dead), TRANSIENT
-(unverifiable — every web attempt failed transiently and the
-authoritative fallback below could not settle it). A TRANSIENT link is
-still a failure (exit 1, listed separately as "unverifiable"), so the
-tripwire stays intact; it only changes the diagnosis, never the verdict.
+(unverifiable). Failures that say nothing about whether the page exists
+-- 403 (bot protection), 429 (rate limit), 5xx, timeouts, connection
+resets, temporary DNS failures -- are retried (3 attempts per round, 2
+rounds, jittered backoff, Retry-After honoured, a realistic browser UA
+on the last attempt of each round). A URL that still has no usable
+answer is UNVERIFIABLE: it is listed as a warning and does NOT fail the
+run (2026-11-20: a CI check that goes red on a third party's bot wall
+or a transient outage is noise, and noise is how real failures get
+ignored). A genuinely dead link still fails: 404/410 are never retried
+into a second round and never downgraded to unverifiable.
 
 GitHub API fallback (2026-11-08, CI run 42462394721): github.com's web
 frontend intermittently answers 504/429 for URLs that exist — the same
@@ -42,6 +48,7 @@ this script is the mechanical enforcement.
 import http.client
 import json
 import os
+import random
 import re
 import socket
 import sys
@@ -53,20 +60,6 @@ import urllib.request
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 FENCE_RE = re.compile(r"^\s*```")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
-
-# URLs that are live but block automated checks via bot protection
-# (Akamai/Cloudflare 403 on non-browser TLS fingerprints). Each entry was
-# manually verified live with curl; the checker skips them instead of
-# failing on the 403.
-BOT_PROTECTED_URLS = {
-    # bugs.openjdk.org serves 403 to Python urllib (AkamaiGHost) but 200
-    # to curl/browser; verified live 2026-10-13.
-    "https://bugs.openjdk.org/browse/JDK-8247838",
-    # enterprisetimes.co.uk serves 403 to all automated fetches (bot
-    # protection); the article exists. Verified 403 via curl 2026-10-13.
-    "https://www.enterprisetimes.co.uk/2024/10/18/azul-platform-prime-37-faster-than-other-openjdk-distributions/",
-}
-
 
 def github_slug(heading):
     """GitHub heading-anchor slug: lowercase, strip punctuation, each
@@ -107,8 +100,9 @@ BROWSER_ACCEPT = ("text/html,application/xhtml+xml,application/xml;q=0.9,"
 
 # Transport failures that mean "no answer arrived at all" — the host is
 # alive but this request was lost on the way (connection reset before
-# any response bytes, timeout, 5xx/429). These are retried with backoff;
-# only a failure that survives every attempt counts as a dead link.
+# any response bytes, timeout, 5xx/429), or the host refuses automated
+# clients (403). These are retried with backoff; a failure that survives
+# every attempt makes the URL unverifiable, never dead.
 #
 # Mechanism, observed 2026-11-06 (CI run 42130033841): go.dev/cl
 # intermittently resets connections with zero bytes returned
@@ -144,15 +138,57 @@ class _Transient:
 TRANSIENT = _Transient()
 
 
-def _is_transient(exc):
-    """True if the failure is a lost request rather than a dead URL:
-    a 429/5xx answer, or a transport error raised before any response
-    arrived. A definitive 4xx (e.g. 404/410) is not transient."""
-    if isinstance(exc, urllib.error.HTTPError):
-        return exc.code == 429 or 500 <= exc.code < 600
-    if isinstance(exc, urllib.error.URLError):
-        return isinstance(exc.reason, _TRANSIENT_EXC)
+# HTTP statuses that carry no information about whether the page exists:
+# 403 (bot protection), 429 (rate limit), 5xx (server trouble).
+def _transient_status(code):
+    return code in (403, 429) or 500 <= code < 600
+
+
+def _transport_transient(exc):
+    # Connection refused and a name that does not resolve are definitive
+    # ("nothing is there"), although ConnectionRefusedError is a
+    # ConnectionError; a *temporary* resolver failure is not.
+    if isinstance(exc, ConnectionRefusedError):
+        return False
+    if isinstance(exc, socket.gaierror):
+        return exc.errno == socket.EAI_AGAIN
     return isinstance(exc, _TRANSIENT_EXC)
+
+
+def _is_transient(exc):
+    """True if the failure says nothing about whether the page exists:
+    a 403/429/5xx answer, or a transport error raised before any
+    response arrived. Definitive answers (404/410, other 4xx, DNS
+    NXDOMAIN, connection refused) are not transient."""
+    if isinstance(exc, urllib.error.HTTPError):
+        return _transient_status(exc.code)
+    if isinstance(exc, urllib.error.URLError):
+        return _transport_transient(exc.reason)
+    return _transport_transient(exc)
+
+
+BACKOFF_BASE = 2.0       # seconds between attempts of one round
+ROUND_PAUSE = 10.0       # seconds between rounds
+RETRY_AFTER_CAP = 30.0   # longest Retry-After we are willing to wait
+
+
+def _jitter(base):
+    """Jittered delay in [base, 1.5*base): requests from parallel CI
+    jobs must not retry in lockstep against the same rate limiter."""
+    return base * (1.0 + 0.5 * random.random())
+
+
+def _delay(exc, base):
+    """Backoff before the next attempt. A 429/503 with a numeric
+    Retry-After header is honoured (capped); otherwise jittered base."""
+    if isinstance(exc, urllib.error.HTTPError) and exc.code in (429, 503):
+        try:
+            ra = float(exc.headers.get("Retry-After"))
+        except (AttributeError, TypeError, ValueError):
+            ra = None
+        if ra is not None and ra >= 0:
+            return min(max(ra, base), RETRY_AFTER_CAP)
+    return _jitter(base)
 
 
 def _github_api_endpoint(url):
@@ -266,23 +302,25 @@ def check_external(url, sleep=None):
     after a round whose failures were all transient."""
     if sleep is None:
         sleep = time.sleep
-    if url in BOT_PROTECTED_URLS:
-        return True  # manually verified live; bot protection blocks automation
     # Some sites 403 HEAD or non-browser user agents (bot protection);
-    # retry with GET + browser UA before declaring dead.
+    # retry with GET + browser UA before giving up on the URL.
     attempts = [
         ("HEAD", "graalgo-linkcheck/1.0", PLAIN_ACCEPT),
         ("GET", "graalgo-linkcheck/1.0", PLAIN_ACCEPT),
         ("GET", BROWSER_UA, BROWSER_ACCEPT),
     ]
     # Two rounds over the (method, UA) ladder. A transient failure
-    # sleeps with backoff before the next attempt so a short outage
-    # window cannot swallow the whole ladder; a second round runs only
-    # if every failure was transient. A definitive failure (4xx other
-    # than 429) moves to the next attempt immediately and never triggers
-    # a second round, so a genuinely dead link still fails fast.
+    # (403/429/5xx/timeout/reset) sleeps with jittered backoff before
+    # the next attempt so a short outage or rate-limit window cannot
+    # swallow the whole ladder; a second round runs only if some failure
+    # was transient and none was definitive. A GET answered 404/410 is
+    # definitive: the page is gone, whatever the other attempts said
+    # (HEAD is not trusted for this: some servers 404 it), and the URL
+    # fails fast with no second round. After the second round a URL with
+    # only transient failures is TRANSIENT (unverifiable, a warning).
     for round_no in range(2):
         saw_transient = False
+        saw_gone = False
         for i, (method, ua, accept) in enumerate(attempts):
             req = urllib.request.Request(url, method=method,
                                          headers={"User-Agent": ua,
@@ -295,9 +333,13 @@ def check_external(url, sleep=None):
                 if _is_transient(e):
                     saw_transient = True
                     if i < len(attempts) - 1:
-                        sleep(2.0)
+                        sleep(_delay(e, BACKOFF_BASE))
+                elif (method == "GET"
+                      and isinstance(e, urllib.error.HTTPError)
+                      and e.code in (404, 410)):
+                    saw_gone = True
                 continue
-        if not saw_transient:
+        if saw_gone or not saw_transient:
             return False
         # Every failure this round was transient: the web frontend
         # cannot be trusted for this URL right now. Ask the
@@ -305,15 +347,14 @@ def check_external(url, sleep=None):
         # round on a degraded frontend; an API verdict settles the
         # URL with no second round. If the API is inconclusive too,
         # sleep and try the web once more; after the second round the
-        # URL stays TRANSIENT so the run still fails, with the right
-        # diagnosis.
+        # URL stays TRANSIENT.
         api_result = _github_api_alive(url)
         if api_result is True:
             return True
         if api_result is False:
             return False
         if round_no == 0:
-            sleep(10.0)
+            sleep(_jitter(ROUND_PAUSE))
     return TRANSIENT
 
 
@@ -396,20 +437,23 @@ def main():
                             f"{md}:{lineno}: dangling anchor #{anchor} "
                             f"in {target}")
 
-    if errors or transient:
-        if errors:
-            print(f"{len(errors)} broken link(s) in {len(md_files)} markdown files:")
-            for e in errors:
-                print("  " + e)
-        if transient:
-            print(f"{len(transient)} unverifiable link(s) in "
-                  f"{len(md_files)} markdown files "
-                  "(transient failures — re-run to confirm):")
-            for t in transient:
-                print("  " + t)
+    if errors:
+        print(f"{len(errors)} broken link(s) in {len(md_files)} markdown files:")
+        for e in errors:
+            print("  " + e)
+    if transient:
+        # Warning only: bot walls, rate limits and outages say nothing
+        # about whether the page exists, so they never fail the run.
+        print(f"warning: {len(transient)} unverifiable link(s) in "
+              f"{len(md_files)} markdown files (403/429/5xx/timeout after "
+              "retries; not failing the run — check by hand):")
+        for t in transient:
+            print("  " + t)
+    if errors:
         return 1
     print(f"OK: {len(md_files)} markdown files, no broken links"
-          + (" (external URLs skipped)" if skip_external else ""))
+          + (" (external URLs skipped)" if skip_external else "")
+          + (f", {len(transient)} unverifiable" if transient else ""))
     return 0
 
 

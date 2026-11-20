@@ -23,11 +23,18 @@ showed 504/429 on 9/10 URLs including github.com/CAFxX/graalgo
 itself. The fix adds an authoritative GitHub API fallback, consulted
 only after a round whose failures were all transient, and a tri-state
 verdict (True / False / TRANSIENT) so an unverifiable URL is reported
-as unverifiable rather than dead — while still failing the run.
+as unverifiable rather than dead.
+
+The 2026-11-20 change (markdown-links on master: a gnu.org manual URL
+failed one run and passed the next; openjdk/intel hosts answered 403 to
+bots): 403/429/5xx/timeout that survive every retry are UNVERIFIABLE and
+no longer fail the run (a warning listing them), while 404/410, DNS
+NXDOMAIN and connection refused stay hard failures. There is no URL
+allowlist: the classification is structural.
 
 Fixtures below replay both exact signatures plus the neighboring cases
 the fix must not change: a persistently reset URL is now TRANSIENT
-(still failing in main()), a 404 still fails fast with no second
+(a warning in main()), a 404 still fails fast with no second
 round and never consults the API, and the HEAD-403 -> GET-200 ladder
 for bot-protected hosts still works.
 
@@ -41,6 +48,7 @@ import http.client
 import io
 import json
 import os
+import socket
 import sys
 import tempfile
 import unittest
@@ -92,6 +100,7 @@ class CheckExternalTest(unittest.TestCase):
         api = mock.Mock(return_value=api_result)
         with mock.patch("urllib.request.urlopen",
                         side_effect=side_effect) as urlopen, \
+                mock.patch.object(cml, "_jitter", lambda b: b), \
                 mock.patch.object(cml, "_github_api_alive", api):
             result = cml.check_external(
                 URL, sleep=lambda s: sleeps.append(s))
@@ -170,13 +179,13 @@ class CheckExternalTest(unittest.TestCase):
         self.assertEqual(api_calls, 0)
 
     def test_head_403_then_get_200(self):
-        # The pre-existing bot-protection ladder is unchanged: a HEAD
-        # 403 falls through to GET, which answers 200.
+        # The bot-protection ladder: a HEAD 403 backs off, then falls
+        # through to GET, which answers 200.
         result, calls, sleeps, api_calls = self.run_with(
             [http_error(403), FakeResponse(200)])
         self.assertTrue(result)
         self.assertEqual(calls, 2)
-        self.assertEqual(sleeps, [])
+        self.assertEqual(sleeps, [2.0])
         self.assertEqual(api_calls, 0)
 
     def test_every_attempt_sends_accept_header(self):
@@ -203,11 +212,107 @@ class CheckExternalTest(unittest.TestCase):
         self.assertTrue(result)
         self.assertEqual(calls, 2)
 
-    def test_bot_protected_url_skipped_without_fetch(self):
-        url = next(iter(cml.BOT_PROTECTED_URLS))
-        with mock.patch("urllib.request.urlopen") as urlopen:
-            self.assertTrue(cml.check_external(url))
-        urlopen.assert_not_called()
+    def test_no_url_allowlist(self):
+        # Classification is structural: no per-URL special cases.
+        self.assertFalse(hasattr(cml, "BOT_PROTECTED_URLS"))
+
+    # --- unverifiable vs dead (2026-11-20) ---
+
+    def test_persistent_403_is_unverifiable_not_dead(self):
+        # A bot wall that never opens: 2 rounds x 3 attempts, then
+        # TRANSIENT (a warning), never False.
+        result, calls, sleeps, api_calls = self.run_with(
+            [http_error(403)] * 6)
+        self.assertIs(result, cml.TRANSIENT)
+        self.assertEqual(calls, 6)
+        self.assertEqual(sleeps, [2.0, 2.0, 10.0, 2.0, 2.0])
+
+    def test_403_then_403_then_200_browser_ua_succeeds(self):
+        result, calls, _, _ = self.run_with(
+            [http_error(403), http_error(403), FakeResponse(200)])
+        self.assertTrue(result)
+        self.assertEqual(calls, 3)
+
+    def test_403_retry_then_success_in_second_round(self):
+        result, calls, sleeps, _ = self.run_with(
+            [http_error(403)] * 3 + [FakeResponse(200)])
+        self.assertTrue(result)
+        self.assertEqual(calls, 4)
+        self.assertEqual(sleeps, [2.0, 2.0, 10.0])
+
+    def test_403_head_but_get_404_is_dead(self):
+        # Positive control: a bot-wall 403 must not mask a page the
+        # server says is gone. No second round.
+        result, calls, sleeps, _ = self.run_with(
+            [http_error(403), http_error(404), http_error(404)])
+        self.assertIs(result, False)
+        self.assertEqual(calls, 3)
+
+    def test_head_404_get_200_alive(self):
+        result, calls, _, _ = self.run_with(
+            [http_error(404), FakeResponse(200)])
+        self.assertTrue(result)
+        self.assertEqual(calls, 2)
+
+    def test_other_4xx_is_dead(self):
+        # 401/400/451 etc. are not bot-wall/rate-limit signals.
+        result, calls, sleeps, _ = self.run_with([http_error(400)] * 3)
+        self.assertIs(result, False)
+        self.assertEqual(sleeps, [])
+
+    def test_persistent_429_is_unverifiable(self):
+        result, calls, sleeps, _ = self.run_with([http_error(429)] * 6)
+        self.assertIs(result, cml.TRANSIENT)
+        self.assertEqual(calls, 6)
+
+    def test_429_honours_retry_after_capped(self):
+        def err(ra):
+            return urllib.error.HTTPError(
+                URL, 429, "slow down", {"Retry-After": ra}, None)
+        result, calls, sleeps, _ = self.run_with(
+            [err("7"), err("9999"), FakeResponse(200)])
+        self.assertTrue(result)
+        self.assertEqual(sleeps, [7.0, cml.RETRY_AFTER_CAP])
+
+    def test_429_garbled_retry_after_falls_back_to_backoff(self):
+        err = urllib.error.HTTPError(
+            URL, 429, "x", {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"},
+            None)
+        result, _, sleeps, _ = self.run_with([err, FakeResponse(200)])
+        self.assertTrue(result)
+        self.assertEqual(sleeps, [2.0])
+
+    def test_timeout_persistent_is_unverifiable(self):
+        result, calls, _, _ = self.run_with([TimeoutError("timed out")] * 6)
+        self.assertIs(result, cml.TRANSIENT)
+        self.assertEqual(calls, 6)
+
+    def test_connection_refused_is_dead(self):
+        exc = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+        result, calls, sleeps, _ = self.run_with([exc] * 3)
+        self.assertIs(result, False)
+        self.assertEqual(sleeps, [])
+
+    def test_dns_nxdomain_is_dead(self):
+        exc = urllib.error.URLError(
+            socket.gaierror(socket.EAI_NONAME, "Name or service not known"))
+        result, calls, sleeps, _ = self.run_with([exc] * 3)
+        self.assertIs(result, False)
+        self.assertEqual(sleeps, [])
+
+    def test_dns_temporary_failure_is_transient(self):
+        exc = urllib.error.URLError(
+            socket.gaierror(socket.EAI_AGAIN, "Temporary failure"))
+        result, calls, _, _ = self.run_with([exc] * 6)
+        self.assertIs(result, cml.TRANSIENT)
+
+    def test_jitter_range_and_use(self):
+        for _ in range(200):
+            v = cml._jitter(2.0)
+            self.assertTrue(2.0 <= v < 3.0, v)
+        # The real (unstubbed) backoff is jittered: not a constant.
+        self.assertGreater(len({cml._delay(http_error(500), 2.0)
+                                for _ in range(50)}), 1)
 
     # --- GitHub API fallback (2026-11-08, CI run 42462394721) ---
 
@@ -415,16 +520,33 @@ class MainVerdictTest(unittest.TestCase):
         self.assertLess(out.index("broken link(s)"),
                         out.index("unverifiable link(s)"))
 
-    def test_main_transient_only_still_fails(self):
-        # Positive control: TRANSIENT still fails the run — the
-        # tripwire is intact, only the diagnosis changed.
+    def test_main_transient_only_warns_and_passes(self):
+        # 2026-11-20: an unverifiable URL (bot wall, rate limit,
+        # outage) is a warning, not a failure.
         code, out = self.run_main(
             {"a.md": "[flaky](https://github.com/o/r)\n"},
             {"https://github.com/o/r": cml.TRANSIENT})
-        self.assertEqual(code, 1)
-        self.assertIn("unverifiable link(s)", out)
-        self.assertIn("re-run to confirm", out)
+        self.assertEqual(code, 0)
+        self.assertIn("warning: 1 unverifiable link(s)", out)
+        self.assertIn("unverifiable URL https://github.com/o/r", out)
         self.assertNotIn("broken link(s)", out)
+        self.assertIn("OK: 1 markdown files", out)
+
+    def test_main_dead_url_still_fails(self):
+        # Positive control: a doc linking a dead page fails the run.
+        code, out = self.run_main(
+            {"a.md": "[dead](https://example.com/gone)\n"},
+            {"https://example.com/gone": False})
+        self.assertEqual(code, 1)
+        self.assertIn("dead URL https://example.com/gone", out)
+        self.assertNotIn("OK:", out)
+
+    def test_main_broken_relative_link_fails_despite_transient(self):
+        code, out = self.run_main(
+            {"a.md": "[x](missing.md) [flaky](https://github.com/o/r)\n"},
+            {"https://github.com/o/r": cml.TRANSIENT})
+        self.assertEqual(code, 1)
+        self.assertIn("broken link -> missing.md", out)
 
     def test_main_all_live_ok(self):
         code, out = self.run_main(
