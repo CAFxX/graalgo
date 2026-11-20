@@ -205,12 +205,15 @@ receivers, bytealg kernels, merged with master). `gc+PGO` profiles a whole
 run of the same program. Single-rep ratios move by up to ~25 % with host
 load; §3 and §3.1 hold the interleaved A/B numbers.
 
+† `chanpingpong` re-measured on this lane merged with master's WP-SCHED handoff (§3.1; the
+rest of the table was measured before the merge; before the merge its "after" was 10.81 ms, 35.1×).
+
 | Benchmark | gc | gc+PGO | before | after | before/gc | after/gc | after/gc+PGO | time to peak (ms) |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | `arraymat` | 0.77 | 0.78 | 1.34 | 0.66 | 1.7× | 0.9× | 0.8× | 274 |
 | `bintrees` | 30.85 | 27.86 | 21.58 | 16.84 | 0.7× | 0.5× | 0.6× | 392 |
 | `bytesops` | 2.21 | 1.98 | 7.61 | 5.37 | 3.5× | 2.4× | 2.7× | 362 |
-| `chanpingpong` | 0.31 | 0.27 | 8.19 | 10.81 | 26.6× | 35.1× | 39.6× | 330 |
+| `chanpingpong` | 0.31 | 0.27 | 8.19 | 0.94† | 26.6× | 3.0×† | 3.3×† | 622 |
 | `closures` | 0.73 | 0.73 | 2.31 | 0.90 | 3.1× | 1.2× | 1.2× | 208 |
 | `fannkuch` | 12.85 | 12.61 | 25.50 | 24.09 | 2.0× | 1.9× | 1.9× | 683 |
 | `fib` | 2.23 | 1.19 | 3.35 | 3.42 | 1.5× | 1.5× | 2.9× | 1159 |
@@ -236,9 +239,9 @@ load; §3 and §3.1 hold the interleaved A/B numbers.
 | `structs` | 0.24 | 0.29 | 1.97 | 1.69 | 8.2× | 7.0× | 5.9× | 224 |
 | `workerpool` | 0.51 | 0.50 | 0.84 | 0.72 | 1.7× | 1.4× | 1.4× | 253 |
 
-Geometric mean graalgo/gc: **2.26× before, 1.56× after** (1.65× against
-gc+PGO; median 1.4×; on the 27 benchmarks of the previous table 2.28× →
-1.57× in this run). graalgo is now ahead of gc+PGO on `loop` (0.2×,
+Geometric mean graalgo/gc: **2.26× before, 1.42× after** (1.50× against
+gc+PGO; median 1.3×; on the 27 benchmarks of the previous table 2.28× →
+1.43× in this run). graalgo is now ahead of gc+PGO on `loop` (0.2×,
 vectorized), `arraymat`, `mapint`, `bintrees` and at parity on `ifacepoly`,
 `floatloop`, `spectralnorm`, `ifacemono`, `sliceappend`; `ifacesplit` is
 within 1.3× (splitting; 13× without it). PGO matters to gc only on `fib`
