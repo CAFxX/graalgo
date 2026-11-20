@@ -61,6 +61,10 @@ class FuzzTest(unittest.TestCase):
         self.assertNotIn('func a()', out)
         self.assertLess(len(out.split('\n')), 6)
 
+    def test_blocks(self):
+        src = ['func f() {', '\tif x {', '\t\ta()', '\t} else {', '\t\tb()', '\t}', '}', 'var y = 1']
+        self.assertEqual(run.blocks(src), [(0, 6), (1, 5)])
+
     def test_known_requires_bug_row(self):
         with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as f:
             f.write('test/fuzz/x.go BUG-9999 diverge stdout: x\n')

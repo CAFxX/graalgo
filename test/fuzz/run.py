@@ -213,15 +213,15 @@ def materialize(src, dst):
 
 def blocks(lines):
     """Spans [i, j] of brace-balanced blocks: a line ending in '{' through its
-    matching closing line (largest first)."""
+    matching closing line (largest first); `} else {` continues its block."""
     spans, stack = [], []
     for i, l in enumerate(lines):
-        s = l.rstrip()
+        s = l.strip()
         opens, closes = s.count('{'), s.count('}')
+        if s.startswith('}') and s.endswith('{'):
+            continue
         if s.endswith('{'):
             stack.append(i)
-            if closes:
-                pass
         elif closes > opens and stack:
             spans.append((stack.pop(), i))
     spans.sort(key=lambda p: p[0] - p[1])
@@ -229,31 +229,53 @@ def blocks(lines):
 
 
 def minimize(tc, src_text, key, workdir, log):
+    """Delta-debugs src_text to a smaller program whose outcome keeps sig_key
+    `key`. Pass 1 drops brace-balanced blocks (largest first; a block whose
+    removal failed once is not retried), pass 2 is line ddmin. Every
+    candidate is evaluated at most once; gc rejects most broken candidates
+    before graalgo is built or started."""
     lines = src_text.split('\n')
     tries = [0]
+    seen = {}
 
     def test(cand):
+        text = '\n'.join(cand)
+        if text in seen:
+            return seen[text]
         tries[0] += 1
         d = os.path.join(workdir, 'm%d' % tries[0])
         os.makedirs(d)
         with open(os.path.join(d, 'main.go'), 'w') as f:
-            f.write('\n'.join(cand))
+            f.write(text)
         with open(os.path.join(d, 'go.mod'), 'w') as f:
             f.write('module fuzzprog\n\ngo 1.27\n')
         cls, sig, _ = tc.evaluate(d)
         shutil.rmtree(d, ignore_errors=True)
-        return sig_key(cls, sig) == key
+        seen[text] = ok = sig_key(cls, sig) == key
+        return ok
 
+    # Pass 0: a generated program's test functions are independent; dropping
+    # the call `run("tK", tK)` leaves tK dead, so pass 1 removes it at once.
+    for line in [l for l in lines if re.match(r'\s*run\("t\d+", t\d+\)$', l)]:
+        cand = [l for l in lines if l != line]
+        if test(cand):
+            lines = cand
+            log('  %s removed' % line.strip())
     # Pass 1: drop whole blocks, largest first, until no block can go.
+    failed = set()
     changed = True
     while changed:
         changed = False
         for (i, j) in blocks(lines):
+            span = '\n'.join(lines[i:j + 1])
+            if span in failed:
+                continue
             cand = lines[:i] + lines[j + 1:]
             if test(cand):
                 lines, changed = cand, True
                 log('  block %d-%d removed (%d lines left)' % (i, j, len(lines)))
                 break
+            failed.add(span)
     # Pass 2: line ddmin.
     n = 2
     while len(lines) >= 2:
