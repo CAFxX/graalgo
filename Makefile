@@ -190,7 +190,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite pe-check-m1a test-m1r test-m1c test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic pe-check-m1a test-m1r test-m1c test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c
 
@@ -450,6 +450,15 @@ M1A_BENCH ?=
 bench-suite: build
 	GO="$(GO)" test/bench/suite.sh $(BENCH_ARGS)
 BENCH_ARGS ?=
+
+# The realistic benchmarks (not a gate; docs/arch/north-star.md §3):
+# stdlib pipelines, an allocation-heavy heap with tail latency, goroutine
+# scaling — test/bench/realistic/ on the bench-suite runner, gc legs at
+# GOMAXPROCS=4 to match the JVM's -XX:ActiveProcessorCount=4; peak RSS and
+# CPU time per leg. BENCH_ARGS as for bench-suite, plus e.g.
+# --gg-variant zgc="-XX:+UseZGC" or --gc-variant gogc400="GOGC=400".
+bench-realistic: build
+	GO="$(GO)" test/bench/suite.sh --dir test/bench/realistic --gc-env GOMAXPROCS=4 $(BENCH_ARGS)
 
 # Toolexec milestone M1r/M1b differential gate (per-push in `make all`): programs
 # that import standard-library packages, built through graalgo-tool against

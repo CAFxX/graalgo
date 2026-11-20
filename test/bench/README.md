@@ -4,6 +4,10 @@
   path**: the benchmark suite of [performance.md](../../docs/arch/performance.md),
   run under gc, gc+PGO and graalgo with outputs checked against gc, warmup
   curves, steady-state medians and JSON. `make bench-suite BENCH_ARGS=…`.
+- [realistic/](realistic/) — whole-workload programs (stdlib pipelines,
+  allocation and tail latency, goroutine scaling) for
+  [north-star.md](../../docs/arch/north-star.md), on the same runner
+  (`--dir`): `make bench-realistic`.
 - `fib/`, `loop/`, `slicesum/`, `maps/`, `structs/`, `iface/`, `strbuild/`,
   `chanpingpong/` — micro-benchmarks (`main.go` each). [run.sh](run.sh) runs
   them on **v1** ([graalgo-sync-run](../../internal/backend/graalgo-sync-run))
