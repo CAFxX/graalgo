@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ratcheted debt gates (make check-repo).
 
-Three per-file counters, each with a committed budget in
+Four per-file counters, each with a committed budget in
 .github/scripts/ratchet_budget.json:
 
   placeholder    TODO / FIXME / XXX markers in tracked Go, Python and shell
@@ -20,6 +20,10 @@ Three per-file counters, each with a committed budget in
                  the count may only shrink — the marker is not a way to park
                  a bug (each entry still needs a BUG id and a signature, see
                  `diffharness registers`).
+  java-conventions  entries of the Truffle-conventions allowlist
+                 (internal/backend/truffle/src/test/java/graalgo/conventions/
+                 allowlist.txt, truffle-design.md §16): NodeConventionsTest
+                 fails on a stale entry, this counter on an added one.
 
 The ratchet only goes down, in the tree and against the git base:
   - a file whose count exceeds its budget (or a new file with any) FAILS;
@@ -66,6 +70,11 @@ COUNTERS = {
         "files": re.compile(r"^test/differential/[a-z-]*exclusions\.yaml$"),
         "exclude": re.compile(r"^$"),
         "pattern": re.compile(r"(?m)^\s*timing:\s*true\b"),
+    },
+    "java-conventions": {
+        "files": re.compile(r"^internal/backend/truffle/src/test/java/graalgo/conventions/allowlist\.txt$"),
+        "exclude": re.compile(r"^$"),
+        "pattern": re.compile(r"(?m)^[A-Z][0-9]-[a-z-]+ \S+ \| "),
     },
 }
 

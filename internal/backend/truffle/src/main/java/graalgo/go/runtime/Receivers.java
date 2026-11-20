@@ -39,10 +39,10 @@ public final class Receivers {
             if (data == null) {
                 throw Panics.nilDeref(node);
             } else if (data instanceof Ptr ptr) {
-                obj = ptr.obj;
-                p = ptr.prim;
-                r = ptr.ref;
-                b = ptr.byt;
+                obj = ptr.obj();
+                p = ptr.prim();
+                r = ptr.ref();
+                b = ptr.byt();
             } else {
                 obj = (Flat) data;
             }
@@ -59,10 +59,10 @@ public final class Receivers {
                 if (ptr == null) {
                     throw Panics.nilDeref(node);
                 } else if (ptr instanceof Ptr q) {
-                    obj = q.obj;
-                    p = q.prim;
-                    r = q.ref;
-                    b = q.byt;
+                    obj = q.obj();
+                    p = q.prim();
+                    r = q.ref();
+                    b = q.byt();
                 } else {
                     obj = (Flat) ptr;
                     p = 0;

@@ -35,14 +35,14 @@ final class BytealgIntrinsics {
     private static final byte[] NONE = new byte[0];
 
     private static byte[] arr(Slice s) {
-        return s.base == null ? NONE : s.base.bytes;
+        return s.base() == null ? NONE : s.base().bytes;
     }
 
     /** {@code bytes.Compare}'s kernel: -1, 0, +1 by unsigned lexicographic order. */
     @TruffleBoundary
     static long internal_bytealg_Compare(Node node, Object a, Object b) {
         Slice x = (Slice) a, y = (Slice) b;
-        return Integer.signum(Arrays.compareUnsigned(arr(x), x.byt, x.byt + x.len, arr(y), y.byt, y.byt + y.len));
+        return Integer.signum(Arrays.compareUnsigned(arr(x), x.byt(), x.byt() + x.len(), arr(y), y.byt(), y.byt() + y.len()));
     }
 
     /** {@code runtime.cmpstring} (assembly in {@code internal/bytealg}): as {@code Compare}. */
@@ -54,7 +54,7 @@ final class BytealgIntrinsics {
     @TruffleBoundary
     static long internal_bytealg_IndexByte(Node node, Object b, long c) {
         Slice s = (Slice) b;
-        return indexByte(arr(s), s.byt, s.len, (byte) c);
+        return indexByte(arr(s), s.byt(), s.len(), (byte) c);
     }
 
     @TruffleBoundary
@@ -97,7 +97,7 @@ final class BytealgIntrinsics {
     @TruffleBoundary
     static long internal_bytealg_Count(Node node, Object b, long c) {
         Slice s = (Slice) b;
-        return count(arr(s), s.byt, s.len, (byte) c);
+        return count(arr(s), s.byt(), s.len(), (byte) c);
     }
 
     @TruffleBoundary
@@ -123,7 +123,7 @@ final class BytealgIntrinsics {
     @TruffleBoundary
     static long internal_bytealg_Index(Node node, Object a, Object b) {
         Slice x = (Slice) a, y = (Slice) b;
-        return index(arr(x), x.byt, x.len, arr(y), y.byt, y.len);
+        return index(arr(x), x.byt(), x.len(), arr(y), y.byt(), y.len());
     }
 
     @TruffleBoundary

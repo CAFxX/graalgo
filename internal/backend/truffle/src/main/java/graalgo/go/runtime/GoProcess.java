@@ -190,7 +190,7 @@ public final class GoProcess {
         for (GoType iface : new GoType[] {types.error, types.stringer}) {
             graalgo.go.types.Itab itab = v.type.itab(iface);
             if (itab != null) {
-                Method m = itab.methods[0];
+                Method m = itab.methods()[0];
                 Object s = m.target().call(new Object[] {null, Receivers.adapt(m, v.data, null)});
                 return indent(s.toString());
             }
@@ -214,7 +214,7 @@ public final class GoProcess {
      * for nil. Not a real address — the JVM has none to give — but distinct per object.
      */
     private static String address(Object data) {
-        Object o = data instanceof graalgo.go.values.Ptr p ? p.obj : data;
+        Object o = data instanceof graalgo.go.values.Ptr p ? p.obj() : data;
         if (o == null) {
             return "0x0";
         }

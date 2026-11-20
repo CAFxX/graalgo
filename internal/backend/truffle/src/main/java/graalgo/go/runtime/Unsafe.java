@@ -58,9 +58,9 @@ public final class Unsafe {
         if (p instanceof Flat f) {
             return f;
         } else if (p instanceof Ptr q) {
-            return q.obj;
+            return q.obj();
         }
-        return ((View) p).obj;
+        return ((View) p).obj();
     }
 
     private static GoType layout(Flat obj) {
@@ -76,9 +76,9 @@ public final class Unsafe {
         if (p instanceof Flat) {
             return 0;
         } else if (p instanceof Ptr q) {
-            return layout(q.obj).gcOffOfLeaf(q.prim + q.ref + q.byt);
+            return layout(q.obj()).gcOffOfLeaf(q.prim() + q.ref() + q.byt());
         }
-        return ((View) p).off;
+        return ((View) p).off();
     }
 
     /** The size in gc bytes of an object: its type's, or element size times count for a backing store. */
@@ -338,17 +338,17 @@ public final class Unsafe {
         switch (t.kind) {
             case GoType.COMPLEX64: {
                 Complex c = (Complex) ref;
-                return Float.floatToRawIntBits((float) c.re) & 0xFFFFFFFFL | (long) Float.floatToRawIntBits((float) c.im) << 32;
+                return Float.floatToRawIntBits((float) c.re()) & 0xFFFFFFFFL | (long) Float.floatToRawIntBits((float) c.im()) << 32;
             }
             case GoType.COMPLEX128: {
                 Complex c = (Complex) ref;
-                return Double.doubleToRawLongBits(w == 0 ? c.re : c.im);
+                return Double.doubleToRawLongBits(w == 0 ? c.re() : c.im());
             }
             case GoType.STRING:
                 return w == 0 ? toInt(n, strData(n, (Str) ref)) : ((Str) ref).len;
             case GoType.SLICE: {
                 Slice s = (Slice) ref;
-                return w == 0 ? toInt(n, sliceData(s)) : w == 8 ? s.len : s.cap;
+                return w == 0 ? toInt(n, sliceData(s)) : w == 8 ? s.len() : s.cap();
             }
             case GoType.INTERFACE:
                 return toInt(n, w == 0 ? typeWord(ref) : dataWord(n, ref));
@@ -375,7 +375,7 @@ public final class Unsafe {
             case GoType.COMPLEX128: {
                 Complex c = (Complex) ref;
                 double d = Double.longBitsToDouble(bits);
-                obj.refs[l.ref] = w == 0 ? new Complex(d, c.im) : new Complex(c.re, d);
+                obj.refs[l.ref] = w == 0 ? new Complex(d, c.im()) : new Complex(c.re(), d);
                 break;
             }
             case GoType.STRING:
@@ -383,7 +383,7 @@ public final class Unsafe {
                 break;
             case GoType.SLICE:
                 obj.refs[l.ref] = w == 0 ? sliceWithData(n, (Slice) ref, fromInt(n, bits), t.elem)
-                        : sliceWithLenCap(n, (Slice) ref, w == 8 ? bits : ((Slice) ref).len, w == 8 ? ((Slice) ref).cap : bits);
+                        : sliceWithLenCap(n, (Slice) ref, w == 8 ? bits : ((Slice) ref).len(), w == 8 ? ((Slice) ref).cap() : bits);
                 break;
             case GoType.INTERFACE:
                 obj.refs[l.ref] = w == 0 ? makeIface(n, fromInt(n, bits), dataWord(n, ref))
@@ -662,8 +662,8 @@ public final class Unsafe {
             case GoType.SLICE: {
                 Slice s = (Slice) v;
                 storeWord(n, obj, off, sliceData(s));
-                storeBits(n, obj, off + 8, 8, s.len);
-                storeBits(n, obj, off + 16, 8, s.cap);
+                storeBits(n, obj, off + 8, 8, s.len());
+                storeBits(n, obj, off + 16, 8, s.cap());
                 break;
             }
             case GoType.INTERFACE:
@@ -672,14 +672,14 @@ public final class Unsafe {
                 break;
             case GoType.COMPLEX64: {
                 Complex c = (Complex) v;
-                storeBits(n, obj, off, 8, Float.floatToRawIntBits((float) c.re) & 0xFFFFFFFFL
-                        | (long) Float.floatToRawIntBits((float) c.im) << 32);
+                storeBits(n, obj, off, 8, Float.floatToRawIntBits((float) c.re()) & 0xFFFFFFFFL
+                        | (long) Float.floatToRawIntBits((float) c.im()) << 32);
                 break;
             }
             case GoType.COMPLEX128: {
                 Complex c = (Complex) v;
-                storeBits(n, obj, off, 8, Double.doubleToRawLongBits(c.re));
-                storeBits(n, obj, off + 8, 8, Double.doubleToRawLongBits(c.im));
+                storeBits(n, obj, off, 8, Double.doubleToRawLongBits(c.re()));
+                storeBits(n, obj, off + 8, 8, Double.doubleToRawLongBits(c.im()));
                 break;
             }
             default:
@@ -750,9 +750,9 @@ public final class Unsafe {
         if (q instanceof Flat f) {
             return Values.load(t, f, 0, 0, 0);
         } else if (q instanceof Ptr ptr) {
-            return Values.load(t, ptr.obj, ptr.prim, ptr.ref, ptr.byt);
+            return Values.load(t, ptr.obj(), ptr.prim(), ptr.ref(), ptr.byt());
         } else if (q instanceof View v) {
-            return loadValue(n, v.obj, v.off, t);
+            return loadValue(n, v.obj(), v.off(), t);
         }
         throw Panics.fatal(n, INVALID);
     }
@@ -785,9 +785,9 @@ public final class Unsafe {
         if (q instanceof Flat f) {
             Values.store(t, f, 0, 0, 0, v);
         } else if (q instanceof Ptr ptr) {
-            Values.store(t, ptr.obj, ptr.prim, ptr.ref, ptr.byt, v);
+            Values.store(t, ptr.obj(), ptr.prim(), ptr.ref(), ptr.byt(), v);
         } else if (q instanceof View w) {
-            storeValue(n, w.obj, w.off, t, v);
+            storeValue(n, w.obj(), w.off(), t, v);
         } else {
             throw Panics.fatal(n, INVALID);
         }
@@ -813,7 +813,7 @@ public final class Unsafe {
 
     /** The pointer to a slice's element 0 ({@code unsafe.SliceData}); nil for a nil slice. */
     public static Object sliceData(Slice s) {
-        return s.base == null ? null : Ptr.make(s.base, s.prim, s.ref, s.byt);
+        return s.base() == null ? null : Ptr.make(s.base(), s.prim(), s.ref(), s.byt());
     }
 
     /**
@@ -886,7 +886,7 @@ public final class Unsafe {
             Leaf l = lt.leafAt(off);
             at = off == 0 ? new int[3] : l != null && l.gcOff == off ? new int[] {l.prim, l.ref, l.byt} : null;
             if (at == null && off == extent(obj) && p instanceof Ptr q) {
-                at = new int[] {q.prim, q.ref, q.byt};
+                at = new int[] {q.prim(), q.ref(), q.byt()};
             }
         } else if (elem.isByteLeaf()) {
             Leaf first = byteRun(obj, off, cap);
@@ -962,7 +962,7 @@ public final class Unsafe {
      */
     private static Slice sliceWithData(Node n, Slice old, Object p, GoType elem) {
         if (p == null) {
-            return old.len == 0 && old.cap == 0 ? Slice.NIL : new Slice(null, 0, 0, 0, old.len, old.cap);
+            return old.len() == 0 && old.cap() == 0 ? Slice.NIL : new Slice(null, 0, 0, 0, old.len(), old.cap());
         } else if (!isFlatPointer(p)) {
             throw Panics.fatal(n, STRADDLES);
         }
@@ -975,18 +975,18 @@ public final class Unsafe {
             typed = off + elem.gcSize() <= extent(obj) ? coincides(lt, off, elem) : off == extent(obj);
         }
         if (typed) {
-            long avail = elem.gcSize() == 0 ? old.cap : (extent(obj) - off) / elem.gcSize();
-            return sliceOver(n, p, Math.min(old.len, avail), Math.min(old.cap, avail), elem, STRADDLES);
+            long avail = elem.gcSize() == 0 ? old.cap() : (extent(obj) - off) / elem.gcSize();
+            return sliceOver(n, p, Math.min(old.len(), avail), Math.min(old.cap(), avail), elem, STRADDLES);
         }
         Leaf l = lt.leafAt(off);
         if (l == null || l.gcOff != off) {
             throw Panics.fatal(n, STRADDLES);
         }
-        return new Slice(obj, l.prim, l.ref, l.byt, old.len, old.cap);
+        return new Slice(obj, l.prim, l.ref, l.byt, old.len(), old.cap());
     }
 
     private static Slice sliceWithLenCap(Node n, Slice old, long len, long cap) {
-        if (old.base == null) {
+        if (old.base() == null) {
             if (len < 0 || cap < 0 || len > Integer.MAX_VALUE || cap > Integer.MAX_VALUE) {
                 throw Panics.fatal(n, STRADDLES);
             }
@@ -994,7 +994,7 @@ public final class Unsafe {
             return len == 0 && cap == 0 ? Slice.NIL : new Slice(null, 0, 0, 0, (int) len, (int) cap);
         }
         // The capacity may grow back up to the end of the storage; the length follows it.
-        Slice s = new Slice(old.base, old.prim, old.ref, old.byt, (int) Math.min(len, Integer.MAX_VALUE),
+        Slice s = new Slice(old.base(), old.prim(), old.ref(), old.byt(), (int) Math.min(len, Integer.MAX_VALUE),
                 (int) Math.min(cap, Integer.MAX_VALUE));
         if (len < 0 || cap < 0) {
             throw Panics.fatal(n, STRADDLES);
@@ -1019,7 +1019,7 @@ public final class Unsafe {
      * itself in a program without {@code internal/abi}), nil for a nil interface.
      */
     public static Object typeWord(Object slot) {
-        return slot == null ? null : slot instanceof Iface i ? i.type.typeWord() : ((RawIface) slot).typ;
+        return slot == null ? null : slot instanceof Iface i ? i.type.typeWord() : ((RawIface) slot).typ();
     }
 
     /**
@@ -1032,7 +1032,7 @@ public final class Unsafe {
         if (slot == null) {
             return null;
         } else if (slot instanceof RawIface r) {
-            return r.data;
+            return r.data();
         }
         Iface i = (Iface) slot;
         if (i.type.isPointerShaped()) {

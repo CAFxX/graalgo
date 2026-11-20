@@ -150,7 +150,7 @@ final class TimeIntrinsics {
     }
 
     private static void call(State s, long seq, long delta) {
-        s.f.target.call(new Object[] {s.f.env, s.arg, seq, delta});
+        s.f.target().call(new Object[] {s.f.env(), s.arg, seq, delta});
     }
 
     /** Removes a buffered value from the timer channel; true if there was one. */

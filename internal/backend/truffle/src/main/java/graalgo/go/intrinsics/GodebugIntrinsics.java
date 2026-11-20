@@ -25,7 +25,7 @@ final class GodebugIntrinsics {
         if (update != null) {
             // update(def, env): no //go:debug or go.mod default is recorded at link time yet
             // (docs/arch/limitations.md), so the default setting is empty.
-            update.target.call(update.env, Str.EMPTY, env);
+            update.target().call(update.env(), Str.EMPTY, env);
         }
     }
 
