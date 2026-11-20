@@ -11,17 +11,10 @@ package graalgo.go.values;
  * referent type's inverse leaf table (the offsets sum to a leaf index), so pointer values do
  * not grow for {@code unsafe} arithmetic (ADR-0015 decision 1).
  */
-public final class Ptr {
-    public final Flat obj;
-    public final int prim;
-    public final int ref;
-    public final int byt;
-
-    private Ptr(Flat obj, int prim, int ref, int byt) {
-        this.obj = obj;
-        this.prim = prim;
-        this.ref = ref;
-        this.byt = byt;
+public record Ptr(Flat obj, int prim, int ref, int byt) {
+    /** Use {@link #make}: a pointer to an object's start is the object itself. */
+    public Ptr {
+        assert (prim | ref | byt) != 0 : "Ptr with zero offsets: use Ptr.make";
     }
 
     /** The pointer to the location ({@code obj}, {@code prim}, {@code ref}, {@code byt}). */

@@ -43,6 +43,7 @@ public final class Runner {
         TESTS.add(graalgo.go.types.LeafTableTest.class);
         TESTS.add(graalgo.go.nodes.EntryPollTest.class);
         TESTS.add(graalgo.go.intrinsics.BytealgKernelTest.class);
+        TESTS.add(graalgo.conventions.NodeConventionsTest.class);
     }
 
     public static void main(String[] args) {

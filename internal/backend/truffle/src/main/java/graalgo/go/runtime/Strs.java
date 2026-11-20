@@ -84,9 +84,9 @@ public final class Strs {
     /** {@code string([]rune)}. */
     @TruffleBoundary
     public static Str fromRunes(Slice s) {
-        ByteArrayOutputStream out = new ByteArrayOutputStream(s.len);
-        for (int i = 0; i < s.len; i++) {
-            encode(out, s.base.prims[s.prim + i]);
+        ByteArrayOutputStream out = new ByteArrayOutputStream(s.len());
+        for (int i = 0; i < s.len(); i++) {
+            encode(out, s.base().prims[s.prim() + i]);
         }
         return new Str(out.toByteArray());
     }
@@ -108,11 +108,11 @@ public final class Strs {
 
     /** {@code string([]byte)}. */
     public static Str fromBytes(Slice s) {
-        int n = s.len;
+        int n = s.len();
         if (n == 0) {
             return Str.EMPTY;
         }
-        return new Str(java.util.Arrays.copyOfRange(s.base.bytes, s.byt, s.byt + n));
+        return new Str(java.util.Arrays.copyOfRange(s.base().bytes, s.byt(), s.byt() + n));
     }
 
     /** {@code []byte(string)}. */

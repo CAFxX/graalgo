@@ -140,7 +140,7 @@ final class ReflectliteIntrinsics {
         MaterializedFrame env = Env.create(SWAP_ENV);
         Env.set(env, 0, s);
         Env.set(env, 1, elem);
-        Env.set(env, 2, s.len <= 1 ? (Object) Integer.valueOf(s.len) : fast ? Boolean.TRUE : Boolean.FALSE);
+        Env.set(env, 2, s.len() <= 1 ? (Object) Integer.valueOf(s.len()) : fast ? Boolean.TRUE : Boolean.FALSE);
         GoLanguage lang = GoLanguage.get(node);
         return new Closure(lang.runtimeTypes().sharedTarget("internal/reflectlite.Swapper.func", () -> new SwapRoot(lang)), env);
     }
@@ -180,7 +180,7 @@ final class ReflectliteIntrinsics {
                 }
                 return;
             }
-            long len = s.len;
+            long len = s.len();
             if (Long.compareUnsigned(i, len) >= 0 || Long.compareUnsigned(j, len) >= 0) {
                 if (cls == Boolean.TRUE) {
                     // ss[i], ss[j] = ss[j], ss[i]: the right-hand side's indexes are checked first.
@@ -198,22 +198,22 @@ final class ReflectliteIntrinsics {
 
     /** Exchanges elements {@code i} and {@code j} of {@code s}, slot by slot in each region. */
     private static void swapSlots(Slice s, GoType elem, int i, int j) {
-        Flat b = s.base;
+        Flat b = s.base();
         int np = elem.nPrim(), nr = elem.nRef(), nb = elem.nByte();
         for (int k = 0; k < np; k++) {
-            int x = s.prim + i * np + k, y = s.prim + j * np + k;
+            int x = s.prim() + i * np + k, y = s.prim() + j * np + k;
             long tmp = b.prims[x];
             b.prims[x] = b.prims[y];
             b.prims[y] = tmp;
         }
         for (int k = 0; k < nr; k++) {
-            int x = s.ref + i * nr + k, y = s.ref + j * nr + k;
+            int x = s.ref() + i * nr + k, y = s.ref() + j * nr + k;
             Object tmp = b.refs[x];
             b.refs[x] = b.refs[y];
             b.refs[y] = tmp;
         }
         for (int k = 0; k < nb; k++) {
-            int x = s.byt + i * nb + k, y = s.byt + j * nb + k;
+            int x = s.byt() + i * nb + k, y = s.byt() + j * nb + k;
             byte tmp = b.bytes[x];
             b.bytes[x] = b.bytes[y];
             b.bytes[y] = tmp;

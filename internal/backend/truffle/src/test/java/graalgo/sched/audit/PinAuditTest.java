@@ -26,26 +26,26 @@ public final class PinAuditTest {
                     "expected exactly 1 pin event, got " + pins.size());
         }
         PinAudit.Pin p = pins.get(0);
-        if (p.expected) {
+        if (p.expected()) {
             throw new AssertionError("pin must be UNEXPECTED with empty allowlist");
         }
-        if (!p.thread.equals("pin-jni-vt")) {
-            throw new AssertionError("wrong thread: " + p.thread);
+        if (!p.thread().equals("pin-jni-vt")) {
+            throw new AssertionError("wrong thread: " + p.thread());
         }
-        boolean hasPark = p.frames.stream().anyMatch(f -> f.contains("doPark"));
-        boolean hasNative = p.frames.stream().anyMatch(f -> f.contains("parkWhileCritical"));
+        boolean hasPark = p.frames().stream().anyMatch(f -> f.contains("doPark"));
+        boolean hasNative = p.frames().stream().anyMatch(f -> f.contains("parkWhileCritical"));
         if (!hasPark || !hasNative) {
-            throw new AssertionError("stack missing pin frames: " + p.frames);
+            throw new AssertionError("stack missing pin frames: " + p.frames());
         }
     }
 
     public void testAllowlistMarksExpected() throws Exception {
         List<PinAudit.Pin> pins = PinAudit.readPins(Paths.get(FIXTURE), "<fixture>",
                 List.of("pin-jni-vt|doPark")).pins;
-        if (pins.size() != 1 || !pins.get(0).expected) {
+        if (pins.size() != 1 || !pins.get(0).expected()) {
             throw new AssertionError("allowlisted pin must be EXPECTED");
         }
-        if (!"pin-jni-vt|doPark".equals(pins.get(0).allowMatch)) {
+        if (!"pin-jni-vt|doPark".equals(pins.get(0).allowMatch())) {
             throw new AssertionError("allowMatch not recorded");
         }
     }
@@ -53,7 +53,7 @@ public final class PinAuditTest {
     public void testAllowlistThreadPrefixMismatch() throws Exception {
         List<PinAudit.Pin> pins = PinAudit.readPins(Paths.get(FIXTURE), "<fixture>",
                 List.of("other-thread|doPark")).pins;
-        if (pins.size() != 1 || pins.get(0).expected) {
+        if (pins.size() != 1 || pins.get(0).expected()) {
             throw new AssertionError("non-matching allowlist must stay UNEXPECTED");
         }
     }

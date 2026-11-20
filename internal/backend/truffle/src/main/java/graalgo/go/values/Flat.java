@@ -51,8 +51,15 @@ public final class Flat {
     public Flat sub(GoType subType, int primOff, int nPrim, int refOff, int nRef, int byteOff, int nByte) {
         return new Flat(subType,
                 nPrim == 0 ? NO_PRIMS : Arrays.copyOfRange(prims, primOff, primOff + nPrim),
-                nRef == 0 ? NO_REFS : Arrays.copyOfRange(refs, refOff, refOff + nRef),
+                nRef == 0 ? NO_REFS : copyRefs(refs, refOff, nRef),
                 nByte == 0 ? NO_BYTES : Arrays.copyOfRange(bytes, byteOff, byteOff + nByte));
+    }
+
+    /** {@code Arrays.copyOfRange} for a reference region without its reflective array allocation (PE-safe). */
+    private static Object[] copyRefs(Object[] src, int off, int n) {
+        Object[] r = new Object[n];
+        System.arraycopy(src, off, r, 0, n);
+        return r;
     }
 
     /**

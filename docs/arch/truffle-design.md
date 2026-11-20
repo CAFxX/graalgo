@@ -1783,7 +1783,8 @@ TR-8 → TR-9. Critical path for debugging (GG-0024): TR-1 → TR-3 → TR-10.
 
 Applies to every class under the node, value and runtime packages of §12. A
 reviewer checks each changed node against every rule; "n/a" is an answer,
-silence is not.
+silence is not. The rules a class file can show are enforced mechanically by
+`NodeConventionsTest` (§16).
 
 **Boundaries**
 
@@ -1796,11 +1797,15 @@ silence is not.
   stream, lambda capture, lock, `synchronized`, park, I/O, reflection or
   `System.*` call on a fast path. Node state is fields and
   `@CompilationFinal(dimensions = 1)` arrays, never a `List` or `Map`.
-- **B4.** PE-safe allow-list for JDK calls on fast paths: `System.arraycopy`;
-  `Arrays.equals/mismatch/fill/copyOf/copyOfRange` on primitive arrays;
-  `Math.*`; `Integer/Long` bit and unsigned operations; raw-bits conversions
-  of `Float/Double`; `Objects.requireNonNull`. Anything else needs a boundary
-  or an entry added to this list by review.
+- **B4.** PE-safe allow-list for JDK calls on fast paths: `System.arraycopy`,
+  `System.identityHashCode`, `System.nanoTime`/`currentTimeMillis` (compiler
+  intrinsics); `Arrays.equals/mismatch/compare/compareUnsigned/copyOf/copyOfRange`
+  on primitive arrays and `Arrays.fill` on any array; `Math.*`; the boxed
+  types' bit, unsigned, raw-bits and `valueOf` operations (not their
+  `toString`/`parse*`); `Objects.requireNonNull/equals`;
+  `java.util.concurrent.atomic.*`, `VarHandle`, `Reference.get`,
+  `Thread.currentThread/onSpinWait`. Anything else needs a boundary or an entry
+  added to this list by review (and to `NodeConventions.hostile`).
 - **B5.** Exceptions are created behind a profile, in a boundary factory
   method (`GoPanics.*`). No `throw new …("…" + x)` in an `execute` method.
 - **B6.** `CompilerDirectives.transferToInterpreterAndInvalidate()` precedes
@@ -2123,3 +2128,84 @@ records where the implementation departs from the sections above, and why;
 | Maps | Iteration order is a random rotation of insertion order (`GoMap.Iter`: random start, then insertion order), not gc's bucket-randomized order; both are unspecified, but a program that checks the *kind* of randomness diverges ([bugs.md](../dev/bugs.md) BUG-0031). | §3.4 |
 | Splitting | `FuncRoot.isCloningAllowed()` and `cloneUninitialized()` (lane perf-calls, 2026-11-20): the factory gives every function and literal root a rebuild recipe (instance, GIR body, name, wrapper flag, capture count) and a split copy is the body **decoded again from GIR** with fresh inline caches, as §4.7 designed; `Dispatch` and `IfaceDispatch` report polymorphism, Truffle's default splitting budget decides. `-Dgraalgo.go.forceSplit=true` splits every static call site at once (the m1a/m1r/m1c corpora pass under it; a planted throwing `cloneUninitialized` fails 16 of 17 m1r programs). Benchmark: `ifacesplit` ([performance.md](performance.md)). Thunks, yield roots and intrinsic roots are not split. | §4.7 |
 | Not built in this slice | Source sections, tags and wrappers (§6, rule I3); `InteropLibrary` exports (§5); `AllocationReporter` (P4); per-node unit and PE tests (T1–T4: waived for M1a by [ADR-0014](../dev/adr/ADR-0014-node-tests-waived-m1a.md) — the corpus gate, `defer_path.sh` and `make pe-check-m1a` stand in; WP-NODETEST builds them); context policy stays `EXCLUSIVE`; `G` lives in the TR-1 thread slot. Unsupported constructs fail loudly at first call: slice → array conversion, type switch/assertion on a type-parameter operand. | §5, §6, §11 |
+
+## 16. Java and Truffle conventions, enforced (lane java-practices, 2026-11-20)
+
+The owner's standing rules for the Graal/Truffle code: everything that can be
+`final`, `static final` or a record is; the Truffle annotations are used
+wherever they apply (§11). `graalgo.conventions.NodeConventionsTest` (in
+`make test-java-fast`, ~0.3 s: class files only, read with the JDK's
+`java.lang.classfile` API, no class loaded, no JVM per case) checks the rules a
+class file shows over the new node package (`graalgo.go.*`), the shared runtime
+(`graalgo.sched.*` but v1's `sched.nodes`, `graalgo.syscall.*`,
+`graalgo.safepoint`) and the classes of `graalgo.runtime`, `graalgo.values` and
+`graalgo.language` those reference directly. DSL-generated classes are exempt.
+
+| Rule | What fails |
+|---|---|
+| N1-field | a `Node` instance field that is not `final`, `@Child`, `@Children` or `@CompilationFinal` |
+| N1-volatile, N1-sync | a `volatile` field, a `synchronized` method or block in a `Node` class (outside a boundary) |
+| N1-cfdims | `@CompilationFinal` on an array field without explicit `dimensions` |
+| N1-children | a `@Children` field that is not a final array |
+| N2-switch | an `execute*` method that switches on the node's own field (the factory chooses the class, §4.2) |
+| N4-explode | an `@ExplodeLoop` method that reads a node array field that is neither `@Children` nor `@CompilationFinal(dimensions >= 1)` |
+| N4-unexploded | a PE-reachable loop over a `@Children` array without `@ExplodeLoop` |
+| N8-typecase | an `execute*` method of a non-DSL node with `instanceof` tests of three or more types (a specialization set) |
+| S1-static | a static field that is not `final` |
+| S2-static-read | PE-reachable code that reads a non-final static |
+| C1-final | a concrete class without subclasses that is not `final` |
+| R1-record | a class with only final fields, a constructor that only stores them and only accessor/`equals`/`hashCode`/`toString` methods that is not a record |
+| D2-limit | a `@Specialization` with guards and a value `@Cached` but no explicit `limit` |
+| D4-idempotent | a guard helper (node, superclass or `@ImportStatic` method) without `@Idempotent`/`@NonIdempotent` |
+| D6-neverdefault | a `@Cached` initializer helper returning a reference without `@NeverDefault` (or `neverDefault =`) |
+| B2-frame | a `@TruffleBoundary` method taking a `VirtualFrame`/`Frame` |
+| B3-boundary | PE-reachable code calling a JDK method outside the B4 list, concatenating strings, entering a monitor or calling a record's generated `equals`/`hashCode`/`toString` |
+| B6-invalidate | a PE-reachable write of a `@CompilationFinal`/`@Child` field, or `replace`/`insert`, not preceded by `transferToInterpreterAndInvalidate` |
+
+*PE-reachable* is computed, not guessed: from every `execute*`,
+`isLoopCondition`, `@Specialization` and `@Fallback` method of an in-scope node,
+over static and virtual calls (every override in the scanned classes), stopping
+at `@TruffleBoundary` methods, at v1 code (the interop module, v1 nodes) and,
+inside a method, at `transferToInterpreter*`/`shouldNotReachHere`/
+`neverPartOfCompilation` (the code after them is interpreter-only). A finding
+names its call path (`reached from …`).
+
+**Allowlist.** `internal/backend/truffle/src/test/java/graalgo/conventions/allowlist.txt`
+holds the exceptions, one `RULE location | reason` line each. The test fails on
+a finding that is not listed **and** on a listed entry that is no longer a
+finding (STALE: delete it), and `check_ratchets.py`'s `java-conventions`
+counter fails a commit that adds an entry against its base: the list only
+shrinks. The rules that need judgment (B4 additions, a new rule) change by
+review of this section and of `NodeConventions`.
+
+**Proof the rules fail.** `graalgo.conventions.fixtures.Fixtures` plants one
+violation of every rule plus two conforming nodes; the test requires exactly
+the planted set and fails when a rule has no plant.
+
+**Sweep (2026-11-20).** The first run over the tree reported 81 findings, a
+third of them in v1 code reached through virtual calls (now scoped out). Fixed: the Go value
+carriers `Slice`, `Ptr`, `View`, `RawIface`, `Closure`, `Complex` (now also
+`@ValueType`: no code compares complex values by identity) and `Itab`, and six
+scheduler/audit carriers, became records (412 field reads became accessor
+calls, which PE and C2 inline); `FuncRoot`'s factory-set fields became
+`@CompilationFinal`; `IfaceDispatch.method` got `@NeverDefault`; the atomic
+view-pointer slow paths got `@TruffleBoundary`; `Mem.Loc.viewObj/viewOff`
+throw through `shouldNotReachHere`; `Flat.sub` copies references with
+`arraycopy` instead of the reflective `Arrays.copyOfRange`. Allowlisted (21):
+the process-wide statics of the scheduler, poller and v1 hooks (S1/S2, the
+poll epoch by design), `runtime_rand`'s `ThreadLocalRandom` (B3) and v1's
+`GoTypeDescriptor` (R1). Not applied, by measurement or by absence of a site:
+`@GenerateInline` (every DSL node of the package is a `@NodeChild` AST node;
+the cached helpers are already inlined profiles and call nodes), DSL rewrites of
+hand-written caches (the one left, `Unsafes.ToPtr`, caches a per-call result,
+not a specialization), `@ValueType` on carriers that are identity keys
+(`Descriptors`' identity maps, `%p` printing), `@Introspectable` (no test
+introspects yet: WP-NODETEST).
+
+Effect (interleaved A/B against the base, 3 rounds, medians of best rounds in
+ms, load 13–18; `mapint`/`mapstr` re-run 4 more rounds): `fib` 3.34 → 3.39,
+`loop` 0.86 → 0.87, `slicesum` 1.91 → 1.92, `structs` 1.77 → 1.83,
+`ifacepoly` 0.33 → 0.34, `mapint` 3.49 → 3.47, `strbuild` 0.76 → 0.74,
+`closures` 0.90 → 0.90 — neutral, as expected of changes PE already saw
+through; compilations per run unchanged or fewer (`slicesum` 18 → 13,
+`strbuild` 16 → 10). Class files of `graalgo.go` +0.7 % (record accessors).

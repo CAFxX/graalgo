@@ -7,12 +7,5 @@ package graalgo.go.values;
  * stores (ADR-0015 decision 2). Typed code never reads such a slot — in gc it would read a
  * corrupt interface.
  */
-public final class RawIface {
-    public final Object typ;
-    public final Object data;
-
-    public RawIface(Object typ, Object data) {
-        this.typ = typ;
-        this.data = data;
-    }
+public record RawIface(Object typ, Object data) {
 }

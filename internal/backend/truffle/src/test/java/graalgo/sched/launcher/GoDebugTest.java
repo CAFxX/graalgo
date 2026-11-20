@@ -41,7 +41,7 @@ public final class GoDebugTest {
         List<String> parts = new ArrayList<>();
         for (String name : GoDebug.knobNames()) {
             GoDebug.Knob k = GoDebug.knob(name);
-            parts.add(name + "|" + k.disposition + "|" + k.defaultValue);
+            parts.add(name + "|" + k.disposition() + "|" + k.defaultValue());
         }
         String joined = String.join(",", parts);
         MessageDigest md = MessageDigest.getInstance("SHA-256");
@@ -58,9 +58,9 @@ public final class GoDebugTest {
     public void testEveryKnobHasJustification() {
         for (String name : GoDebug.knobNames()) {
             GoDebug.Knob k = GoDebug.knob(name);
-            assertTrue(k.summary != null && !k.summary.isEmpty(),
+            assertTrue(k.summary() != null && !k.summary().isEmpty(),
                     name + ": missing summary");
-            assertTrue(k.justification != null && !k.justification.isEmpty(),
+            assertTrue(k.justification() != null && !k.justification().isEmpty(),
                     name + ": missing justification");
         }
     }

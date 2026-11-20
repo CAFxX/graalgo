@@ -1,11 +1,13 @@
 package graalgo.go.nodes;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.dsl.Bind;
 import com.oracle.truffle.api.dsl.Cached;
 import com.oracle.truffle.api.dsl.GenerateInline;
+import com.oracle.truffle.api.dsl.NeverDefault;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.FrameDescriptor;
@@ -106,7 +108,7 @@ public final class Calls {
             return false;
         }
 
-        private boolean readOnlyReceiver;
+        @CompilationFinal private boolean readOnlyReceiver;
 
         /** Set by the factory: the body never writes or escapes its struct/array value receiver. */
         public final void setReadOnlyReceiver(boolean v) {
@@ -122,7 +124,7 @@ public final class Calls {
         }
 
         /** Builds this function's tree afresh; set by the factory (null: no splitting). */
-        private Supplier<FuncRoot> rebuild;
+        @CompilationFinal private Supplier<FuncRoot> rebuild;
 
         public final void setRebuild(Supplier<FuncRoot> rebuild) {
             this.rebuild = rebuild;
@@ -518,8 +520,8 @@ public final class Calls {
                 nil.enter();
                 throw Panics.nilDeref(this);
             }
-            a[0] = c.env;
-            return dispatch.execute(c.target, a);
+            a[0] = c.env();
+            return dispatch.execute(c.target(), a);
         }
     }
 
@@ -591,9 +593,10 @@ public final class Calls {
             return call.call(m.target(), args);
         }
 
+        @NeverDefault
         Method method(GoType dyn) {
             Itab itab = dyn.itabFast(iface, ifaceId);
-            return itab.methods[index];
+            return itab.methods()[index];
         }
     }
 
@@ -860,8 +863,8 @@ public final class Calls {
                 frame.setObject(targetSlot, null);
                 return a;
             }
-            a[0] = c.env;
-            frame.setObject(targetSlot, c.target);
+            a[0] = c.env();
+            frame.setObject(targetSlot, c.target());
             return a;
         }
     }
@@ -900,7 +903,7 @@ public final class Calls {
 
         @TruffleBoundary
         private Method method(GoType dyn) {
-            return dyn.itab(iface).methods[index];
+            return dyn.itab(iface).methods()[index];
         }
     }
 

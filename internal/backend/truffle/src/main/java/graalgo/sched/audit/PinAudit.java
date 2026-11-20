@@ -72,21 +72,7 @@ public final class PinAudit {
         int goroutineStarts;
     }
     /** One classified pin event. */
-    static final class Pin {
-        final String program;
-        final String thread;
-        final List<String> frames;
-        final boolean expected;
-        final String allowMatch;
-
-        Pin(String program, String thread, List<String> frames,
-            boolean expected, String allowMatch) {
-            this.program = program;
-            this.thread = thread;
-            this.frames = frames;
-            this.expected = expected;
-            this.allowMatch = allowMatch;
-        }
+    record Pin(String program, String thread, List<String> frames, boolean expected, String allowMatch) {
     }
 
     public static void main(String[] args) throws Exception {
@@ -135,10 +121,10 @@ public final class PinAudit {
             ChildResult child = runChild(jfr, gmp,
                     new String[]{"--gmp=" + gmp, prog.toString()},
                     "p" + programs);
-            if (child.exit != 0) {
-                skipped.add(prog + (child.timedOut
+            if (child.exit() != 0) {
+                skipped.add(prog + (child.timedOut()
                         ? " (timeout after " + CHILD_TIMEOUT_MINUTES + "m)"
-                        : " (exit " + child.exit + ")"));
+                        : " (exit " + child.exit() + ")"));
             }
             try {
                 AuditResult r = readPins(jfr, prog.toString(), allow);
@@ -163,13 +149,13 @@ public final class PinAudit {
             Path jfr = work.resolve("tests.jfr");
             ChildResult child = runChild(jfr, gmp, new String[]{"__TESTS__"},
                     "tests");
-            testsChildLog = child.childLog;
-            testsExit = child.exit;
-            testsTimedOut = child.timedOut;
-            if (child.exit != 0) {
+            testsChildLog = child.childLog();
+            testsExit = child.exit();
+            testsTimedOut = child.timedOut();
+            if (child.exit() != 0) {
                 skipped.add("SchedTestRunner ("
-                        + (child.timedOut ? "timeout after " + CHILD_TIMEOUT_MINUTES + "m"
-                                : "exit " + child.exit)
+                        + (child.timedOut() ? "timeout after " + CHILD_TIMEOUT_MINUTES + "m"
+                                : "exit " + child.exit())
                         + ")");
                 // Reviewer1 P1-1: the --tests leg is the pin-relevant
                 // coverage; a non-zero exit means the suite did not run
@@ -189,7 +175,7 @@ public final class PinAudit {
             Files.deleteIfExists(jfr);
         }
 
-        long unexpected = pins.stream().filter(p -> !p.expected).count();
+        long unexpected = pins.stream().filter(p -> !p.expected()).count();
         long expected = pins.size() - unexpected;
 
         // P2-M7 reviewer P2-2 / reviewer1 P1-1: fail closed on systemic
@@ -224,14 +210,14 @@ public final class PinAudit {
                 .append("FFM/file-I/O per GG-0057). The default allowlist is empty: ")
                 .append("graalgo has no JNI/FFM on goroutine paths.\n\n");
         for (Pin p : pins) {
-            md.append("### ").append(p.expected ? "EXPECTED" : "UNEXPECTED")
-                    .append(" pin — ").append(p.program).append("\n");
-            md.append("- thread: `").append(p.thread).append("`\n");
-            if (p.allowMatch != null) {
-                md.append("- allowlist match: `").append(p.allowMatch).append("`\n");
+            md.append("### ").append(p.expected() ? "EXPECTED" : "UNEXPECTED")
+                    .append(" pin — ").append(p.program()).append("\n");
+            md.append("- thread: `").append(p.thread()).append("`\n");
+            if (p.allowMatch() != null) {
+                md.append("- allowlist match: `").append(p.allowMatch()).append("`\n");
             }
             md.append("- stack (top 12 frames):\n");
-            p.frames.stream().limit(12).forEach(f -> md.append("  - `").append(f).append("`\n"));
+            p.frames().stream().limit(12).forEach(f -> md.append("  - `").append(f).append("`\n"));
             md.append("\n");
         }
         if (pins.isEmpty()) {
@@ -289,16 +275,7 @@ public final class PinAudit {
     private static final int CHILD_TIMEOUT_MINUTES = 10;
 
     /** Outcome of one child JVM run, including its captured output file. */
-    private static final class ChildResult {
-        final int exit;
-        final boolean timedOut;
-        final Path childLog;
-
-        ChildResult(int exit, boolean timedOut, Path childLog) {
-            this.exit = exit;
-            this.timedOut = timedOut;
-            this.childLog = childLog;
-        }
+    private record ChildResult(int exit, boolean timedOut, Path childLog) {
     }
 
     /**
