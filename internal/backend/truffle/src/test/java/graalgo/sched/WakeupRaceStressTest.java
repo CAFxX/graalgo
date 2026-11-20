@@ -226,6 +226,76 @@ public final class WakeupRaceStressTest {
     }
 
     /**
+     * Direct handoff starvation freedom (WP-SCHED, GG-SCHED-0001): at
+     * GOMAXPROCS 1 a channel ping-pong pair passes the only slot back and
+     * forth by direct handoff, never through the drainer's lanes. The pair
+     * must still yield the slot at the quantum (a handoff inherits the
+     * slot's quantum deadline), so a CPU-bound spinner queued in the run
+     * lane gets its share: here at least a fifth of the wall time (about
+     * half is expected). A handoff that granted a fresh quantum would let
+     * the pair hold the slot forever and the spinner would get none.
+     */
+    public void testHandoffPairDoesNotStarveSpinner() throws Exception {
+        final long runNanos = 600_000_000L;
+        final long quantum = 2_000_000L;
+        final AtomicLong spinnerRunNanos = new AtomicLong();
+        final AtomicLong rounds = new AtomicLong();
+        final java.util.concurrent.atomic.AtomicBoolean stop =
+                new java.util.concurrent.atomic.AtomicBoolean();
+        final long[] window = new long[2];
+        withScheduler(1, quantum, () -> {
+            GoChan ping = new GoChan(0, 0L);
+            GoChan pong = new GoChan(0, 0L);
+            sched.spawn(() -> {
+                for (;;) {
+                    GoChan.RecvResult r = ping.recv();
+                    if (!r.ok()) {
+                        return;
+                    }
+                    pong.send(r.value());
+                    graalgo.safepoint.Safepoint.poll();
+                }
+            });
+            sched.spawn(() -> {
+                window[0] = System.nanoTime();
+                while (!stop.get()) {
+                    ping.send(1L);
+                    pong.recv();
+                    rounds.incrementAndGet();
+                    graalgo.safepoint.Safepoint.poll();
+                }
+                ping.close();
+            });
+            sched.spawn(() -> {
+                long last = System.nanoTime();
+                long ran = 0;
+                long start = last;
+                while (last - start < runNanos) {
+                    graalgo.safepoint.Safepoint.poll();
+                    long now = System.nanoTime();
+                    if (now - last < 50_000L) {
+                        ran += now - last; // still mounted: count it as run time
+                    }
+                    last = now;
+                }
+                spinnerRunNanos.set(ran);
+                window[1] = System.nanoTime();
+                stop.set(true);
+            });
+        });
+        long wall = window[1] - window[0];
+        double share = (double) spinnerRunNanos.get() / wall;
+        System.out.printf("  [handoff-fairness] spinner share %.2f of %d ms, pair rounds %d%n",
+                share, wall / 1_000_000, rounds.get());
+        if (share < 0.2) {
+            throw new AssertionError("ping-pong pair starved the spinner: share " + share);
+        }
+        if (rounds.get() == 0) {
+            throw new AssertionError("spinner starved the ping-pong pair");
+        }
+    }
+
+    /**
      * BUG-0038 (torture leg F6): a {@code select} receiving on {@code ping}
      * and {@code quit} races a plain {@code ping} send on every round. While
      * the selector sweeps {@code quit} it holds its transient self-claim; a
