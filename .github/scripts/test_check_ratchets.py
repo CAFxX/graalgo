@@ -72,6 +72,18 @@ class Gate(unittest.TestCase):
         errs = g.compare(g.count(d, g.tracked(d)), {})
         self.assertEqual(errs, ["unimplemented: internal/x/A.java: 1 > budget 0 (debt may only go down)"])
 
+    def test_timing_entries_count_and_shrink_only(self):
+        reg = "test/differential/srctest-exclusions.yaml"
+        text = "- file: a.go\n  timing: true\n- file: b.go\n  timing: true\n- file: c.go\n"
+        d = repo({reg: text, "docs/x.yaml": "timing: true\n"}, {})
+        errs = g.compare(g.count(d, g.tracked(d)), {})
+        self.assertEqual(errs, [f"timing-excl: {reg}: 2 > budget 0 (debt may only go down)"])
+        self.assertEqual(g.compare(g.count(d, g.tracked(d)), {"timing-excl": {reg: 2}}), [])
+        (d / reg).write_text("- file: a.go\n  timing: true\n")
+        errs = g.compare(g.count(d, g.tracked(d)), {"timing-excl": {reg: 2}})
+        self.assertEqual(len(errs), 1, errs)
+        self.assertIn("paid down", errs[0])
+
     def test_paid_down_requires_budget_update(self):
         d = repo({"tools/a.py": "ok\n"}, {"placeholder": {"tools/a.py": 2}})
         self.assertEqual(g.main(["x", str(d)]), 1)

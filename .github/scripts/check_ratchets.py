@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Ratcheted debt gates (make check-repo).
 
-Two per-file counters, each with a committed budget in
+Three per-file counters, each with a committed budget in
 .github/scripts/ratchet_budget.json:
 
   placeholder    TODO / FIXME / XXX markers in tracked Go, Python and shell
@@ -14,6 +14,12 @@ Two per-file counters, each with a committed budget in
                  package (graalgo: not supported by the new node package
                  yet) and `.unsupportedf(` in the toolexec emitter
                  (unsupported: ...).
+  timing-excl    `timing: true` entries of the differential exclusion
+                 registers (test/differential/*-exclusions.yaml): a timing
+                 entry is exempt from STALE when its program matches gc, so
+                 the count may only shrink — the marker is not a way to park
+                 a bug (each entry still needs a BUG id and a signature, see
+                 `diffharness registers`).
 
 The ratchet only goes down, in the tree and against the git base:
   - a file whose count exceeds its budget (or a new file with any) FAILS;
@@ -55,6 +61,11 @@ COUNTERS = {
             r'"[^"\n]*(?i:unimplemented|not implemented)[^"\n]*"'
             r'|\bnew Unsupported\('
             r'|\.unsupportedf\('),
+    },
+    "timing-excl": {
+        "files": re.compile(r"^test/differential/[a-z-]*exclusions\.yaml$"),
+        "exclude": re.compile(r"^$"),
+        "pattern": re.compile(r"(?m)^\s*timing:\s*true\b"),
     },
 }
 

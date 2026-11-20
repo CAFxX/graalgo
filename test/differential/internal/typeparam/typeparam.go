@@ -62,8 +62,11 @@ type TFile struct {
 	// (srctest): the file still RUNS, and matching gc makes it STALE.
 	Expected string `json:"expected,omitempty"`
 	// ExpectedSig is the entry's pinned DiffSignature, if any (G2).
-	ExpectedSig string   `json:"expectedSig,omitempty"`
-	Srcs        []string `json:"-"`
+	ExpectedSig string `json:"expectedSig,omitempty"`
+	// Timing is the entry's `timing: true` marker: its outcome depends on
+	// host speed, so matching gc is a pass (TIMING), not STALE.
+	Timing bool     `json:"timing,omitempty"`
+	Srcs   []string `json:"-"`
 	// Args are the program arguments and RunDir the run working
 	// directory (srctest: from the GOROOT/test action line, and
 	// GOROOT/test itself, as gc's test driver runs `// run` files).
@@ -77,6 +80,7 @@ type Exclusion struct {
 	Reason    string
 	Detail    string
 	Signature string
+	Timing    bool
 }
 
 var directiveRe = regexp.MustCompile(`^//\s*(run|rundir|compile|compiledir|errorcheck|build)\b`)
@@ -104,6 +108,7 @@ func Scan(tpDir string, yamlExcl map[string]Exclusion) ([]TFile, error) {
 			// (notrun) stay notrun.
 			tf.Expected = x.Reason
 			tf.ExpectedSig = x.Signature
+			tf.Timing = x.Timing
 			tf.Detail = "expected divergence (" + ExclusionsFileName() + "): " + x.Detail
 		}
 		out = append(out, tf)
@@ -205,7 +210,7 @@ func LoadExclusions(path string) (version string, excl map[string]Exclusion, err
 	}
 	excl = make(map[string]Exclusion, len(rx))
 	for k, e := range rx {
-		excl[k] = Exclusion{File: e.File, Reason: e.Reason, Detail: e.Detail, Signature: e.Signature}
+		excl[k] = Exclusion{File: e.File, Reason: e.Reason, Detail: e.Detail, Signature: e.Signature, Timing: e.Timing}
 	}
 	return v, excl, nil
 }
@@ -226,6 +231,8 @@ type Comparison struct {
 	Expected string   `json:"expected,omitempty"`
 	// ExpectedSig is the pinned DiffSignature of the expected divergence.
 	ExpectedSig string `json:"expectedSig,omitempty"`
+	// Timing: the entry is marked `timing: true` (matching gc is a pass).
+	Timing bool `json:"timing,omitempty"`
 	// Infra marks a comparison that could not produce a verdict (the
 	// graalgo batch JVM failed, staging failed): never a pass.
 	Infra bool `json:"infra,omitempty"`
@@ -319,6 +326,7 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 				results[k].Reasons = scrubReasons(results[k].Reasons, workRoot, ref, alt)
 				results[k].Expected = included[idx].Expected
 				results[k].ExpectedSig = included[idx].ExpectedSig
+				results[k].Timing = included[idx].Timing
 				comps[idx] = results[k]
 			}
 		}(j)

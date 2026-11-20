@@ -139,3 +139,91 @@ func TestLoadBugIDs(t *testing.T) {
 		t.Fatalf("ids %v err %v", ids, err)
 	}
 }
+
+func TestParseTimingMarker(t *testing.T) {
+	_, ex, err := ParseReviewedExclusions("t", `version: 1
+exclusions:
+- file: slow.go
+  reason: deferred-parity
+  detail: BUG-0001: wall-clock check
+  signature: unpinned (timings)
+  timing: true
+- file: plain.go
+  reason: deferred-parity
+  detail: BUG-0001
+  signature: 0123456789abcdef
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ex["slow.go"].Timing || ex["plain.go"].Timing {
+		t.Errorf("timing marker not parsed per entry: %+v %+v", ex["slow.go"], ex["plain.go"])
+	}
+	if _, _, err := ParseReviewedExclusions("t", "version: 1\nexclusions:\n- file: a.go\n  reason: deferred-parity\n  timing: yes\n"); err == nil ||
+		!strings.Contains(err.Error(), "timing: must be true or false") {
+		t.Errorf("a non-boolean timing value must be rejected, got %v", err)
+	}
+}
+
+// The timing marker exempts an entry from STALE, so the register gate must
+// not let it stand without a bug id, a detail or a signature.
+func TestRegisterProblemsTiming(t *testing.T) {
+	bugs := map[string]bool{"BUG-0001": true}
+	_, ex, err := ParseReviewedExclusions("t", `version: 1
+exclusions:
+- file: good.go
+  reason: deferred-parity
+  detail: BUG-0001: wall-clock check
+  signature: unpinned (timings)
+  timing: true
+- file: goodpinned.go
+  reason: deferred-parity
+  detail: BUG-0001: timeout
+  signature: 0123456789abcdef
+  timing: true
+- file: nobug.go
+  reason: unspecified-behavior
+  detail: it is just slow
+  signature: unpinned (timings)
+  timing: true
+- file: nodetail.go
+  reason: deferred-parity
+  signature: unpinned (timings)
+  timing: true
+- file: nosig.go
+  reason: unspecified-behavior
+  detail: BUG-0001: slow
+  timing: true
+- file: notiming.go
+  reason: unspecified-behavior
+  detail: no marker, so no timing rules
+  signature: unpinned (x)
+groups:
+- group: g
+  reason: deferred-parity
+  expires: M3
+  detail: BUG-0001: a group
+  files: g1.go
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(RegisterProblems("t", ex, bugs, true), "\n")
+	for _, want := range []string{"nobug.go: timing: true needs a detail citing the BUG id",
+		"nodetail.go: timing: true needs a detail citing the BUG id",
+		"nosig.go: timing: true entry pins no signature"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing problem %q in:\n%s", want, got)
+		}
+	}
+	for _, clean := range []string{"good.go", "goodpinned.go", "notiming.go", "g1.go"} {
+		if strings.Contains(got, "t: "+clean+":") {
+			t.Errorf("%s must be clean:\n%s", clean, got)
+		}
+	}
+	// A group entry cannot carry the marker.
+	grp := map[string]ReviewedExclusion{"g.go": {File: "g.go", Reason: "deferred-parity", Group: "g", Detail: "BUG-0001", Timing: true}}
+	if s := strings.Join(RegisterProblems("t", grp, bugs, true), "\n"); !strings.Contains(s, "not a group entry") {
+		t.Errorf("a timing group entry must be rejected:\n%s", s)
+	}
+}

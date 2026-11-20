@@ -23,6 +23,8 @@
 //	      EXPECTED  differs from gc, listed (reason-coded, reviewed)       -> ok
 //	      STALE     listed as expected divergence but now matches gc       -> fail
 //	                (prune the entry: a shrinking list is the health metric)
+//	      TIMING    listed `timing: true` (outcome depends on host speed)
+//	                and matches gc: a pass, not STALE
 //	      INFRA     the run failed for an infrastructure reason (e.g. a
 //	                corrupted frontend export) on every retry               -> fail, exit 3
 //	    With -verify-ref, the reference backend is re-run too and any
@@ -544,6 +546,8 @@ func classify(name, diff string, infra bool, expected map[string]harness.Reviewe
 	switch {
 	case diff != "" && infra:
 		return verdict{name, "INFRA", diff}
+	case diff == "" && isExpected && x.Timing:
+		return verdict{name, "TIMING", fmt.Sprintf("passes (timing-dependent): listed `timing: true` (%s: %s), matches gc on this host", x.Reason, x.Detail)}
 	case diff == "" && isExpected:
 		return verdict{name, "STALE", fmt.Sprintf("listed as expected divergence (%s: %s) but matches gc — prune the entry", x.Reason, x.Detail)}
 	case diff == "":
@@ -567,9 +571,9 @@ func report(vs []verdict, n int, snap *SnapshotFile, backend string) error {
 			fmt.Printf("%-9s %-28s %s\n", v.kind, v.name, v.detail)
 		}
 	}
-	fmt.Printf("check: %d programs under %s vs %s snapshot (%s): match=%d expected=%d drift=%d stale=%d unpinned=%d infra=%d ref-drift=%d\n",
+	fmt.Printf("check: %d programs under %s vs %s snapshot (%s): match=%d expected=%d drift=%d stale=%d unpinned=%d infra=%d ref-drift=%d timing-pass=%d\n",
 		n, backend, snap.Reference, snap.Toolchain, counts["MATCH"], counts["EXPECTED"],
-		counts["DRIFT"], counts["STALE"], counts["UNPINNED"], counts["INFRA"], counts["REF-DRIFT"])
+		counts["DRIFT"], counts["STALE"], counts["UNPINNED"], counts["INFRA"], counts["REF-DRIFT"], counts["TIMING"])
 	if bad := counts["DRIFT"] + counts["STALE"] + counts["UNPINNED"] + counts["REF-DRIFT"]; bad > 0 {
 		return fmt.Errorf("%d unexpected results (drift/stale/unpinned/ref-drift)", bad)
 	}

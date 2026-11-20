@@ -115,6 +115,15 @@ Tamed, never silent (FEASIBILITY.md §7):
    programs still run (STALE once they match gc). Order-unspecified or
    address-printing output is annotated per program (`NORMALIZE` file),
    never normalized globally.
+   An entry whose program is a wall-clock check (it times out or fails a
+   "too slow" assertion on a slow or loaded host and matches gc on a fast
+   one) carries `timing: true`: matching gc is then reported `TIMING` (a
+   pass, "passes (timing-dependent)") instead of STALE, while a divergence
+   is judged as for any entry (pinned signature, or `unpinned (<why>)`).
+   The marker needs a `BUG-NNNN` in the detail and a signature
+   (`diffharness registers`), and the number of marked entries is a
+   shrink-only ratchet (`timing-excl` in
+   [ratchet_budget.json](../../.github/scripts/ratchet_budget.json)).
 4. The `validate` rerun control (same program twice under the reference
    backend) mechanically guards against flakiness: any divergence there
    fails validation (kill trigger K3).

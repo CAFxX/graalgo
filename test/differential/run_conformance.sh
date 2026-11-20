@@ -11,7 +11,8 @@
 #
 # Exit status: 0 green; 1 an unlisted divergence (triage: fix graalgo, or
 # list it with a reason code) or a STALE entry (listed but now matches gc:
-# prune it); 2 usage/setup; 3 infrastructure failure (no verdict).
+# prune it; a `timing: true` entry that matches gc is TIMING, a pass);
+# 2 usage/setup; 3 infrastructure failure (no verdict).
 #
 # Environment:
 #   DH_GO        Go toolchain root (default: ~/tools/go, else PATH)

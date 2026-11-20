@@ -197,6 +197,31 @@ func TestYamlExclusionOverrides(t *testing.T) {
 	}
 }
 
+// The yaml `timing: true` marker must reach the scanned file (and from there
+// the comparison), or the run verdict would still call the entry STALE.
+func TestYamlTimingMarkerReachesScan(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "slow.go", "package main\n\nfunc main() {}\n")
+	writeFile(t, dir, "plain.go", "package main\n\nfunc main() {}\n")
+	yaml := filepath.Join(dir, "x.yaml")
+	writeFile(t, dir, "x.yaml", "version: 1\nexclusions:\n- file: slow.go\n  reason: deferred-parity\n  detail: BUG-0001\n  timing: true\n- file: plain.go\n  reason: deferred-parity\n  detail: BUG-0001\n")
+	_, excl, err := typeparam.LoadExclusions(yaml)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := Scan(dir, excl)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, f := range files {
+		got[f.Name] = f.Timing
+	}
+	if !got["slow.go"] || got["plain.go"] {
+		t.Fatalf("timing marker not carried per file: %v", got)
+	}
+}
+
 func TestScanSkipsSubdirs(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, dir, "a.go", "package main\n\nfunc main() {}\n")
