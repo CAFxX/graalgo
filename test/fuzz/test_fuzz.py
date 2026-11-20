@@ -4,14 +4,25 @@ before the run): the generator is seeded, the minimizer keeps the failure
 and drops the rest, the known-divergence register refuses an id that
 docs/dev/bugs.md does not have, and signatures collapse run-specific numbers.
 """
+import importlib.util
 import os
-import sys
 import tempfile
 import unittest
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import gen  # noqa: E402
-import run  # noqa: E402
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def load(name):
+    """Imports test/fuzz/<name>.py by path (test/fuzz is no package)."""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + '.py'))
+    assert spec is not None and spec.loader is not None, name
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+gen = load('gen')
+run = load('run')
 
 
 class FakeToolchain:
@@ -61,7 +72,7 @@ class FuzzTest(unittest.TestCase):
 
     def test_known_parses(self):
         known = run.load_known(os.path.join(run.HERE, 'known.txt'))
-        for prog, (bug, cls, sig) in known.items():
+        for prog, (_bug, cls, _sig) in known.items():
             self.assertTrue(os.path.exists(os.path.join(run.ROOT, prog)), prog)
             self.assertIn(cls, ('diverge', 'gg-crash', 'gg-build', 'timeout'))
 

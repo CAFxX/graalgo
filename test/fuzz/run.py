@@ -40,6 +40,8 @@ Env: GO, GRAALGO_JAVA_OPTS, FUZZ_TIMEOUT (seconds, default 60),
 """
 import argparse
 import difflib
+import importlib.util
+import io
 import os
 import re
 import shutil
@@ -152,6 +154,16 @@ class Toolchain:
             return 'diverge', 'stdout: ' + first_diff(gc_out.decode('utf-8', 'replace'),
                                                      gg_out.decode('utf-8', 'replace')), detail
         return 'diverge', 'stderr: ' + first_diff(gc_nerr, gg_nerr), detail
+
+
+def load_sibling(name):
+    """Imports test/fuzz/<name>.py by path (test/fuzz is no package)."""
+    spec = importlib.util.spec_from_file_location(name, os.path.join(HERE, name + '.py'))
+    if spec is None or spec.loader is None:
+        raise ImportError(name)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def first_line(s):
@@ -288,8 +300,9 @@ def load_known(path):
 
 
 def main():
-    sys.stdout.reconfigure(line_buffering=True)
-    ap = argparse.ArgumentParser(description=__doc__.split('\n')[0])
+    if isinstance(sys.stdout, io.TextIOWrapper):
+        sys.stdout.reconfigure(line_buffering=True)
+    ap = argparse.ArgumentParser(description=(__doc__ or '').split('\n')[0])
     ap.add_argument('programs', nargs='*')
     ap.add_argument('--gen', type=int, default=0, help='generate N programs')
     ap.add_argument('--seed', type=int, default=1)
@@ -326,8 +339,7 @@ def run(args, scratch):
     if args.gen:
         gdir = os.path.join(scratch, 'gen')
         os.makedirs(gdir)
-        sys.path.insert(0, HERE)
-        import gen  # test/fuzz/gen.py
+        gen = load_sibling('gen')
         for i in range(args.gen):
             seed = args.seed + i
             p = os.path.join(gdir, 'gen_%d.go' % seed)

@@ -238,7 +238,7 @@ class Gen:
     def pop(self):
         self.scopes.pop()
 
-    def vars(self, pred=lambda t: True, writable=False):
+    def vars(self, pred=lambda _: True, writable=False):
         out = []
         for s in self.scopes:
             for n, t in s:
