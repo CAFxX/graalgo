@@ -7,36 +7,12 @@
       "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
     },
     {
-      "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
-    },
-    {
-      "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
-    },
-    {
-      "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
-    },
-    {
       "program": "19_sort",
       "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
     },
     {
       "program": "27_panic_trace",
       "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
-    },
-    {
-      "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
-    },
-    {
-      "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
-    },
-    {
-      "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
     },
     {
       "program": "40_method_values",
@@ -48,7 +24,7 @@
     }
   ],
   "format": "graalgo-behavior-snapshot/v1",
-  "graalgoCommit": "10b6c50708ec3ad46e3cdab6fd2c65555521babe",
+  "graalgoCommit": "a0df481b",
   "normalizer": "harness.Normalize+backend.stderrFilters/v1",
   "programs": [
     {
@@ -184,6 +160,17 @@
       "timedOut": false
     },
     {
+      "name": "14_goroutines_sum",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "36\n",
+      "stderr": ""
+    },
+    {
       "args": [],
       "buildLog": "",
       "buildOk": true,
@@ -215,6 +202,28 @@
       "stdin": "",
       "stdout": "int/int=2/2\n",
       "timedOut": false
+    },
+    {
+      "name": "17_generics",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "6\n4\nb a\n3\n",
+      "stderr": ""
+    },
+    {
+      "name": "18_errors",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "ok: 1\ntrue\nfalse\nnot found\n",
+      "stderr": ""
     },
     {
       "args": [],
@@ -292,6 +301,17 @@
       "stdin": "",
       "stdout": "8000\n42\nrlock ok\n",
       "timedOut": false
+    },
+    {
+      "name": "28_exit_code",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 3,
+      "timedOut": false,
+      "stdout": "stdout line\n",
+      "stderr": "about to exit\n"
     },
     {
       "args": [],
@@ -382,6 +402,17 @@
       "timedOut": false
     },
     {
+      "name": "37_utf8",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "14 9\n0 h U+0068\nfooβ 5\nABC true\n",
+      "stderr": ""
+    },
+    {
       "args": [],
       "buildLog": "",
       "buildOk": true,
@@ -391,6 +422,17 @@
       "stdin": "",
       "stdout": "0 1 2 3\n1 1024 1048576\ntrue\n",
       "timedOut": false
+    },
+    {
+      "name": "39_named_returns",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "7 10\n",
+      "stderr": ""
     },
     {
       "args": [],
@@ -470,6 +512,6 @@
       "stderr": ""
     }
   ],
-  "recordedAt": "2026-10-14T13:37:58Z",
+  "recordedAt": "2026-11-21T06:03:26Z",
   "toolchain": "go1.27.1"
 }

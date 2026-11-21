@@ -71,36 +71,12 @@
       "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
     },
     {
-      "program": "14_goroutines_sum",
-      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
-    },
-    {
-      "program": "17_generics",
-      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
-    },
-    {
-      "program": "18_errors",
-      "reason": "backend-specific: errors.As needs reflect (not in scope)"
-    },
-    {
       "program": "19_sort",
       "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
     },
     {
       "program": "27_panic_trace",
       "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
-    },
-    {
-      "program": "28_exit_code",
-      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
-    },
-    {
-      "program": "37_utf8",
-      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
-    },
-    {
-      "program": "39_named_returns",
-      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
     },
     {
       "program": "40_method_values",
