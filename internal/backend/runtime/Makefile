@@ -201,13 +201,10 @@ pin-audit: main $(OUT_TEST)/.built
 	--out out/pinaudit-report.md
 
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
+# Takes ~10 min. The battery script lives at tools/torture/run_battery.sh
+# and runs from this module dir with the module's TEST_CP.
 torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
-
-# P2-M8 GOMAXPROCS matrix (differential vs gc).
-gmp-matrix: main $(OUT_TEST)/.built
-	bash ../../../tools/torture/gmp_matrix.sh
 
 clean:
 	rm -rf out

@@ -7,27 +7,68 @@
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
 #                gc prints P/M fields, graalgo prints goroutines/cap/carriers;
-#                documented in phases/phase2/GODEBUG.md)
+#                documented in docs/arch/phases/phase2/GODEBUG.md)
 #   scheddetail  graalgo additionally emits SCHED-DETAIL lines
 #   gctrace      both emit a per-GC-cycle line on stderr (numbers are
 #                JVM-heap sourced for graalgo)
 #   panicnil     byte-identical stdout (recover() returns nil, like gc)
 #
-# Usage: ./godebug-diff.sh [--keep]   (run from this directory)
-# Exit 0 iff every knob diffs as expected. Writes REPORT.md on success.
+# Usage: ./godebug-diff.sh [--keep | --check-only]
+#   --keep        keep the scratch work dir under <repo>/.tmp/ (else removed)
+#   --check-only  run only the infrastructure preflight (no build, no JVM
+#                 launch) and exit 0 (ready) / 3 (infra missing)
+# Exit 0 iff every knob diffs as expected; 3 infrastructure error (missing
+# toolchain, unbuilt classes, missing corpus/probe — never a knob FAIL).
+# Writes REPORT.md on success. GRAALGO_ROOT overrides the repo root
+# (test seam; default: the repo containing this script).
 set -u
 
-P2="$(cd "$(dirname "$0")/../../phases/phase2" && pwd)"
-GRAALGO="$P2"
-GO="$HOME/tools/go/bin/go"
+ROOT="${GRAALGO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+BK="$ROOT/internal/backend"
+GO="${GO:-$HOME/tools/go/bin/go}"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 JAVA="$GRAALVM_HOME/bin/java"
-CORPUS="$P2/corpus/godebug"
-WORK="$(mktemp -d)"
+CORPUS="$ROOT/test/corpus/phase2/godebug"
+PROBES="db02_panicnil.go db03_alloc.go db04_spin.go"
+
+# Same classpath as the runtime module's RUN_CP (see
+# internal/backend/runtime/Makefile): runtime classes first (the overlay
+# shadowing the truffle module's frozen stubs), then the truffle module's
+# classes, interop classes, Truffle jars.
+CP="$BK/runtime/out/classes:$BK/truffle/out/classes:$BK/interop/out/classes"
+for jar in "$BK"/truffle/lib/*.jar; do CP="$CP:$jar"; done
+JAVA_FLAGS=(--enable-native-access=ALL-UNNAMED -Xss32m)
+
+# check_infra: every computed classpath entry, the corpus dir, and the
+# probe programs must exist before any JVM launch. Returns 3 otherwise.
+check_infra() {
+  [ -x "$GO" ] || { echo "INFRA: gc toolchain not found: $GO" >&2; return 3; }
+  [ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; return 3; }
+  local -a entries
+  IFS=':' read -ra entries <<< "$CP"
+  local entry
+  for entry in "${entries[@]}"; do
+    [ -e "$entry" ] || { echo "INFRA: classpath entry missing: $entry" >&2; return 3; }
+  done
+  [ -d "$CORPUS" ] || { echo "INFRA: corpus dir missing: $CORPUS" >&2; return 3; }
+  local probe
+  for probe in $PROBES; do
+    [ -f "$CORPUS/$probe" ] || { echo "INFRA: probe missing: $CORPUS/$probe" >&2; return 3; }
+  done
+  [ -f "$BK/runtime/out/classes/graalgo/sched/launcher/SchedMain.class" ] \
+    || { echo "INFRA: SchedMain not built (make -C $ROOT build)" >&2; return 3; }
+  return 0
+}
+
+if [ "${1:-}" = "--check-only" ]; then
+  check_infra || exit 3
+  echo "check-only: OK (ROOT=$ROOT)"
+  exit 0
+fi
 KEEP="${1:-}"
 
-CP="$P2/out/classes:$P2/../phase1/out/classes:$(echo $P2/../phase1/lib/*.jar | tr ' ' ':')"
-JAVA_FLAGS="--enable-native-access=ALL-UNNAMED -Xss32m"
+mkdir -p "$ROOT/.tmp"
+WORK="$(mktemp -d "$ROOT/.tmp/godebug-diff.XXXXXX")"
 
 pass=0
 fail=0
@@ -41,10 +82,15 @@ run_gc() { # $1=godebug $2=probe -> stdout/stderr/exit in $WORK/gc.{out,err,exit
 
 run_gr() { # $1=godebug $2=probe
     local gd="$1" probe="$2"
-    GODEBUG="$gd" "$JAVA" $JAVA_FLAGS -cp "$CP" \
+    GODEBUG="$gd" "$JAVA" "${JAVA_FLAGS[@]}" -cp "$CP" \
         graalgo.sched.launcher.SchedMain --gmp=2 "$CORPUS/$probe" \
         >"$WORK/gr.out" 2>"$WORK/gr.err"
     echo "$?" >"$WORK/gr.exit"
+    if grep -qE 'ClassNotFoundException|NoClassDefFoundError|Could not find or load main class' "$WORK/gr.err"; then
+        echo "INFRA: graalgo launcher could not load its classes:" >&2
+        head -3 "$WORK/gr.err" >&2
+        exit 3
+    fi
 }
 
 # Strip JVM/Truffle warnings from graalgo stderr (not program behavior).
@@ -64,8 +110,9 @@ check() { # $1=knob $2=ok(0/1) $3=detail
     fi
 }
 
-echo "== building phase2 =="
-make -C "$P2" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
+echo "== building backend =="
+make -C "$ROOT" build >/dev/null 2>&1 || { echo "INFRA: make build failed" >&2; exit 3; }
+check_infra || exit 3
 
 # --- schedtrace ---
 # Strengthened comparator: requires >=3 lines with STRICTLY INCREASING

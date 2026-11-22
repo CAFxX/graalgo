@@ -1,17 +1,67 @@
 #!/bin/bash
 # P2-M8 torture battery orchestrator: spike 2b F1–F6 on the production path.
 #
-# Runs every leg, archives logs to hidden_files/torture/logs/, prints a
-# summary. Exit 0 iff every leg passes. A single failing leg is a bug to
-# fix; systematic divergence across legs is the kill trigger (PLAN.md §7).
+# Runs every leg of graalgo.sched.torture.TortureBattery (the runtime
+# module's test classes), keeps logs in a scratch dir under the gitignored
+# <repo>/.tmp/ (override with TORTURE_LOG_DIR), prints a summary.
+#
+# Exit status: 0 every leg passes; 1 a leg failed (a bug to fix; systematic
+# divergence across legs is the kill trigger, PLAN.md §7); 3 infrastructure
+# error (java missing, a classpath entry missing, test classes not built,
+# TortureBattery class not loadable) — never reported as a leg failure.
+#
+# Needs: the runtime module's main + test classes built
+# (make -C internal/backend/runtime main; the runtime Makefile's `torture`
+# target builds them first). The classpath below is the module's TEST_CP
+# (see internal/backend/runtime/Makefile).
+#
+# Usage: run_battery.sh [--check-only] — --check-only runs only the
+# infrastructure preflight (no JVM launch, no logs) and exits 0/3.
+# GRAALGO_ROOT overrides the repo root (test seam; default: the repo
+# containing this script).
 set -u
-cd "$(dirname "$0")/../.." || exit 1
+
+ROOT="${GRAALGO_ROOT:-$(cd "$(dirname "$0")/../.." && pwd)}"
+RT="$ROOT/internal/backend/runtime"
 
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-CP="out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar"
-OUTDIR="hidden_files/torture/logs"
-mkdir -p "$OUTDIR"
 JAVA="$GRAALVM_HOME/bin/java"
+
+# Same classpath as the runtime module's TEST_CP: test classes, main
+# classes, the truffle module's classes (the 8 frozen stubs, shadowed at
+# load by the runtime module's replacements), interop classes, Truffle jars.
+CP="$RT/out/test-classes:$RT/out/classes:$RT/../truffle/out/classes:$RT/../interop/out/classes"
+for jar in "$RT"/../truffle/lib/*.jar; do CP="$CP:$jar"; done
+JAVA_FLAGS=(--enable-native-access=ALL-UNNAMED -Xss32m)
+
+# check_infra: fail fast (return 3) if any computed classpath entry is
+# missing, the TortureBattery class is not built, or java cannot run.
+# Runs before any JVM launch and before any log dir is created.
+check_infra() {
+  [ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; return 3; }
+  local -a entries
+  IFS=':' read -ra entries <<< "$CP"
+  local entry
+  for entry in "${entries[@]}"; do
+    [ -e "$entry" ] || { echo "INFRA: classpath entry missing: $entry" >&2; return 3; }
+  done
+  [ -f "$RT/out/test-classes/graalgo/sched/torture/TortureBattery.class" ] \
+    || { echo "INFRA: test classes not built (make -C internal/backend/runtime main + test classes)" >&2; return 3; }
+  return 0
+}
+
+check_infra || exit 3
+if [ "${1:-}" = "--check-only" ]; then
+  echo "check-only: OK (ROOT=$ROOT)"
+  exit 0
+fi
+cd "$RT" || exit 3
+
+mkdir -p "$ROOT/.tmp"
+OUTDIR="${TORTURE_LOG_DIR:-$(mktemp -d "$ROOT/.tmp/torture.XXXXXX")}"
+mkdir -p "$OUTDIR"
+
+echo "torture logs: $OUTDIR"
 
 # leg <logname> <JFLAGS> -- <LEG> [leg args...]
 leg() {
@@ -24,10 +74,14 @@ leg() {
   local legname="$1"; shift
   local log="$OUTDIR/$logname.log"
   echo "--- leg $logname ($legname $*) ---"
-  timeout 300 "$JAVA" "${jflags[@]}" -cp "$CP" \
+  timeout 300 "$JAVA" "${JAVA_FLAGS[@]}" "${jflags[@]}" -cp "$CP" \
     graalgo.sched.torture.TortureBattery "$legname" "$@" \
     > "$log" 2>&1
   local rc=$?
+  if grep -qE 'ClassNotFoundException|NoClassDefFoundError|Could not find or load main class' "$log"; then
+    echo "INFRA: leg $logname could not load its classes; log: $log" >&2
+    exit 3
+  fi
   grep -E "^(F[0-9]|RESULT)" "$log" | tail -4
   if [ $rc -ne 0 ]; then
     echo "LEG $logname FAILED (exit $rc); log: $log"
@@ -77,4 +131,4 @@ echo "==="
 echo "torture battery: $PASS pass, $FAIL fail"
 [ -n "$FAILED" ] && echo "failed legs:$FAILED"
 echo "RESULT=$([ $FAIL -eq 0 ] && echo PASS || echo FAIL)"
-exit $([ $FAIL -eq 0 ] && echo 0 || echo 2)
+exit $([ $FAIL -eq 0 ] && echo 0 || echo 1)
