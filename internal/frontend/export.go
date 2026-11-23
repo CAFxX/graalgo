@@ -11367,7 +11367,7 @@ func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*N
 // Nested MR calls (h(f(g()))) are handled recursively.
 // Only user-defined MR kinds (mrUser, mrFuncField) are hoisted here; the
 // synthetic M5/M7 kinds keep their pinned fail-fast outside desugar
-// positions (TestMultiResultFailFastKept, GG-0017).
+// positions (TestMultiResultFailFastKept, GG-0073).
 func (e *exporter) exportCallArgs(c *ast.CallExpr) ([]*Node, error) {
 	args := make([]*Node, 0, len(c.Args))
 	for _, a := range c.Args {

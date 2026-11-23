@@ -3,7 +3,7 @@ package graalgo.runtime;
 import graalgo.sched.SchedulerCore;
 
 /**
- * Channel/select intrinsic surface (P2-M2, WS B; GG-0017 chan slice).
+ * Channel/select intrinsic surface (P2-M2, WS B; GG-0073 chan slice).
  *
  * <p>Every FROZEN signature is the GG-0020 one (bodies are INTERNAL per
  * freeze §3.5); {@code FreezeSignatureTest} checks them.

@@ -80,9 +80,10 @@ public final class SchedulerCore {
             Object.class.getModule().isExported("jdk.internal.vm", SchedulerCore.class.getModule());
 
     /**
-     * Carrier mode is the default for new schedulers: {@code -Dgraalgo.sched.goroutines=carrier}
-     * (opt-in while GG-0017's "1:1 virtual thread" wording stands, ADR-0018; the default is
-     * {@code thread}: one thread per goroutine). Read per scheduler, so a test can switch it.
+     * Whether carrier mode is the default for new schedulers: {@code -Dgraalgo.sched.goroutines=carrier}
+     * (ADR-0018; GG-0073 makes carrier mode the default, but until the default flip lands the
+     * property's default is {@code thread}: one thread per goroutine, GG-0073's fallback mode).
+     * Read per scheduler, so a test can switch it.
      */
     public static boolean carrierModeDefault() {
         return "carrier".equals(System.getProperty("graalgo.sched.goroutines", "thread"));

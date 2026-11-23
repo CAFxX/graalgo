@@ -54,7 +54,7 @@ import graalgo.values.InterfaceDispatchProbes;
  * Phase-1 {@code NodeFactory} change.
  *
  * <p>verifies: GG-0014
- * <p>verifies: GG-0017 (iface slice)
+ * <p>verifies: GG-0073 (iface slice)
  */
 public final class IfaceDispatchNode extends GoExprNode {
 

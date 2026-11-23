@@ -19,7 +19,7 @@ package main
 //     (the mrXmlToken plan shares the concrete helper-call shape).
 //  5. TestConcreteBareM5StillFailFast pins the kind-gate boundary: a
 //     bare context.WithCancel keeps the pinned M5 statement-position
-//     fail-fast (TestMultiResultFailFastKept, GG-0017) — the D2
+//     fail-fast (TestMultiResultFailFastKept, GG-0073) — the D2
 //     interception covers only mrM7/mrXmlToken. Interface multi-result
 //     calls in this position keep the D1 path (TestD1BareIfaceCall).
 

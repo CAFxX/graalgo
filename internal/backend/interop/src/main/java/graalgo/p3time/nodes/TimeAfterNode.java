@@ -24,7 +24,7 @@ import graalgo.values.GoStructDescriptor;
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1 change.
  *
- * <p>verifies: GG-0017 (time slice)
+ * <p>verifies: GG-0073 (time slice)
  */
 public final class TimeAfterNode extends GoExprNode {
 

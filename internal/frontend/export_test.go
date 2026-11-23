@@ -335,7 +335,7 @@ func TestDeepNesting(t *testing.T) {
 	}
 }
 
-// TestChannelOpsM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005 Appendix C)
+// TestChannelOpsM5 verifies: GG-0073 — P3-M5 (WS E, ADR-0005 Appendix C)
 // channel-operations lowering: make(chan)/send/recv/close/select lower to
 // the additive wire nodes (makechan/send/recv/chanclose/select), and
 // `for v := range ch` desugars to a for+select loop.
@@ -561,7 +561,7 @@ func assertGostmtZeroArg(t *testing.T, nodes []nodeKind) {
 	}
 }
 
-// TestGoWithArgsInLoop verifies: GG-0017 — P3-M5 (reviewer1 P2-4) the
+// TestGoWithArgsInLoop verifies: GG-0073 — P3-M5 (reviewer1 P2-4) the
 // `go f(args)` desugar inside a loop. The Appendix N desugar emits one
 // __go_arg_* temp per go *statement*; in a loop the temp vardecls must
 // sit inside the loop body (so the factory's loopcap pre-scan gives

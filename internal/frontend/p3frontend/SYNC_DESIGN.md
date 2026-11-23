@@ -1,6 +1,6 @@
 # [SYNC_DESIGN.md](SYNC_DESIGN.md) — P3-M2b `sync` Go bindings
 
-**Scope:** PLAN.md §4 P3-M2 (WS D), GG-0017 sync slice. Implements
+**Scope:** PLAN.md §4 P3-M2 (WS D), GG-0073 sync slice (formerly `GG-0017`). Implements
 ADR-0002 (freeze exception for the synthetic `sync` package).
 **Status:** implemented 2026-10-06; differential corpus 22/22 vs gc 1.27.1.
 
@@ -97,7 +97,7 @@ The `defer`/`go` desugars need no p3frontend work: they are standard
 
 ## 5. Java (`graalgo.p3sync`, `phases/phase3/src/main/java`)
 
-- `nodes/SyncNewNode.java`, `nodes/SyncOpNode.java` (`verifies: GG-0017`):
+- `nodes/SyncNewNode.java`, `nodes/SyncOpNode.java` (`verifies: GG-0073`):
   build the `GoMutex`/`GoRWMutex`/`GoWaitGroup`/`GoOnce` objects and
   dispatch the ops. Misuse panics (`unlock`/`rUnlock` of unlocked,
   negative `WaitGroup` counter) throw `IllegalStateException` with gc's

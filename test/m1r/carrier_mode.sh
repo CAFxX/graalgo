@@ -6,9 +6,10 @@
 # with 1,000 and with 19,000 goroutines alive, and 20,000 spawns must take
 # under 2 s (one polyglot thread per goroutine fails both).
 #
-# The programs are not in test/m1r/programs/: the default goroutine mode
-# (one thread per goroutine, GG-0017) is quadratic in the live count and
-# fails spawn_flat by design. The scheduler's semantics suites also run in
+# The programs are not in test/m1r/programs/: the current default goroutine
+# mode (one thread per goroutine; GG-0073's fallback, the default until the
+# carrier default flip lands) is quadratic in the live count and fails
+# spawn_flat by design. The scheduler's semantics suites also run in
 # carrier mode, at the Java level (graalgo.sched.CarriersTest).
 #
 # Usage: test/m1r/carrier_mode.sh [-v]

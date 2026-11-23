@@ -1,15 +1,18 @@
 # ADR-0018 — Goroutines as continuations on polyglot carrier threads (carrier mode)
 
 **Date:** 2026-11-20
-**Status:** accepted as an **opt-in mode** 2026-11-20 (lane sched-spawn).
-Making it the default **needs the owner's decision**: it departs from the
-locked text of [GG-0017](../../../requirements/GG-0017.yaml) ("Each goroutine
-SHALL map 1:1 to a Java virtual thread"), so the lane stopped there and
-reports (see *Requirement* below). No requirement text changes here.
+**Status:** **accepted** 2026-11-23 as the goroutine model, by the
+coordinator under design authority delegated by the owner:
+[GG-0073](../../../requirements/GG-0073.yaml) supersedes `GG-0017` ("Each
+goroutine SHALL map 1:1 to a Java virtual thread") and makes carrier mode the default, one virtual
+thread per goroutine the fallback where `Continuation` is unavailable. The
+default flip itself is a separate, pending lane. (History: accepted as an
+**opt-in mode** 2026-11-20, lane sched-spawn, which stopped at the
+requirement conflict; see *Requirement* below.)
 **Scope:** [SPEC.md](../../arch/SPEC.md) §3.5;
 [truffle-design.md](../../arch/truffle-design.md) §2.5–§2.6 (T3);
 [north-star.md](../../arch/north-star.md) §4.3 and §5.3;
-requirements GG-0017, GG-SCHED-0001–0003, GG-SCHED-0006, GG-WAKE-0001–0003
+requirements GG-0073 (superseding `GG-0017`), GG-SCHED-0001–0003, GG-SCHED-0006, GG-WAKE-0001–0003
 (re-verified in carrier mode, unchanged).
 
 ## Context
@@ -128,18 +131,30 @@ not exposed to it. Follow-up for the PE lane.
 
 ## Requirement
 
-GG-0017 (locked 2026-10-03) says each goroutine maps 1:1 to a Java virtual
+`GG-0017` (locked 2026-10-03) says each goroutine maps 1:1 to a Java virtual
 thread. On Truffle 25 that mapping makes creation O(live goroutines) (the
 two loops above), so the north-star goal (servers with huge goroutine
-counts) and GG-0017's text conflict. Carrier mode keeps everything else
-GG-0017 asks — `Safepoint.poll()` preemption with an indefinite park and a
+counts) and `GG-0017`'s text conflict. Carrier mode keeps everything else
+`GG-0017` asks — `Safepoint.poll()` preemption with an indefinite park and a
 resume token, the Loom pool treated as untrusted (carriers are ours now),
 GOMAXPROCS as the in-flight cap — and replaces "a Java virtual thread" with
 "a continuation scheduled on carrier threads". Flipping the default needs a
 superseding requirement, which only the owner can lock. Proposed text:
 "Each goroutine SHALL be a JDK continuation — a virtual thread, or a
 `jdk.internal.vm.Continuation` mounted on a scheduler carrier thread — plus
-a scheduler token; …" (the rest of GG-0017 unchanged).
+a scheduler token; …" (the rest of `GG-0017` unchanged).
+
+**Resolution (2026-11-23).** The owner delegated design authority to the
+coordinator, who accepted this ADR and superseded `GG-0017` with
+[GG-0073](../../../requirements/GG-0073.yaml) (locked the same day). Its
+text generalizes the proposal: a goroutine is a lightweight execution
+context unmounted when parked — by default a `Continuation` run by
+scheduler carriers, with spawn cost independent of the live count and
+per-parked-goroutine memory ≤ ~2× gc's — and one virtual thread per
+goroutine is only the documented fallback where `Continuation` is
+unavailable (native images until P-F, truffle-design §7.4). Every other
+`GG-0017` obligation carries over. Decision 7's "default stays one virtual
+thread" holds only until the default-flip lane lands.
 
 ## Consequences
 

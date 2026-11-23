@@ -421,7 +421,8 @@ the AOT/hybrid modes (Native Image's SubstrateVM heap) can approach gc.
   Creation no longer depends on the live count: 100k spawn in 1.0–1.5 s
   (thread mode 162 s; gc 0.18–0.20 s: 6–7× on a loaded host), 1M in 11.5 s
   (gc 1.9 s) at 2.3 KB per idle goroutine (gc 2.76 KB), peak RSS 4.0 GB.
-  Default needs GG-0017 superseded (owner). Open: the per-goroutine spawn
+  Default: **decided** — GG-0073 superseded `GG-0017` (2026-11-23,
+  ADR-0018 accepted); the default flip is a pending lane. Open: the per-goroutine spawn
   path (6× gc), and a whole lifecycle round (spawn, park, broadcast wake,
   exit) still 30–45× gc — the wake is one deoptimization per goroutine in
   the first round (ADR-0018 "mass deoptimization") plus the drainer hops.
@@ -527,7 +528,7 @@ Work package ids as in [RECOVERY.md](RECOVERY.md) and
 | Item | Move | Why (north star) |
 |---|---|---|
 | Land M1d (`wt/fmt/path`) | **first** | every realistic benchmark needs `fmt`/`reflect`/`os` |
-| Goroutine creation O(1) (new, §5.3) | **up: top** — done as opt-in carrier mode (ADR-0018); default awaits GG-0017's supersession | T2–T4 are impossible at 10k+ goroutines in thread mode; measured quadratic |
+| Goroutine creation O(1) (new, §5.3) | **up: top** — done as opt-in carrier mode (ADR-0018); decided as the default (GG-0073, superseding `GG-0017`); the flip is pending | T2–T4 are impossible at 10k+ goroutines in thread mode; measured quadratic |
 | PE failures on `goto` blocks and deep inlining (new, §4.1) | **up: top** | `regexp`, `encoding/json`'s scanner, `compress/flate` run interpreted: 20–130× gc |
 | W8b sockets + poller on sockets (M4 `net`) | **up** (before the rest of M4) | the T2 floor |
 | crypto link floor + intrinsics, `hash/crc32`, `math/big` (M4 `crypto/*`) | **up**, split: link floor first, speed second | `net/http` does not link without `crypto/tls`; gzip/png/T3 need crc32 |
@@ -574,8 +575,8 @@ value is the profile it gives, ranked against §5.8's speculation list.
    live goroutines; idle memory per goroutine; re-run §4.3 incl. 1M.
    **Landed 2026-11-20 as opt-in carrier mode (ADR-0018):** flat and 6–7× gc
    per spawn at 100k (the L1 bar of ≤ 10×, linear: met; the lane brief's 5×:
-   not yet), idle 1.7× gc at 100k and 0.83× at 1M. Default: owner decision
-   on GG-0017.
+   not yet), idle 1.7× gc at 100k and 0.83× at 1M. Default: decided by
+   GG-0073 (superseded `GG-0017`, 2026-11-23); the flip is the next step.
 2. **`m4-net` (T4 syscall lane):** L2 — socket roles, poller on sockets,
    loopback echo benchmark (the viability check of §5.4).
 3. **`m4-crypto` (T1 intrinsics lane):** L3 — link floor for `crypto/*`,

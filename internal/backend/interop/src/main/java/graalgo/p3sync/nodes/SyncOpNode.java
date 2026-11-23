@@ -78,7 +78,7 @@ import java.util.Map;
  * {@code NodeFactory.registerExprKind} hook (P2-D8 precedent) — no
  * Phase-1 {@code NodeFactory} change.
  *
- * <p>verifies: GG-0017 (sync slice)
+ * <p>verifies: GG-0073 (sync slice)
  */
 public final class SyncOpNode extends GoExprNode {
 

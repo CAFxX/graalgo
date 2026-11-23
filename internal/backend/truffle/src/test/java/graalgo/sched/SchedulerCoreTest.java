@@ -512,7 +512,7 @@ public final class SchedulerCoreTest {
     }
 
     /**
-     * verifies: GG-0017 (Go panic parity).
+     * verifies: GG-0073 (Go panic parity).
      * Reviewer1 P1-1: an uncaught panic in a SPAWNED goroutine must be
      * recorded (launcher exits 2), not a silent exit 0 with a raw JVM
      * stack trace.
@@ -536,7 +536,7 @@ public final class SchedulerCoreTest {
     /**
      * Internal errors are loud: a RuntimeException escaping a goroutine
      * body is recorded as a crash (launcher exits 1), never swallowed.
-     * verifies: GG-0017 (Goexit/panic/crash discipline).
+     * verifies: GG-0073 (Goexit/panic/crash discipline).
      * A RuntimeException escaping a goroutine body is recorded as a
      * crash (launcher exits 1), never swallowed.
      */
