@@ -1,5 +1,7 @@
 #!/bin/bash
-# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
+# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain, via the
+# product launcher wrapper (internal/backend/graalgo-sync-run), which owns
+# the classpath and JVM flags.
 # Usage: diff_one.sh <go-file> <workdir> <gmp>
 # Emits a JSON result record to stdout.
 set -uo pipefail
@@ -8,15 +10,16 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: tools/fuzz-soak/harness/diff_one.sh -> harness -> fuzz-soak -> tools -> repo.
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GR="${GR:-$(cd "$HERE/../.." && pwd)}"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+# The launcher wrapper uses GRAALVM_HOME; honor JAVA_BIN when GRAALVM_HOME
+# is unset so the run_soak.sh JAVA_BIN contract keeps working.
+if [ -n "${JAVA_BIN:-}" ] && [ -z "${GRAALVM_HOME:-}" ]; then
+  export GRAALVM_HOME="$(dirname "$(dirname "$JAVA_BIN")")"
+fi
+export TMPDIR="${FUZZ_TMPDIR:-${TMPDIR:-/tmp}}"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
@@ -31,10 +34,9 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (120s timeout; JVM startup dominates) via the product
+# launcher wrapper (owns the classpath, JVM flags, and tmpdir).
+timeout 120 "$GR/internal/backend/graalgo-sync-run" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 

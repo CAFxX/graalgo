@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Batch differential fuzzing driver.
 
-1. Builds graalgo Java modules once.
+1. Builds graalgo (gofrontend + Java modules) once.
 2. Generates N programs (seed range).
 3. Runs diff_one.sh in parallel.
 4. Classifies, dedups, writes results.jsonl + summary.
@@ -16,9 +16,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+# Repo root: tools/fuzz-soak/harness/run_batch.py -> harness -> fuzz-soak -> tools -> repo.
 GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,9 +39,12 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build graalgo once: `generate` builds the gofrontend binary (the
+    # launcher shells out to it for every program) and `build` compiles the
+    # Java modules. `make build` alone leaves gofrontend absent, so every
+    # diff would fail before running anything.
+    print("== building graalgo (gofrontend + java modules) ==", flush=True)
+    r = sh(f"make -C {GR} generate build", timeout=1200)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
