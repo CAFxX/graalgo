@@ -280,7 +280,7 @@ func reportsDivergence(out string) bool {
 func firstFailures(out string) string {
 	var keep []string
 	for _, l := range strings.Split(out, "\n") {
-		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") || strings.HasPrefix(l, "INFRA") || strings.Contains(l, "error:") {
+		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") || strings.HasPrefix(l, "INFRA") || strings.HasPrefix(l, "RETRY") || strings.Contains(l, "error:") {
 			keep = append(keep, strings.Join(strings.Fields(l), " "))
 		}
 		if len(keep) == 3 {
