@@ -67,17 +67,17 @@ Phase definitions used (from task brief):
 
 | ID | Phase | Statement (one line) | Why this phase |
 |---|---|---|---|
-| GG-0017 | 2 | Goroutines 1:1 on virtual threads + scheduler token; Safepoint.poll at loop back-edges/function entries; FJP untrusted; GOMAXPROCS = in-flight cap. | Explicitly the Phase-2 scheduler work (task brief excludes goroutines/channels/GC interop from Phase 1). Note: the Phase-1 AST must expose the Safepoint instrumentation seam (see §3). |
+| `GG-0017` | 2 | Goroutines 1:1 on virtual threads + scheduler token; Safepoint.poll at loop back-edges/function entries; FJP untrusted; GOMAXPROCS = in-flight cap. | Explicitly the Phase-2 scheduler work (task brief excludes goroutines/channels/GC interop from Phase 1). Note: the Phase-1 AST must expose the Safepoint instrumentation seam (see §3). |
 | GG-0025 | 2 | momo module generations map to GraalVM isolates; memory quotas via MaxHeapSize; no CPU quotas in v1. | Isolation/interop concern; needs the value model + Phase-2 scheduling. |
 | GG-0048 | 2 (ambiguous) | Spec defines the exact scheduling observables the differential oracle must hold equivalent; unclosable divergence = kill trigger. | Scheduler observables; but "the spec SHALL define" may demand the definition before Phase 2 begins (see §3). |
 | GG-0057 | 2 | `jdk.VirtualThreadPinned` JFR shows zero unexpected pins on conformance corpus; cgo/FFM and blocking file I/O off the carrier pool. | Scheduler/carrier discipline; cgo/FFM half reaches into Phase 3+. |
-| GG-SCHED-0001 | 2 | On quantum expiry at Safepoint.poll, vthread parks via LockSupport.park + enqueues resume token; default quantum 10ms. | Child of GG-0017. |
-| GG-SCHED-0002 | 2 | Single platform-thread drainer admits vthreads via LockSupport.unpark in lane-priority order; non-terminating. | Child of GG-0017. |
-| GG-SCHED-0003 | 2 | Admitted-but-not-parked vthreads never exceed min(GOMAXPROCS, carrier parallelism); drainer hard-asserts. | Child of GG-0017. |
-| `GG-SCHED-0004` | 2 | All blocking via scheduler-aware primitives; blocking I/O via slot-releasing NIO wrapper (ioEnter/ioExit, unpaired ioEnter = fail-fast assert). | Child of GG-0017; the NIO wrapper slice reaches Phase 3 (net). |
-| GG-WAKE-0001 | 2 | Per-vthread armed ticket + generation counter; acked flag set before unpark (order reversal loses wakeups). | Child of GG-0017. |
-| GG-WAKE-0002 | 2 | At quiescence admissions == parks; zero lost wakeups under randomized park/unpark + channel-wakeup stress. | Child of GG-0017. |
-| GG-WAKE-0003 | 2 | wakeFifo lane for woken/channel-ready goroutines ahead of runFifo; initFifo for new goroutines ahead of runFifo. | Child of GG-0017. |
+| GG-SCHED-0001 | 2 | On quantum expiry at Safepoint.poll, vthread parks via LockSupport.park + enqueues resume token; default quantum 10ms. | Child of `GG-0017`. |
+| GG-SCHED-0002 | 2 | Single platform-thread drainer admits vthreads via LockSupport.unpark in lane-priority order; non-terminating. | Child of `GG-0017`. |
+| GG-SCHED-0003 | 2 | Admitted-but-not-parked vthreads never exceed min(GOMAXPROCS, carrier parallelism); drainer hard-asserts. | Child of `GG-0017`. |
+| `GG-SCHED-0004` | 2 | All blocking via scheduler-aware primitives; blocking I/O via slot-releasing NIO wrapper (ioEnter/ioExit, unpaired ioEnter = fail-fast assert). | Child of `GG-0017`; the NIO wrapper slice reaches Phase 3 (net). |
+| GG-WAKE-0001 | 2 | Per-vthread armed ticket + generation counter; acked flag set before unpark (order reversal loses wakeups). | Child of `GG-0017`. |
+| GG-WAKE-0002 | 2 | At quiescence admissions == parks; zero lost wakeups under randomized park/unpark + channel-wakeup stress. | Child of `GG-0017`. |
+| GG-WAKE-0003 | 2 | wakeFifo lane for woken/channel-ready goroutines ahead of runFifo; initFifo for new goroutines ahead of runFifo. | Child of `GG-0017`. |
 | GG-FAIR-0001 | 2 | At 10,000-goroutine scale, per-goroutine admitted quanta max/mean within 2x. | Scheduler fairness metric. |
 | GG-FAIR-0002 | 2 | Mean per park/resume hop overhead ≤1% of configured quantum. | Scheduler overhead metric. |
 | GG-FAIR-0003 | 2 | Every runnable goroutine admitted within 4×N drainer admissions; 10,000-spinner quiescence probe never_scheduled=0. | Scheduler starvation metric. |
@@ -152,15 +152,15 @@ Requirements Phase 1 owns or exercises during Phase 1:
 28. `GG-0055` (registry seed slice)
 29. GG-0056 (agent-hour calibration slice)
 30. GG-0059
-31. GG-0017 (Safepoint instrumentation-seam slice only — full scheduling is Phase 2; see §3 flag 3)
+31. `GG-0017` (Safepoint instrumentation-seam slice only — full scheduling is Phase 2; see §3 flag 3)
 
-Phase counts: Phase 1 owns 10 + exercises a slice of 21 = 31; Phase 2 = 14; Phase 3/3+ = 6; Phase 4 = 6; Phase 5 = 9; pure cross-cutting (no Phase-1 slice) = 6. Ambiguous phase tag on 4 items (GG-0017, GG-0048, GG-0054, GG-0057), resolved with the phase-1 slice explicitly above. Total: 70/70 covered (GG-0009, GG-0014, GG-0020, GG-0021 counted under Phase 1 as slices, GG-0009/GG-0014/GG-0054 also listed under their later phases).
+Phase counts: Phase 1 owns 10 + exercises a slice of 21 = 31; Phase 2 = 14; Phase 3/3+ = 6; Phase 4 = 6; Phase 5 = 9; pure cross-cutting (no Phase-1 slice) = 6. Ambiguous phase tag on 4 items (`GG-0017`, GG-0048, GG-0054, GG-0057), resolved with the phase-1 slice explicitly above. Total: 70/70 covered (GG-0009, GG-0014, GG-0020, GG-0021 counted under Phase 1 as slices, GG-0009/GG-0014/GG-0054 also listed under their later phases).
 
 ## 3. Flags: contradictions and ambiguous phase tags
 
 1. **GG-0020 names Phase-2/Phase-3 machinery in a Phase-1 intrinsic surface.** Exact text: "The runtime SHALL expose a versioned intrinsic surface of ~60-70 functions (memmove/memequal, makeslice/growslice, map/chan/select ops, itab machinery, panic/defer, scheduler, atomics, timers, fastrand, traceback) plus exact rtype/itab layouts for reflect's unsafe uses." "map/chan/select ops", "scheduler", and "timers" are Phase-2 (goroutines/channels/scheduling) features, yet the task brief scopes Phase 1 to "intrinsic surface stubs for language tests". Resolved: Phase 1 builds stubs only; full chan/select/scheduler/timer implementation is Phase 2. If the statement is read literally (all ~60–70 functions in Phase 1), it contradicts Phase-1 scope.
 
-2. **GG-0017 requires the Phase-1 AST to carry a Phase-2 instrumentation seam.** Exact text: "the Truffle AST SHALL insert Safepoint.poll() at loop back-edges and function entries for quantum-based preemption (indefinite park + resume token on expiry)". The scheduler is Phase 2, but the AST (a Phase-1 deliverable) must insert — or at least reserve — the poll points. Resolved: Phase 1 owns the instrumentation seam (hook points in the AST); Phase 2 owns the poll semantics. Ambiguous until the interface freeze (GG-0059) fixes which side owns what.
+2. **`GG-0017` requires the Phase-1 AST to carry a Phase-2 instrumentation seam.** Exact text: "the Truffle AST SHALL insert Safepoint.poll() at loop back-edges and function entries for quantum-based preemption (indefinite park + resume token on expiry)". The scheduler is Phase 2, but the AST (a Phase-1 deliverable) must insert — or at least reserve — the poll points. Resolved: Phase 1 owns the instrumentation seam (hook points in the AST); Phase 2 owns the poll semantics. Ambiguous until the interface freeze (GG-0059) fixes which side owns what.
 
 3. **GG-0048's "spec SHALL define" timing is ambiguous.** Exact text: "The spec SHALL define the exact scheduling observables the differential oracle must hold equivalent (fairness, starvation-freedom, latency distribution, GOMAXPROCS behavior); systematic divergence the user-space scheduler cannot close is a kill trigger." The observables are Phase-2 scheduling work, but the definition must exist before Phase 2's oracle runs — i.e. it may be a Phase-1-exit/Phase-2-entry deliverable, not mid-Phase-2 work. Recommend assigning the *definition* to the Phase-1→2 boundary.
 

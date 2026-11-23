@@ -3,7 +3,7 @@
 **Date:** 2026-10-06
 **Status:** accepted 2026-10-06 — coordinator design (P3-M3 brief).
 Spec-first ordering honored: ADR committed before any exporter change.
-**Scope:** closes PLAN.md §4 P3-M3 (WS B); GG-0014, GG-0017 (iface slice).
+**Scope:** closes PLAN.md §4 P3-M3 (WS B); GG-0014, `GG-0017` (iface slice).
 **Normative basis:** `phases/phase1/INTERFACE_FREEZE.md` (v1, in force);
 PLAN.md §§2–5 (WS B); SPEC §§3.3 (PIC on itab identity, limit ~3,
 megamorphic hash fallback), 3.4 (value model); ADR-0002 (precedent).
@@ -231,7 +231,7 @@ phase-1 208/208, phase-2 194/194):
   per-site itab-identity histograms classified mono/bi/megamorphic.
 - Suites stay green: phase-1 (208/208), phase-2 (194/194), p3frontend,
   sync differential (25/25).
-- `verifies: GG-0014` on the dispatch node; GG-0017 iface slice activates.
+- `verifies: GG-0014` on the dispatch node; `GG-0017` iface slice activates.
 
 ## Consequences
 

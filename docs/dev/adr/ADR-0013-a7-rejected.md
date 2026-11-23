@@ -133,7 +133,7 @@ Reopen A7 only if one of these happens, and then re-run P-B unchanged
   status and column), TR-6 replaced by WP-POLLCOST for the poll, P-B row
   records the result; the tradeoff column "if rejected" is now the plan.
 - RECOVERY: decision-log row; new work package WP-POLLCOST in the table and
-  the coverage matrix; GG-0017 and GG-SCHED-0001 rows point to WP-POLLCOST
+  the coverage matrix; `GG-0017` and GG-SCHED-0001 rows point to WP-POLLCOST
   instead of "A7 conditional on P-B". WP-SCHED no longer waits on an A7
   decision.
 - ADR-0012 decision 2 is resolved by this record (note added there).

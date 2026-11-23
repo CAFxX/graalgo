@@ -51,10 +51,10 @@ DIVERGENCES.md.
 | WS | Workstream | GG IDs | Gate |
 |---|---|---|---|
 | A | Frontend package dirs + import resolution: `ExportDir` (multi-file packages, build-tag filtering per GG-0023), import resolution across the GOROOT source tree (vendoring is P3-M6), `overlayImporter` → real importer with synthetic bootstrap retained (`runtime`, `fmt` until their real packages land) | `GG-0012`, GG-0013, GG-0023 (build-tag slice) | 1 (part) |
-| B | Interface dispatch: PIC on itab identity (limit ~3, megamorphic hash fallback per SPEC §3.3), type switches via decision trees, `GoInterface` graduates from data carrier to dispatch; polymorphism re-measurement (M9 trigger) | GG-0014, GG-0017 (iface slice) | 1 |
+| B | Interface dispatch: PIC on itab identity (limit ~3, megamorphic hash fallback per SPEC §3.3), type switches via decision trees, `GoInterface` graduates from data carrier to dispatch; polymorphism re-measurement (M9 trigger) | GG-0014, `GG-0017` (iface slice) | 1 |
 | C | Intrinsic surface completion: GG-0020 audit (stub-vs-real over ~60–70 fns), complete memmove/memequal, makeslice/growslice, map ops, itab machinery, atomics, fastrand, traceback, write barrier; linkname by symbol name both directions | GG-0020 | 1 |
-| D | `sync` Go bindings + DIV-M3-1 fix: lower `import "sync"` onto the Phase-2 Java primitives (discharges the P2-M8 re-test trigger); fix `len()` on buffered timer channel to 0 (gc parity) with red-green-first evidence | GG-0017 (sync slice), GG-0048 | 1 |
-| E | `time` + `context` lowering: `time` onto Phase-2 timers (after DIV-M3-1 fix); `context` via the new interface dispatch (P3-M3 is a hard prerequisite) | GG-0017 (time/ctx slice) | 1 |
+| D | `sync` Go bindings + DIV-M3-1 fix: lower `import "sync"` onto the Phase-2 Java primitives (discharges the P2-M8 re-test trigger); fix `len()` on buffered timer channel to 0 (gc parity) with red-green-first evidence | `GG-0017` (sync slice), GG-0048 | 1 |
+| E | `time` + `context` lowering: `time` onto Phase-2 timers (after DIV-M3-1 fix); `context` via the new interface dispatch (P3-M3 is a hard prerequisite) | `GG-0017` (time/ctx slice) | 1 |
 | F | Adapted stdlib fork mechanics: vendoring pipeline (stdlib re-vendored atomically with go/* per SPEC §3.2), linkname-diff tooling operational (GG-0021), asm per-category strategy implemented (evaporate/intrinsify/emulate-then-intrinsify/JVM-covers), build-tagged `syscall`/`os`/`net` for Linux, versioned exclusion list with reason codes + review cap | GG-0009, GG-0021, GG-0023 | 5 (part) |
 | G | Package-group bring-up in dependency order: wave 1 (errors, sort, strings, bytes, strconv, math, encoding/*), wave 2 (io, os, syscall, reflect+unsafe, crypto-emulate), wave 3 (net, net/http, compress, archive, remaining) — each wave differentially green vs gc before the next starts | GG-0009, GG-0024 (pprof slice, deferred impl) | 1, 4 |
 | H | Testing layers 1–4 operational: layer 1 smoke corpus (per-commit), layer 2 conformance (per-commit on frontend changes), layer 3 `go test ./...` + script suites (per-release gate), layer 4 fuzz soak — interface reserved for the continuous adversarial test-finding track (see §3) | GG-0029, GG-0030, GG-0031, GG-0032, GG-0037 | 2 |
@@ -136,10 +136,10 @@ depends on it; no Phase-3 worker staffs it.
   lowers onto the Phase-2 Java primitives; the P2-M8 stress suite
   re-runs as Go programs differential vs gc (discharges the P2-M8
   re-test trigger); `len()` on buffered timer channel returns 0 like gc,
-  red-green-first (GG-0017 sync slice →active)
+  red-green-first (`GG-0017` sync slice →active)
 - P3-M3: interface dispatch (WS B) — PIC on itab identity, type switches;
   `io.Writer`-shaped programs + interface-heavy corpus differential vs
-  gc; M9 polymorphism re-measured and recorded (GG-0014, GG-0017 iface
+  gc; M9 polymorphism re-measured and recorded (GG-0014, `GG-0017` iface
   slice →active)
 - P3-M4: intrinsic surface completion (WS C) — GG-0020 audit published
   (every one of the ~60–70 functions classified stub-vs-real, then all
@@ -148,7 +148,7 @@ depends on it; no Phase-3 worker staffs it.
 - P3-M5: `time` + `context` lowering (WS E) — `import "time"` onto
   Phase-2 timers (DIV-M3-1 fix verified in the loop), `import
   "context"` via P3-M3 dispatch; cancellation/deadline programs
-  differential vs gc (GG-0017 time/ctx slice →active)
+  differential vs gc (`GG-0017` time/ctx slice →active)
 - P3-M6: stdlib fork mechanics (WS F) — vendoring pipeline green,
   linkname-diff tool operational on a trial pair, asm per-category
   strategy implemented, exclusion list v1 published (versioned,
@@ -290,7 +290,7 @@ divergence triage closed or accepted (four-way classification per entry)
   red
 - GG-0014: interface call dispatches to the wrong method, or PIC
   megamorphic fallback diverges vs gc → red
-- GG-0017 (sync/time/ctx/iface slices): any lowered package semantic ≠
+- `GG-0017` (sync/time/ctx/iface slices): any lowered package semantic ≠
   gc differentially → red
 - GG-0020: any intrinsic in the audited surface still stubbed at P3-M4
   sign-off, or intrinsic ≠ gc differentially → red

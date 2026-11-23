@@ -5,7 +5,7 @@
 **Scope reviewed:**
 1. `SPEC.md` §3.5 (concurrency runtime), §7.2 (preemption-equivalence bar), §8.2 risk rows 2/10/11, §10.1 provenance ledger
 2. `spikes/02b-userspace-scheduler/REPORT.md` + full prototype source (`src/usched/*.java`, `src/work/*.java`) + archived logs (`logs/`) + `run.sh`
-3. Requirements: GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003, revised GG-0017, GG-0048; ADR-0001 (D5)
+3. Requirements: GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003, revised `GG-0017`, GG-0048; ADR-0001 (D5)
 4. Greenfield protocol (`~/workspace/skills/greenfield/SKILL.md`) honesty bars
 
 **Method:** I read every line of `UserScheduler.java`, `GoChannel.java`, `GoSelect.java`, `GoTimer.java`, `Goroutine.java`, `Safepoint.java`, `Go.java`, `MpscQueue.java`, all six falsifier harnesses, `run.sh`, and all archived logs; traced every park/unpark/wakeup path by hand; checked every `[VERIFIED]` number in §3.5 against the logs; checked file timestamps for evidence provenance.
@@ -138,13 +138,13 @@ A bounded-wait claim cannot coexist with an unbounded-postponement mechanism. Th
 
 **Suggested fix.** Statement: "Mean per park/resume hop overhead SHALL be ≤1% of the configured quantum." Move the 0.27% projection to rationale labeled `[ESTIMATE]` (it already is, in prose — keep it out of the statement), and leave re-measurement solely in the verification plan.
 
-### P1-10. All ten new requirements have empty `parent:` — traceability gap to GG-0017/GG-0048
+### P1-10. All ten new requirements have empty `parent:` — traceability gap to `GG-0017`/GG-0048
 
 **Location:** All of GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003 (`parent: ""`).
 
-**What's wrong.** The requirements form a flat list with no links to the parent requirements they refine (GG-0017 owns the scheduler mechanism; GG-0048 owns the preemption-equivalence bar). The Greenfield registry's value is impact analysis ("retiring/superseding searches the whole codebase"); unparented SHALLs defeat it. GG-0017's own statement also substantially overlaps the new IDs (it restates the token model, Safepoint.poll, FJP-demotion, and the GOMAXPROCS→cap mapping) — acceptable *if* the children point at it.
+**What's wrong.** The requirements form a flat list with no links to the parent requirements they refine (`GG-0017` owns the scheduler mechanism; GG-0048 owns the preemption-equivalence bar). The Greenfield registry's value is impact analysis ("retiring/superseding searches the whole codebase"); unparented SHALLs defeat it. `GG-0017`'s own statement also substantially overlaps the new IDs (it restates the token model, Safepoint.poll, FJP-demotion, and the GOMAXPROCS→cap mapping) — acceptable *if* the children point at it.
 
-**Suggested fix.** Set `parent: GG-0017` on the SCHED/WAKE requirements and `parent: GG-0048` on the FAIR requirements (FAIR-0001–0003 refine the equivalence bar's fairness/starvation-freedom observables). Consider trimming GG-0017's statement to the token-model + FJP-demotion core and letting the children own the mechanism detail.
+**Suggested fix.** Set `parent: GG-0017` on the SCHED/WAKE requirements and `parent: GG-0048` on the FAIR requirements (FAIR-0001–0003 refine the equivalence bar's fairness/starvation-freedom observables). Consider trimming `GG-0017`'s statement to the token-model + FJP-demotion core and letting the children own the mechanism detail.
 
 ---
 
@@ -177,7 +177,7 @@ The bounded-submissions argument assumes the default virtual-thread scheduler (`
 ### P2-9. Interleavings the F6 stress test does *not* cover (scope for the Phase-2 model-checking gate)
 The pairing protocol itself is sound (see "what survived" below), but for the record, F6's randomized coverage does not deterministically exercise: (a) `close()` waking parked *senders* via the `aborted` path while receivers drain; (b) a stale-ticket `wakeup()` racing re-arm to a fresh ticket (safe by CAS + monotonic generations — analyzed, not stress-targeted); (c) select's in-flight stale `SelSignal` vs re-registration (safe by `claimed` CAS ordering — analyzed, not targeted); (d) INIT lane under WAKEUP flood (F3 covered RESUME flood only); (e) `cap=1` channel-wakeup liveness (O5's original deadlock config was *worked around* by changing the test, which is legitimate per `GG-SCHED-0004`'s ban, but the ban's enforcement is a static audit that doesn't exist yet); (f) WAKEUP-before-IDLE with generation skew under drainer batching. **Fix:** the GG-WAKE-0002 "formal model-checking" gate is the right gate — but write its scope explicitly as this list, modeled at the *protocol* level (events + drainer state machine; small enough for TLA+/JPF), not just "re-run stress harder."
 
-### P2-10. GG-0017/GG-0048 revision history is fine — keep the pattern
+### P2-10. `GG-0017`/GG-0048 revision history is fine — keep the pattern
 Both carry `created` + `revised` history entries, no ID reuse, still `draft`. Pre-acceptance revision of unlocked drafts is protocol-compliant. No action; noting as checked.
 
 ---

@@ -76,7 +76,7 @@ fixes; the launcher's temporary deviations are recorded separately in
    `syscall`/`internal/poll`/`net` reach the runtime as raw system calls
    through the Panama executor, and SPEC §3.5 already said the wrapper
    brackets blocking downcalls while readiness waits park in the epoll
-   poller. `GG-SCHED-0005` (parent GG-0017) stated that, but its rationale
+   poller. `GG-SCHED-0005` (parent `GG-0017`) stated that, but its rationale
    ("the mechanism is unchanged") was false: a goroutine in a Panama
    downcall pins its carrier, which an NIO-blocked virtual thread did not,
    so slot release alone does not prevent starvation at carriers = cap.
@@ -91,7 +91,7 @@ fixes; the launcher's temporary deviations are recorded separately in
    and goroutine threads may be recycled, so thread identity is not
    goroutine identity. §3.5 now says so and points to the `[OPEN]` item on
    goroutine threads in native-image modes (truffle-design A1). No
-   requirement text is affected (GG-0017 says "virtual thread plus a
+   requirement text is affected (`GG-0017` says "virtual thread plus a
    scheduler token", which T3 keeps on HotSpot).
 
 ## Consequences

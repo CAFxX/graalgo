@@ -205,9 +205,9 @@ reviewed; spot-read if00, if01, if02, if05, if09, if10 sources.
   first real tests land with the annotation, per the PLAN.md §2 activation
   policy ("exactly when its first real test lands with a `verifies: GG-XXXX`
   annotation; never before").
-- **F6 (low, traceability): GG-0017's iface slice lacks its annotation.**
-  ADR-0003's scope line and verification list both state "GG-0017 (iface slice)"
-  / "GG-0017 iface slice activates", but no `verifies: GG-0017` annotation
+- **F6 (low, traceability): `GG-0017`'s iface slice lacks its annotation.**
+  ADR-0003's scope line and verification list both state "`GG-0017` (iface slice)"
+  / "`GG-0017` iface slice activates", but no `verifies: GG-0017` annotation
   exists anywhere in the iface code or tests — the only `verifies: GG-0017`
   annotations in phase 3 are the P3-M2 sync slice (`SyncNewNode`,
   `SyncOpNode`, `P3SyncMain`, each marked "(sync slice)"). Under the policy's
@@ -253,7 +253,7 @@ reviewed; spot-read if00, if01, if02, if05, if09, if10 sources.
 | F3 | Medium | Mutation C proves load-bearing only for arity-mismatched swaps; "no silent wrong-method dispatch" is not established (same-arity swap would be silent — no method-identity check at the invoke boundary) | Scope the claim, or add a same-arity swap mutation (red via output mismatch) |
 | F4 | Low | Differential runner doesn't compare stderr on success paths; "11/11 byte-identical" overstates if06; multi-result methods untested with an unevidenced "mechanics are identical" claim; named scope errors have no negative tests | Filtered stderr comparison for all programs; qualify the byte-identical claim; add negative scope-error programs |
 | F5 | Low (process) | M9 workload-representative re-measurement deferred to Phase 4 only in a hidden-file sentence — risks being lost | Record as a carried-forward open item in the P3-M3 sign-off / CHECKPOINT.md |
-| F6 | Low (traceability) | GG-0017 iface slice claimed active in ADR but has no `verifies: GG-0017` annotation (activation policy: the annotation is the activation event) | Add `verifies: GG-0017 (iface slice)` annotations mirroring the sync-slice convention |
+| F6 | Low (traceability) | `GG-0017` iface slice claimed active in ADR but has no `verifies: GG-0017` annotation (activation policy: the annotation is the activation event) | Add `verifies: GG-0017 (iface slice)` annotations mirroring the sync-slice convention |
 | F7 | — | Review-gate setup | None — fixed snapshot confirmed, 2-review structure satisfied |
 | F8 | — | Divergence check | None — no unrecorded new divergence |
 

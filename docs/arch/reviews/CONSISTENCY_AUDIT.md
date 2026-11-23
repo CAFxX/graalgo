@@ -129,9 +129,9 @@ files (scheduler families); the other 60 are `GG-0001`–`GG-0060`. Both schemes
 Track D clean checks: 70 files; 70 distinct GG-IDs cited in SPEC ↔ exact bijection with files,
 0 missing, 0 orphans; Appendix B rows = 70, titles match yaml titles verbatim; 0 dangling §N /
 parent / GG-ID refs; **0 stale killed-design hits** — all mechanism text is option C (e.g.
-GG-0017: "Loom ForkJoinPool SHALL be treated as an untrusted thread pool with no scheduling
+`GG-0017`: "Loom ForkJoinPool SHALL be treated as an untrusted thread pool with no scheduling
 discipline assumed"; GG-SCHED-0001: park + resume token; GG-WAKE-0003: wakeFifo/initFifo lanes),
-with explicit kill history notes (GG-0017:11 "revised for option C (spike 2b PASS); yield-to-FJP
+with explicit kill history notes (`GG-0017`:11 "revised for option C (spike 2b PASS); yield-to-FJP
 design removed"); no mutual-exclusion between requirements or vs SPEC §3.5 (quantum 10ms, 2x
 fairness bound vs measured 1.05, 1% overhead budget vs measured 0.30% — all consistent); 0
 duplicate IDs; all 70 `status: draft`, none superseded — consistent with SPEC acceptance/ID lock

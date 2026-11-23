@@ -9,7 +9,7 @@ re-test trigger ("when WS G overlay lands, bind the four primitives and
 re-run stress as Go programs differential vs gc",
 `phases/phase2/hidden_files/torture/REPORT.md` §5).
 **Normative basis:** `phases/phase1/INTERFACE_FREEZE.md` (v1, in force) §§1,
-2, 5; PLAN.md §§2–5 (WS D; GG-0017 sync slice, GG-0048); SPEC §§2.8, 3.2,
+2, 5; PLAN.md §§2–5 (WS D; `GG-0017` sync slice, GG-0048); SPEC §§2.8, 3.2,
 3.3, 3.6, 3.8, 5.
 
 ## Context
@@ -230,7 +230,7 @@ exporter desugars (all standard v1 wire, no factory change):
   reuse + negative-counter message, Once 32 racers) — differential vs gc.
 - Suites stay green: phase-1 (208/208), phase-2 (194/194, post-DIV-M3-1-fix),
   p3frontend (`go test`).
-- `verifies: GG-0017` annotations on the new Java nodes (GG-0017 already
+- `verifies: GG-0017` annotations on the new Java nodes (`GG-0017` already
   →active since P2-M1; this activates its sync slice).
 
 ## Consequences

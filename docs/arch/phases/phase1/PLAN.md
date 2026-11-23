@@ -27,7 +27,7 @@ direct `graalgo-run` launcher, never the wrapper (req-phase-map §3 flag 8).
 | A | Toolchain & repo skeleton (pinned jars, javac build, `graalgo-run` launcher, placeholder grep gate) | GG-0027 (pin stable), GG-0023 (linux/amd64) | — |
 | B | Frontend service: `gofrontend` (vendored go/* verbatim) → versioned typed-AST JSON (`frontend/v1`) → Java `NodeFactory` | `GG-0012`, GG-0013, GG-0044 | 3 (part) |
 | C | Value model (`graalgo.values`): descriptors, GoStruct{long[],Object[]}, GoSlice, GoMap (open-addressing), GoString{byte[]}, GoInterface{(descriptor,data),itab}, GoFunc{RootCallTarget,Frame}, handle-table unsafe.Pointer | `GG-0015`, `GG-0016` | 1 |
-| D | Expression nodes: typed execute methods, unboxed primitives; **Safepoint.poll() seam** at function entries; polymorphism probe hooks at interface dispatch | GG-0014, GG-0017 (seam slice) | 1 |
+| D | Expression nodes: typed execute methods, unboxed primitives; **Safepoint.poll() seam** at function entries; polymorphism probe hooks at interface dispatch | GG-0014, `GG-0017` (seam slice) | 1 |
 | E | Statement nodes incl. loops (`LoopNode`/`RepeatingNode`, `@ExplodeLoop`-friendly); **Safepoint.poll() seam** at loop back-edges; accurate SourceSections on every node | GG-0014, GG-0024 (inspect slice) | 1 |
 | F | defer (explicit per-goroutine chain) / panic (`AbstractTruffleException`, lazy traces) / recover / Goexit (`ControlFlowException`); panic(nil)→*PanicNilError* | `GG-0019` | 1 |
 | G | Intrinsics: builtins (len/cap/make/new/append/copy/delete/complex/real/imag/print/println/panic/recover) + runtime stubs (memmove/memequal, makeslice/growslice, map ops, itab, fastrand, traceback) + minimal `fmt` stub with verb-conformance matrix; versioned signatures for the **full ~60–70 catalog** (stubs where Phase 2 owns the impl) | GG-0020 (stub slice), GG-0021 (symbol-name slice), GG-0059 (part) | 1, 3 |
@@ -89,7 +89,7 @@ lands with a `verifies: GG-XXXX` annotation (req lint rule (c)); never before.
   build against it (spec-extract item 52).
 - **D8 [DECIDED]: Safepoint seam in Phase 1.** `graalgo.safepoint.Safepoint.poll()` intrinsic
   signature frozen; AST inserts calls at loop back-edges + function entries;
-  Phase-1 impl is a no-op; Phase 2 gives it semantics (GG-0017 seam slice).
+  Phase-1 impl is a no-op; Phase 2 gives it semantics (`GG-0017` seam slice).
 
 **Program-owner review 2026-10-04:** D2/D4/D7/D8 approved as decided (no
 alternatives to explore). GraalVM pin: **Oracle GraalVM 25.0.4.1.1, LTS line**
