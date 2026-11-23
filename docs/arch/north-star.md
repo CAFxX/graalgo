@@ -191,6 +191,15 @@ stated); the run's `--json` summary goes in the commit message.
 
 ## 4. Measurements (2026-11-20)
 
+> **Update 2026-11-23 (lane perf-pe):** every failed compilation below is
+> fixed (zero on all six pipelines, `make pe-report`), and the uintptr and
+> checked-conversion paths of `reflect` and `strings.Builder` are cheaper:
+> the pipelines' geomean is **3.7× gc at long-running steady state** (20 s
+> of rounds, was 21.8× on the same host) and 10.5× in the default 4 s
+> window (was 31.9×; warmup dominates). Tables, method and the remaining
+> gaps: [performance.md](performance.md) §8.1. The numbers below are the
+> 2026-11-20 baseline.
+
 Host: the shared 16-core x86-64 WSL2 box ([performance.md](performance.md)
 §2); graalgo legs under `nice -n 19` with `-Xmx2g
 -XX:ActiveProcessorCount=4`, gc legs at `GOMAXPROCS=4`. Tree: master

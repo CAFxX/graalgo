@@ -19,7 +19,9 @@ peak RSS and CPU time per leg; `STAT` lines collected).
 
 GC matrix: `BENCH_ARGS='--gg-variant par=-XX:+UseParallelGC --gg-variant
 zgc=-XX:+UseZGC allocmix'`. They need the M1d stdlib (`fmt`, `reflect`,
-`os`); on a tree without it the graalgo leg fails at link. `make pe-report` ([pe-report.sh](pe-report.sh), [pe_report.py](pe_report.py))
+`os`); on a tree without it the graalgo leg fails at link. Long-running steady state: `BENCH_ARGS='--min-total 20 …'` (at least 20 s
+of rounds per leg; the default is 4 s, where JIT warmup still shows).
+`make pe-report` ([pe-report.sh](pe-report.sh), [pe_report.py](pe_report.py))
 runs each program once with Truffle compilation tracing and prints the
 failed compilations (root, reason) and the roots deoptimized or invalidated
 most often; the target is zero failures. Add a program:
