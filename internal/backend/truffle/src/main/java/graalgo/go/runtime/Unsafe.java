@@ -126,6 +126,16 @@ public final class Unsafe {
 
     private static final ConcurrentHashMap<Key, Boolean> COINCIDES = new ConcurrentHashMap<>();
 
+    /** One answer of {@link #coincides}, immutable (a racy read sees a whole entry or null). */
+    private record Seen(GoType referent, long off, GoType pointee, boolean coincides) {}
+
+    /**
+     * A direct-mapped front of {@link #COINCIDES} by identity: the map's lookup (a key record,
+     * its hash and equals) was a twentieth of a template render, the conversion behind every
+     * {@code reflect} access.
+     */
+    private static final Seen[] RECENT = new Seen[1024];
+
     /**
      * {@code (*U)(p)} for an {@code unsafe.Pointer} {@code p} (ADR-0015 decision 1): the typed
      * pointer to the location when {@code U}'s leaves are the referent's leaves from there on,
@@ -197,12 +207,18 @@ public final class Unsafe {
         if (lt.kind == GoType.BACKING && lt.elem.gcSize() > 0) {
             cls = off % lt.elem.gcSize(); // a backing store's layout repeats per element
         }
+        int slot = (lt.idHash ^ (u.idHash >>> 7) ^ (int) cls * 0x2545F491) >>> 22;
+        Seen s = RECENT[slot];
+        if (s != null && s.referent == lt && s.pointee == u && s.off == cls) {
+            return s.coincides;
+        }
         Key key = new Key(lt, cls, u);
         Boolean hit = COINCIDES.get(key);
         if (hit == null) {
             hit = coincidesUncached(lt, cls, u);
             COINCIDES.put(key, hit);
         }
+        RECENT[slot] = new Seen(lt, cls, u, hit);
         return hit;
     }
 
@@ -845,6 +861,12 @@ public final class Unsafe {
         long off = offset(p);
         if (off + len > extent(obj) || len > Integer.MAX_VALUE) {
             throw Panics.fatal(n, STRING_STRADDLES);
+        }
+        if (obj.type.kind == GoType.BACKING && obj.type.elem.isByteLeaf()) {
+            // A backing store of one-byte elements: byte i is byte slot i (strings.Builder.String).
+            Str s = new Str(obj.bytes, (int) off, (int) len);
+            s.flat = obj;
+            return s;
         }
         Leaf first = byteRun(obj, off, len);
         if (first != null) {

@@ -70,8 +70,12 @@ public final class GoType {
         }
     }
 
+    private static final java.util.concurrent.atomic.AtomicInteger ID_SEQ = new java.util.concurrent.atomic.AtomicInteger(1);
+
     public final String key;
     public final int kind;
+    /** A well-spread identity hash, fixed at creation (runtime caches keyed by type identity). */
+    public final int idHash;
     // Defined types.
     public final String pkg;
     public final String name;
@@ -138,6 +142,7 @@ public final class GoType {
         this.lock = lock;
         this.key = key;
         this.kind = kind;
+        this.idHash = ID_SEQ.getAndIncrement() * 0x9E3779B9;
         this.pkg = pkg;
         this.name = name;
         this.targs = targs;
