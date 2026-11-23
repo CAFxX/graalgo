@@ -34,13 +34,31 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   markdown-links workflow: every external URL, network; local `make
   check` skips them; a 403/429/5xx/timeout that survives the retries is an
   *unverifiable* warning, never a failure — only 404/410/NXDOMAIN fail) and `test-diffharness` (ci.yml's harness self-test),
-  then CI's drift check. Never a hand-picked subset of targets: gates
+  then CI's drift check — run through
+  [test/lib/gates.py](test/lib/gates.py), which times every gate (wall +
+  CPU) and prints the table; `GATE_JOBS=N` runs N gates at once (default
+  1 on this shared host; CI uses 2). Never a hand-picked subset of targets: gates
   share inputs (a new `test/m1a/programs` file is also an input of
   `test-toolexec`'s reference-interpreter differential), so "the gate for
   my area passed" is not evidence. Per-push CI outside `pre-land`: only
   the path-filtered `conformance.yml` (needs a full GOROOT/test tree) and
   `fuzz-newpath.yml` (`make fuzz-newpath`; run it when `test/fuzz/`
   changes).
+- **Test cost is a gate too** ([docs/dev/test-profile.md](docs/dev/test-profile.md):
+  the per-gate profile, the top costs, the levers). More tests are
+  welcome; longer test runs are not. `make test-times` (`TARGETS=...` to
+  narrow) prints every gate's wall and CPU time and ratchets the CPU time
+  against [test/duration-baseline.json](test/duration-baseline.json):
+  locally a gate >1.2x its baseline prints SLOWER; CI fails one >2x + 30 s.
+  Re-record (`python3 test/lib/gates.py record .tmp/gate-times.json`) only
+  for a reviewed, intended cost increase, and say so in the commit. The gc
+  leg of the m1* gates is replayed from a content-addressed cache
+  (`.tmp/gc-oracle`, [test/lib/gcoracle.sh](test/lib/gcoracle.sh);
+  `GC_ORACLE_CACHE=off` forces live gc). Tiers: `make quick` is the
+  inner loop (static repo gates, module suites, slices of the
+  differential gates; minutes, never landing evidence); CI off master runs
+  only the docs tier for a Markdown-only change; master, `make all` and
+  `make pre-land` always run everything.
 - `make check` — the static gates: pinned-jar checksums; placeholder,
   debug-leftover, v1-netpoller, off-heap/NIO (only `graalgo.syscall` may use
   `MemorySegment`/`Arena`/`java.nio.channels`) and pin-surface grep gates;

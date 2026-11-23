@@ -44,7 +44,10 @@ so the tests run offline in milliseconds; a live smoke check against
 go.dev/cl or github.com is NOT asserted here (network-dependent).
 """
 
+import email.message
 import http.client
+import importlib.util
+from typing import Any
 import io
 import json
 import os
@@ -57,9 +60,27 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import check_markdown_links as cml
+
+def _load(name) -> Any:
+    """Import .github/scripts/<name>.py by path (not a package)."""
+    spec = importlib.util.spec_from_file_location(
+        name, Path(__file__).resolve().parent / (name + ".py"))
+    assert spec and spec.loader
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+cml = _load("check_markdown_links")
+
+
+def hdrs(d=None):
+    """HTTP headers as HTTPError takes them (an email Message)."""
+    m = email.message.Message()
+    for k, v in (d or {}).items():
+        m[k] = v
+    return m
 
 URL = "https://go.dev/cl/793780"
 GH_BLOB = ("https://github.com/oracle/graal/blob/master/"
@@ -88,7 +109,7 @@ def reset_exc():
 
 
 def http_error(code, url=URL):
-    return urllib.error.HTTPError(url, code, "error", {}, None)
+    return urllib.error.HTTPError(url, code, "error", hdrs(), None)
 
 
 class CheckExternalTest(unittest.TestCase):
@@ -221,7 +242,7 @@ class CheckExternalTest(unittest.TestCase):
     def test_persistent_403_is_unverifiable_not_dead(self):
         # A bot wall that never opens: 2 rounds x 3 attempts, then
         # TRANSIENT (a warning), never False.
-        result, calls, sleeps, api_calls = self.run_with(
+        result, calls, sleeps, _ = self.run_with(
             [http_error(403)] * 6)
         self.assertIs(result, cml.TRANSIENT)
         self.assertEqual(calls, 6)
@@ -243,7 +264,7 @@ class CheckExternalTest(unittest.TestCase):
     def test_403_head_but_get_404_is_dead(self):
         # Positive control: a bot-wall 403 must not mask a page the
         # server says is gone. No second round.
-        result, calls, sleeps, _ = self.run_with(
+        result, calls, _, _ = self.run_with(
             [http_error(403), http_error(404), http_error(404)])
         self.assertIs(result, False)
         self.assertEqual(calls, 3)
@@ -256,27 +277,27 @@ class CheckExternalTest(unittest.TestCase):
 
     def test_other_4xx_is_dead(self):
         # 401/400/451 etc. are not bot-wall/rate-limit signals.
-        result, calls, sleeps, _ = self.run_with([http_error(400)] * 3)
+        result, _, sleeps, _ = self.run_with([http_error(400)] * 3)
         self.assertIs(result, False)
         self.assertEqual(sleeps, [])
 
     def test_persistent_429_is_unverifiable(self):
-        result, calls, sleeps, _ = self.run_with([http_error(429)] * 6)
+        result, calls, _, _ = self.run_with([http_error(429)] * 6)
         self.assertIs(result, cml.TRANSIENT)
         self.assertEqual(calls, 6)
 
     def test_429_honours_retry_after_capped(self):
         def err(ra):
             return urllib.error.HTTPError(
-                URL, 429, "slow down", {"Retry-After": ra}, None)
-        result, calls, sleeps, _ = self.run_with(
+                URL, 429, "slow down", hdrs({"Retry-After": ra}), None)
+        result, _, sleeps, _ = self.run_with(
             [err("7"), err("9999"), FakeResponse(200)])
         self.assertTrue(result)
         self.assertEqual(sleeps, [7.0, cml.RETRY_AFTER_CAP])
 
     def test_429_garbled_retry_after_falls_back_to_backoff(self):
         err = urllib.error.HTTPError(
-            URL, 429, "x", {"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"},
+            URL, 429, "x", hdrs({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}),
             None)
         result, _, sleeps, _ = self.run_with([err, FakeResponse(200)])
         self.assertTrue(result)
@@ -289,21 +310,21 @@ class CheckExternalTest(unittest.TestCase):
 
     def test_connection_refused_is_dead(self):
         exc = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
-        result, calls, sleeps, _ = self.run_with([exc] * 3)
+        result, _, sleeps, _ = self.run_with([exc] * 3)
         self.assertIs(result, False)
         self.assertEqual(sleeps, [])
 
     def test_dns_nxdomain_is_dead(self):
         exc = urllib.error.URLError(
             socket.gaierror(socket.EAI_NONAME, "Name or service not known"))
-        result, calls, sleeps, _ = self.run_with([exc] * 3)
+        result, _, sleeps, _ = self.run_with([exc] * 3)
         self.assertIs(result, False)
         self.assertEqual(sleeps, [])
 
     def test_dns_temporary_failure_is_transient(self):
         exc = urllib.error.URLError(
             socket.gaierror(socket.EAI_AGAIN, "Temporary failure"))
-        result, calls, _, _ = self.run_with([exc] * 6)
+        result, _, _, _ = self.run_with([exc] * 6)
         self.assertIs(result, cml.TRANSIENT)
 
     def test_jitter_range_and_use(self):

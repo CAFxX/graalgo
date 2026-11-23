@@ -319,7 +319,14 @@ directory's README repeats its status.
     1 divergence, 2 usage, 3 infrastructure error);
     [toolexec.sh](../test/lib/toolexec.sh) builds graalgo-tool, the stub
     and the standard-library fork overlay for runners of the `-toolexec`
-    path.
+    path; [gcoracle.sh](../test/lib/gcoracle.sh) replays their gc leg from
+    a content-addressed cache; [jvmcds.sh](../test/lib/jvmcds.sh) gives
+    their runner JVMs a class-data-sharing archive;
+    [gates.py](../test/lib/gates.py) runs the gates timed (`make
+    test-times`, `make pre-land`, CI) and ratchets their CPU time against
+    [duration-baseline.json](../test/duration-baseline.json)
+    ([test-profile.md](dev/test-profile.md)); `test_*.py` are their
+    self-tests (`make check`).
   - [m1r/](../test/m1r/) — the differential gate of the standard library
     through the `-toolexec` path (`make test-m1r`, ~15 s, per-push in `make all`):
     [run.sh](../test/m1r/run.sh) builds each program of

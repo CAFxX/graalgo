@@ -90,12 +90,45 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
+          cache: false  # see the actions/cache step below
 
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: make all (generate + build + check + fast tests)
-        run: make all
+      - name: Restore the Go build cache and the gc-oracle cache
+        # setup-go's own cache keys on a root go.sum this repo does not
+        # have (one go.mod per module), so it never restored anything: every
+        # run compiled the std library cold, once per gc configuration and
+        # once more through graalgo-tool. Both caches are content-addressed
+        # (a stale entry is a miss, never a wrong answer): restore the
+        # newest, save under this sha. The gc-oracle cache
+        # (test/lib/gcoracle.sh) replays the gc leg of unchanged m1* programs.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            .tmp/gc-oracle
+          key: gates-${{ runner.os }}-go1.27.1-${{ github.sha }}
+          restore-keys: gates-${{ runner.os }}-go1.27.1-
+
+      - name: make all + harness self-test, timed and tiered
+        # `make test-times` runs exactly `make all`'s list (test/lib/gates.py
+        # reads the `all:` rule) plus test-diffharness (the harness
+        # self-test: build/vet/unit tests of diffharness and its comparator
+        # gc-vs-gc — no false positives, rerun stability, sensitivity to
+        # mutated corpus programs; graalgo-vs-gc is snapshot-check, mutating
+        # graalgo itself the nightly mutation.yml): the setup targets
+        # first, then the gates two at a time (output buffered per gate),
+        # each timed; RATCHET=fail fails a gate whose CPU time exceeds 2x
+        # its baseline + 30 s (test/duration-baseline.json;
+        # docs/dev/test-profile.md). Tiers: off master, a push or PR whose
+        # changes are all docs (Markdown outside the code trees) runs the
+        # docs tier (`check` + the gates that read a doc); master always
+        # runs the full list.
+        env:
+          DH_TIMEOUT: "90"
+          GATE_TIER_BASE: ${{ github.ref != 'refs/heads/master' && (github.event.pull_request.base.sha || github.event.before) || '' }}
+        run: make test-times GATE_JOBS=2 RATCHET=fail TARGETS="all test-diffharness" GATE_TIMES="$RUNNER_TEMP/gate-times.json"
 
       - name: Fail on drift (generated files differ from committed, or new untracked files)
         # `git diff --exit-code` alone misses a generated file that is
@@ -105,16 +138,6 @@ jobs:
           if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
             echo "DRIFT: make all left modified or untracked files:"; git status --porcelain --untracked-files=all; exit 1
           fi
-
-      - name: Harness self-test (diffharness comparator, gc-vs-gc)
-        # Builds/vets/unit-tests the harness and checks the comparator on
-        # gc-vs-gc: no false positives on the unmutated corpus, rerun
-        # stability, sensitivity to mutated corpus programs. graalgo-vs-gc
-        # is `make all` -> snapshot-check above; mutating graalgo itself is
-        # the nightly mutation.yml.
-        env:
-          DH_TIMEOUT: "90"
-        run: make test-diffharness
 
   full-suite:
     # The long differential suite, excluded from per-push CI by design
