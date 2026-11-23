@@ -136,6 +136,19 @@ public final class TypeparamDifferentialTest {
     }
 
     private static Path typeparamDir() throws Exception {
+        Path tp = goroot().resolve("test").resolve("typeparam");
+        if (!Files.isDirectory(tp)) {
+            throw new AssertionError("no test/typeparam dir at " + tp);
+        }
+        return tp;
+    }
+
+    /**
+     * The stock toolchain's GOROOT, asked of the toolchain itself. Never
+     * derived from stockGo()'s path: when the pinned ~/tools/go is absent
+     * (CI) stockGo() is the bare PATH name "go", whose getParent() is null.
+     */
+    private static Path goroot() throws Exception {
         Path go = ToolPaths.stockGo();
         Process p = new ProcessBuilder(go.toString(), "env", "GOROOT")
                 .redirectErrorStream(true).start();
@@ -143,11 +156,7 @@ public final class TypeparamDifferentialTest {
         if (!p.waitFor(60, TimeUnit.SECONDS) || p.exitValue() != 0) {
             throw new AssertionError("go env GOROOT failed: " + out);
         }
-        Path tp = Paths.get(out.trim()).resolve("test").resolve("typeparam");
-        if (!Files.isDirectory(tp)) {
-            throw new AssertionError("no test/typeparam dir at " + tp);
-        }
-        return tp;
+        return Paths.get(out.trim());
     }
 
     /** Builds the diffharness CLI once per JVM (to a temp dir) and returns it. */
@@ -350,7 +359,7 @@ public final class TypeparamDifferentialTest {
                 "--jobs", "4"));
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().put("GOTOOLCHAIN", "local");
-        pb.environment().put("DH_GO", ToolPaths.stockGo().getParent().getParent().toString());
+        pb.environment().put("DH_GO", goroot().toString());
         pb.environment().put("REPO_DIR", repoDir().toAbsolutePath().toString());
         // backends.json's graalgo launcher is ${GRAALGO_BACKEND_DIR}/graalgo-run:
         // without it every batch failed to start ("fork/exec {GRAALGO_RUN}")
