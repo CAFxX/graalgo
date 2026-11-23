@@ -113,12 +113,17 @@ public final class IndexNode extends GoExprNode {
                 yield Integer.valueOf(bytes[i] & 0xFF);
             }
             case MAP -> {
+                // G-P1-5: the key is boxed (evaluated) BEFORE the container
+                // is read, matching gc and every other branch of this
+                // switch: a key expression that reassigns the map variable
+                // must see the lookup run against the new map, and the key
+                // must be evaluated even when the map is nil.
+                Object k = MapKeys.box(keyKind(), key, frame);
                 GoMap m = (GoMap) container.executeObject(frame);
                 if (m == null) {
                     // Reading a nil map is legal: zero value.
                     yield zeroValue();
                 }
-                Object k = MapKeys.box(keyKind(), key, frame);
                 Object v = m.get(k);
                 // A present key may hold a null (nil) value; only an
                 // absent key yields the zero value.
