@@ -320,11 +320,11 @@ public final class Values {
             case GoType.FLOAT64 -> ascii(out, GoFloatFmt.formatFloat((double) v, 'g', -1, 64));
             case GoType.COMPLEX64, GoType.COMPLEX128 -> {
                 Complex c = (Complex) v;
-                ascii(out, GoFloatFmt.formatComplex(c.re, c.im, 'g', -1, u.kind == GoType.COMPLEX64 ? 64 : 128));
+                ascii(out, GoFloatFmt.formatComplex(c.re(), c.im(), 'g', -1, u.kind == GoType.COMPLEX64 ? 64 : 128));
             }
             case GoType.SLICE -> {
                 Slice s = (Slice) v;
-                ascii(out, "[" + s.len + "/" + s.cap + "]" + address(s.base));
+                ascii(out, "[" + s.len() + "/" + s.cap() + "]" + address(s.base()));
             }
             case GoType.INTERFACE -> {
                 Iface i = (Iface) v;

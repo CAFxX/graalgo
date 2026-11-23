@@ -206,7 +206,7 @@ public final class Data {
 
         @Override
         public long executeLong(VirtualFrame frame) {
-            return ((Slice) s.executeGeneric(frame)).len;
+            return ((Slice) s.executeGeneric(frame)).len();
         }
     }
 
@@ -219,7 +219,7 @@ public final class Data {
 
         @Override
         public long executeLong(VirtualFrame frame) {
-            return ((Slice) s.executeGeneric(frame)).cap;
+            return ((Slice) s.executeGeneric(frame)).cap();
         }
     }
 
@@ -251,14 +251,14 @@ public final class Data {
         public Object executeGeneric(VirtualFrame frame) {
             Slice sl = (Slice) s.executeGeneric(frame);
             long l = lo == null ? 0 : lo.executeLong(frame);
-            long h = hi == null ? sl.len : hi.executeLong(frame);
-            long m = max == null ? sl.cap : max.executeLong(frame);
-            if (Long.compareUnsigned(m, sl.cap) > 0 || Long.compareUnsigned(h, m) > 0
+            long h = hi == null ? sl.len() : hi.executeLong(frame);
+            long m = max == null ? sl.cap() : max.executeLong(frame);
+            if (Long.compareUnsigned(m, sl.cap()) > 0 || Long.compareUnsigned(h, m) > 0
                     || Long.compareUnsigned(l, h) > 0) {
                 bad.enter();
-                throw boundsPanic(this, max != null, l, h, m, sl.cap, true, unsigned);
+                throw boundsPanic(this, max != null, l, h, m, sl.cap(), true, unsigned);
             }
-            return new Slice(sl.base, sl.prim + (int) l * np, sl.ref + (int) l * nr, sl.byt + (int) l * nb,
+            return new Slice(sl.base(), sl.prim() + (int) l * np, sl.ref() + (int) l * nr, sl.byt() + (int) l * nb,
                     (int) (h - l), (int) (m - l));
         }
     }
@@ -286,14 +286,14 @@ public final class Data {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
             Slice s = (Slice) x.executeGeneric(frame);
-            int len = s == null ? 0 : s.len;
+            int len = s == null ? 0 : s.len();
             if (len < n) {
                 throw Panics.bounds(this, BoundsCode.CONVERT, len, n, true);
             }
-            if (s == null || s.base == null) {
+            if (s == null || s.base() == null) {
                 return value ? array.zeroFlat() : null;
             }
-            return Ptr.make(s.base, s.prim, s.ref, s.byt);
+            return Ptr.make(s.base(), s.prim(), s.ref(), s.byt());
         }
     }
 
@@ -582,8 +582,8 @@ public final class Data {
     /** Room for {@code add} more elements: the slice itself or a grown copy (gc growslice caps). */
     static Slice reserve(Slice s, int add, GoType backing, int np, int nr, int nb, long elemSize, boolean pointers,
             Object[] zeroElem) {
-        int need = s.len + add;
-        if (need <= s.cap) {
+        int need = s.len() + add;
+        if (need <= s.cap()) {
             return s;
         }
         return grow(s, need, backing, np, nr, nb, elemSize, pointers, zeroElem);
@@ -612,22 +612,22 @@ public final class Data {
         if (need < 0 || need > maxElems(np, nr, nb)) {
             throw new OutOfMemoryError("growslice: len out of range");
         }
-        int cap = elemSize == 0 ? need : Intrinsics.nextSliceCap(need, s.cap, elemSize, pointers);
+        int cap = elemSize == 0 ? need : Intrinsics.nextSliceCap(need, s.cap(), elemSize, pointers);
         if (cap > maxElems(np, nr, nb)) {
             cap = need; // gc's rounding up past the JVM bound: the exact need still fits
         }
         long[] prims = np == 0 ? Flat.NO_PRIMS : new long[cap * np];
         Object[] refs = nr == 0 ? Flat.NO_REFS : new Object[cap * nr];
         byte[] bytes = nb == 0 ? Flat.NO_BYTES : new byte[cap * nb];
-        if (s.len > 0) {
-            System.arraycopy(s.base.prims, s.prim, prims, 0, s.len * np);
-            System.arraycopy(s.base.refs, s.ref, refs, 0, s.len * nr);
-            System.arraycopy(s.base.bytes, s.byt, bytes, 0, s.len * nb);
+        if (s.len() > 0) {
+            System.arraycopy(s.base().prims, s.prim(), prims, 0, s.len() * np);
+            System.arraycopy(s.base().refs, s.ref(), refs, 0, s.len() * nr);
+            System.arraycopy(s.base().bytes, s.byt(), bytes, 0, s.len() * nb);
         }
         if (zeroElem != null) {
-            fillZero(refs, s.len, cap, zeroElem);
+            fillZero(refs, s.len(), cap, zeroElem);
         }
-        return new Slice(new Flat(backing, prims, refs, bytes), 0, 0, 0, s.len, cap);
+        return new Slice(new Flat(backing, prims, refs, bytes), 0, 0, 0, s.len(), cap);
     }
 
     /** Shared configuration of the append nodes. */
@@ -657,7 +657,7 @@ public final class Data {
         }
 
         protected final Slice extended(Slice s, int add) {
-            return new Slice(s.base, s.prim, s.ref, s.byt, s.len + add, s.cap);
+            return new Slice(s.base(), s.prim(), s.ref(), s.byt(), s.len() + add, s.cap());
         }
     }
 
@@ -682,14 +682,14 @@ public final class Data {
             }
             s = room(s, values.length);
             if (byteElem) {
-                byte[] bytes = s.base.bytes;
+                byte[] bytes = s.base().bytes;
                 for (int i = 0; i < values.length; i++) {
-                    bytes[s.byt + s.len + i] = (byte) v[i];
+                    bytes[s.byt() + s.len() + i] = (byte) v[i];
                 }
             } else {
-                long[] prims = s.base.prims;
+                long[] prims = s.base().prims;
                 for (int i = 0; i < values.length; i++) {
-                    prims[s.prim + s.len + i] = v[i];
+                    prims[s.prim() + s.len() + i] = v[i];
                 }
             }
             return extended(s, values.length);
@@ -714,9 +714,9 @@ public final class Data {
                 v[i] = values[i].executeGeneric(frame);
             }
             s = room(s, values.length);
-            Object[] refs = s.base.refs;
+            Object[] refs = s.base().refs;
             for (int i = 0; i < values.length; i++) {
-                refs[s.ref + s.len + i] = v[i];
+                refs[s.ref() + s.len() + i] = v[i];
             }
             return extended(s, values.length);
         }
@@ -741,7 +741,7 @@ public final class Data {
             }
             s = room(s, values.length);
             for (int i = 0; i < values.length; i++) {
-                s.base.store(s.prim + (s.len + i) * np, s.ref + (s.len + i) * nr, s.byt + (s.len + i) * nb,
+                s.base().store(s.prim() + (s.len() + i) * np, s.ref() + (s.len() + i) * nr, s.byt() + (s.len() + i) * nb,
                         (Flat) v[i]);
             }
             return extended(s, values.length);
@@ -761,14 +761,14 @@ public final class Data {
         public Object executeGeneric(VirtualFrame frame) {
             Slice s = (Slice) slice.executeGeneric(frame);
             Slice t = (Slice) tail.executeGeneric(frame);
-            if (t.len == 0) {
+            if (t.len() == 0) {
                 return s;
             }
-            Slice d = room(s, t.len);
-            System.arraycopy(t.base.prims, t.prim, d.base.prims, d.prim + d.len * np, t.len * np);
-            System.arraycopy(t.base.refs, t.ref, d.base.refs, d.ref + d.len * nr, t.len * nr);
-            System.arraycopy(t.base.bytes, t.byt, d.base.bytes, d.byt + d.len * nb, t.len * nb);
-            return extended(d, t.len);
+            Slice d = room(s, t.len());
+            System.arraycopy(t.base().prims, t.prim(), d.base().prims, d.prim() + d.len() * np, t.len() * np);
+            System.arraycopy(t.base().refs, t.ref(), d.base().refs, d.ref() + d.len() * nr, t.len() * nr);
+            System.arraycopy(t.base().bytes, t.byt(), d.base().bytes, d.byt() + d.len() * nb, t.len() * nb);
+            return extended(d, t.len());
         }
     }
 
@@ -789,7 +789,7 @@ public final class Data {
                 return s;
             }
             Slice d = room(s, t.len);
-            System.arraycopy(t.b, t.off, d.base.bytes, d.byt + d.len, t.len);
+            System.arraycopy(t.b, t.off, d.base().bytes, d.byt() + d.len(), t.len);
             return extended(d, t.len);
         }
     }
@@ -814,11 +814,11 @@ public final class Data {
         public long executeLong(VirtualFrame frame) {
             Slice d = (Slice) dst.executeGeneric(frame);
             Slice s = (Slice) src.executeGeneric(frame);
-            int n = Math.min(d.len, s.len);
+            int n = Math.min(d.len(), s.len());
             if (n > 0) {
-                System.arraycopy(s.base.prims, s.prim, d.base.prims, d.prim, n * np);
-                System.arraycopy(s.base.refs, s.ref, d.base.refs, d.ref, n * nr);
-                System.arraycopy(s.base.bytes, s.byt, d.base.bytes, d.byt, n * nb);
+                System.arraycopy(s.base().prims, s.prim(), d.base().prims, d.prim(), n * np);
+                System.arraycopy(s.base().refs, s.ref(), d.base().refs, d.ref(), n * nr);
+                System.arraycopy(s.base().bytes, s.byt(), d.base().bytes, d.byt(), n * nb);
             }
             return n;
         }
@@ -838,9 +838,9 @@ public final class Data {
         public long executeLong(VirtualFrame frame) {
             Slice d = (Slice) dst.executeGeneric(frame);
             Str s = (Str) src.executeGeneric(frame);
-            int n = Math.min(d.len, s.len);
+            int n = Math.min(d.len(), s.len);
             if (n > 0) {
-                System.arraycopy(s.b, s.off, d.base.bytes, d.byt, n);
+                System.arraycopy(s.b, s.off, d.base().bytes, d.byt(), n);
             }
             return n;
         }
@@ -864,16 +864,16 @@ public final class Data {
         @Override
         public void executeVoid(VirtualFrame frame) {
             Slice s = (Slice) slice.executeGeneric(frame);
-            if (s.len == 0) {
+            if (s.len() == 0) {
                 return;
             }
-            Arrays.fill(s.base.prims, s.prim, s.prim + s.len * np, 0);
-            Arrays.fill(s.base.bytes, s.byt, s.byt + s.len * nb, (byte) 0);
+            Arrays.fill(s.base().prims, s.prim(), s.prim() + s.len() * np, 0);
+            Arrays.fill(s.base().bytes, s.byt(), s.byt() + s.len() * nb, (byte) 0);
             if (zeroElem == null) {
-                Arrays.fill(s.base.refs, s.ref, s.ref + s.len * nr, null);
+                Arrays.fill(s.base().refs, s.ref(), s.ref() + s.len() * nr, null);
             } else {
-                for (int i = 0; i < s.len; i++) {
-                    System.arraycopy(zeroElem, 0, s.base.refs, s.ref + i * nr, nr);
+                for (int i = 0; i < s.len(); i++) {
+                    System.arraycopy(zeroElem, 0, s.base().refs, s.ref() + i * nr, nr);
                 }
             }
         }

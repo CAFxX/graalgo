@@ -1,16 +1,11 @@
 package graalgo.go.values;
 
+import com.oracle.truffle.api.CompilerDirectives.ValueType;
+
 /** An immutable complex64/complex128 value (complex64 parts are float-rounded doubles). */
-public final class Complex {
+@ValueType
+public record Complex(double re, double im) {
     public static final Complex ZERO = new Complex(0, 0);
-
-    public final double re;
-    public final double im;
-
-    public Complex(double re, double im) {
-        this.re = re;
-        this.im = im;
-    }
 
     @Override
     public boolean equals(Object o) {

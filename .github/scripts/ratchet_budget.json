@@ -1,8 +1,12 @@
 {
  "_definitions": {
+  "java-conventions": "^internal/backend/truffle/src/test/java/graalgo/conventions/allowlist\\.txt$ ^$ (?m)^[A-Z][0-9]-[a-z-]+ \\S+ \\| ",
   "placeholder": "\\.(go|py|sh)$ ^\\.github/scripts/(check|test_check)_ratchets\\.py$ \\b(TODO|FIXME|XXX)\\b",
   "timing-excl": "^test/differential/[a-z-]*exclusions\\.yaml$ ^$ (?m)^\\s*timing:\\s*true\\b",
   "unimplemented": "^internal/.*\\.(go|java)$ (_test\\.go$|/src/test/) \"[^\"\\n]*(?i:unimplemented|not implemented)[^\"\\n]*\"|\\bnew Unsupported\\(|\\.unsupportedf\\("
+ },
+ "java-conventions": {
+  "internal/backend/truffle/src/test/java/graalgo/conventions/allowlist.txt": 21
  },
  "placeholder": {
   ".github/scripts/check_no_bridges.py": 2,

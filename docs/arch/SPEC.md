@@ -34,6 +34,10 @@ JVM-integration APIs and executing Go programs on the JVM in three modes — pur
 pure AOT, and an AOT+JIT hybrid. The feasibility study ([FEASIBILITY.md](FEASIBILITY.md)) returned
 **CONDITIONALLY FEASIBLE** as a multi-year R&D program; this spec is the normative
 record of what will be built, replacing the study's recommendations with decisions.
+The program's primary goal is to run long-running Go programs — from CPU-bound
+utilities to large I/O-bound servers — significantly faster than gc, with start-up
+and short runs secondary `[DECIDED]` (owner statement 2026-11-20; operational
+definition, benchmark portfolio and roadmap order: [north-star.md](north-star.md)).
 
 ### 1.2 Document status and companion deliverables
 

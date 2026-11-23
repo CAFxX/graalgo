@@ -65,7 +65,7 @@ final class ReflectIntrinsics {
         if (i == null || !(i.data instanceof Closure c)) {
             return 0;
         }
-        return Unsafe.toInt(node, c.target);
+        return Unsafe.toInt(node, c.target());
     }
 
     static long internal_abi_FuncPCABIInternal(Node node, Object f) {
@@ -127,9 +127,9 @@ final class ReflectIntrinsics {
 
     private static GoType[] types(Node node, Object slice) {
         Slice s = (Slice) slice;
-        GoType[] out = new GoType[s.len];
-        for (int i = 0; i < s.len; i++) {
-            out[i] = type(node, s.base.refs[s.ref + i]);
+        GoType[] out = new GoType[s.len()];
+        for (int i = 0; i < s.len(); i++) {
+            out[i] = type(node, s.base().refs[s.ref() + i]);
         }
         return out;
     }
@@ -184,10 +184,10 @@ final class ReflectIntrinsics {
         Slice g = (Slice) tags;
         Slice e = (Slice) embedded;
         GoType[] ts = types(node, types);
-        GoType.Field[] fields = new GoType.Field[n.len];
-        for (int i = 0; i < n.len; i++) {
-            fields[i] = new GoType.Field(n.base.refs[n.ref + i].toString(), p.base.refs[p.ref + i].toString(), ts[i],
-                    e.base.bytes[e.byt + i] != 0, g.base.refs[g.ref + i].toString());
+        GoType.Field[] fields = new GoType.Field[n.len()];
+        for (int i = 0; i < n.len(); i++) {
+            fields[i] = new GoType.Field(n.base().refs[n.ref() + i].toString(), p.base().refs[p.ref() + i].toString(), ts[i],
+                    e.base().bytes[e.byt() + i] != 0, g.base().refs[g.ref() + i].toString());
         }
         return image(node, GoProcess.get(node).types.struct(fields));
     }
@@ -311,14 +311,14 @@ final class ReflectIntrinsics {
         GoType t = type(node, rtype);
         Slice d = slice(node, dst, t);
         Slice s = slice(node, src, t);
-        int n = Math.min(d.len, s.len);
-        if (n == 0 || d.base == null || s.base == null) {
+        int n = Math.min(d.len(), s.len());
+        if (n == 0 || d.base() == null || s.base() == null) {
             return n;
         }
         // System.arraycopy is a memmove: overlapping ranges of one backing store are safe.
-        System.arraycopy(s.base.prims, s.prim, d.base.prims, d.prim, n * t.nPrim());
-        System.arraycopy(s.base.refs, s.ref, d.base.refs, d.ref, n * t.nRef());
-        System.arraycopy(s.base.bytes, s.byt, d.base.bytes, d.byt, n * t.nByte());
+        System.arraycopy(s.base().prims, s.prim(), d.base().prims, d.prim(), n * t.nPrim());
+        System.arraycopy(s.base().refs, s.ref(), d.base().refs, d.ref(), n * t.nRef());
+        System.arraycopy(s.base().bytes, s.byt(), d.base().bytes, d.byt(), n * t.nByte());
         return n;
     }
 
@@ -337,12 +337,12 @@ final class ReflectIntrinsics {
         if (need < 0 || need > Integer.MAX_VALUE) {
             throw Panics.plain(node, "reflect.Value.Grow: slice overflow");
         }
-        Slice whole = new Slice(s.base, s.prim, s.ref, s.byt, s.cap, s.cap);
-        Slice g = Data.reserve(whole, (int) need - s.cap, t);
+        Slice whole = new Slice(s.base(), s.prim(), s.ref(), s.byt(), s.cap(), s.cap());
+        Slice g = Data.reserve(whole, (int) need - s.cap(), t);
         Flat r = h.type.zeroFlat();
         r.refs[0] = t.gcSize() == 0 ? h.refs[0] : Unsafe.sliceData(g);
         r.prims[0] = len;
-        r.prims[1] = g.cap;
+        r.prims[1] = g.cap();
         return r;
     }
 
@@ -585,8 +585,8 @@ final class ReflectIntrinsics {
     @TruffleBoundary
     static Object reflect_rselect(Node node, Object casesSlice) {
         Slice s = (Slice) casesSlice;
-        GoType ct = s.len == 0 ? null : s.base.type.elem.u();
-        int n = s.len;
+        GoType ct = s.len() == 0 ? null : s.base().type.elem.u();
+        int n = s.len();
         int def = -1;
         ChanOps.SelectCase[] cases = new ChanOps.SelectCase[n];
         Object[] vals = new Object[n];
@@ -594,11 +594,11 @@ final class ReflectIntrinsics {
         int[] order = new int[n];
         int m = 0;
         for (int i = 0; i < n; i++) {
-            int p = s.prim + i * ct.nPrim();
-            int r = s.ref + i * ct.nRef();
-            long dir = s.base.prims[p + ct.fields[0].primOff];
-            Object ch = s.base.refs[r + ct.fields[2].refOff];
-            Object val = s.base.refs[r + ct.fields[3].refOff];
+            int p = s.prim() + i * ct.nPrim();
+            int r = s.ref() + i * ct.nRef();
+            long dir = s.base().prims[p + ct.fields[0].primOff];
+            Object ch = s.base().refs[r + ct.fields[2].refOff];
+            Object val = s.base().refs[r + ct.fields[3].refOff];
             vals[i] = val;
             if (dir == 3) {
                 def = i;
@@ -629,7 +629,7 @@ final class ReflectIntrinsics {
         }
         int chosen = order[k];
         boolean recvOk = false;
-        long dir = s.base.prims[s.prim + chosen * ct.nPrim() + ct.fields[0].primOff];
+        long dir = s.base().prims[s.prim() + chosen * ct.nPrim() + ct.fields[0].primOff];
         if (dir == 2) {
             recvOk = ChanOps.selectRecvOk();
             GoType elem = chanElem(chans[chosen]);
@@ -651,13 +651,13 @@ final class ReflectIntrinsics {
     /** The carrier values at the addresses in {@code args}, after {@code lead} leading slots. */
     private static Object[] loadArgs(Node node, GoType ft, Object args, int lead) {
         Slice a = (Slice) args;
-        if (a.len != ft.params.length) {
-            throw new IllegalStateException("reflect call: " + a.len + " arguments for " + ft.str());
+        if (a.len() != ft.params.length) {
+            throw new IllegalStateException("reflect call: " + a.len() + " arguments for " + ft.str());
         }
-        Object[] out = new Object[lead + a.len];
-        for (int i = 0; i < a.len; i++) {
+        Object[] out = new Object[lead + a.len()];
+        for (int i = 0; i < a.len(); i++) {
             GoType pt = ft.params[i];
-            out[lead + i] = pt.gcSize() == 0 ? pt.zero() : Unsafe.loadThrough(node, a.base.refs[a.ref + i], pt);
+            out[lead + i] = pt.gcSize() == 0 ? pt.zero() : Unsafe.loadThrough(node, a.base().refs[a.ref() + i], pt);
         }
         return out;
     }
@@ -668,7 +668,7 @@ final class ReflectIntrinsics {
         for (int i = 0; i < n; i++) {
             GoType rt = ft.results[i];
             if (rt.gcSize() != 0) {
-                Unsafe.storeThrough(node, r.base.refs[r.ref + i], rt, n == 1 ? result : ((Object[]) result)[i]);
+                Unsafe.storeThrough(node, r.base().refs[r.ref() + i], rt, n == 1 ? result : ((Object[]) result)[i]);
             }
         }
     }
@@ -683,8 +683,8 @@ final class ReflectIntrinsics {
         GoType ft = funcType(node, rtype);
         Closure c = (Closure) fn;
         Object[] a = loadArgs(node, ft, args, 1);
-        a[0] = c.env;
-        storeResults(node, ft, rets, c.target.call(a));
+        a[0] = c.env();
+        storeResults(node, ft, rets, c.target().call(a));
     }
 
     /**
@@ -755,7 +755,7 @@ final class ReflectIntrinsics {
             for (int i = 0; i < nout; i++) {
                 rets.refs[i] = ft.results[i].zeroFlat();
             }
-            impl.target.call(impl.env, new Slice(args, 0, 0, 0, nin, nin), new Slice(rets, 0, 0, 0, nout, nout));
+            impl.target().call(impl.env(), new Slice(args, 0, 0, 0, nin, nin), new Slice(rets, 0, 0, 0, nout, nout));
             if (nout == 0) {
                 return null;
             }

@@ -5,6 +5,9 @@ lane `perf-peak`). It is the falsifying-benchmark record SPEC §2.6 asks for
 (GG-0007): every "beyond gc" claim in the docs must name a benchmark here and
 beat gc **with PGO** on it, or it is struck. Linked from
 [RECOVERY.md](RECOVERY.md) (WP-POLLCOST, WP-PERF).
+The goal these numbers serve — long-running programs faster than gc, with
+its thresholds, workload tiers and benchmark portfolio — is
+[north-star.md](north-star.md); its realistic programs are §8 below.
 
 ## 1. The suite
 
@@ -326,3 +329,27 @@ goroutines are virtual threads behind one drainer (item 1 halves it at best).
   in the toolchain may do more — not yet measured).
 - JVM flags: `-XX:+UseCompactObjectHeaders` and the GC choice (G1 default)
   are untested on the suite; `engine.Mode=throughput` likewise.
+
+## 8. Realistic programs (north star)
+
+[test/bench/realistic/](../../test/bench/realistic/), `make
+bench-realistic` (the suite runner with `--dir`, gc at `GOMAXPROCS=4`,
+peak RSS and CPU per leg). 2026-11-20, master `a366807f`, 3 interleaved
+reps, load 7 → 34; steady medians in ms. Full tables, the GC matrix,
+goroutine scaling and the compilation evidence: [north-star.md](north-star.md) §4.
+
+| Program | gc | gc+PGO | graalgo | ×gc | time to peak | compile failures |
+|---|---:|---:|---:|---:|---:|---|
+| `jsonrt` | 2.62 | 2.69 | 37.5 | 14× | 2.5 s | 1 (`goto`, PE) |
+| `regexscan` | 2.43 | 2.37 | 262.9 | 108× | 1.1 s | 1 (`goto`, PE: `tryBacktrack`) |
+| `textproc` | 5.67 | 5.20 | 96.0 | 17× | 0.7 s | 0 |
+| `tmplrender` | 2.46 | 2.44 | 75.7 | 31× | 1.6 s | 1 (deopt loop) |
+| `reqpipe` | 1.58 | 1.53 | 46.8 | 30× | 1.8 s | 2 (`goto`, PE) |
+| `deflate` | 11.46 | 10.92 | 198.4 | 17× | 1.9 s | 3 (`goto`, PE; inlining depth) |
+| `allocmix` (60 s, G1) | 31.0 | — | 46.8 | 1.5× | 0.7 s | 0 |
+
+Geomean of the six pipelines: 27× gc (steady), 19× (best rounds) — against
+the micro-suite's 1.4× (§4). New gap items, ahead of §5's list: partial-
+evaluation failures in `goto` blocks (`Ctl.GotoBlock`), goroutine creation
+O(live goroutines) (north-star §4.3), reflection-heavy paths.
+

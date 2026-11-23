@@ -10,12 +10,5 @@ import com.oracle.truffle.api.frame.MaterializedFrame;
  * per iteration for Go 1.22 loop variables) — never the creating function's own activation
  * frame. It is null for top-level functions. The nil func is Java {@code null}.
  */
-public final class Closure {
-    public final RootCallTarget target;
-    public final MaterializedFrame env;
-
-    public Closure(RootCallTarget target, MaterializedFrame env) {
-        this.target = target;
-        this.env = env;
-    }
+public record Closure(RootCallTarget target, MaterializedFrame env) {
 }

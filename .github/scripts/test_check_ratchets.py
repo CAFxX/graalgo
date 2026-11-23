@@ -84,6 +84,14 @@ class Gate(unittest.TestCase):
         self.assertEqual(len(errs), 1, errs)
         self.assertIn("paid down", errs[0])
 
+    def test_java_conventions_allowlist_counts_entries(self):
+        al = "internal/backend/truffle/src/test/java/graalgo/conventions/allowlist.txt"
+        text = "# S1-static a.B#c | comment, not an entry\nS1-static a.B#c | why\nB3-boundary a.B#d | why\n"
+        d = repo({al: text, "docs/allowlist.txt": "S1-static a.B#c | why\n"}, {})
+        errs = g.compare(g.count(d, g.tracked(d)), {})
+        self.assertEqual(errs, [f"java-conventions: {al}: 2 > budget 0 (debt may only go down)"])
+        self.assertEqual(g.compare(g.count(d, g.tracked(d)), {"java-conventions": {al: 2}}), [])
+
     def test_paid_down_requires_budget_update(self):
         d = repo({"tools/a.py": "ok\n"}, {"placeholder": {"tools/a.py": 2}})
         self.assertEqual(g.main(["x", str(d)]), 1)

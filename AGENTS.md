@@ -203,6 +203,12 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - Performance: treat every commit as performance-sensitive — no accidental
   quadratic paths, no hot-path allocations, no synchronized I/O in the
   scheduler loop.
+- Java/Truffle practices (new path and shared runtime): anything that can be
+  `final`, `static final` or a record is; Truffle annotations are used
+  wherever they apply (truffle-design §11). `NodeConventionsTest` (in
+  `make test-java-fast`) enforces the class-file-visible rules over
+  `graalgo.go.*` and the shared runtime; exceptions live in its shrink-only
+  allowlist with a reason ([truffle-design §16](docs/arch/truffle-design.md)).
 
 ## 8. Docs
 
