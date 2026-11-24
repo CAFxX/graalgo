@@ -142,6 +142,9 @@ public final class GoroutineHandle {
      */
     final java.util.concurrent.atomic.AtomicBoolean inIo = new java.util.concurrent.atomic.AtomicBoolean();
 
+    /** Carrier mode: between ioEnter's {@code beginBlocking} and its end (owner thread only). */
+    boolean ioBlocking;
+
     /**
      * gc's wait reason for the current scheduler park (e.g.
      * {@code "chan receive"}, {@code "sync.Mutex.Lock"}), rendered in the

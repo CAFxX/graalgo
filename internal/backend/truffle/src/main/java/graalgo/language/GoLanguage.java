@@ -32,9 +32,14 @@ import org.graalvm.options.OptionStability;
  * </ul>
  *
  * <p>Evaluating a program source initializes and runs it (package init,
- * then {@code main.main} as the first goroutine) and returns the process
- * exit status as an {@code int}: 0 when {@code main} returns, 2 for an
- * uncaught panic or deadlock, {@code n} for {@code os.Exit(n)}.
+ * then {@code main.main} as the first goroutine). A linked bundle's eval
+ * returns 0 when {@code main} returns (a natural exit); every other process
+ * exit — {@code os.Exit(n)}, an uncaught panic or deadlock (2) — is a Truffle
+ * hard exit ({@code TruffleContext.closeExited}): the eval throws a
+ * {@code PolyglotException} with {@code isExit()} and the status as
+ * {@code getExitStatus()}, and the context is closed (playbook §10,
+ * WP-TR-AUDIT-3). The legacy wire-document eval (v1) still returns the
+ * status as an {@code int} in every case.
  * {@code Context.parse} builds the AST without running it (the launchers'
  * {@code --check}).
  *
@@ -110,6 +115,11 @@ public final class GoLanguage extends TruffleLanguage<GoContext> {
     @Override
     protected void finalizeContext(GoContext context) {
         context.finalizeContext();
+    }
+
+    @Override
+    protected void exitContext(GoContext context, ExitMode exitMode, int exitCode) {
+        context.exitContext(exitMode == ExitMode.HARD, exitCode);
     }
 
     @Override

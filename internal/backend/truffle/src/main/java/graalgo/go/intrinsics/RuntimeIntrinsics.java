@@ -26,7 +26,7 @@ final class RuntimeIntrinsics {
         // the stopped world for them.
         graalgo.go.values.Closure cleanup = graalgo.go.runtime.GoProcess.get(node).poolCleanup;
         if (cleanup != null) {
-            graalgo.runtime.sync.PinLock.LOCK.lock();
+            graalgo.runtime.sync.PinLock.lockForGo(node);
             try {
                 cleanup.target().call(node, cleanup.env());
             } finally {

@@ -15,11 +15,6 @@ import java.lang.foreign.StructLayout;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 import java.lang.invoke.VarHandle;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * The syscall executor (toolexec-design §5.6, W8a; abi-spike.md §2): the one place where a Go
@@ -38,9 +33,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  *
  * <p>Scheduling (GG-SCHED-0006): a call whose entry may block releases the goroutine's
  * scheduler slot ({@link SchedulerCore#ioEnter}) and runs on a platform thread outside the
- * carrier pool while the goroutine's virtual thread waits unmounted, so a blocked read pins no
- * carrier; the slot is re-acquired through the wake lane after the call. Other calls run
- * inline: they return without waiting on anything.
+ * carrier pool ({@link BlockingCall}); the slot is re-acquired through the wake lane after the
+ * call. Other calls run inline: they return without waiting on anything. A may-block call is
+ * cancellable (ADR-0019): the goroutine's wait is Truffle-blocked, and its native buffers belong
+ * to the call, so a context cancel, hard exit or scheduler teardown ends the wait at once while
+ * the buffers stay valid until the kernel is done with them.
  */
 public final class Executor {
     private Executor() {}
@@ -57,19 +54,11 @@ public final class Executor {
                 Linker.Option.firstVariadicArg(1), Linker.Option.captureCallState("errno"));
     }
 
-    private static final AtomicInteger THREADS = new AtomicInteger();
-    /** Platform threads for may-block calls: outside the goroutine carrier pool. */
-    private static final ExecutorService OFF_POOL = Executors.newCachedThreadPool(r -> {
-        Thread t = new Thread(r, "graalgo-syscall-" + THREADS.incrementAndGet());
-        t.setDaemon(true);
-        return t;
-    });
-
     /** A write of at most this many bytes to a writable pipe does not wait (POSIX PIPE_BUF on linux). */
     private static final long PIPE_BUF = 4096;
-    private static final short POLLIN = 0x1;
-    private static final short POLLOUT = 0x4;
-    private static final MethodHandle POLL = LINKER.downcallHandle(LINKER.defaultLookup().find("poll").orElseThrow(),
+    static final short POLLIN = 0x1;
+    static final short POLLOUT = 0x4;
+    static final MethodHandle POLL = LINKER.downcallHandle(LINKER.defaultLookup().find("poll").orElseThrow(),
             FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, ValueLayout.JAVA_LONG, ValueLayout.JAVA_INT));
 
     /**
@@ -90,9 +79,9 @@ public final class Executor {
     }
 
     /** The raw result: {@code r1} and {@code errno} (0 on success). */
-    private record Raw(long r1, long errno) {}
+    record Raw(long r1, long errno) {}
 
-    private static Raw invoke(long nr, long[] w) {
+    static Raw invoke(long nr, long[] w) {
         try (Arena a = Arena.ofConfined()) {
             MemorySegment state = a.allocate(CAPTURE);
             long r = (long) SYSCALL.invokeExact(state, nr, w[0], w[1], w[2], w[3], w[4], w[5]);
@@ -122,58 +111,59 @@ public final class Executor {
         Flat[] objs = new Flat[roles.length];
         long[] offs = new long[roles.length];
         byte[][] data = new byte[roles.length][];
-        MemorySegment[] segs = new MemorySegment[roles.length];
+        long total = 0;
+        for (int i = 0; i < roles.length; i++) {
+            Role r = roles[i];
+            if (r.allowed != null && !listed(r.allowed, a[i])) {
+                throw fail(node, e, i, "is " + a[i] + ", a selector the role table does not list");
+            }
+            if (r.kind == Role.K_VAL || a[i] == 0) {
+                continue; // a value, or a nil pointer (the kernel answers EFAULT where it matters)
+            }
+            Object p = Unsafe.fromInt(node, a[i]);
+            if (!Unsafe.isFlatPointer(p)) {
+                throw fail(node, e, i, "is not a pointer into Go memory");
+            }
+            Flat obj = Unsafe.referent(p);
+            long off = Unsafe.offset(p);
+            long room = Unsafe.extent(obj) - off;
+            byte[] b;
+            if (r.kind == Role.K_CSTR) {
+                b = cString(node, e, i, obj, off, room);
+            } else {
+                long n = r.kind == Role.K_STRUCT ? r.size : a[r.lenArg];
+                if (n < 0 || n > room) {
+                    throw fail(node, e, i, "is a buffer of " + n + " bytes in a Go object with " + room
+                            + " bytes left");
+                }
+                b = new byte[(int) n];
+                // Out buffers are copied in as well: an unfilled tail reads back unchanged.
+                Unsafe.readBytes(node, obj, off, b, b.length);
+            }
+            objs[i] = obj;
+            offs[i] = off;
+            data[i] = b;
+            total += align(Math.max(b.length, 1));
+        }
+        SchedulerCore sched = offPool(e, w);
+        if (sched != null) {
+            // May block: the native buffers belong to the call, not to this goroutine, so a
+            // cancelled wait can leave while the kernel may still write them (BlockingCall).
+            return BlockingCall.run(node, sched, e, nr, w, roles, objs, offs, data, total);
+        }
         Raw raw;
         try (Arena arena = Arena.ofConfined()) {
+            MemorySegment[] segs = new MemorySegment[roles.length];
             for (int i = 0; i < roles.length; i++) {
-                Role r = roles[i];
-                if (r.allowed != null && !listed(r.allowed, a[i])) {
-                    throw fail(node, e, i, "is " + a[i] + ", a selector the role table does not list");
-                }
-                if (r.kind == Role.K_VAL || a[i] == 0) {
-                    continue; // a value, or a nil pointer (the kernel answers EFAULT where it matters)
-                }
-                Object p = Unsafe.fromInt(node, a[i]);
-                if (!Unsafe.isFlatPointer(p)) {
-                    throw fail(node, e, i, "is not a pointer into Go memory");
-                }
-                Flat obj = Unsafe.referent(p);
-                long off = Unsafe.offset(p);
-                long room = Unsafe.extent(obj) - off;
-                byte[] b;
-                if (r.kind == Role.K_CSTR) {
-                    b = cString(node, e, i, obj, off, room);
-                } else {
-                    long n = r.kind == Role.K_STRUCT ? r.size : a[r.lenArg];
-                    if (n < 0 || n > room) {
-                        throw fail(node, e, i, "is a buffer of " + n + " bytes in a Go object with " + room
-                                + " bytes left");
-                    }
-                    b = new byte[(int) n];
-                    // Out buffers are copied in as well: an unfilled tail reads back unchanged.
-                    Unsafe.readBytes(node, obj, off, b, b.length);
-                }
-                MemorySegment seg = arena.allocate(Math.max(b.length, 1));
-                MemorySegment.copy(b, 0, seg, ValueLayout.JAVA_BYTE, 0, b.length);
-                objs[i] = obj;
-                offs[i] = off;
-                data[i] = b;
-                segs[i] = seg;
-                w[i] = seg.address();
-            }
-            raw = call(e, nr, w);
-            if (raw.errno == 0) {
-                for (int i = 0; i < roles.length; i++) {
-                    Role r = roles[i];
-                    if (segs[i] == null || r.kind == Role.K_VAL || r.kind == Role.K_CSTR || !r.out) {
-                        continue;
-                    }
-                    int n = data[i].length;
-                    int filled = r.filledResult ? (int) Math.max(0, Math.min(raw.r1, n)) : n;
-                    MemorySegment.copy(segs[i], ValueLayout.JAVA_BYTE, 0, data[i], 0, filled);
-                    Unsafe.writeBytes(node, objs[i], offs[i], data[i], filled);
+                if (data[i] != null) {
+                    MemorySegment seg = arena.allocate(Math.max(data[i].length, 1));
+                    MemorySegment.copy(data[i], 0, seg, ValueLayout.JAVA_BYTE, 0, data[i].length);
+                    segs[i] = seg;
+                    w[i] = seg.address();
                 }
             }
+            raw = invoke(nr, w);
+            copyOut(node, raw, roles, objs, offs, data, segs);
         }
         return new Object[] {raw.r1, 0L, raw.errno};
     }
@@ -214,41 +204,48 @@ public final class Executor {
         return GoProcess.get(node).fatal("graalgo: system call " + e.name + ": argument " + (i + 1) + " " + what);
     }
 
-    /** The downcall, with the slot released and off the carrier pool when the call may block. */
-    private static Raw call(Entry e, long nr, long[] w) {
+    /**
+     * Copies the out buffers back into their Go objects after a successful call ({@code segs}:
+     * the native copies, by argument).
+     */
+    static void copyOut(Node node, Raw raw, Role[] roles, Flat[] objs, long[] offs, byte[][] data,
+            MemorySegment[] segs) {
+        if (raw.errno != 0) {
+            return;
+        }
+        for (int i = 0; i < roles.length; i++) {
+            Role r = roles[i];
+            if (segs[i] == null || r.kind == Role.K_VAL || r.kind == Role.K_CSTR || !r.out) {
+                continue;
+            }
+            int n = data[i].length;
+            int filled = r.filledResult ? (int) Math.max(0, Math.min(raw.r1, n)) : n;
+            MemorySegment.copy(segs[i], ValueLayout.JAVA_BYTE, 0, data[i], 0, filled);
+            Unsafe.writeBytes(node, objs[i], offs[i], data[i], filled);
+        }
+    }
+
+    /** Native buffers are 16-byte aligned inside one call's block. */
+    static long align(long n) {
+        return (n + 15) & ~15L;
+    }
+
+    /**
+     * The scheduler of the calling goroutine when the call must leave the carrier pool (its
+     * entry may block and the descriptor is not ready now), else null: the call runs inline.
+     */
+    private static SchedulerCore offPool(Entry e, long[] w) {
         SchedulerCore sched = SchedulerCore.installedOrNull();
         if (!e.mayBlock || sched == null || !sched.onGoroutine()) {
-            return invoke(nr, w);
+            return null;
         }
         if (e.ready != 0 && (e.ready == 'r' || w[e.lenArg] <= PIPE_BUF) && readyNow(w[0], e.ready)) {
             // The descriptor is ready: the transfer returns without waiting (a regular file,
             // a terminal, a pipe with data or room), so it needs neither the slot release nor
             // the thread hand-off. Another process may take the readiness between the poll and
             // the call; the call then waits on the carrier for that one transfer.
-            return invoke(nr, w);
+            return null;
         }
-        sched.ioEnter();
-        try {
-            Future<Raw> f = OFF_POOL.submit(() -> invoke(nr, w));
-            boolean interrupted = false;
-            try {
-                for (;;) {
-                    try {
-                        // The virtual thread unmounts while it waits: the carrier is free.
-                        return f.get();
-                    } catch (InterruptedException ie) {
-                        interrupted = true; // the native call cannot be cancelled; its buffers stay live
-                    } catch (ExecutionException ee) {
-                        throw new IllegalStateException(ee.getCause());
-                    }
-                }
-            } finally {
-                if (interrupted) {
-                    Thread.currentThread().interrupt();
-                }
-            }
-        } finally {
-            sched.ioExit();
-        }
+        return sched;
     }
 }

@@ -171,6 +171,11 @@ public final class Drainer {
                     detectDeadlock();
                 }
             } catch (Throwable t) {
+                if (stopped || sched.isTornDown()) {
+                    // The context is being cancelled or hard-exited: goroutines end anywhere
+                    // (WP-TR-AUDIT-3), so the accounting no longer holds and nothing is admitted.
+                    return;
+                }
                 // Fail LOUD, never silent: a violated invariant (or any
                 // drainer bug) means scheduler state is corrupt. Letting
                 // the drainer thread die here would hang every parked

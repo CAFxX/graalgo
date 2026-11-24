@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# test/m1r/cancel.sh — embedder cancellation of a running program in each
-# goroutine mode (playbook §10; GG-0073), run by `make test-thread-mode`:
-# builds cancel/probe.go through graalgo-tool and runs
-# graalgo.launcher.CancelProbe on it, which waits for the program's ready file
-# (goroutines parked on a channel and on timers, spinning) and then calls
-# Context.close(true): the close must return within
-# 2 s, the eval must end cancelled, and no runtime thread may stay alive.
+# test/m1r/cancel.sh — embedder cancellation, hard exit and thread-local
+# actions of a running program in each goroutine mode (playbook §10;
+# WP-TR-AUDIT-3; GG-0073), run by `make test-goroutine-modes`: builds
+# cancel/probe.go through graalgo-tool and runs graalgo.launcher.CancelProbe
+# on it (its Javadoc lists the cases: close(true) within 1 s with goroutines
+# blocked everywhere, including read(2) on a pipe and on stdin; os.Exit and
+# panic as hard exits; a thread-local action reaching every thread; no
+# thread left behind). Stdin is a FIFO opened read-write, so a read on it
+# blocks forever.
 #
 # Usage: test/m1r/cancel.sh [MODES]   (default "carrier,thread")
 # Env:   as test/m1r/run.sh. Exit: the infra.sh contract.
@@ -33,11 +35,12 @@ printf 'module m1r/cancel\n\ngo 1.27\n' > "$TMP/mod/go.mod"
 CP="$BK/truffle/out/test-classes:$BK/truffle/out/classes"
 for jar in "$BK"/truffle/lib/*.jar; do CP="$CP:$jar"; done
 status=0
+mkfifo "$TMP/stdin" || infra_die "mkfifo failed"
 # shellcheck disable=SC2086
 timeout 120 "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED \
     --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m -XX:-UsePerfData \
     -XX:G1HeapRegionSize=32m -Djava.lang.invoke.MethodHandle.CUSTOMIZE_THRESHOLD=-1 \
     --sun-misc-unsafe-memory-access=allow ${GRAALGO_JAVA_OPTS:-} \
-    -cp "$CP" graalgo.launcher.CancelProbe "$TMP/probe" "$MODES" </dev/null || status=$?
+    -cp "$CP" graalgo.launcher.CancelProbe "$TMP/probe" "$MODES" 0<>"$TMP/stdin" || status=$?
 [ "$status" -eq 0 ] && echo "m1r cancel: pass ($MODES)" || echo "m1r cancel: FAIL ($MODES, exit $status)"
 exit "$status"

@@ -11,6 +11,7 @@ import java.util.concurrent.locks.LockSupport;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
+import com.oracle.truffle.api.TruffleSafepoint;
 import graalgo.language.GoThreadSlot;
 import graalgo.runtime.GoroutineState;
 import jdk.internal.vm.Continuation;
@@ -66,6 +67,22 @@ final class Carriers {
     /** How long a spare carrier (above {@link #target}) idles before it retires. */
     private static final long SPARE_IDLE_NANOS = TimeUnit.SECONDS.toNanos(10);
 
+    /**
+     * {@link LockSupport#park(Object)} as a Truffle {@code Interruptible}: Truffle delivers a
+     * thread-local action to a blocked thread by interrupting it, so the interrupt (which
+     * {@code park} only returns on) becomes the {@link InterruptedException} Truffle waits for.
+     */
+    static final TruffleSafepoint.Interruptible<Object> PARK_INTERRUPTIBLY = blocker -> {
+        LockSupport.park(blocker);
+        if (Thread.interrupted()) {
+            throw new InterruptedException();
+        }
+    };
+
+    /** An idle carrier's wait for work, as a Truffle {@code InterruptibleFunction}. */
+    private static final TruffleSafepoint.InterruptibleFunction<LinkedTransferQueue<Object>, Object> IDLE_POLL =
+            q -> q.poll(SPARE_IDLE_NANOS, TimeUnit.NANOSECONDS);
+
     /** One goroutine's continuation: a park that cannot yield returns false instead of throwing. */
     private static final class GoContinuation extends Continuation {
         GoContinuation(Runnable body) {
@@ -97,6 +114,12 @@ final class Carriers {
     private final SchedulerCore sched;
     private final Function<Runnable, Thread> carrierThreads;
     private final Supplier<GoThreadSlot> slots;
+    /**
+     * The carriers are polyglot threads of a context: every blocking wait of theirs goes through
+     * {@link TruffleSafepoint} (playbook §10), so cancellation, hard exit and thread-local
+     * actions reach idle and blocked carriers too.
+     */
+    private final boolean inContext;
     private final LinkedTransferQueue<Object> runq = new LinkedTransferQueue<>();
     /** Carriers that should be able to run goroutines: the scheduler's carrier parallelism. */
     private final int target;
@@ -107,6 +130,8 @@ final class Carriers {
     /** Every carrier thread started and not yet retired (terminate joins them). */
     private final java.util.Set<Thread> threads = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private volatile boolean stopped;
+    /** Orders carrier starts against {@link #stop} (see {@link #startCarrier}). */
+    private final Object lifecycle = new Object();
     /** Parks that could not yield and blocked their carrier (diagnostics, tests). */
     final AtomicInteger pinnedParks = new AtomicInteger();
 
@@ -121,6 +146,7 @@ final class Carriers {
         this.target = Math.max(1, target);
         this.carrierThreads = carrierThreads;
         this.slots = slots;
+        this.inContext = slots != null;
     }
 
     /** A new goroutine's continuation, parked until its first {@link #unpark}. */
@@ -157,7 +183,13 @@ final class Carriers {
         beginBlocking();
         try {
             while (!(boolean) PERMIT.getAndSet(h, false)) {
-                LockSupport.park(this);
+                if (inContext) {
+                    // The carrier is a polyglot thread: blocked, it still answers thread-local
+                    // actions (cancel, hard exit, samplers, debugger) — playbook §10.
+                    TruffleSafepoint.setBlockedThreadInterruptible(null, PARK_INTERRUPTIBLY, this);
+                } else {
+                    LockSupport.park(this);
+                }
             }
         } finally {
             RUN_STATE.setVolatile(h, RUNNING);
@@ -242,24 +274,43 @@ final class Carriers {
         }
     }
 
+    /**
+     * Starts one carrier, registered in {@link #threads} BEFORE it starts and under the pool's
+     * lifecycle lock, so {@link #stop} sees every carrier that will ever run: none starts after
+     * it, and one started just before it is already a member (a carrier that registered itself
+     * from its own loop could be missed by a concurrent stop and outlive the context: "the
+     * language did not complete all polyglot threads").
+     */
     private void startCarrier() {
-        Thread[] self = new Thread[1];
-        Thread t;
-        try {
-            t = carrierThreads.apply(() -> loop(self[0]));
-        } catch (RuntimeException | Error e) {
-            alive.decrementAndGet();
-            throw e;
+        synchronized (lifecycle) {
+            if (stopped) {
+                alive.decrementAndGet();
+                return;
+            }
+            Thread[] self = new Thread[1];
+            Thread t;
+            try {
+                t = carrierThreads.apply(() -> loop(self[0]));
+            } catch (RuntimeException | Error e) {
+                alive.decrementAndGet();
+                throw e;
+            }
+            self[0] = t;
+            t.setName("graalgo-carrier-" + t.threadId());
+            t.setDaemon(true);
+            threads.add(t);
+            try {
+                t.start();
+            } catch (RuntimeException | Error e) {
+                threads.remove(t);
+                alive.decrementAndGet();
+                throw e;
+            }
         }
-        self[0] = t;
-        t.setName("graalgo-carrier-" + t.threadId());
-        t.setDaemon(true);
-        t.start();
     }
 
     private void loop(Thread self) {
-        // Registered by the carrier itself (stop() joins the members), removed when it ends.
-        threads.add(self);
+        // Registered by startCarrier (stop() joins the members), removed when it ends.
         Carrier c = new Carrier(self, slots == null ? null : slots.get());
         CURRENT.set(c);
         try {
@@ -274,7 +325,7 @@ final class Carriers {
                             return;
                         }
                         try {
-                            h = runq.poll(SPARE_IDLE_NANOS, TimeUnit.NANOSECONDS);
+                            h = idleWait();
                         } catch (InterruptedException ie) {
                             continue; // carriers ignore interrupts; stop() wakes them
                         }
@@ -292,6 +343,12 @@ final class Carriers {
                 try {
                     run(c, (GoroutineHandle) h);
                 } catch (Throwable t) {
+                    if (t instanceof Error e && sched.isTornDown()) {
+                        // The context's cancellation or hard exit reached this carrier outside
+                        // the goroutine body: the carrier leaves, as every polyglot thread must.
+                        stopFromTeardown();
+                        throw e;
+                    }
                     // The goroutine body catches everything and offers its EXIT token in a
                     // finally block; a throwable here means the scheduler's accounting is
                     // corrupt. Fail loud, as the drainer does: never a silently lost carrier.
@@ -304,6 +361,32 @@ final class Carriers {
             CURRENT.remove();
             threads.remove(self);
         }
+    }
+
+    /**
+     * An idle carrier's wait for work (at most {@link #SPARE_IDLE_NANOS}). Inside a context it
+     * is Truffle-blocked: a thread-local action interrupts it, runs, and the wait resumes; the
+     * context's cancellation or hard exit ends the carrier (and the pool) with its exception.
+     */
+    private Object idleWait() throws InterruptedException {
+        if (!inContext) {
+            return runq.poll(SPARE_IDLE_NANOS, TimeUnit.NANOSECONDS);
+        }
+        try {
+            return TruffleSafepoint.setBlockedThreadInterruptibleFunction(null, IDLE_POLL, runq);
+        } catch (RuntimeException | Error e) {
+            stopFromTeardown();
+            throw e;
+        }
+    }
+
+    /**
+     * The polyglot layer ends this carrier (cancel, hard exit, interrupt): no carrier starts
+     * any more — a closing context refuses new threads, and the pool's work is over.
+     */
+    private void stopFromTeardown() {
+        stopped = true;
+        alive.decrementAndGet();
     }
 
     /** An idle carrier above {@link #target} retires. */
@@ -372,8 +455,11 @@ final class Carriers {
      * a goroutine exits once that goroutine yields or ends. Returns the carrier threads.
      */
     List<Thread> stop() {
-        stopped = true;
-        List<Thread> all = new ArrayList<>(threads);
+        List<Thread> all;
+        synchronized (lifecycle) {
+            stopped = true;
+            all = new ArrayList<>(threads);
+        }
         for (int i = 0; i < all.size(); i++) {
             runq.offer(STOP);
         }

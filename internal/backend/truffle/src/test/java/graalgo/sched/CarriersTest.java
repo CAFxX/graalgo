@@ -192,6 +192,51 @@ public final class CarriersTest {
         assertTrue(unwound.get() > 0, "admitted goroutines unwound through their finally blocks");
     }
 
+    /**
+     * A carrier started but not yet running its loop when the pool stops is still stopped and
+     * joined: {@code stop()} returns it and it ends at once (CI: "the language did not complete
+     * all polyglot threads" after a program exit with a goroutine left blocked, the carrier
+     * started by the teardown's unpark raced the stop). The gate holds every new carrier thread
+     * before its loop, so the race is forced, not sampled. Mutation: a carrier that registers
+     * itself from its loop — stop() misses it and it idles on, red.
+     */
+    public void testStopIncludesCarriersNotYetRunning() throws Exception {
+        CountDownLatch gate = new CountDownLatch(1);
+        List<Thread> created = java.util.Collections.synchronizedList(new ArrayList<>());
+        SchedulerCore s = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS, r -> {
+            Thread t = Thread.ofPlatform().unstarted(() -> {
+                try {
+                    gate.await();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                r.run();
+            });
+            created.add(t);
+            return t;
+        }, null, true);
+        s.start();
+        SchedulerCore prev = SchedulerCore.install(s);
+        try {
+            s.spawn(() -> { });
+            awaitTrue(() -> !created.isEmpty(), "a carrier started");
+        } finally {
+            SchedulerCore.install(prev);
+        }
+        List<Thread> stopped = s.carriersForTest().stop();
+        gate.countDown();
+        List<Thread> snapshot;
+        synchronized (created) {
+            snapshot = new ArrayList<>(created);
+        }
+        assertTrue(stopped.containsAll(snapshot), "stop() returned every started carrier: " + stopped
+                + " of " + snapshot);
+        for (Thread t : snapshot) {
+            assertTrue(t.join(java.time.Duration.ofSeconds(5)), "carrier ended after stop: " + t);
+        }
+        s.terminate(1_000);
+    }
+
     private static boolean allDead(SchedulerCore s) {
         return s.carriersForTest().stop().stream().noneMatch(Thread::isAlive);
     }

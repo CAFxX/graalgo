@@ -227,7 +227,7 @@ public final class GoContext {
     private SchedulerCore newScheduler(int gomaxprocs) {
         SchedulerCore s = new SchedulerCore(gomaxprocs, SchedulerCore.DEFAULT_QUANTUM_NANOS, goroutineThreads(),
                 carrierMode ? language.threadSlot::get : null, carrierMode);
-        s.setTornDown(this::closing);
+        s.bindContext(this::closing);
         return s;
     }
 
@@ -268,6 +268,11 @@ public final class GoContext {
      */
     @TruffleBoundary
     int runBundle(graalgo.go.loader.Program program) {
+        if (!env.isNativeAccessAllowed()) {
+            // Every system call of a bundle is a Panama downcall (graalgo.syscall.Executor).
+            throw new IllegalStateException("the go language makes system calls through native "
+                    + "downcalls: build the context with allowNativeAccess(true)");
+        }
         claimRun(this);
         try {
             // As runProgram: tear a previous run's leftover goroutines down first.
@@ -285,7 +290,11 @@ public final class GoContext {
             sched.start();
             try {
                 sched.spawnMain(() -> p.run(() -> program.run(p)));
-                return awaitExit(sched);
+                int status = awaitExit(sched);
+                if (!sched.exitedNaturally()) {
+                    hardExit(status);
+                }
+                return status;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("interrupted while awaiting program exit", e);
@@ -316,6 +325,42 @@ public final class GoContext {
             throw e;
         }
         return status[0];
+    }
+
+    /**
+     * The program ended by a process exit other than {@code main} returning — {@code os.Exit(n)},
+     * an uncaught panic or a fatal error (status 2) — which gc implements as {@code exit(2)}
+     * of the process: in a polyglot context that is Truffle's hard exit (playbook §10). The
+     * goroutines are already frozen by the exit (no further output); the scheduler is torn
+     * down so the context's threads are gone, and {@link TruffleContext#closeExited} closes the
+     * context: {@link GoLanguage#exitContext} runs on this thread, and the embedder's
+     * {@code eval} ends in a {@code PolyglotException} whose {@code isExit()} holds and whose
+     * {@code getExitStatus()} is {@code status}; the standalone launcher exits with it.
+     */
+    private void hardExit(int status) {
+        terminatePrevious();
+        truffleContext.closeExited(null, status);
+        throw new IllegalStateException("TruffleContext.closeExited returned");
+    }
+
+    /**
+     * {@link GoLanguage#exitContext}: a hard exit (ours, or one another language or the
+     * embedder started) freezes the program first — no goroutine runs or prints after the
+     * exit point, as in gc — then, in both modes, the context's output streams are flushed
+     * (the runtime's own reports go through {@link Env#err()}). gc has no exit hooks; deferred
+     * calls do not run on exit.
+     */
+    void exitContext(boolean hard, int status) {
+        SchedulerCore sched = scheduler;
+        if (hard && sched != null && !sched.isExiting()) {
+            sched.requestExit(status);
+        }
+        try {
+            env.out().flush();
+            env.err().flush();
+        } catch (java.io.IOException e) {
+            // Nothing to report to: the streams are the embedder's and are closing.
+        }
     }
 
     /** Whether the polyglot layer is cancelling or hard-exiting this context. */

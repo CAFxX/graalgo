@@ -33,8 +33,12 @@ public final class BundleMain {
                     .mimeType(GoLanguage.BUNDLE_MIME).buildLiteral();
             status = context.eval(source).asInt();
         } catch (PolyglotException e) {
-            fail("graalgo: " + e.getMessage());
-            return;
+            if (!e.isExit()) {
+                fail("graalgo: " + e.getMessage());
+                return;
+            }
+            // os.Exit(n), an uncaught panic or a fatal error: the context's hard exit.
+            status = e.getExitStatus();
         }
         System.out.flush();
         System.err.flush();

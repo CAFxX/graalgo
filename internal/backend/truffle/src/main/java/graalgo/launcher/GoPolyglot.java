@@ -28,6 +28,11 @@ public final class GoPolyglot {
      *     positions; empty for a run from a stored wire document
      */
     public static Context newContext(int gomaxprocs, String[] argv, List<Path> sourceFiles) {
+        return newContextBuilder(gomaxprocs, argv, sourceFiles).build();
+    }
+
+    /** {@link #newContext}'s builder, for embedders that change more (streams, tools). */
+    public static Context.Builder newContextBuilder(int gomaxprocs, String[] argv, List<Path> sourceFiles) {
         StringBuilder files = new StringBuilder();
         for (Path p : sourceFiles) {
             if (files.length() > 0) {
@@ -38,6 +43,8 @@ public final class GoPolyglot {
         return Context.newBuilder(GoLanguage.ID)
                 // Goroutines are polyglot threads (§2.6).
                 .allowCreateThread(true)
+                // System calls are Panama downcalls (graalgo.syscall).
+                .allowNativeAccess(true)
                 // Virtual polyglot threads are experimental upstream; the
                 // first one would print a warning on the program's stderr.
                 // The switch itself is an experimental engine option.
@@ -48,8 +55,7 @@ public final class GoPolyglot {
                 .arguments(GoLanguage.ID, argv)
                 .in(System.in)
                 .out(System.out)
-                .err(System.err)
-                .build();
+                .err(System.err);
     }
 
     /** The program as a byte source of the frontend/v1 wire MIME type. */

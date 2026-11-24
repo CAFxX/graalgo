@@ -401,7 +401,7 @@ final class SyncIntrinsics {
      */
     @TruffleBoundary
     static long sync_runtime_procPin(Node node) {
-        PinLock.LOCK.lock();
+        PinLock.lockForGo(node);
         return 0;
     }
 

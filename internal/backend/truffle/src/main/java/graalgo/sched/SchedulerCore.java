@@ -3,6 +3,7 @@ package graalgo.sched;
 import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import com.oracle.truffle.api.TruffleSafepoint;
 
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.GoCalls;
@@ -104,9 +105,26 @@ public final class SchedulerCore {
      */
     private java.util.function.BooleanSupplier tornDown = () -> false;
 
-    /** Installs the {@link #tornDown} predicate (before {@link #start}). */
-    public void setTornDown(java.util.function.BooleanSupplier tornDown) {
+    /**
+     * Goroutine threads (thread mode) are polyglot threads of a context: their parks are
+     * Truffle-blocked ({@link TruffleSafepoint#setBlockedThreadInterruptible}), so thread-local
+     * actions — cancellation, hard exit, samplers, the debugger — reach parked goroutines
+     * (playbook §10). Carrier mode decides the same per carrier ({@link Carriers}).
+     */
+    private boolean inContext;
+
+    /**
+     * Binds the scheduler to the polyglot context that owns its threads (before {@link #start}):
+     * {@code tornDown} tells whether the context is being cancelled or hard-exited.
+     */
+    public void bindContext(java.util.function.BooleanSupplier tornDown) {
         this.tornDown = tornDown;
+        this.inContext = true;
+    }
+
+    /** Whether the owning context is being cancelled or hard-exited ({@link #bindContext}). */
+    boolean isTornDown() {
+        return tornDown.getAsBoolean();
     }
 
     /** True when goroutines run as continuations on carrier threads. */
@@ -403,6 +421,7 @@ public final class SchedulerCore {
         if (carriers != null) {
             // The goroutine blocks its carrier from here to ioExit: a spare takes its place.
             carriers.beginBlocking();
+            h.ioBlocking = true;
         }
     }
 
@@ -420,6 +439,7 @@ public final class SchedulerCore {
         }
         if (carriers != null) {
             carriers.endBlocking();
+            h.ioBlocking = false;
         }
         long t = armPark(h);
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_EXIT, h, t));
@@ -442,6 +462,56 @@ public final class SchedulerCore {
         graalgo.jfr.GoroutineParkEvent ioEvent = h.ioParkEvent;
         h.ioParkEvent = null;
         JfrEvents.ioParkEnd(h, ioEvent, System.nanoTime() - h.ioStartNanos);
+    }
+
+    /**
+     * Ends an {@link #ioEnter} (complete or interrupted part-way) that no {@link #ioExit} will
+     * follow: the goroutine is leaving a cancelled blocking call because the program is being
+     * torn down (context cancel or exit, {@link #terminate}). Undoes the carrier-side state —
+     * the pin and the spare-carrier count — without the admission handshake: nothing is
+     * admitted any more. No-op when no ioEnter is pending.
+     */
+    public void ioAbandon() {
+        GoroutineHandle h = currentHandle.get();
+        if (h == null || !h.inIo.compareAndSet(true, false)) {
+            return;
+        }
+        if (carriers != null) {
+            if (h.ioBlocking) {
+                h.ioBlocking = false;
+                carriers.endBlocking();
+            }
+            Carriers.unpinCurrent();
+        }
+    }
+
+    /**
+     * The system-call layer's abort hook of this scheduler (graalgo.syscall's cancellable
+     * blocking calls, ADR-0019), created by {@code create} on first use; {@link #terminate}
+     * runs it (at once, if this scheduler is already terminated).
+     */
+    public Runnable syscallAborter(java.util.function.Supplier<? extends Runnable> create) {
+        Runnable a = syscallAborter.get();
+        if (a == null) {
+            Runnable n = create.get();
+            if (syscallAborter.compareAndSet(null, n)) {
+                a = n;
+                if (terminated) {
+                    n.run();
+                }
+            } else {
+                a = syscallAborter.get();
+            }
+        }
+        return a;
+    }
+
+    private final java.util.concurrent.atomic.AtomicReference<Runnable> syscallAborter =
+            new java.util.concurrent.atomic.AtomicReference<>();
+
+    /** Whether the goroutine threads are polyglot threads of a context ({@link #bindContext}). */
+    public boolean inContext() {
+        return inContext;
     }
 
     Drainer drainer() {
@@ -785,6 +855,8 @@ public final class SchedulerCore {
     private void parkSelf(GoroutineHandle h) {
         if (carriers != null) {
             carriers.park(h);
+        } else if (inContext) {
+            TruffleSafepoint.setBlockedThreadInterruptible(null, Carriers.PARK_INTERRUPTIBLY, this);
         } else {
             LockSupport.park(this);
         }
@@ -938,7 +1010,11 @@ public final class SchedulerCore {
                 if (tornDown.getAsBoolean()) {
                     // The polyglot layer cancels or hard-exits the context (Context.close(true)):
                     // its exception ends this goroutine; the context's teardown stops the rest.
-                    // Not a crash, and it must not report one or request an exit.
+                    // Not a crash, and it must not report one or request an exit. It can end a
+                    // goroutine anywhere — parked, slot released (a Truffle-blocked park) — so
+                    // admission accounting is over: the drainer stops before this EXIT.
+                    markExiting();
+                    drainer.stop();
                 } else {
                     // Any other JVM error (AssertionError, OutOfMemoryError,
                     // ...): the program can no longer be trusted — loud exit,
@@ -946,6 +1022,9 @@ public final class SchedulerCore {
                     recordCrash("internal error", e);
                 }
             } finally {
+                // Unwound by a teardown from inside a pin section (no deferred procUnpin ran):
+                // the lock belongs to this thread and must not outlive the goroutine.
+                PinLock.releaseAllHeldByCurrentThread();
                 // A wake this goroutine deferred is released before its EXIT
                 // (the drainer must see the wakee's UNPARK first).
                 flushRunnext(h);
@@ -1426,6 +1505,9 @@ public final class SchedulerCore {
         }
         synchronized (lifecycleLock) {
             if (!fatal.get()) {
+                if (!exiting) {
+                    naturalExit = true;
+                }
                 requestExit(0);
                 return;
             }
@@ -1449,6 +1531,18 @@ public final class SchedulerCore {
     /** True when the calling thread is a scheduler goroutine. */
     public boolean onGoroutine() {
         return currentHandle.get() != null;
+    }
+
+    /** Set when the first exit request is main returning (not os.Exit, a panic or a fatal). */
+    private volatile boolean naturalExit;
+
+    /**
+     * Whether the program's exit was {@code main} returning — a natural end, as opposed to a
+     * process exit ({@code os.Exit}, an uncaught panic, a fatal error). Valid once
+     * {@link #awaitExit} returned.
+     */
+    public boolean exitedNaturally() {
+        return naturalExit;
     }
 
     /** True once process exit has been requested. */
@@ -1484,6 +1578,11 @@ public final class SchedulerCore {
         markExiting();
         drainer.stop();
         timerHeap.stop();
+        Runnable aborter = syscallAborter.get();
+        if (aborter != null) {
+            // Goroutines waiting for a blocking system call leave now (ADR-0019).
+            aborter.run();
+        }
         long deadline = System.nanoTime() + timeoutMillis * 1_000_000L;
         if (carriers != null) {
             return terminateCarriers(deadline);
