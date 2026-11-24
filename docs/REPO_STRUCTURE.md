@@ -329,10 +329,12 @@ directory's README repeats its status.
     [run.sh](../test/m1r/run.sh) builds each program of
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
-    compares stdout, normalized stderr and exit status with gc;
-    [carrier/](../test/m1r/carrier/) holds the programs
-    [carrier_mode.sh](../test/m1r/carrier_mode.sh) runs the same way in
-    carrier-mode goroutines (ADR-0018: the spawn-scaling check).
+    compares stdout, normalized stderr and exit status with gc (in the
+    default carrier goroutine mode; `spawn_flat.go` is the spawn-scaling
+    check of ADR-0018); [cancel.sh](../test/m1r/cancel.sh) builds
+    [cancel/probe.go](../test/m1r/cancel/probe.go) and cancels it from the
+    embedder (`Context.close(true)`, both goroutine modes; run by `make
+    test-goroutine-modes`).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r

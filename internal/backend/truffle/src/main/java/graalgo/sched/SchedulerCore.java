@@ -80,13 +80,33 @@ public final class SchedulerCore {
             Object.class.getModule().isExported("jdk.internal.vm", SchedulerCore.class.getModule());
 
     /**
-     * Whether carrier mode is the default for new schedulers: {@code -Dgraalgo.sched.goroutines=carrier}
-     * (ADR-0018; GG-0073 makes carrier mode the default, but until the default flip lands the
-     * property's default is {@code thread}: one thread per goroutine, GG-0073's fallback mode).
-     * Read per scheduler, so a test can switch it.
+     * Whether new schedulers run in carrier mode (GG-0073, ADR-0018: the default). The system
+     * property {@code graalgo.sched.goroutines} selects the mode when a context does not set
+     * {@code go.GoroutineThreads}: unset or {@code carrier}, carrier mode; {@code thread}, one
+     * thread per goroutine (GG-0073's fallback). Read per scheduler, so a test can switch it. A
+     * JVM without the {@code jdk.internal.vm} export fails loudly at scheduler creation rather
+     * than falling back to the quadratic mode unnoticed.
      */
     public static boolean carrierModeDefault() {
-        return "carrier".equals(System.getProperty("graalgo.sched.goroutines", "thread"));
+        String mode = System.getProperty("graalgo.sched.goroutines", "carrier");
+        return switch (mode) {
+            case "carrier" -> true;
+            case "thread" -> false;
+            default -> throw new IllegalArgumentException(
+                    "graalgo.sched.goroutines must be 'carrier' or 'thread', got '" + mode + "'");
+        };
+    }
+
+    /**
+     * Whether the embedding is tearing the program down (a polyglot context being cancelled or
+     * hard-exited): an {@link Error} that ends a goroutine then is that teardown, not a crash.
+     * Set once, before {@link #start}, by the context; never outside one.
+     */
+    private java.util.function.BooleanSupplier tornDown = () -> false;
+
+    /** Installs the {@link #tornDown} predicate (before {@link #start}). */
+    public void setTornDown(java.util.function.BooleanSupplier tornDown) {
+        this.tornDown = tornDown;
     }
 
     /** True when goroutines run as continuations on carrier threads. */
@@ -255,10 +275,14 @@ public final class SchedulerCore {
     }
 
     /**
-     * @param goroutineThreads builds the (unstarted) carrier thread of one
-     *     goroutine around its body. Inside a polyglot context these are
-     *     polyglot threads (graalgo.language.GoContext); the default, for
-     *     embedders and tests without a context, is a bare virtual thread.
+     * Thread mode with an explicit thread factory (tests, tools).
+     *
+     * @param goroutineThreads builds the (unstarted) thread of one goroutine
+     *     around its body. Inside a polyglot context these are polyglot
+     *     threads (graalgo.language.GoContext); the two-argument constructor,
+     *     for embedders and tests without a context, follows
+     *     {@link #carrierModeDefault()} with bare platform carriers or bare
+     *     virtual threads.
      */
     public SchedulerCore(int gomaxprocs, long quantumNanos,
             Function<Runnable, Thread> goroutineThreads) {
@@ -278,8 +302,9 @@ public final class SchedulerCore {
         this.requestedCap = Math.max(1, gomaxprocs);
         this.carrierParallelism = Math.max(1, Runtime.getRuntime().availableProcessors());
         if (carrierMode && !CARRIER_MODE_AVAILABLE) {
-            throw new IllegalStateException("graalgo.sched: carrier mode needs the JVM option "
-                    + "--add-exports java.base/jdk.internal.vm=ALL-UNNAMED");
+            throw new IllegalStateException("graalgo.sched: carrier mode (the default) needs the JVM "
+                    + "option --add-exports java.base/jdk.internal.vm=ALL-UNNAMED; "
+                    + "-Dgraalgo.sched.goroutines=thread selects one thread per goroutine instead");
         }
         this.carriers = carrierMode ? new Carriers(this, carrierParallelism, threads, carrierSlots) : null;
         // P2-D6: effective cap = min(GOMAXPROCS, carrier parallelism).
@@ -910,10 +935,16 @@ public final class SchedulerCore {
             } catch (RuntimeException e) {
                 recordCrash("internal error", e);
             } catch (Error e) {
-                // Any other JVM error (AssertionError, OutOfMemoryError,
-                // ...): the program can no longer be trusted — loud exit,
-                // never a silently dead goroutine and a hung process.
-                recordCrash("internal error", e);
+                if (tornDown.getAsBoolean()) {
+                    // The polyglot layer cancels or hard-exits the context (Context.close(true)):
+                    // its exception ends this goroutine; the context's teardown stops the rest.
+                    // Not a crash, and it must not report one or request an exit.
+                } else {
+                    // Any other JVM error (AssertionError, OutOfMemoryError,
+                    // ...): the program can no longer be trusted — loud exit,
+                    // never a silently dead goroutine and a hung process.
+                    recordCrash("internal error", e);
+                }
             } finally {
                 // A wake this goroutine deferred is released before its EXIT
                 // (the drainer must see the wakee's UNPARK first).

@@ -6,7 +6,7 @@ coordinator under design authority delegated by the owner:
 [GG-0073](../../../requirements/GG-0073.yaml) supersedes `GG-0017` ("Each
 goroutine SHALL map 1:1 to a Java virtual thread") and makes carrier mode the default, one virtual
 thread per goroutine the fallback where `Continuation` is unavailable. The
-default flip itself is a separate, pending lane. (History: accepted as an
+default flipped 2026-11-24 (lane carrier-default; item 7). (History: accepted as an
 **opt-in mode** 2026-11-20, lane sched-spawn, which stopped at the
 requirement conflict; see *Requirement* below.)
 **Scope:** [SPEC.md](../../arch/SPEC.md) §3.5;
@@ -91,11 +91,14 @@ Options weighed:
 6. **Teardown** unparks every live goroutine (an intrusive list under the
    quiescence lock), which unwinds at its park as before, then stops and
    joins the carriers.
-7. **Opt-in.** `-Dgraalgo.sched.goroutines=carrier` (schedulers and the
-   context default) or the context option `go.GoroutineThreads=carrier`;
-   every launcher passes `--add-exports java.base/jdk.internal.vm=ALL-UNNAMED`
-   (a JVM without it cannot select carrier mode: a clear error). The default
-   stays one virtual thread per goroutine.
+7. **Default (since 2026-11-24; opt-in until then).** Carrier mode is the
+   default of schedulers and contexts; `-Dgraalgo.sched.goroutines=thread`
+   (schedulers and the context default) or the context option
+   `go.GoroutineThreads=thread` selects one virtual thread per goroutine, the
+   fallback. Every launcher passes `--add-exports
+   java.base/jdk.internal.vm=ALL-UNNAMED`; a JVM without it fails at
+   scheduler creation with a clear error naming both remedies, rather than
+   falling back to the quadratic mode unnoticed.
 
 ## Measurements
 
@@ -158,11 +161,12 @@ thread" holds only until the default-flip lane lands.
 
 ## Consequences
 
-- With carrier mode on, spawning is independent of the live count and 10⁶
-  idle goroutines fit in ~4 GB RSS; with it off, nothing changes.
+- Spawning is independent of the live count and 10⁶ idle goroutines fit
+  in ~4 GB RSS; the thread-mode fallback is unchanged.
 - `jdk.internal.vm.Continuation` is JDK-internal: every launcher and test
   JVM gains the `--add-exports` flag, and a JDK upgrade must re-run the
-  carrier gates (`CarriersTest`, `test/m1r/carrier_mode.sh`). Native images
+  carrier gates (`CarriersTest`, the m1r program `spawn_flat.go`, and every
+  other gate, which run carrier mode). Native images
   keep thread mode (truffle-design §7.4, amendment A1).
 - `Thread.currentThread()` in runtime code is a carrier, shared by many
   goroutines: per-goroutine state goes through the swapped holders (item 3);
@@ -171,8 +175,16 @@ thread" holds only until the default-flip lane lands.
   naming.
 - Gates: `graalgo.sched.CarriersTest` (fast Java list: the structural
   no-thread-per-goroutine check, pinned park and syscall compensation,
-  teardown, and the `LifecycleTest` and `WakeupRaceStressTest` suites in
-  carrier mode, ~4 s) and `test/m1r/carrier_mode.sh` (run by `make test-m1r`:
-  `spawn_flat.go` vs gc, ~5 s). One-off evidence at landing: the whole fast
-  Java list and the m1a corpus (183 programs) pass in carrier mode.
+  teardown) and the m1r program `spawn_flat.go` vs gc (`make test-m1r`,
+  ~5 s); since the flip every gate runs carrier mode, and `make
+  test-goroutine-modes` (~30 s, per push) reruns the scheduler suites and six
+  goroutine programs in the fallback; it also runs
+  `test/m1r/programs/carrier_migration.go` (parks inside reflect calls,
+  timer callbacks, sort and `sync.Once`, panics crossing them) in carrier
+  mode under `-ea`, so Truffle's per-thread assertions see goroutines
+  migrate, and `test/m1r/cancel.sh` (`Context.close(true)` of a running
+  program in both modes: bounded, cancelled, no thread left).
+  (Until the flip, `CarriersTest` reran `LifecycleTest`/`WakeupRaceStressTest`
+  in carrier mode and the removed `test/m1r/carrier_mode.sh` ran
+  `spawn_flat.go`.)
   Benchmark: `make bench-goroutines` (not a gate).

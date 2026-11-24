@@ -399,8 +399,8 @@ unmounted from every OS thread while parked: by default a
 `jdk.internal.vm.Continuation` run by the scheduler's carrier threads; as the
 fallback where `Continuation` is unavailable, one virtual thread per
 goroutine, `go f(args)` ≡ `Thread.ofVirtual().start(...)` (JEP 444
-`[VERIFIED]`). Until the default flip lands, the fallback is still the
-default and carrier mode is opt-in. Where the text below says "vthread",
+`[VERIFIED]`), selected with `-Dgraalgo.sched.goroutines=thread` /
+`go.GoroutineThreads=thread`. Where the text below says "vthread",
 read "the goroutine's continuation" in carrier mode. Goroutine-local state
 (defer chain, panic context) lives in a per-goroutine `G` object, which the
 runtime reaches through the context's thread-local slot (`M`), never through
@@ -605,10 +605,13 @@ cap above unchanged: spawn 1.0–1.5 s at 10⁵ and 11.5 s at 10⁶, flat in the
 live count, ~2.3 KB heap per parked goroutine (gc ~2.75 KB) `[VERIFIED]`
 (scoped: ADR-0018's runs on a shared, loaded host, JDK 25, Truffle 25.0.4). GG-0073 makes it the default mode and keeps
 one virtual thread per goroutine only as a documented fallback where
-`Continuation` is unavailable. **Status:** carrier mode is implemented and
-gated (`CarriersTest`, `test/m1r/carrier_mode.sh`) but still opt-in
-(`-Dgraalgo.sched.goroutines=carrier` / `go.GoroutineThreads=carrier`); the
-default flip is a pending work item. **Known limitation** (part of the
+`Continuation` is unavailable. **Status:** carrier mode is the default
+(2026-11-24): every gate runs it, `CarriersTest` and the m1r program
+`spawn_flat.go` check its mechanisms and spawn scaling, and `make
+test-goroutine-modes` keeps the fallback (`-Dgraalgo.sched.goroutines=thread` /
+`go.GoroutineThreads=thread`) gated. A JVM without the `jdk.internal.vm`
+export fails at scheduler creation instead of falling back unnoticed.
+**Known limitation** (part of the
 `[OPEN]` native-image item above): whether
 `jdk.internal.vm.Continuation` (and the `--add-exports
 java.base/jdk.internal.vm=ALL-UNNAMED` it needs) works in a native image is

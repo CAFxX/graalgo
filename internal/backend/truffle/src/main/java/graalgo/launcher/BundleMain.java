@@ -50,7 +50,7 @@ public final class BundleMain {
         }
     }
 
-    private static byte[] readBundle(String exe) throws IOException {
+    static byte[] readBundle(String exe) throws IOException {
         try (RandomAccessFile f = new RandomAccessFile(exe, "r")) {
             long size = f.length();
             byte[] trailer = new byte[20];

@@ -71,12 +71,12 @@ public final class GoLanguage extends TruffleLanguage<GoContext> {
             category = OptionCategory.USER, stability = OptionStability.STABLE)
     static final OptionKey<String> SourceFiles = new OptionKey<>("");
 
-    @Option(help = "How goroutines run: one polyglot thread per goroutine, 'virtual' (default) "
-            + "or 'platform' (truffle-design §2.6 item 5), or 'carrier': continuations on a few "
-            + "polyglot carrier threads (ADR-0018). Unset, -Dgraalgo.sched.goroutines=carrier "
-            + "selects 'carrier'.",
+    @Option(help = "How goroutines run: 'carrier' (default): continuations on a few polyglot "
+            + "carrier threads (GG-0073, ADR-0018); or one polyglot thread per goroutine, "
+            + "'thread' (= 'virtual') or 'platform' (truffle-design §2.6 item 5), the fallback. "
+            + "Unset, -Dgraalgo.sched.goroutines=thread selects 'thread'.",
             category = OptionCategory.USER, stability = OptionStability.STABLE)
-    static final OptionKey<String> GoroutineThreads = new OptionKey<>("virtual");
+    static final OptionKey<String> GoroutineThreads = new OptionKey<>("carrier");
 
     private static final LanguageReference<GoLanguage> REFERENCE =
             LanguageReference.create(GoLanguage.class);

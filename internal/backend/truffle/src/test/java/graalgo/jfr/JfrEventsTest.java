@@ -203,10 +203,16 @@ public final class JfrEventsTest {
         assertTrue(sawLongChannel, "no long CHANNEL park event");
         assertTrue(sawLongTimer, "no long TIMER park event");
 
-        // JDK mapping: jdk.VirtualThreadStart fires for our vthreads and
-        // correlates via the thread name.
+        // JDK mapping: in the thread-per-goroutine fallback jdk.VirtualThreadStart
+        // fires for our vthreads and correlates via the thread name; carrier mode
+        // (the default, GG-0073) runs no virtual threads, so it must fire none.
         List<RecordedEvent> vtStarts = byName.getOrDefault("jdk.VirtualThreadStart", List.of());
-        assertTrue(!vtStarts.isEmpty(), "no jdk.VirtualThreadStart events");
+        if (sched.carrierMode()) {
+            assertTrue(vtStarts.isEmpty(), "carrier mode started " + vtStarts.size()
+                    + " virtual threads");
+        } else {
+            assertTrue(!vtStarts.isEmpty(), "no jdk.VirtualThreadStart events");
+        }
     }
 
     /**

@@ -1,7 +1,5 @@
 package graalgo.sched;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -14,9 +12,9 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>The structural property behind O(1) spawn — no thread per goroutine — is asserted
  * directly (the carrier count stays at the pool target however many goroutines live); the
  * park/unpark permit protocol, the pinned-park fallback and blocking compensation each have a
- * test that fails when the mechanism is removed; and the scheduler's lifecycle and wake-race
- * suites run once more in carrier mode ({@link #testLifecycleSuiteInCarrierMode},
- * {@link #testWakeupRaceSuiteInCarrierMode}).
+ * test that fails when the mechanism is removed. Carrier mode is the default (GG-0073), so the
+ * scheduler's own suites (LifecycleTest, ChannelTest, WakeupRaceStressTest) run in it; {@code
+ * make test-goroutine-modes} reruns them in the thread-per-goroutine fallback.
  *
  * <p>verifies: GG-SCHED-0003 (carrier slice: in-flight cap with carriers), GG-WAKE-0001
  * (carrier slice: no lost wakeup through the permit), GG-SCHED-0006 (carrier slice: a
@@ -196,42 +194,5 @@ public final class CarriersTest {
 
     private static boolean allDead(SchedulerCore s) {
         return s.carriersForTest().stop().stream().noneMatch(Thread::isAlive);
-    }
-
-    /** {@link LifecycleTest} (exit, freeze, deadlock, panic, Goexit, teardown) in carrier mode. */
-    public void testLifecycleSuiteInCarrierMode() throws Exception {
-        runSuiteInCarrierMode(LifecycleTest.class);
-    }
-
-    /** {@link WakeupRaceStressTest} (herds, timer storms, handoff) in carrier mode. */
-    public void testWakeupRaceSuiteInCarrierMode() throws Exception {
-        runSuiteInCarrierMode(WakeupRaceStressTest.class);
-    }
-
-    private static void runSuiteInCarrierMode(Class<?> suite) throws Exception {
-        String key = "graalgo.sched.goroutines";
-        String old = System.getProperty(key);
-        System.setProperty(key, "carrier");
-        try {
-            assertTrue(new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS).carrierMode(),
-                    "the property selects carrier mode");
-            for (Method m : suite.getMethods()) {
-                if (!m.getName().startsWith("test") || m.getParameterCount() != 0) {
-                    continue;
-                }
-                try {
-                    m.invoke(suite.getDeclaredConstructor().newInstance());
-                } catch (InvocationTargetException e) {
-                    throw new AssertionError(suite.getSimpleName() + "." + m.getName()
-                            + " failed in carrier mode: " + e.getCause(), e.getCause());
-                }
-            }
-        } finally {
-            if (old == null) {
-                System.clearProperty(key);
-            } else {
-                System.setProperty(key, old);
-            }
-        }
     }
 }
