@@ -2028,7 +2028,7 @@ document — and the reserved bundle type) and
 The product launcher (P3SyncMain) runs every program as `Context.eval` of
 the wire document through
 [GoPolyglot](../../internal/backend/truffle/src/main/java/graalgo/launcher/GoPolyglot.java);
-`Context.parse` is `--check`; `eval` returns the exit status as an `int`.
+`Context.parse` is `--check`; a bundle `eval` returns 0 when `main` returns and ends any other exit (`os.Exit(n)`, uncaught panic or fatal: 2) as a Truffle hard exit — `PolyglotException.isExit()` with the status ([ADR-0019](../dev/adr/ADR-0019-truffle-cancellation-exit.md)); the v1 wire eval returns the status as an `int`.
 graalgo-run (`Main`) and `SchedMain` still run without a context (their
 root nodes keep a `null` language).
 

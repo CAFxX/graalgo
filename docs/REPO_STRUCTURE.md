@@ -334,7 +334,9 @@ directory's README repeats its status.
     default carrier goroutine mode; `spawn_flat.go` is the spawn-scaling
     check of ADR-0018); [cancel.sh](../test/m1r/cancel.sh) builds
     [cancel/probe.go](../test/m1r/cancel/probe.go) and cancels it from the
-    embedder (`Context.close(true)`, both goroutine modes; run by `make
+    embedder (`Context.close(true)` with goroutines blocked everywhere,
+    system calls included; thread-local action reach; `os.Exit` and panic
+    as Truffle hard exits; both goroutine modes, ADR-0019; run by `make
     test-goroutine-modes`).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
