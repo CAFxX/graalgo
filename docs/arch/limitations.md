@@ -163,7 +163,9 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   reports the closing brace or `return`. Standard-library file names keep
   gc's object-file form `$GOROOT/src/...`; `runtime.Stack(buf, true)`
   reports only the calling goroutine; tracebacks print no argument words
-  (`f(...)`) and no `created by` line.
+  (`f(...)`) and no `created by` line. A literal nested in a literal is
+  named `outer.funcN.funcM` — gc's name when its compiler inlined the outer
+  literal (an immediately called one); otherwise gc says `outer.funcN.M`.
 
 ## `os`, `reflect`, `fmt` and the runtime facade (`-toolexec` path; toolexec M1c/M1d)
 

@@ -39,6 +39,9 @@ attributes the call to).
 3. **Root names are gc's**: `pkg.F`, `pkg.(*T).M`, `pkg.T.M`, `pkg.F[...]`,
    `pkg.(*T[...]).M`, `pkg.f.func1`, `pkg.f.func1.func1`, `pkg.f-range1`
    (`getName` = `getQualifiedName`); a root's section is its declaration line.
+   gc names a literal nested in a literal `outer.funcN.M` unless its
+   compiler inlined the outer literal (then `outer.funcN.funcM`); graalgo
+   does not mirror gc's inlining decisions and always uses the second form.
 4. **Tags**: `StatementTag` on positioned statements, `RootTag` and
    `RootBodyTag` on `Calls.Body` (the function body, also the `return`
    target), `CallTag` on positioned calls. Wrappers come from
