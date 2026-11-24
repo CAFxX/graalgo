@@ -166,6 +166,8 @@ def main():
     ap.add_argument('--reps', type=int, default=1)
     ap.add_argument('--pgo', action='store_true', help='add the gc+PGO leg')
     ap.add_argument('--trace', action='store_true', help='Truffle compilation tracing counts')
+    ap.add_argument('--min-total', type=int, metavar='SECONDS',
+                    help='least time in rounds per leg (default 4; e.g. 20 for long-running steady state)')
     ap.add_argument('--json', help='write the results here')
     ap.add_argument('--timeout', type=int, default=int(os.environ.get('BENCH_TIMEOUT', '600')))
     ap.add_argument('--no-graalgo', action='store_true', help='gc legs only')
@@ -185,6 +187,8 @@ def main():
     tmp = os.path.join(env_get('TMP'), 'suite')
     os.makedirs(tmp, exist_ok=True)
     base_env = dict(os.environ)
+    if a.min_total:
+        base_env['BENCH_MIN_TOTAL'] = str(a.min_total)  # the harness's least time in rounds (h.MinTotal)
     gc_env = dict(base_env, **env_spec(a.gc_env))
     java_opts = base_env.get('GRAALGO_JAVA_OPTS', '-Xmx2g -XX:ActiveProcessorCount=4')
     if a.trace:

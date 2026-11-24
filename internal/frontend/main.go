@@ -25,7 +25,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 )
@@ -80,7 +82,19 @@ func main() {
 	out, err := ExportFiles(rest, testPackageDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gofrontend: %v\n", err)
+		if errors.Is(err, ErrHostCorruption) {
+			os.Exit(3) // infrastructure failure (BUG-0012)
+		}
 		os.Exit(2)
 	}
-	fmt.Println(out)
+	// Write the encoded document directly (no fmt buffer copy: every
+	// extra large copy is another chance for BUG-0012's corruption).
+	_, err = io.WriteString(os.Stdout, out)
+	if err == nil {
+		_, err = io.WriteString(os.Stdout, "\n")
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "gofrontend: write: %v\n", err)
+		os.Exit(2)
+	}
 }

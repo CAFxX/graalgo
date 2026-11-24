@@ -1,9 +1,7 @@
 package graalgo.go.runtime;
 
 import java.lang.ref.WeakReference;
-import java.util.Map;
-import java.util.TreeMap;
-import java.util.WeakHashMap;
+import java.util.Arrays;
 
 /**
  * The range-allocating handle table behind {@code uintptr(p)} (SPEC §3.4, GG-0062): the first
@@ -15,39 +13,141 @@ import java.util.WeakHashMap;
  *
  * <p>The table holds objects weakly: as in gc, an integer does not keep its object alive, and
  * an integer whose object is gone resolves to nothing.
+ *
+ * <p>Objects are found by identity in an open-addressing table of the ranges themselves (one
+ * weak reference per range, no reference queue). Bases only grow, so the ranges are an append-only sorted array searched by bisection (the
+ * newest range first: a {@code uintptr} round trip such as {@code abi.NoEscape}, taken on every
+ * {@code strings.Builder} and {@code fmt} printer, converts back the range it just made). Dead
+ * ranges are squeezed out when the array is full, before it grows: amortized O(1) per range.
+ * (A tree with a periodic sweep of every range cost O(live ranges) per 4,096 conversions,
+ * quadratic between collections: round times grew with the heap.) A range whose object died
+ * and is not squeezed out yet resolves to nothing, as a removed one would: the integer lies
+ * past the end of every earlier range.
  */
 public final class Handles {
-    private record Range(WeakReference<Object> obj, long extent) {}
+    /** One object's range; also its entry in the identity table {@link #byObj}. */
+    private static final class Range extends WeakReference<Object> {
+        final long base;
+        final long extent;
+        final int hash;
 
-    private final WeakHashMap<Object, Long> bases = new WeakHashMap<>();
-    private final TreeMap<Long, Range> ranges = new TreeMap<>();
+        Range(Object obj, int hash, long base, long extent) {
+            super(obj);
+            this.hash = hash;
+            this.base = base;
+            this.extent = extent;
+        }
+    }
+
+    /** Object to range: open addressing on the identity hash; dead entries go at rehash. */
+    private Range[] byObj = new Range[1024];
+    private int byObjUsed;
+    /** The ranges in base order. */
+    private long[] keys = new long[256];
+    private Range[] refs = new Range[256];
+    private int size;
     private long next = 0xc000000000L;
-    private int sinceSweep;
+
+    private static int hash(Object obj) {
+        int h = System.identityHashCode(obj);
+        return h ^ (h >>> 16);
+    }
 
     /** The range base of {@code obj}, an object of {@code extent} gc bytes (identity-keyed). */
     public synchronized long base(Object obj, long extent) {
-        Long b = bases.get(obj);
-        if (b == null) {
-            b = next;
-            next += (extent + 16) & ~15L;
-            bases.put(obj, b);
-            ranges.put(b, new Range(new WeakReference<>(obj), extent));
-            if (++sinceSweep >= 4096) {
-                sinceSweep = 0;
-                ranges.values().removeIf(r -> r.obj.get() == null);
+        int h = hash(obj);
+        Range[] t = byObj;
+        int mask = t.length - 1;
+        int i = h & mask;
+        for (Range r; (r = t[i]) != null; i = (i + 1) & mask) {
+            if (r.hash == h && r.get() == obj) {
+                return r.base;
             }
         }
+        long b = next;
+        next += (extent + 16) & ~15L;
+        Range r = new Range(obj, h, b, extent);
+        if ((byObjUsed + 1) * 2 > t.length) {
+            rehash();
+            t = byObj;
+            mask = t.length - 1;
+            i = h & mask;
+            while (t[i] != null) {
+                i = (i + 1) & mask;
+            }
+        }
+        t[i] = r;
+        byObjUsed++;
+        if (size == keys.length) {
+            makeRoom();
+        }
+        keys[size] = b;
+        refs[size] = r;
+        size++;
         return b;
+    }
+
+    /** Rebuilds the identity table from its live entries, at most half full afterwards. */
+    private void rehash() {
+        Range[] old = byObj;
+        int live = 0;
+        for (Range r : old) {
+            if (r != null && r.get() != null) {
+                live++;
+            }
+        }
+        int cap = 1024;
+        while (cap < live * 4) {
+            cap <<= 1;
+        }
+        Range[] t = new Range[cap];
+        int mask = cap - 1;
+        for (Range r : old) {
+            if (r != null && r.get() != null) {
+                int i = r.hash & mask;
+                while (t[i] != null) {
+                    i = (i + 1) & mask;
+                }
+                t[i] = r;
+            }
+        }
+        byObj = t;
+        byObjUsed = live;
+    }
+
+    /** Drops the dead ranges of the base-ordered array; grows it when that frees less than half. */
+    private void makeRoom() {
+        int n = 0;
+        for (int i = 0; i < size; i++) {
+            if (refs[i].get() != null) {
+                keys[n] = keys[i];
+                refs[n] = refs[i];
+                n++;
+            }
+        }
+        Arrays.fill(refs, n, size, null);
+        size = n;
+        if (n * 2 >= keys.length) {
+            keys = Arrays.copyOf(keys, keys.length * 2);
+            refs = Arrays.copyOf(refs, refs.length * 2);
+        }
     }
 
     /** The live object whose range (its end included) contains {@code addr} and the offset, or null. */
     public synchronized Object[] resolve(long addr) {
-        Map.Entry<Long, Range> e = ranges.floorEntry(addr);
-        if (e == null) {
+        int i = size - 1;
+        if (i < 0 || addr < keys[0]) {
             return null;
         }
-        Object obj = e.getValue().obj.get();
-        long off = addr - e.getKey();
-        return obj == null || off > e.getValue().extent ? null : new Object[] {obj, off};
+        if (addr < keys[i]) {
+            i = Arrays.binarySearch(keys, 0, size, addr);
+            if (i < 0) {
+                i = -i - 2;
+            }
+        }
+        Range r = refs[i];
+        Object obj = r.get();
+        long off = addr - r.base;
+        return obj == null || off > r.extent ? null : new Object[] {obj, off};
     }
 }

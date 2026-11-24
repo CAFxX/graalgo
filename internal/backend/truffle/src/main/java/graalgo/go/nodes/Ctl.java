@@ -153,13 +153,14 @@ public final class Ctl {
         private final int strip;
 
         Repeat(Bool cond, Stmt body, Stmt post, Jump cont, int idx, I64 limit) {
-            this.cond = cond;
             this.body = body;
             this.post = post;
             this.cont = cont;
             this.idx = idx;
             this.strip = limit == null ? 1 : stripLength(body, post);
             this.limit = strip > 1 ? limit : null;
+            // A strip-mined loop tests idx < limit everywhere ({@link #once}).
+            this.cond = this.limit != null ? null : cond;
         }
 
         /**
@@ -215,8 +216,21 @@ public final class Ctl {
             return true;
         }
 
+        /**
+         * One iteration. A strip-mined loop tests {@code idx < limit} here too (it is exactly
+         * {@code cond}): {@code limit} is what compiled code runs, and a node that only compiled
+         * code executes never leaves its uninitialized state — its first compiled execution
+         * deoptimizes, the interpreter does not specialize it, and the compilation fails with
+         * "Deopt taken too many times".
+         */
         private boolean once(VirtualFrame frame) {
-            if (cond != null && !profile.profile(cond.executeBoolean(frame))) {
+            boolean go;
+            if (limit != null) {
+                go = frame.getLong(idx) < limit.executeLong(frame);
+            } else {
+                go = cond == null || cond.executeBoolean(frame);
+            }
+            if (!profile.profile(go)) {
                 return false;
             }
             try {
@@ -237,6 +251,13 @@ public final class Ctl {
     /**
      * A block containing {@code goto} targets: statements run from a program counter that a
      * caught label jump resets (labels are indices; merge-exploded like a bytecode loop).
+     *
+     * <p>The caught {@link Jump} is not a partial-evaluation constant when several statements
+     * (or several {@code goto}s nested in one statement) throw: it is a phi of their constants.
+     * So the dispatch compares it with each label and continues the exploded loop from inside the
+     * matching branch, where the new program counter is a constant; a dispatch that returned the
+     * target (a phi of constants after the merge) failed partial evaluation and left the whole
+     * function interpreted.
      */
     public static final class GotoBlock extends Stmt {
         @Children private final Stmt[] stmts;
@@ -253,26 +274,23 @@ public final class Ctl {
         @ExplodeLoop(kind = ExplodeLoop.LoopExplosionKind.MERGE_EXPLODE)
         public void executeVoid(VirtualFrame frame) {
             int pc = 0;
+            dispatch:
             while (pc < stmts.length) {
                 CompilerAsserts.partialEvaluationConstant(pc);
                 try {
                     stmts[pc].executeVoid(frame);
                     pc++;
                 } catch (Jump j) {
-                    pc = target(j);
                     Safepoint.poll(this);
+                    for (int i = 0; i < labels.length; i++) {
+                        if (labels[i] == j) {
+                            pc = targets[i];
+                            continue dispatch;
+                        }
+                    }
+                    throw j;
                 }
             }
-        }
-
-        @ExplodeLoop
-        private int target(Jump j) {
-            for (int i = 0; i < labels.length; i++) {
-                if (labels[i] == j) {
-                    return targets[i];
-                }
-            }
-            throw j;
         }
     }
 }

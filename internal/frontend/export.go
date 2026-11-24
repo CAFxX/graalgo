@@ -34,6 +34,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -2496,11 +2497,56 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		doc.Objects = []ObjectEnt{}
 	}
 
-	out, err := json.MarshalIndent(doc, "", "  ")
+	out, err := encodeDocChecked(doc)
 	if err != nil {
-		return "", fmt.Errorf("gofrontend: JSON encoding failed: %v", err)
+		return "", err
 	}
-	return string(out), nil
+	// The []byte -> string copy is another large copy: re-scan its result.
+	res := string(out)
+	if strings.IndexByte(res, 0) >= 0 {
+		return "", ErrHostCorruption
+	}
+	return res, nil
+}
+
+// ErrHostCorruption reports a NUL byte in the encoded document, or a
+// syntax error in encoding/json's own output. The encoder never writes a
+// NUL (encoding/json escapes U+0000 as \u0000), so either
+// can only be host memory corruption (BUG-0012: on the dev host, large
+// full-cache-line copies — non-temporal or fast-string stores — under
+// heavy load occasionally lose one byte, which then reads 0 or a stale
+// value). main exits 3 (infrastructure failure) on it, so callers count it
+// as infra, never as a product divergence or a silently retried pass.
+var ErrHostCorruption = errors.New("gofrontend: host memory corruption detected in the encoded document (BUG-0012, see docs/dev/ENV.md)")
+
+// marshalDoc is the document encoder; a variable so the regression test
+// can plant a corrupted encoding.
+var marshalDoc = func(v any) ([]byte, error) { return json.MarshalIndent(v, "", "  ") }
+
+// encodeDocChecked encodes doc and fails with ErrHostCorruption when the
+// result holds a NUL byte or MarshalIndent's own scan of the compact
+// encoding reports a syntax error. The scan is memchr-speed; a corruption to a non-NUL stale byte is
+// not detected here (a second full encode to compare against would be,
+// but costs ~+40% of a gofrontend run — BUG-0012 is a host defect, fixed
+// at the host, see docs/dev/ENV.md).
+func encodeDocChecked(doc any) ([]byte, error) {
+	out, err := marshalDoc(doc)
+	if err != nil {
+		// MarshalIndent re-scans Marshal's output, which is valid JSON
+		// by construction: a syntax error there is a byte corrupted in
+		// between (to NUL or a stale value), never an exporter bug. (A
+		// custom MarshalJSON's invalid output is a MarshalerError: ours.)
+		var syn *json.SyntaxError
+		var me *json.MarshalerError
+		if errors.As(err, &syn) && !errors.As(err, &me) {
+			return nil, fmt.Errorf("%w (encoder: %v)", ErrHostCorruption, err)
+		}
+		return nil, fmt.Errorf("gofrontend: JSON encoding failed: %v", err)
+	}
+	if bytes.IndexByte(out, 0) >= 0 {
+		return nil, ErrHostCorruption
+	}
+	return out, nil
 }
 
 func scopeErrorf(format string, args ...any) error {

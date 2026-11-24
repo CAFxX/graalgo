@@ -4,7 +4,7 @@
 # node package), results checked against gc, warmup curves and steady-state
 # ratios. Method and current numbers: docs/arch/performance.md.
 #
-# Usage: suite.sh [--dir DIR] [--reps K] [--pgo] [--trace] [--json FILE] [--no-graalgo]
+# Usage: suite.sh [--dir DIR] [--reps K] [--pgo] [--trace] [--min-total S] [--json FILE] [--no-graalgo]
 #                 [--gc-env ENV] [--gc-variant NAME=ENV] [--gg-variant NAME=OPTS] [name...]
 #        (all options: test/bench/suite.py --help)
 # Env:   GO, GRAALVM_HOME, GRAALGO_TMP, GRAALGO_JAVA_OPTS (default

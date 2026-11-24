@@ -68,8 +68,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - `make test` — the full suite, `test-java-fast` + `test-java-slow` (every
   class the module runners register, each on its module's classpath, judged
   against the quarantine): never per-push, never on a shared host without
-  asking; the weekly CI `full-suite` job runs it. (Nightly: `mutation.yml`, `fuzz-soak.yml` and `fuzz-newpath.yml` —
-  `make fuzz-newpath`, the new path's differential fuzzer; the layer-3
+  asking; the weekly CI `full-suite` job runs it. (Nightly: `mutation.yml`,
+  `fuzz-soak.yml`, `fuzz-newpath.yml` — `make fuzz-newpath`, the new path's
+  differential fuzzer — and `compile-health.yml` — `make pe-report`, failed
+  compilations and deopt churn of the realistic programs; the layer-3
   `stdlib-gate.yml` is manual-only until BUG-0033 is triaged.)
 - Per-module Go tests: `go test ./...` inside the module's own directory
   (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its
@@ -206,3 +208,11 @@ same commit. Every repo path written in a non-archived doc must exist
 [check_markdown_links.py](.github/scripts/check_markdown_links.py),
 backticked paths by `check_doc_paths.py` in `make check`); mark a path that
 does not exist yet as "(planned)".
+
+## 9. Truffle work (standing order)
+
+- All work touching the Truffle runtime (design, nodes/DSL, optimization and PE diagnosis, tests/CI modes, interop, tooling, Native Image, upgrades, reviews) MUST apply the skill `anthropic-skills:implementing-truffle-languages` (playbook, outside the repo: `~/.claude/skills/synced/350a013d-75ee-4e70-bf7b-1d06ee3d77bd_15e2d836-7958-43b4-ad91-c9a2e0ddb880/implementing-truffle-languages/SKILL.md`).
+- Lane briefs and reviewers cite its §17 checklist, §15 test matrix and §16 diagnosis order; findings are reported as file:line → violated invariant → consequence → fix.
+- Check the pinned Truffle version (jars 25.0.4.1.1) against the playbook's §18 before giving API-level advice.
+- The current audit, its findings and work packages: [docs/arch/truffle-audit.md](docs/arch/truffle-audit.md).
+- graalgo is unreleased and greenfield: backwards compatibility is never a constraint; prefer redesign and deletion over accommodation.
