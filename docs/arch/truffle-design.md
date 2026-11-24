@@ -24,6 +24,11 @@ jars in [internal/backend/truffle/lib/](../../internal/backend/truffle/lib/)
 design"). The owner decided on §14's items on 2026-11-18; §14 records the
 outcome of each.
 
+**Audit (2026-11-24):** [truffle-audit.md](truffle-audit.md) checks this
+design and the as-built node package (§15, §16) against the owner's Truffle
+playbook; its findings and work packages (WP-TR-AUDIT-n) supersede the
+ordering of §10.2 where they differ.
+
 Evidence labels used throughout:
 
 | Label | Meaning |

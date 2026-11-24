@@ -97,6 +97,15 @@ the upgrade tooling are unchanged (drop-in track). Critical path to the
 first real server benchmarked against gc and the next six lanes:
 north-star §6.2–§6.3.
 
+## Truffle playbook audit (2026-11-24)
+
+[truffle-audit.md](truffle-audit.md): the new path audited against the
+owner's Truffle playbook (AGENTS.md §9). Proposed work packages
+WP-TR-AUDIT-1…13 (its §6) and eight decisions for the coordinator; first in
+line: `goto` PE failures, blocking through `TruffleSafepoint`, the
+`evalFieldChain` deopt cycle, and a benchmark method that separates warmup
+from peak. Not yet scheduled: the table below is unchanged until decided.
+
 ## Tracks
 
 **T0 — make what exists honest** (no architecture dependency; start now)
