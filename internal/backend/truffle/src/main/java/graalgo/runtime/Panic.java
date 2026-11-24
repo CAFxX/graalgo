@@ -3,6 +3,7 @@ package graalgo.runtime;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoString;
 import graalgo.values.GoTypeDescriptor;
 
 /**
@@ -92,6 +93,18 @@ public final class Panic {
      * (gc-verified). The returned value is boxed as a Go {@code any}
      * ({@link GoInterface}) when the descriptor is known, so type switches
      * and assertions on the recovered value behave like gc's.
+     *
+     * <p>fix-redmaster-r43: a string-kind runtime error's interface data
+     * IS its message string (gc: {@code errorString} is
+     * {@code type errorString string}). The panic carrier is a
+     * {@code GoErrorValue} wrapper, not the string: boxing the wrapper
+     * as the interface data makes every kind-STRING consumer read a
+     * non-string (fmt's {@code append([]byte, s...)} CCEs). Unwrap to
+     * the message GoString here, at the recover boxing site only — the
+     * uncaught path reads the PanicException directly and is
+     * untouched. Struct-kind runtime errors (boundsError) keep the
+     * wrapper as data: their field values are not recoverable from
+     * the carrier, so that path stays loud rather than fabricated.
      */
     public static Object recover() {
         GoroutineState s = GoroutineState.current();
@@ -104,7 +117,13 @@ public final class Panic {
         }
         p.markRecovered();
         if (p.descriptor() != null) {
-            return new GoInterface(p.descriptor(), p.goValue(), null);
+            Object data = p.goValue();
+            if (data instanceof GoErrorValue gev
+                    && p.descriptor() instanceof GoTypeDescriptor gd
+                    && gd.kind() == GoKind.STRING) {
+                data = GoString.fromUtf8(gev.errorString());
+            }
+            return new GoInterface(p.descriptor(), data, null);
         }
         return p.goValue();
     }
