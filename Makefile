@@ -492,6 +492,7 @@ test-gir:
 # the given programs and skips defer_path.sh.
 test-m1a: build
 	python3 test/m1a/test_transform.py
+	python3 test/m1a/test_tbnorm.py
 	GO="$(GO)" test/m1a/run.sh $(M1A_PROGRAMS)
 	@if [ -z "$(strip $(M1A_PROGRAMS))" ]; then echo GO="$(GO)" test/m1a/defer_path.sh; GO="$(GO)" test/m1a/defer_path.sh; fi
 M1A_PROGRAMS ?=
@@ -708,7 +709,7 @@ define run_java_tests
 	  -cp "$(2)" ClassListRunner $(3)
 endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
-JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.go.types.LeafTableTest graalgo.go.runtime.HandlesTest graalgo.go.nodes.EntryPollTest graalgo.go.intrinsics.BytealgKernelTest graalgo.conventions.NodeConventionsTest
+JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.go.types.LeafTableTest graalgo.go.runtime.HandlesTest graalgo.go.nodes.EntryPollTest graalgo.go.nodes.SourcesTest graalgo.go.intrinsics.BytealgKernelTest graalgo.conventions.NodeConventionsTest
 JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
 JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.CarriersTest graalgo.sched.JfrParkCostTest
 JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
@@ -745,8 +746,8 @@ test-java-fast: java-test-classes java-test-lists-check
 # (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
 # and leak-free, in both modes.
 THREAD_MODE_JAVA := graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.sched.WakeupRaceStressTest graalgo.jfr.JfrEventsTest
-THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go
-THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go
+THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go test/m1a/programs/traceback_goroutine.go
+THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go test/m1r/programs/callers.go
 THREAD_MODE_M1C := test/m1c/programs/sync_contention.go test/m1c/programs/time_timers.go
 THREAD_MODE_OPTS = $(GRAALGO_JAVA_OPTS) -Dgraalgo.sched.goroutines=thread
 test-goroutine-modes: build java-test-classes
@@ -756,6 +757,7 @@ test-goroutine-modes: build java-test-classes
 	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1c/run.sh $(THREAD_MODE_M1C)
 	GRAALGO_JAVA_OPTS="$(GRAALGO_JAVA_OPTS) -ea" GO="$(GO)" test/m1r/run.sh test/m1r/programs/carrier_migration.go $(THREAD_MODE_M1A)
 	GO="$(GO)" test/m1r/cancel.sh
+	GO="$(GO)" test/m1r/tools.sh carrier,thread
 
 # Each module's run is logged (exit status ignored: a JVM crash or INFRA
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then

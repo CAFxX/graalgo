@@ -1,9 +1,9 @@
 // reflect_probe.go — the reflect API surface, one check per line (the abi-spike
 // probe test/spikes/abi/reflectprobe, 126 checks): types, method tables,
 // run-time-made types, fields, sets, maps, channels, Value.Call, MakeFunc,
-// method values, Select, DeepEqual. One check of the original is left out:
-// panic.unexported-set, whose message names the calling reflect method
-// through runtime.Callers (BUG-0047).
+// method values, Select, DeepEqual. panic.unexported-set's message names the
+// calling reflect method through runtime.Callers (BUG-0047, fixed by
+// WP-TR-AUDIT-6).
 //
 // Command reflectprobe exercises the reflect API surface one check at a
 // time. Each check prints one line "name value"; a check that panics prints
@@ -386,6 +386,12 @@ var checks = []check{
 	{"panic.ValueError", func() (s string) {
 		defer func() { s = recover().(*reflect.ValueError).Error() }()
 		reflect.ValueOf("x").Int()
+		return ""
+	}},
+	{"panic.unexported-set", func() (s string) {
+		defer func() { s = recover().(string) }()
+		p := sample
+		reflect.ValueOf(&p).Elem().Field(11).SetBool(true)
 		return ""
 	}},
 }
