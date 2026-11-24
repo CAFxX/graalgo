@@ -369,13 +369,14 @@ public final class JfrEventsTest {
     }
 
     /**
-     * Disabled-path cost, measured directly: notePark + parkResumed on a
-     * real handle, no recording active. Asserts the guard costs less than
-     * two {@code System.nanoTime()} calls — a machine-independent
-     * definition of "near-zero" for instrumentation whose job is
-     * timestamping parks. (Absolute budgets don't port: this VM's clock
-     * runs ~5x slow. {@code Event.isEnabled()} is ~8ns on the pinned
-     * GraalVM 25 toolchain — called directly, no caching layer.)
+     * Disabled-path cost: notePark + parkResumed on a real handle, no recording active.
+     * Deterministic first: the disabled path reads no clock (the park's start stays 0), consumes
+     * the park reason, and allocates nothing over a million parks (thread allocation counter).
+     * Then the cost, against a control: per park the guard costs less than two
+     * {@code System.nanoTime()} calls, both loops timed in <em>thread CPU time</em> (the host
+     * descheduling the thread does not count) and the best of {@value #GUARD_TRIALS} adjacent
+     * trials compared, so a loaded host cannot fail it. (Wall-clock budgets flaked under load:
+     * the guard loop and the reference loop ran in different scheduling weather.)
      */
     public void testDisabledGuardCostNegligible() throws Exception {
         assertTrue(!JfrEvents.anyEnabled(), "test requires no active recording");
@@ -391,44 +392,71 @@ public final class JfrEventsTest {
         ctor.setAccessible(true);
         graalgo.sched.GoroutineHandle h = ctor.newInstance((Runnable) () -> {
         });
+        guardProbe = h;
+        // Disabled: no timestamp, reason consumed.
+        JfrEvents.notePark(h, ParkReason.QUANTUM);
+        assertTrue(h.parkStartNanos == 0L, "disabled notePark read the clock");
+        JfrEvents.parkResumed(h);
+        assertTrue(h.parkReason == null, "parkResumed did not consume the park reason");
+        com.sun.management.ThreadMXBean mx =
+                (com.sun.management.ThreadMXBean) java.lang.management.ManagementFactory.getThreadMXBean();
         int n = 1_000_000;
-        // Cost of one clock read on this machine (reference unit).
-        for (int i = 0; i < 100_000; i++) {
-            System.nanoTime();
+        guardLoop(n); // warmup: settle JIT/code-cache on the park path
+        nanoLoop(100_000);
+        long alloc0 = mx.getCurrentThreadAllocatedBytes();
+        guardLoop(n);
+        long allocated = mx.getCurrentThreadAllocatedBytes() - alloc0;
+        assertTrue(allocated < 1024, "disabled park hooks allocated " + allocated + " bytes over "
+                + n + " parks");
+        double bestGuard = Double.MAX_VALUE;
+        double bestNano = Double.MAX_VALUE;
+        for (int t = 0; t < GUARD_TRIALS; t++) {
+            long c0 = mx.getCurrentThreadCpuTime();
+            nanoLoop(n);
+            long c1 = mx.getCurrentThreadCpuTime();
+            guardLoop(n);
+            long c2 = mx.getCurrentThreadCpuTime();
+            incLoop(n);
+            long c3 = mx.getCurrentThreadCpuTime();
+            bestNano = Math.min(bestNano, (double) (c1 - c0) / n);
+            // Subtract the scheduler's own bookkeeping (the atomic inc is not JFR's).
+            bestGuard = Math.min(bestGuard, (double) ((c2 - c1) - (c3 - c2)) / n);
         }
-        long t0 = System.nanoTime();
-        long sink = 0;
-        for (int i = 0; i < n; i++) {
-            sink += System.nanoTime();
-        }
-        double nanoCost = (double) (System.nanoTime() - t0) / n;
-        if (sink == 0) {
-            throw new AssertionError("unreachable");
-        }
-        // Warmup: settle JIT/code-cache on the park path.
-        for (int i = 0; i < 100_000; i++) {
-            h.parkSeq.incrementAndGet(); // simulate armPark
-            JfrEvents.notePark(h, ParkReason.QUANTUM);
-            JfrEvents.parkResumed(h);
-        }
-        t0 = System.nanoTime();
+        System.out.println("JFR disabled guard cost: " + bestGuard + " ns/park"
+                + " (nanoTime: " + bestNano + " ns; thread CPU time, best of " + GUARD_TRIALS + ")");
+        assertTrue(bestGuard < 2 * bestNano,
+                "disabled guard too slow: " + bestGuard + " ns/park vs nanoTime " + bestNano + " ns");
+    }
+
+    private static final int GUARD_TRIALS = 5;
+
+    /** Escapes the probe handle, so the JIT cannot scalar-replace the hooks' writes. */
+    private static volatile graalgo.sched.GoroutineHandle guardProbe;
+
+    private static void guardLoop(int n) {
+        graalgo.sched.GoroutineHandle h = guardProbe;
         for (int i = 0; i < n; i++) {
             h.parkSeq.incrementAndGet(); // simulate armPark (scheduler bookkeeping)
             JfrEvents.notePark(h, ParkReason.QUANTUM);
             JfrEvents.parkResumed(h);
         }
-        long fullNanos = System.nanoTime() - t0;
-        // Subtract the scheduler's own bookkeeping (the atomic inc is not JFR's).
-        t0 = System.nanoTime();
+    }
+
+    private static void incLoop(int n) {
+        graalgo.sched.GoroutineHandle h = guardProbe;
         for (int i = 0; i < n; i++) {
             h.parkSeq.incrementAndGet();
         }
-        long incNanos = System.nanoTime() - t0;
-        double guardCost = (double) (fullNanos - incNanos) / n;
-        System.out.println("JFR disabled guard cost: " + guardCost + " ns/park"
-                + " (nanoTime: " + nanoCost + " ns)");
-        assertTrue(guardCost < 2 * nanoCost,
-                "disabled guard too slow: " + guardCost + " ns/park vs nanoTime " + nanoCost + " ns");
+    }
+
+    private static long nanoSink;
+
+    private static void nanoLoop(int n) {
+        long sink = 0;
+        for (int i = 0; i < n; i++) {
+            sink += System.nanoTime();
+        }
+        nanoSink += sink;
     }
 
     /**
