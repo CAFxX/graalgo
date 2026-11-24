@@ -26,7 +26,9 @@
 //	      TIMING    listed `timing: true` (outcome depends on host speed)
 //	                and matches gc: a pass, not STALE
 //	      INFRA     the run failed for an infrastructure reason (e.g. a
-//	                corrupted frontend export) on every retry               -> fail, exit 3
+//	                corrupted frontend export) on every retry, or the
+//	                REFERENCE (gc) timed out even on its 2x-timeout
+//	                retry (host speed, never a graalgo behavior)            -> fail, exit 3
 //	    With -verify-ref, the reference backend is re-run too and any
 //	    difference from the snapshot is REF-DRIFT (upstream behavior
 //	    change or an unrecorded corpus edit) -> fail.
@@ -302,8 +304,11 @@ func trunc(s string, n int) string {
 }
 
 // runAll executes every program under the backend, jobs-at-a-time, and
-// returns the outcomes in program order.
-func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, workRoot string, jobs int) []harness.Outcome {
+// returns the outcomes in program order. reference marks the backend as
+// the oracle (gc): its timeouts are retried once with an extended timeout
+// (harness.RunReference) and, if they persist, are INFRA (harness.RefInfra),
+// never a recorded or compared behavior.
+func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, workRoot string, jobs int, reference bool) []harness.Outcome {
 	outs := make([]harness.Outcome, len(progs))
 	if jobs < 1 {
 		jobs = 1
@@ -316,7 +321,11 @@ func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, wo
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			outs[i] = harness.RunProgram(cfg, b, p, workRoot)
+			if reference {
+				outs[i] = harness.RunReference(cfg, b, p, workRoot)
+			} else {
+				outs[i] = harness.RunProgram(cfg, b, p, workRoot)
+			}
 		}(i, p)
 	}
 	wg.Wait()
@@ -396,8 +405,11 @@ func cmdSnapshotRecord(args []string) error {
 		Normalizer: snapshotNormalizer,
 	}
 	for r := 0; r < sf.runs; r++ {
-		outs := runAll(cfg, b, progs, workRoot, sf.jobs)
+		outs := runAll(cfg, b, progs, workRoot, sf.jobs, true)
 		for i, p := range progs {
+			if harness.RefInfra(outs[i]) {
+				return fmt.Errorf("%w: reference %s timed out on %s (also on the extended retry): refusing to record a timeout as gc's behavior", errInfra, b.Name, p.Name)
+			}
 			e := entryFromOutcome(p, outs[i], corpusRoot)
 			if e.SourceSHA256, err = sourceHash(p); err != nil {
 				return err
@@ -476,8 +488,12 @@ func cmdSnapshotCheck(args []string) error {
 		if err != nil {
 			return err
 		}
-		outs := runAll(cfg, rb, live, workRoot, sf.jobs)
+		outs := runAll(cfg, rb, live, workRoot, sf.jobs, true)
 		for i, p := range live {
+			if harness.RefInfra(outs[i]) {
+				verdicts = append(verdicts, verdict{p.Name, "INFRA", rb.Name + ": reference timed out (also on the extended retry): no verdict"})
+				continue
+			}
 			if d := diffEntries(want[p.Name], entryFromOutcome(p, outs[i], corpusRoot)); d != "" {
 				verdicts = append(verdicts, verdict{p.Name, "REF-DRIFT", rb.Name + ": " + d})
 			}
@@ -485,7 +501,7 @@ func cmdSnapshotCheck(args []string) error {
 	}
 	var outs []harness.Outcome
 	if !sf.failFast {
-		outs = runAll(cfg, b, live, workRoot, sf.jobs)
+		outs = runAll(cfg, b, live, workRoot, sf.jobs, false)
 	}
 	for i, p := range live {
 		var oc harness.Outcome

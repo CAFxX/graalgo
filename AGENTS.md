@@ -113,6 +113,13 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   signature, and the count of marked entries is the shrink-only
   `timing-excl` ratchet (`.github/scripts/ratchet_budget.json`): never use
   it for a program that fails for any other reason.
+- **A timeout of the reference (gc) is INFRA, never a divergence.** gc
+  is the oracle: if it times out (a slow runner) the harness retries once
+  with 2x the timeout, and if it still times out the program is `INFRA`
+  (exit 3, fails loudly; never compared, never masked by an exclusion
+  entry). Only a graalgo-side timeout can diverge. Programs importing
+  `os/exec` (they run the go tool) get a 4x per-program timeout
+  (`test/differential/internal/harness/runner.go`: `RunReference`).
 
 ## 4. Worktrees and commits
 

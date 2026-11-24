@@ -300,3 +300,23 @@ func TestGcBuildsDistinguishesInfra(t *testing.T) {
 		t.Error("an unstartable toolchain must be infra")
 	}
 }
+
+// A program importing os/exec (it spawns child processes, typically the go
+// tool) gets a larger run-timeout multiplier; others do not. Structural: by
+// import, never by file name.
+func TestClassifyExecTimeoutScale(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, dir, "a.go", "// run\n\npackage main\n\nimport \"os/exec\"\n\nvar _ = exec.Command\n\nfunc main() {}\n")
+	writeFile(t, dir, "b.go", "// run\n\npackage main\n\nimport \"os\"\n\nvar _ = os.Args\n\nfunc main() {}\n")
+	files, err := Scan(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	for _, f := range files {
+		got[f.Name] = f.TimeoutScale
+	}
+	if got["a.go"] != execTimeoutScale || got["b.go"] != 0 {
+		t.Fatalf("scales = %v, want a.go=%d b.go=0", got, execTimeoutScale)
+	}
+}
