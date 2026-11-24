@@ -104,6 +104,13 @@
 #   `make check-links-external`, `make test-diffharness` — per-push CI
 #   (markdown-links.yml, ci.yml's harness self-test) outside `make all`;
 #   `make pre-land` runs `all`, both, and CI's drift check.
+#   `make test-times` runs `all`'s list through test/lib/gates.py: each
+#   gate timed (wall + CPU) and ratcheted against
+#   test/duration-baseline.json; GATE_JOBS gates at a time. CI runs `all`
+#   and test-diffharness this way (GATE_JOBS=2, RATCHET=fail; off master,
+#   a Markdown-only change runs only the docs tier). Cost profile:
+#   docs/dev/test-profile.md.
+#   `make quick` — the inner-loop tier (minutes; never landing evidence).
 #   `make fuzz-newpath` — the differential fuzzer of the new path
 #   ([test/fuzz/](test/fuzz/)): the hand-written adversarial corpus plus N
 #   generated programs from SEED, each vs live gc (~1 s a program); nightly
@@ -203,7 +210,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
 
@@ -270,7 +277,7 @@ check-repo:
 	# ##[error] annotation through setup-go's problem matcher (the top
 	# annotation of a red run pointed at test_check_ratchets.py's planted
 	# tools/b.go). A self-test's output is shown only when it fails.
-	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py; do \
+	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py test/lib/test_*.py; do \
 	  if out=$$(python3 $$t 2>&1); then echo "== $$t: ok"; \
 	  else echo "== $$t: FAILED"; echo "$$out"; exit 1; fi; done
 	python3 .github/scripts/check_tracked_files.py
@@ -305,10 +312,47 @@ check-repo:
 check-links-external:
 	python3 .github/scripts/check_markdown_links.py
 
-test-diffharness: build
-	DH_TIMEOUT=$${DH_TIMEOUT:-90} ./test/differential/run.sh
+# Timed gate runs ([test/lib/gates.py](test/lib/gates.py); profile and
+# costs: [docs/dev/test-profile.md](docs/dev/test-profile.md)). The setup
+# targets (generate build graalgo java-test-classes) run first, then the
+# gates GATE_JOBS at a time (output buffered per gate, never interleaved),
+# each timed (wall + CPU); the table goes to stdout and GATE_TIMES (JSON),
+# and each gate's CPU time is ratcheted against
+# [test/duration-baseline.json](test/duration-baseline.json): RATCHET=warn
+# (local default) prints SLOWER above 1.2x; RATCHET=fail (CI) also fails
+# above 2x + 30 s. GATE_JOBS defaults to 1 (shared hosts: AGENTS.md §7);
+# CI runs 2.
+#   make test-times                    `make all`'s gates, timed
+#   make test-times TARGETS="test-m1a test-m1r"
+GATE_JOBS ?= 1
+RATCHET ?= warn
+GATE_TIMES ?= $(CURDIR)/.tmp/gate-times.json
+GATES = python3 test/lib/gates.py run --make "$(MAKE)" -j $(GATE_JOBS) --ratchet $(RATCHET) --json $(GATE_TIMES)
+TARGETS ?= all
+test-times:
+	$(GATES) $(TARGETS)
 
-pre-land: all check-links-external test-diffharness
+# The inner-loop tier (~3 min on a quiet host): never landing evidence —
+# `make pre-land` is. The static repo gates, the cheap module suites, and
+# slices of the differential gates: the edge-case snapshot slice
+# (MUTATION_SLICE, the slice the mutation gate trusts) and a few programs
+# of m1a/m1r/m1d across defers, interfaces, generics, goroutines, panics
+# and the real fmt.
+QUICK_M1A ?= test/m1a/programs/defer_chain.go test/m1a/programs/flat_values.go test/m1a/programs/generics.go test/m1a/programs/ifaces.go test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go test/m1a/programs/eval_order.go test/m1a/programs/panic_print.go
+QUICK_M1R ?= test/m1r/programs/sort_slice.go test/m1r/programs/strconv_conv.go
+QUICK_M1D ?= test/m1d/programs/hello_fmt.go
+quick: generate build
+	$(MAKE) check-repo test-v2 test-gir
+	$(MAKE) snapshot-check SNAPSHOT_PROGRAMS=$(MUTATION_SLICE)
+	$(MAKE) test-m1a M1A_PROGRAMS="$(QUICK_M1A)"
+	$(MAKE) test-m1r M1R_PROGRAMS="$(QUICK_M1R)"
+	$(MAKE) test-m1d M1D_PROGRAMS="$(QUICK_M1D)"
+
+test-diffharness: build
+	DH_TIMEOUT=$${DH_TIMEOUT:-90} DH_JOBS=$${DH_JOBS:-$(SNAPSHOT_JOBS)} ./test/differential/run.sh
+
+pre-land:
+	$(GATES) --tier-base= all check-links-external test-diffharness
 	git diff --exit-code
 	@if [ -n "$$(git status --porcelain --untracked-files=all)" ]; then \
 	  echo "DRIFT: modified or untracked files:"; git status --porcelain --untracked-files=all; exit 1; fi
@@ -362,6 +406,7 @@ test-regression: generate build graalgo
 	@test -n "$(strip $(REGRESSION_TEST_DIRS))" || { echo "TEST-REGRESSION: no test/regression/*/ dirs (zero cases is not a pass)"; exit 1; }
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
+	eval "$$(bash test/lib/jvmcds.sh sync-env)"; \
 	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
@@ -777,7 +822,7 @@ snapshot:
 
 snapshot-check: build
 	$(snapshot_guard)
-	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) \
+	mkdir -p $(SNAPSHOT_TMP) && eval "$$(bash test/lib/jvmcds.sh sync-env)" && cd $(DH) && $(SNAPSHOT_ENV) \
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \

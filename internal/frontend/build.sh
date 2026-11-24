@@ -55,7 +55,10 @@ case "${1:-build}" in
     echo "== vendoring diff gate ==" >&2
     diff -r "$GOROOT_DIR/src/go" "$PWD/go" && echo "vendored tree byte-identical to GOROOT/src/go" >&2
     echo "== frontend/v1 wire-format validator ==" >&2
-    "$GO" build $OV -o gofrontend .
+    # Validate a binary built from today's sources, into scratch: never
+    # rewrite ./gofrontend in place, other gates may be executing it.
+    fe="${TMPDIR:-/tmp}/gofrontend.check.$$"
+    "$GO" build $OV -o "$fe" .
     python3 tools/validate_frontend_v1.py --selftest
     # Validate every checked-in golden document plus a fresh export of
     # each valid testdata program — not only straight01.go (the goldens
@@ -72,9 +75,11 @@ case "${1:-build}" in
                testdata/methodvalue01.go testdata/timeintr_value.go \
                testdata/mr_return_named.go; do
       base=$(basename "$src" .go)
-      ./gofrontend "$src" > "${TMPDIR:-/tmp}/v1-$base.json"
-      python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-$base.json" || exit 1
+      "$fe" "$src" > "${TMPDIR:-/tmp}/v1-$base.json"
+      python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1-$base.json" || { rm -f "$fe"; exit 1; }
+      rm -f "${TMPDIR:-/tmp}/v1-$base.json"
     done
+    rm -f "$fe"
     echo "frontend/v1 validator: selftest + all golden docs + fresh exports accepted" >&2
     ;;
   *) echo "usage: build.sh [build|vet|test|check]" >&2; exit 1 ;;

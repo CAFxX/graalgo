@@ -17,7 +17,11 @@ GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 if [ -z "${GRAALGO_GOFRONTEND:-}" ] && [ -x "$HERE/../frontend/gofrontend" ]; then
   export GRAALGO_GOFRONTEND="$HERE/../frontend/gofrontend"
 fi
-CP="$HERE/interop/out/classes:$HERE/truffle/out/classes"
+# GRAALGO_INTEROP_CLASSES / GRAALGO_TRUFFLE_CLASSES: where the modules'
+# classes are (default */out/classes): the test gates pass jars of the same
+# classes, which a class-data-sharing archive can map (test/lib/jvmcds.sh;
+# CDS refuses a non-empty directory on the class path).
+CP="${GRAALGO_INTEROP_CLASSES:-$HERE/interop/out/classes}:${GRAALGO_TRUFFLE_CLASSES:-$HERE/truffle/out/classes}"
 for jar in "$HERE"/truffle/lib/*.jar; do
   CP="$CP:$jar"
 done

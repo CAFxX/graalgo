@@ -45,6 +45,7 @@ Every file/directory named in our docs must be a working relative link;
 this script is the mechanical enforcement.
 """
 
+import concurrent.futures
 import http.client
 import json
 import os
@@ -378,6 +379,9 @@ def strip_inline_code(line):
     return INLINE_CODE_RE.sub("", line)
 
 
+EXTERNAL_JOBS = 8
+
+
 def main():
     skip_external = "--skip-external" in sys.argv
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
@@ -386,6 +390,7 @@ def main():
     errors = []
     transient = []
     md_files = []
+    external = []  # (file, line, url), checked below: once per URL, concurrently
     for dirpath, dirnames, filenames in os.walk(root):
         # Never descend into build output, vendored trees, or git metadata.
         dirnames[:] = [d for d in dirnames
@@ -413,12 +418,7 @@ def main():
 
                 if re.match(r"https?://", target):
                     if not skip_external:
-                        verdict = check_external(target)
-                        if verdict is False:
-                            errors.append(f"{md}:{lineno}: dead URL {target}")
-                        elif verdict is TRANSIENT:
-                            transient.append(
-                                f"{md}:{lineno}: unverifiable URL {target}")
+                        external.append((md, lineno, target))
                     continue
                 if re.match(r"[a-zA-Z][a-zA-Z0-9+.-]*:", path_part):
                     continue  # other schemes: not our problem
@@ -436,6 +436,18 @@ def main():
                         errors.append(
                             f"{md}:{lineno}: dangling anchor #{anchor} "
                             f"in {target}")
+
+    # Each distinct URL is fetched once (many docs cite the same pages),
+    # EXTERNAL_JOBS at a time: the check is network-bound, not CPU-bound.
+    urls = list(dict.fromkeys(u for _, _, u in external))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=EXTERNAL_JOBS) as pool:
+        verdicts = dict(zip(urls, pool.map(check_external, urls)))
+    for md, lineno, target in external:
+        verdict = verdicts[target]
+        if verdict is False:
+            errors.append(f"{md}:{lineno}: dead URL {target}")
+        elif verdict is TRANSIENT:
+            transient.append(f"{md}:{lineno}: unverifiable URL {target}")
 
     if errors:
         print(f"{len(errors)} broken link(s) in {len(md_files)} markdown files:")

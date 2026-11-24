@@ -82,11 +82,17 @@ mkdir -p "$TMP/mod"
 cp "$HERE"/*.go "$TMP/mod/"
 printf 'module imgcheck\n\ngo 1.27\n' > "$TMP/mod/go.mod"
 
-# gc leg: the compiler's descriptors, and the walker checked against reflect.
-( cd "$TMP/mod" && "$GO" build -tags imgcheck_oracle -ldflags=-checklinkname=0 -o "$TMP/gc.bin" . ) >"$TMP/gc.build" 2>&1 \
+# gc leg: the compiler's descriptors, and the walker checked against reflect
+# (replayed from test/lib/gcoracle.sh's cache when nothing changed).
+# shellcheck source=../lib/gcoracle.sh
+. "$HERE/../lib/gcoracle.sh"
+gc_run() { ( cd "$TMP" && timeout "$TIMEOUT" "$1" >"$2" 2>"$3" </dev/null ); }
+gc_live() { gc_leg_build_run "$TMP/mod" "$TMP" gc_run -tags imgcheck_oracle -ldflags=-checklinkname=0; }
+gc_oracle "$TMP" "$TMP/mod" gc_live imgcheck "$TIMEOUT"
+gc_status=$(cat "$TMP/gc.status")
+[ "$gc_status" != build ] \
     || { cat "$TMP/gc.build" >&2; infra_die "gc cannot build the imgcheck program"; }
-( cd "$TMP" && timeout "$TIMEOUT" "$TMP/gc.bin" >"$TMP/gc.out" 2>"$TMP/gc.err" </dev/null ) \
-    || fail "the gc leg exited with status $?"
+[ "$gc_status" = 0 ] || fail "the gc leg exited with status $gc_status"
 grep -q '^oracle: [0-9]* descriptors checked against reflect, 0 mismatches$' "$TMP/gc.out" \
     || { grep -a 'ORACLE MISMATCH' "$TMP/gc.err" | head -10; fail "the walker disagrees with gc's reflect: $(cat "$TMP/gc.out")"; }
 summary="$(tail -1 "$TMP/gc.err")"

@@ -80,6 +80,18 @@ run_leg() { # <dir> <stdout> <stderr> <stdin> <src> -> exit status
     return "$status"
 }
 
+# shellcheck source=../lib/gcoracle.sh
+. "$HERE/../lib/gcoracle.sh"
+gc_live() {
+    if ( cd "$w/mod" && "$GO" build -o "$w/gc/prog" . ) >"$w/gc.build" 2>&1; then
+        local st=0
+        run_leg "$w/gc" "$w/gc.out" "$w/gc.err" "$stdin" "$src" || st=$?
+        echo "$st" > "$w/gc.status"
+    else
+        echo build > "$w/gc.status"
+    fi
+}
+
 pass=0
 fail=0
 report="${M1D_REPORT:-}"
@@ -92,20 +104,22 @@ for prog in "${programs[@]}"; do
     w="$TMP/w/$n"
     mkdir -p "$w/mod" "$w/gc" "$w/gg"
     cp "$src" "$w/mod/main.go"
-    printf 'module m1d/p%d\n\ngo 1.27\n' "$n" > "$w/mod/go.mod"
+    printf 'module m1d/p\n\ngo 1.27\n' > "$w/mod/go.mod"
     stdin=/dev/null
     if grep -q '^// stdin: ' "$src"; then
         stdin="$w/stdin"
         printf '%b\n' "$(directive "$src" stdin | head -1)" > "$stdin"
     fi
     reason=""
-    if ! ( cd "$w/mod" && "$GO" build -o "$w/gc/prog" . ) >"$w/gc.build" 2>&1; then
+    # The gc leg, replayed from test/lib/gcoracle.sh's cache when unchanged
+    # (its args, env and stdin are directives of the source: in the key).
+    gc_oracle "$w" "$w/mod" gc_live m1d "$TIMEOUT"
+    gc_status=$(cat "$w/gc.status")
+    if [ "$gc_status" = build ]; then
         reason="gc rejects the program (corpus bug)"
     elif ! ( cd "$w/mod" && toolexec_build "$w/gg/prog" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
     else
-        gc_status=0
-        run_leg "$w/gc" "$w/gc.out" "$w/gc.err" "$stdin" "$src" || gc_status=$?
         gg_status=0
         run_leg "$w/gg" "$w/gg.out" "$w/gg.err" "$stdin" "$src" || gg_status=$?
         infra_check_run "$prog" "$gg_status" "$w/gg.err"

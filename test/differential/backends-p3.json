@@ -53,6 +53,7 @@
         "GOMAXPROCS": "1",
         "GOTOOLCHAIN": "local"
       },
+      "lazyBuild": true,
       "name": "graalgo",
       "noiseSets": [
         "jvm"

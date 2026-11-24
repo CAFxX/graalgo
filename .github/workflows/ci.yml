@@ -8,8 +8,9 @@
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs `make all`
 # (generate/build/snapshot-check/check/module tests/test-ci/test-java-fast/
 # test-regression/test-m1a/pe-check-m1a/test-m1w13/test-imgcheck/test-m1r/
-# test-m1c — the new -toolexec path's gc differential, PE, pointer-model,
-# descriptor-image, std-library and M1c gates) plus the testing-strategy layers at their
+# test-m1c/test-m1d/test-goroutine-modes — the new -toolexec path's gc
+# differential, PE, pointer-model, descriptor-image, std-library, M1c/M1d and
+# goroutine-mode gates) plus the testing-strategy layers at their
 # cadence (SPEC §5):
 #   layer 1 (smoke):            per-commit  — `make all` -> snapshot-check:
 #                               the differential corpus under graalgo vs
@@ -90,12 +91,45 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.1'
+          cache: false  # see the actions/cache step below
 
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: make all (generate + build + check + fast tests)
-        run: make all
+      - name: Restore the Go build cache and the gc-oracle cache
+        # setup-go's own cache keys on a root go.sum this repo does not
+        # have (one go.mod per module), so it never restored anything: every
+        # run compiled the std library cold, once per gc configuration and
+        # once more through graalgo-tool. Both caches are content-addressed
+        # (a stale entry is a miss, never a wrong answer): restore the
+        # newest, save under this sha. The gc-oracle cache
+        # (test/lib/gcoracle.sh) replays the gc leg of unchanged m1* programs.
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            .tmp/gc-oracle
+          key: gates-${{ runner.os }}-go1.27.1-${{ github.sha }}
+          restore-keys: gates-${{ runner.os }}-go1.27.1-
+
+      - name: make all + harness self-test, timed and tiered
+        # `make test-times` runs exactly `make all`'s list (test/lib/gates.py
+        # reads the `all:` rule) plus test-diffharness (the harness
+        # self-test: build/vet/unit tests of diffharness and its comparator
+        # gc-vs-gc — no false positives, rerun stability, sensitivity to
+        # mutated corpus programs; graalgo-vs-gc is snapshot-check, mutating
+        # graalgo itself the nightly mutation.yml): the setup targets
+        # first, then the gates two at a time (output buffered per gate),
+        # each timed; RATCHET=fail fails a gate whose CPU time exceeds 2x
+        # its baseline + 30 s (test/duration-baseline.json;
+        # docs/dev/test-profile.md). Tiers: off master, a push or PR whose
+        # changes are all docs (Markdown outside the code trees) runs the
+        # docs tier (`check` + the gates that read a doc); master always
+        # runs the full list.
+        env:
+          DH_TIMEOUT: "90"
+          GATE_TIER_BASE: ${{ github.ref != 'refs/heads/master' && (github.event.pull_request.base.sha || github.event.before) || '' }}
+        run: make test-times GATE_JOBS=2 RATCHET=fail TARGETS="all test-diffharness" GATE_TIMES="$RUNNER_TEMP/gate-times.json"
 
       - name: Fail on drift (generated files differ from committed, or new untracked files)
         # `git diff --exit-code` alone misses a generated file that is
@@ -105,16 +139,6 @@ jobs:
           if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
             echo "DRIFT: make all left modified or untracked files:"; git status --porcelain --untracked-files=all; exit 1
           fi
-
-      - name: Harness self-test (diffharness comparator, gc-vs-gc)
-        # Builds/vets/unit-tests the harness and checks the comparator on
-        # gc-vs-gc: no false positives on the unmutated corpus, rerun
-        # stability, sensitivity to mutated corpus programs. graalgo-vs-gc
-        # is `make all` -> snapshot-check above; mutating graalgo itself is
-        # the nightly mutation.yml.
-        env:
-          DH_TIMEOUT: "90"
-        run: make test-diffharness
 
   full-suite:
     # The long differential suite, excluded from per-push CI by design
@@ -167,18 +191,29 @@ jobs:
         # a runner loss are the evidence); make's output is streamed, not
         # buffered.
         timeout-minutes: 80
+        # Without pipefail the pipeline's status is tee's, so a failing
+        # `make test` reported success (dispatch run 45456985959: test-java-fast
+        # failed, the job was green): `shell: bash` runs `-eo pipefail`, and
+        # make's own exit status is kept in make-test.rc for the summary.
+        shell: bash
         run: |
+          set -o pipefail
           mkdir -p "$FULL_SUITE_LOGS"
           .github/scripts/ci_watch.sh 20 "$FULL_SUITE_LOGS/watch.log" &
           watch=$!
           trap 'kill "$watch" 2>/dev/null || true' EXIT
-          make test 2>&1 | tee "$FULL_SUITE_LOGS/make-test.log"
+          rc=0
+          make test 2>&1 | tee "$FULL_SUITE_LOGS/make-test.log" || rc=$?
+          echo "$rc" > "$FULL_SUITE_LOGS/make-test.rc"
+          exit "$rc"
 
-      - name: Summary (peak memory, per-class timings)
+      - name: Summary (make's exit status, peak memory, per-class timings)
         if: always()
+        shell: bash
         run: |
           {
             echo "### full-suite"
+            echo "make test exit status: $(cat "$FULL_SUITE_LOGS/make-test.rc" 2>/dev/null || echo 'none (step did not finish)')"
             if [ -s "$FULL_SUITE_LOGS/watch.log" ]; then
               echo "min MemAvailable: $(grep -o 'avail=[0-9]*' "$FULL_SUITE_LOGS/watch.log" | cut -d= -f2 | sort -n | head -1) MB;" \
                 "max load: $(grep -o 'load=[0-9.]*' "$FULL_SUITE_LOGS/watch.log" | cut -d= -f2 | sort -n | tail -1);" \

@@ -272,10 +272,10 @@ func TestRunAllReferenceTimeout(t *testing.T) {
 	}
 	cfg := &harness.Config{TimeoutSec: 1, TimeoutUnit: 100 * time.Millisecond}
 	progs := []harness.Program{{Name: "p", Main: "unused.go"}}
-	if outs := runAll(cfg, b, progs, t.TempDir(), 1, true); !harness.RefInfra(outs[0]) {
+	if outs := runAll(cfg, b, progs, t.TempDir(), 1, harness.RunReference); !harness.RefInfra(outs[0]) {
 		t.Fatalf("reference timeout must be INFRA: %+v", outs[0])
 	}
-	outs := runAll(cfg, b, progs, t.TempDir(), 1, false)
+	outs := runAll(cfg, b, progs, t.TempDir(), 1, harness.RunProgram)
 	if !outs[0].TimedOut || outs[0].RetriedTimeout {
 		t.Fatalf("non-reference run must not be retried: %+v", outs[0])
 	}

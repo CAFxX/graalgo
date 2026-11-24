@@ -1,0 +1,293 @@
+#!/usr/bin/env python3
+"""test/lib/gates.py — run the per-push gates timed, optionally in parallel,
+and ratchet their cost against test/duration-baseline.json.
+
+    gates.py run [-j N] [-k] [--json FILE] [--baseline FILE]
+                 [--ratchet off|warn|fail] [TARGET...]
+    gates.py record RUN_JSON [--baseline FILE]
+
+`run` with no TARGET runs the prerequisites of the Makefile's `all:` rule
+(the per-push set, so the two cannot drift apart); a TARGET named `all`
+stands for that list too. The SETUP targets
+(generate, build, graalgo, java-test-classes) always run first, one at a
+time (unless --no-setup): they write the build outputs every gate reads. Each gate then runs as
+`make -o SETUP... <gate>` (SETUP marked done, never rebuilt), up to N at a
+time; a gate's output is captured and printed whole when it finishes, so
+parallel output never interleaves. Wall time and CPU time (user+sys of the
+gate's whole process tree, from wait4) are measured per target.
+
+Ratchet: each target's CPU time is compared with the committed baseline.
+  warn  (local default) prints SLOWER when cpu > 1.2 x base + 5 s
+  fail  (CI) also fails when cpu > FAIL_RATIO x base + 30 s (default 2.0):
+        only a gross regression (an accidental doubling) fails; host noise
+        and a slower runner stay warnings
+CPU time, not wall: on a shared host wall time tracks the load, CPU time
+much less. A target missing from the baseline is reported (NEW), never
+failed; `record` rewrites the baseline from a run's JSON.
+
+Exit: 0 all gates passed (and no ratchet failure), 1 a gate failed or the
+ratchet failed, 2 usage.
+"""
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+SETUP = ["generate", "build", "graalgo", "java-test-classes"]
+WARN_RATIO, WARN_SLACK = 1.2, 5.0
+FAIL_SLACK = 30.0
+DEFAULT_BASELINE = os.path.join(ROOT, "test", "duration-baseline.json")
+# Gates that share a scratch directory with fixed file names never run
+# concurrently: the truffle module's JVM tests (pin-audit smoke in `check`,
+# the smoke tests, the fast Java classes) all use truffle/out/test-tmp.
+SERIAL_GROUPS = [{"check", "test-ci", "test-java-fast"}]
+
+
+# The docs tier (--tier-base): a change that touches only Markdown outside
+# the code trees runs `check` (doc paths, links, GG ids, registers, req
+# lint read the docs) plus the gates known to read a doc. Anything else —
+# or an unknown base — runs the full list. Never on master: CI passes
+# --tier-base only for branches and PRs, so the full tier stays the last
+# word. A new doc reader belongs in DOC_READERS.
+CODE_TREES = ("internal/", "cmd/", "stdlib/", "test/", "tools/", ".github/")
+DOCS_TIER = ["check"]
+DOC_READERS = {
+    "docs/dev/bugs.md": ["test-toolexec"],  # intrinsics/temporary_test.go
+    "docs/arch/RECOVERY.md": ["test-java-fast"],  # test/java/check_lists.py
+}
+
+
+def tier_targets(changed, full):
+    """The targets for a change touching `changed` (paths), or `full`."""
+    if not changed or any(not f.endswith(".md") or f.startswith(CODE_TREES) for f in changed):
+        return full
+    picked = list(DOCS_TIER)
+    for f in changed:
+        picked += [t for t in DOC_READERS.get(f, []) if t not in picked]
+    return [t for t in full if t in picked] + [t for t in picked if t not in full]
+
+
+def changed_files(base, cwd):
+    """Paths changed between base and HEAD, or None when unknown."""
+    try:
+        out = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], cwd=cwd,
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return [l for l in out.stdout.splitlines() if l]
+
+
+def conflicts(target, running):
+    return any(target in g and g & set(running) for g in SERIAL_GROUPS)
+
+
+def all_targets(makefile):
+    """The prerequisites of the `all:` rule, in order."""
+    with open(makefile) as f:
+        text = f.read().replace("\\\n", " ")
+    m = re.search(r"^all:([^\n]*)$", text, re.M)
+    if not m:
+        raise SystemExit("gates: no `all:` rule in %s" % makefile)
+    return m.group(1).split()
+
+
+def run_target(target, make, cwd, setup_done, log_path):
+    """Run one make target; return (rc, wall, cpu)."""
+    cmd = [make, "--no-print-directory"]
+    for s in setup_done:
+        cmd += ["-o", s]
+    cmd.append(target)
+    t0 = time.monotonic()
+    with open(log_path, "wb") as log:
+        p = subprocess.Popen(cmd, cwd=cwd, stdout=log, stderr=subprocess.STDOUT,
+                             stdin=subprocess.DEVNULL)
+        _, status, ru = os.wait4(p.pid, 0)
+        p.returncode = os.waitstatus_to_exitcode(status)
+    wall = time.monotonic() - t0
+    return p.returncode, wall, ru.ru_utime + ru.ru_stime
+
+
+def verdict(cpu, base, mode, fail_ratio):
+    """Ratchet verdict of one target: OK, NEW, SLOWER (warning) or FAIL."""
+    if base is None:
+        return "NEW"
+    if mode == "fail" and cpu > fail_ratio * base + FAIL_SLACK:
+        return "FAIL"
+    if cpu > WARN_RATIO * base + WARN_SLACK:
+        return "SLOWER"
+    return "OK"
+
+
+def emit(lock, text):
+    with lock:
+        sys.stdout.write(text)
+        sys.stdout.flush()
+
+
+def cmd_run(a):
+    targets = []
+    for t in a.targets or ["all"]:  # "all" stands for the `all:` rule's list
+        targets += all_targets(os.path.join(a.dir, "Makefile")) if t == "all" else [t]
+    if a.tier_base:
+        changed = changed_files(a.tier_base, a.dir)
+        tiered = tier_targets(changed, targets)
+        if tiered != targets:
+            print("gates: docs tier: %d changed file(s) since %s are all docs: running %s"
+                  % (len(changed or []), a.tier_base, " ".join(tiered)))
+        else:
+            print("gates: full tier (changes since %s are not docs-only, or unknown)" % a.tier_base)
+        targets = tiered
+    setup = [] if a.no_setup else list(SETUP)
+    gates = [t for t in targets if t not in SETUP]
+    gha = os.environ.get("GITHUB_ACTIONS") == "true"
+    os.makedirs(a.logdir, exist_ok=True)
+    logdir = tempfile.mkdtemp(prefix="gates-", dir=a.logdir)
+    results = {}
+    lock = threading.Lock()
+    failed = []
+
+    def one(t, done):
+        log = os.path.join(logdir, t + ".log")
+        rc, wall, cpu = run_target(t, a.make, a.dir, done, log)
+        results[t] = {"rc": rc, "wall": round(wall, 1), "cpu": round(cpu, 1)}
+        with open(log, "rb") as f:
+            body = f.read().decode("utf-8", "replace")
+        head = "%s %s (wall %.0fs, cpu %.0fs)" % ("PASS" if rc == 0 else "FAIL", t, wall, cpu)
+        if gha:
+            emit(lock, "::group::%s\n%s::endgroup::\n%s\n" % (head, body, head))
+        else:
+            emit(lock, "== %s\n%s== %s\n" % (t, body, head))
+        if rc != 0:
+            failed.append(t)
+
+    done = []
+    for t in setup:
+        one(t, done)
+        if failed:
+            break
+        done.append(t)
+    if not failed:
+        pending = list(gates)
+        running = {}  # target -> thread
+        while pending or running:
+            running = {t: th for t, th in running.items() if th.is_alive()}
+            stop = failed and not a.keep_going
+            while len(running) < a.jobs and not stop:
+                nxt = next((t for t in pending if not conflicts(t, running)), None)
+                if nxt is None:
+                    break
+                pending.remove(nxt)
+                th = threading.Thread(target=one, args=(nxt, done))
+                th.start()
+                running[nxt] = th
+            if stop and not running:
+                break
+            if running:
+                next(iter(running.values())).join(0.2)
+    skipped = [t for t in setup + gates if t not in results]
+
+    base = load_baseline(a.baseline)
+    ratchet_fail = report(results, base, a.ratchet, a.fail_ratio, skipped)
+    if a.json:
+        with open(a.json, "w") as f:
+            json.dump({"jobs": a.jobs, "targets": results}, f, indent=1, sort_keys=True)
+            f.write("\n")
+    if failed:
+        print("gates: FAILED: %s (logs in %s)" % (" ".join(failed), logdir))
+        return 1
+    for t in results:
+        os.unlink(os.path.join(logdir, t + ".log"))
+    os.rmdir(logdir)
+    return 1 if ratchet_fail else 0
+
+
+def load_baseline(path):
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        return json.load(f).get("cpu", {})
+
+
+def report(results, base, mode, fail_ratio, skipped):
+    """Print the timing table; return True on a ratchet failure."""
+    print("\n%-22s %4s %8s %8s %8s  %s" % ("target", "rc", "wall s", "cpu s", "base s", "ratchet"))
+    tw = tc = 0.0
+    bad = False
+    for t, r in results.items():
+        b = base.get(t)
+        v = verdict(r["cpu"], b, mode, fail_ratio) if mode != "off" else "-"
+        bad |= v == "FAIL"
+        tw += r["wall"]
+        tc += r["cpu"]
+        print("%-22s %4d %8.1f %8.1f %8s  %s" % (t, r["rc"], r["wall"], r["cpu"],
+                                                 "-" if b is None else "%.1f" % b, v))
+    print("%-22s %4s %8.1f %8.1f   (sum of targets; parallel wall is less)" % ("total", "", tw, tc))
+    if skipped:
+        print("not run (an earlier failure): %s" % " ".join(skipped))
+    if bad:
+        print("gates: RATCHET FAILED: a target's CPU time exceeds %.1fx its baseline + %.0fs "
+              "(test/duration-baseline.json; re-record with `gates.py record` only for a "
+              "reviewed, intended cost increase)" % (fail_ratio, FAIL_SLACK))
+    return bad
+
+
+def cmd_record(a):
+    with open(a.run_json) as f:
+        res = json.load(f)["targets"]
+    cpu = {t: r["cpu"] for t, r in sorted(res.items()) if r["rc"] == 0}
+    wall = {t: r["wall"] for t, r in sorted(res.items()) if r["rc"] == 0}
+    old = {}
+    if os.path.exists(a.baseline):
+        with open(a.baseline) as f:
+            old = json.load(f)
+    old.setdefault("cpu", {}).update(cpu)
+    old.setdefault("wall", {}).update(wall)
+    with open(a.baseline, "w") as f:
+        json.dump(old, f, indent=1, sort_keys=True)
+        f.write("\n")
+    print("gates: recorded %d targets into %s" % (len(cpu), a.baseline))
+    return 0
+
+
+def main(argv=None):
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure:
+        reconfigure(line_buffering=True)  # in order with the gates' output
+    ap = argparse.ArgumentParser(description=(__doc__ or "").split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("run")
+    r.add_argument("-j", "--jobs", type=int, default=int(os.environ.get("GATE_JOBS", "1") or 1))
+    r.add_argument("-k", "--keep-going", action="store_true")
+    r.add_argument("--json")
+    r.add_argument("--baseline", default=DEFAULT_BASELINE)
+    r.add_argument("--ratchet", choices=["off", "warn", "fail"], default="warn")
+    r.add_argument("--fail-ratio", type=float, default=2.0)
+    r.add_argument("--make", default=os.environ.get("MAKE", "make"))
+    r.add_argument("--dir", default=ROOT)
+    r.add_argument("--logdir", default=os.path.join(ROOT, ".tmp"))
+    r.add_argument("--tier-base", default=os.environ.get("GATE_TIER_BASE") or None,
+                   help="pick the docs tier when every change since this commit is a doc")
+    r.add_argument("--no-setup", action="store_true",
+                   help="do not run the SETUP targets first (a gate builds its own prerequisites)")
+    r.add_argument("targets", nargs="*")
+    rec = sub.add_parser("record")
+    rec.add_argument("run_json")
+    rec.add_argument("--baseline", default=DEFAULT_BASELINE)
+    a = ap.parse_args(argv)
+    if a.cmd == "run":
+        if a.jobs < 1:
+            ap.error("-j must be >= 1")
+        return cmd_run(a)
+    return cmd_record(a)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

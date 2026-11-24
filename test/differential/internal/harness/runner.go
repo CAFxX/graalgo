@@ -92,7 +92,18 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 	if !oc.BuildOK {
 		return oc
 	}
+	return runBuilt(cfg, b, prog, workRoot, oc)
+}
 
+// RunSkippingBuild runs prog under b without its build step, as if the
+// build had succeeded with an empty log. Only for a backend whose run
+// command needs no build product (Backend.LazyBuild: the launcher takes
+// the source).
+func RunSkippingBuild(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
+	return runBuilt(cfg, b, prog, workRoot, Outcome{Program: prog.Name, Backend: b.Name, BuildOK: true})
+}
+
+func runBuilt(cfg *Config, b *Backend, prog Program, workRoot string, oc Outcome) Outcome {
 	runDir, err := os.MkdirTemp("", "diffharness-run-*")
 	if err != nil {
 		oc.BuildLog = Normalize(fmt.Sprintf("mktemp rundir: %v", err))
@@ -250,6 +261,13 @@ func runEnv(overrides map[string]string) []string {
 	// (read only by the graalgo launchers; inert for gc binaries).
 	if jo := os.Getenv("GRAALGO_JAVA_OPTS"); jo != "" {
 		base = append(base, "GRAALGO_JAVA_OPTS="+jo)
+	}
+	// The launchers' class locations (jars of the same classes, for the
+	// gates' class-data-sharing archive: test/lib/jvmcds.sh); inert for gc.
+	for _, k := range []string{"GRAALGO_TRUFFLE_CLASSES", "GRAALGO_INTEROP_CLASSES"} {
+		if v := os.Getenv(k); v != "" {
+			base = append(base, k+"="+v)
+		}
 	}
 	return overrideEnv(base, overrides)
 }

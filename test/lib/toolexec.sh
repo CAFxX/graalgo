@@ -7,7 +7,9 @@
 #                    `go build -overlay` file that applies graalgo's
 #                    standard-library fork (stdlib/) to the toolchain's
 #                    GOROOT. Sets TOOLEXEC_TOOL, TOOLEXEC_STUB and
-#                    TOOLEXEC_OVERLAY.
+#                    TOOLEXEC_OVERLAY. Last, jvm_cds_setup
+#                    (test/lib/jvmcds.sh): the runner's JVMs map a
+#                    class-data-sharing archive of the truffle classes.
 #   toolexec_build <out> <runner>
 #                    `go build` of the package in the current directory
 #                    through graalgo-tool with the fork applied; the linked
@@ -32,6 +34,10 @@ toolexec_setup() {
     "$TMP/bin/graalgo-goroot" -stdlib "$root/stdlib" -upstream "$("$GO" env GOROOT)" \
         -overlay "$TOOLEXEC_OVERLAY" -work "$TMP/fork/work" \
         || infra_die "cannot apply the standard-library fork (stdlib/)"
+    # shellcheck source=jvmcds.sh
+    . "$root/test/lib/jvmcds.sh"
+    GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+    jvm_cds_setup bundle "$root/internal/backend/graalgo-bundle-run"
 }
 
 toolexec_build() {

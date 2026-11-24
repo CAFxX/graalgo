@@ -56,6 +56,8 @@ NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
 # shellcheck source=../lib/toolexec.sh
 . "$HERE/../lib/toolexec.sh"
 toolexec_setup
+# shellcheck source=../lib/gcoracle.sh
+. "$HERE/../lib/gcoracle.sh"
 
 if [ $# -eq 0 ]; then
     # The corpus programs that import nothing; all of test/m1a/programs (written for this
@@ -91,6 +93,8 @@ run_leg() { # <exe> <stdout> <stderr> -> exit status
     return "$status"
 }
 
+gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg; }
+
 n=0
 for prog in "${programs[@]}"; do
     n=$((n + 1))
@@ -102,20 +106,21 @@ for prog in "${programs[@]}"; do
         category="multipkg"
     elif [ -f "$src" ]; then
         python3 "$HERE/transform.py" "$src" "$w/mod/main.go" || infra_die "transform failed: $prog"
-        printf 'module m1a/p%d\n\ngo 1.27\n' "$n" > "$w/mod/go.mod"
+        printf 'module m1a/p\n\ngo 1.27\n' > "$w/mod/go.mod"
         category="$(basename "$(dirname "$src")")"
     else
         echo "run.sh: no such program: $prog" >&2
         exit "$USAGE_EXIT"
     fi
     reason=""
-    if ! ( cd "$w/mod" && "$GO" build -o "$w/gc.bin" . ) >"$w/gc.build" 2>&1; then
+    # The gc leg, replayed from test/lib/gcoracle.sh's cache when unchanged.
+    gc_oracle "$w" "$w/mod" gc_live m1a "$TIMEOUT"
+    gc_status=$(cat "$w/gc.status")
+    if [ "$gc_status" = build ]; then
         reason="gc rejects the program (corpus bug)"
     elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(head -1 "$w/gg.build")"
     else
-        gc_status=0
-        run_leg "$w/gc.bin" "$w/gc.out" "$w/gc.err" || gc_status=$?
         gg_status=0
         TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
