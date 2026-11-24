@@ -52,6 +52,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   narrow) prints every gate's wall and CPU time and ratchets the CPU time
   against [test/duration-baseline.json](test/duration-baseline.json):
   locally a gate >1.2x its baseline prints SLOWER; CI fails one >2x + 30 s.
+  Baselines are per environment and cache state (dev host vs CI's
+  [test/duration-baseline-ci.json](test/duration-baseline-ci.json), warm vs
+  `_cold` sections: test-profile.md "Baselines per environment").
   Re-record (`python3 test/lib/gates.py record .tmp/gate-times.json`) only
   for a reviewed, intended cost increase, and say so in the commit. The gc
   leg of the m1* gates is replayed from a content-addressed cache

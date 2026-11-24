@@ -3,7 +3,8 @@
 and ratchet their cost against test/duration-baseline.json.
 
     gates.py run [-j N] [-k] [--json FILE] [--baseline FILE]
-                 [--ratchet off|warn|fail] [TARGET...]
+                 [--ratchet off|warn|fail] [--cache warm|cold]
+                 [--format auto|plain|github] [TARGET...]
     gates.py record RUN_JSON [--baseline FILE]
 
 `run` with no TARGET runs the prerequisites of the Makefile's `all:` rule
@@ -24,6 +25,21 @@ Ratchet: each target's CPU time is compared with the committed baseline.
 CPU time, not wall: on a shared host wall time tracks the load, CPU time
 much less. A target missing from the baseline is reported (NEW), never
 failed; `record` rewrites the baseline from a run's JSON.
+
+Like with like. A baseline file belongs to one environment (the dev host:
+test/duration-baseline.json; the GitHub runner, 4 vCPU:
+test/duration-baseline-ci.json — CI passes it), and inside it the numbers
+of a warm-cache run ("cpu") are kept apart from those of a cold-cache run
+("cpu_cold": the Go build and gc-oracle caches were not restored).
+--cache says which this run is: a warm run compares with "cpu", falling
+back to "cpu_cold" (a cold number is never lower than the warm one, so the
+fallback can only be lax, never a false failure); a cold run compares only
+with "cpu_cold" — a target with no cold number is NEW, never failed.
+`record` files a run under the section of the run's --cache.
+
+--format: `github` wraps each gate's output in ::group:: (GitHub Actions
+log folding), `plain` in `== target` lines; `auto` (default) picks github
+iff GITHUB_ACTIONS=true.
 
 Exit: 0 all gates passed (and no ratchet failure), 1 a gate failed or the
 ratchet failed, 2 usage.
@@ -147,7 +163,7 @@ def cmd_run(a):
         targets = tiered
     setup = [] if a.no_setup else list(SETUP)
     gates = [t for t in targets if t not in SETUP]
-    gha = os.environ.get("GITHUB_ACTIONS") == "true"
+    gha = a.format == "github" or (a.format == "auto" and os.environ.get("GITHUB_ACTIONS") == "true")
     os.makedirs(a.logdir, exist_ok=True)
     logdir = tempfile.mkdtemp(prefix="gates-", dir=a.logdir)
     results = {}
@@ -194,11 +210,13 @@ def cmd_run(a):
                 next(iter(running.values())).join(0.2)
     skipped = [t for t in setup + gates if t not in results]
 
-    base = load_baseline(a.baseline)
+    base = load_baseline(a.baseline, a.cache)
+    print("\ngates: %s caches; baseline %s" % (a.cache, a.baseline or "-"))
     ratchet_fail = report(results, base, a.ratchet, a.fail_ratio, skipped)
     if a.json:
         with open(a.json, "w") as f:
-            json.dump({"jobs": a.jobs, "targets": results}, f, indent=1, sort_keys=True)
+            json.dump({"cache": a.cache, "jobs": a.jobs, "targets": results}, f,
+                      indent=1, sort_keys=True)
             f.write("\n")
     if failed:
         print("gates: FAILED: %s (logs in %s)" % (" ".join(failed), logdir))
@@ -209,11 +227,22 @@ def cmd_run(a):
     return 1 if ratchet_fail else 0
 
 
-def load_baseline(path):
+def section(cache, kind="cpu"):
+    """The baseline section a run with this cache state is filed under."""
+    return kind if cache == "warm" else kind + "_cold"
+
+
+def load_baseline(path, cache="warm"):
+    """target -> (cpu seconds, from_cold) to compare a run of this cache
+    state with: like with like (module docstring)."""
     if not path or not os.path.exists(path):
         return {}
     with open(path) as f:
-        return json.load(f).get("cpu", {})
+        b = json.load(f)
+    out = {t: (v, True) for t, v in b.get("cpu_cold", {}).items()}
+    if cache == "warm":
+        out.update({t: (v, False) for t, v in b.get("cpu", {}).items()})
+    return out
 
 
 def report(results, base, mode, fail_ratio, skipped):
@@ -222,38 +251,40 @@ def report(results, base, mode, fail_ratio, skipped):
     tw = tc = 0.0
     bad = False
     for t, r in results.items():
-        b = base.get(t)
+        b, cold = base.get(t, (None, False))
         v = verdict(r["cpu"], b, mode, fail_ratio) if mode != "off" else "-"
         bad |= v == "FAIL"
         tw += r["wall"]
         tc += r["cpu"]
         print("%-22s %4d %8.1f %8.1f %8s  %s" % (t, r["rc"], r["wall"], r["cpu"],
-                                                 "-" if b is None else "%.1f" % b, v))
-    print("%-22s %4s %8.1f %8.1f   (sum of targets; parallel wall is less)" % ("total", "", tw, tc))
+                                                 "-" if b is None else "%.1f%s" % (b, "c" if cold else ""), v))
+    print("%-22s %4s %8.1f %8.1f   (sum of targets; parallel wall is less; base `c`: a cold-cache number)"
+          % ("total", "", tw, tc))
     if skipped:
         print("not run (an earlier failure): %s" % " ".join(skipped))
     if bad:
         print("gates: RATCHET FAILED: a target's CPU time exceeds %.1fx its baseline + %.0fs "
-              "(test/duration-baseline.json; re-record with `gates.py record` only for a "
-              "reviewed, intended cost increase)" % (fail_ratio, FAIL_SLACK))
+              "(re-record with `gates.py record` only for a reviewed, intended cost increase; "
+              "docs/dev/test-profile.md)" % (fail_ratio, FAIL_SLACK))
     return bad
 
 
 def cmd_record(a):
     with open(a.run_json) as f:
-        res = json.load(f)["targets"]
+        run = json.load(f)
+    res, cache = run["targets"], run.get("cache", "warm")
     cpu = {t: r["cpu"] for t, r in sorted(res.items()) if r["rc"] == 0}
     wall = {t: r["wall"] for t, r in sorted(res.items()) if r["rc"] == 0}
     old = {}
     if os.path.exists(a.baseline):
         with open(a.baseline) as f:
             old = json.load(f)
-    old.setdefault("cpu", {}).update(cpu)
-    old.setdefault("wall", {}).update(wall)
+    old.setdefault(section(cache), {}).update(cpu)
+    old.setdefault(section(cache, "wall"), {}).update(wall)
     with open(a.baseline, "w") as f:
         json.dump(old, f, indent=1, sort_keys=True)
         f.write("\n")
-    print("gates: recorded %d targets into %s" % (len(cpu), a.baseline))
+    print("gates: recorded %d targets (%s caches) into %s" % (len(cpu), cache, a.baseline))
     return 0
 
 
@@ -270,6 +301,10 @@ def main(argv=None):
     r.add_argument("--baseline", default=DEFAULT_BASELINE)
     r.add_argument("--ratchet", choices=["off", "warn", "fail"], default="warn")
     r.add_argument("--fail-ratio", type=float, default=2.0)
+    r.add_argument("--cache", choices=["warm", "cold"], default=os.environ.get("GATE_CACHE") or "warm",
+                   help="whether the build/oracle caches were warm: picks the baseline section")
+    r.add_argument("--format", choices=["auto", "plain", "github"], default="auto",
+                   help="per-gate output framing (auto: github iff GITHUB_ACTIONS=true)")
     r.add_argument("--make", default=os.environ.get("MAKE", "make"))
     r.add_argument("--dir", default=ROOT)
     r.add_argument("--logdir", default=os.path.join(ROOT, ".tmp"))
@@ -285,6 +320,8 @@ def main(argv=None):
     if a.cmd == "run":
         if a.jobs < 1:
             ap.error("-j must be >= 1")
+        if a.cache not in ("warm", "cold"):
+            ap.error("--cache / GATE_CACHE must be warm or cold, not %r" % a.cache)
         return cmd_run(a)
     return cmd_record(a)
 

@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
 """Self-test of test/lib/gates.py: plants a failing gate, a gate whose CPU
 time blows through its baseline, and parallel gates whose output must not
-interleave, and checks gates.py reports each (run by `make check`)."""
+interleave, and checks gates.py reports each (run by `make check`).
+
+The runs pin their environment (hermetic_env): gates.py reads
+GITHUB_ACTIONS (output framing), GATE_* (jobs, cache state, tier base) and
+make reads MAKEFLAGS — a self-test that inherits CI's or an enclosing
+make's values tests that environment instead of the code (c35a2888 went
+red exactly so: under GitHub Actions the output was ::group:: framed)."""
 import contextlib
 import importlib.util
 from typing import Any
@@ -44,6 +50,17 @@ bad:
 """
 
 
+# Inherited variables that change what gates.py or the inner make do.
+LEAKY_ENV = ("GITHUB_ACTIONS", "CI", "GATE_JOBS", "GATE_CACHE", "GATE_TIER_BASE",
+             "MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES")
+
+
+def hermetic_env(**extra):
+    env = {k: v for k, v in os.environ.items() if k not in LEAKY_ENV}
+    env.update(extra)
+    return env
+
+
 def jload(path):
     with open(path) as f:
         return json.load(f)
@@ -63,9 +80,9 @@ class GatesTest(unittest.TestCase):
     def tearDown(self):
         subprocess.call(["rm", "-rf", self.d])
 
-    def run_gates(self, *args):
+    def run_gates(self, *args, env=None):
         cmd = [sys.executable, GATES, "run", "--dir", self.d, "--logdir", self.d] + list(args)
-        p = subprocess.run(cmd, capture_output=True, text=True)
+        p = subprocess.run(cmd, capture_output=True, text=True, env=env or hermetic_env())
         return p.returncode, p.stdout + p.stderr
 
     def test_all_targets_follows_continuations(self):
@@ -82,6 +99,23 @@ class GatesTest(unittest.TestCase):
         # each gate's block is contiguous: parallel output never interleaves
         for g in ("ok1", "ok2"):
             self.assertRegex(out, r"== %s\n%s-a\n%s-b\n== PASS %s" % (g, g, g, g))
+        self.assertNotIn("::group::", out)
+
+    def test_output_format(self):
+        # github framing: auto under GITHUB_ACTIONS=true, or forced; each
+        # gate's block stays contiguous inside its group
+        group = r"::group::PASS ok1 \(wall \d+s, cpu \d+s\)\nok1-a\nok1-b\n::endgroup::\nPASS ok1"
+        for args, env in ((["--format", "auto"], hermetic_env(GITHUB_ACTIONS="true")),
+                          (["--format", "github"], hermetic_env())):
+            rc, out = self.run_gates(*args, "-j", "2", "ok1", "ok2", env=env)
+            self.assertEqual(rc, 0, out)
+            self.assertRegex(out, group)
+            self.assertNotIn("== ok1\n", out)
+        # plain framing: forced even under GitHub Actions
+        rc, out = self.run_gates("--format", "plain", "ok1", env=hermetic_env(GITHUB_ACTIONS="true"))
+        self.assertEqual(rc, 0, out)
+        self.assertRegex(out, r"== ok1\nok1-a\nok1-b\n== PASS ok1")
+        self.assertNotIn("::group::", out)
 
     def test_failing_gate_fails_the_run(self):
         rc, out = self.run_gates("ok1", "bad", "ok2")
@@ -113,15 +147,52 @@ class GatesTest(unittest.TestCase):
             self.assertEqual(gates.verdict(9.0, None, "fail", 2.0), "NEW")
             with contextlib.redirect_stdout(io.StringIO()):
                 self.assertTrue(gates.report({"burn": {"rc": 0, "wall": 1, "cpu": 0.6}},
-                                             {"burn": 0.01}, "fail", 2.0, []))
+                                             {"burn": (0.01, False)}, "fail", 2.0, []))
                 self.assertFalse(gates.report({"burn": {"rc": 0, "wall": 1, "cpu": 0.6}},
-                                              {"burn": 0.01}, "warn", 2.0, []))
+                                              {"burn": (0.01, False)}, "warn", 2.0, []))
         finally:
             gates.FAIL_SLACK = old
         rc, out = self.run_gates("--baseline", base, "--ratchet", "warn", "burn", "ok1")
         self.assertEqual(rc, 0, out)
         self.assertRegex(out, r"burn\s+0\s+[\d.]+\s+[\d.]+\s+0\.0\s+OK")
         self.assertRegex(out, r"generate .* NEW")
+
+    def test_ratchet_compares_like_with_like(self):
+        # an environment's baseline keeps warm- and cold-cache numbers apart
+        base = os.path.join(self.d, "base.json")
+        jdump(base, {"cpu": {"w": 10.0, "both": 10.0}, "cpu_cold": {"c": 80.0, "both": 80.0}})
+        warm, cold = gates.load_baseline(base, "warm"), gates.load_baseline(base, "cold")
+        # warm run: warm numbers, falling back to the (never lower) cold one
+        self.assertEqual(warm, {"w": (10.0, False), "both": (10.0, False), "c": (80.0, True)})
+        # cold run: cold numbers only; a warm-only target is NEW, not failed
+        self.assertEqual(cold, {"c": (80.0, True), "both": (80.0, True)})
+        # the planted CI incident: a cold run (cpu 60) against a warm-only
+        # baseline (10) failed; against the cold section it passes, while a
+        # real doubling of a cold run (200 > 2x80+30) still fails
+        with contextlib.redirect_stdout(io.StringIO()) as buf:
+            self.assertTrue(gates.report({"both": {"rc": 0, "wall": 1, "cpu": 60.0}},
+                                         {"both": (10.0, False)}, "fail", 2.0, []))
+            self.assertFalse(gates.report({"both": {"rc": 0, "wall": 1, "cpu": 60.0},
+                                           "w": {"rc": 0, "wall": 1, "cpu": 999.0}},
+                                          cold, "fail", 2.0, []))
+            self.assertTrue(gates.report({"both": {"rc": 0, "wall": 1, "cpu": 200.0}},
+                                         cold, "fail", 2.0, []))
+            # a warm run that doubles is caught against the warm number
+            self.assertTrue(gates.report({"both": {"rc": 0, "wall": 1, "cpu": 51.0}},
+                                         warm, "fail", 2.0, []))
+        self.assertRegex(buf.getvalue(), r"w\s+0\s+1\.0\s+999\.0\s+-\s+NEW")
+        self.assertRegex(buf.getvalue(), r"both .*80\.0c\s+FAIL")
+        # end to end: --cache (or GATE_CACHE) picks the section
+        jdump(base, {"cpu": {"burn": 0.01}, "cpu_cold": {}})
+        rc, out = self.run_gates("--baseline", base, "--ratchet", "fail", "--fail-ratio", "1",
+                                 "--no-setup", "burn", env=hermetic_env(GATE_CACHE="cold"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("gates: cold caches", out)
+        self.assertRegex(out, r"burn .* NEW")
+        rc, out = self.run_gates("--cache", "bogus", "burn")
+        self.assertEqual(rc, 2, out)
+        rc, out = self.run_gates("--no-setup", "burn", env=hermetic_env(GATE_CACHE="bogus"))
+        self.assertEqual(rc, 2, out)
 
     def test_serial_groups(self):
         self.assertTrue(gates.conflicts("check", {"test-ci": None}))
@@ -144,6 +215,12 @@ class GatesTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(gates.main(["record", rj, "--baseline", base]), 0)
         self.assertEqual(jload(base)["cpu"], {"a": 2, "c": 5})
+        # a cold run is filed under the cold sections, the warm ones untouched
+        jdump(rj, {"cache": "cold", "targets": {"a": {"rc": 0, "wall": 9, "cpu": 7}}})
+        with contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(gates.main(["record", rj, "--baseline", base]), 0)
+        b = jload(base)
+        self.assertEqual((b["cpu"], b["cpu_cold"], b["wall_cold"]), ({"a": 2, "c": 5}, {"a": 7}, {"a": 9}))
 
 
 if __name__ == "__main__":

@@ -329,7 +329,8 @@ directory's README repeats its status.
     their runner JVMs a class-data-sharing archive;
     [gates.py](../test/lib/gates.py) runs the gates timed (`make
     test-times`, `make pre-land`, CI) and ratchets their CPU time against
-    [duration-baseline.json](../test/duration-baseline.json)
+    [duration-baseline.json](../test/duration-baseline.json) (CI's:
+    [duration-baseline-ci.json](../test/duration-baseline-ci.json))
     ([test-profile.md](dev/test-profile.md)); `test_*.py` are their
     self-tests (`make check`).
   - [m1r/](../test/m1r/) — the differential gate of the standard library

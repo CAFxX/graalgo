@@ -104,7 +104,11 @@ jobs:
         # (a stale entry is a miss, never a wrong answer): restore the
         # newest, save under this sha. The gc-oracle cache
         # (test/lib/gcoracle.sh) replays the gc leg of unchanged m1* programs.
-        uses: actions/cache@v4
+        # restore/save are split (not actions/cache) so that the gates know
+        # whether the caches were warm (cache-matched-key, below) and a red
+        # run still seeds them (actions/cache saves only on success).
+        id: gates-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cache/go-build
@@ -121,15 +125,35 @@ jobs:
         # graalgo itself the nightly mutation.yml): the setup targets
         # first, then the gates two at a time (output buffered per gate),
         # each timed; RATCHET=fail fails a gate whose CPU time exceeds 2x
-        # its baseline + 30 s (test/duration-baseline.json;
-        # docs/dev/test-profile.md). Tiers: off master, a push or PR whose
+        # its baseline + 30 s. Like with like (docs/dev/test-profile.md):
+        # the runner's own baseline (test/duration-baseline-ci.json, not the
+        # dev host's), and its cold-cache section when the restore above
+        # missed (GATE_CACHE=cold). Tiers: off master, a push or PR whose
         # changes are all docs (Markdown outside the code trees) runs the
         # docs tier (`check` + the gates that read a doc); master always
         # runs the full list.
         env:
           DH_TIMEOUT: "90"
           GATE_TIER_BASE: ${{ github.ref != 'refs/heads/master' && (github.event.pull_request.base.sha || github.event.before) || '' }}
-        run: make test-times GATE_JOBS=2 RATCHET=fail TARGETS="all test-diffharness" GATE_TIMES="$RUNNER_TEMP/gate-times.json"
+          GATE_CACHE: ${{ steps.gates-cache.outputs.cache-matched-key != '' && 'warm' || 'cold' }}
+        run: make test-times GATE_JOBS=2 RATCHET=fail GATE_BASELINE=test/duration-baseline-ci.json TARGETS="all test-diffharness" GATE_TIMES="$RUNNER_TEMP/gate-times.json"
+
+      - name: Upload the gate times (re-record test/duration-baseline-ci.json from these)
+        if: success() || failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-times
+          path: ${{ runner.temp }}/gate-times.json
+          if-no-files-found: ignore
+
+      - name: Save the Go build cache and the gc-oracle cache
+        if: success() || failure()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            .tmp/gc-oracle
+          key: gates-${{ runner.os }}-go1.27.1-${{ github.sha }}
 
       - name: Fail on drift (generated files differ from committed, or new untracked files)
         # `git diff --exit-code` alone misses a generated file that is

@@ -106,7 +106,8 @@
 #   `make pre-land` runs `all`, both, and CI's drift check.
 #   `make test-times` runs `all`'s list through test/lib/gates.py: each
 #   gate timed (wall + CPU) and ratcheted against
-#   test/duration-baseline.json; GATE_JOBS gates at a time. CI runs `all`
+#   test/duration-baseline.json (CI: test/duration-baseline-ci.json);
+#   GATE_JOBS gates at a time. CI runs `all`
 #   and test-diffharness this way (GATE_JOBS=2, RATCHET=fail; off master,
 #   a Markdown-only change runs only the docs tier). Cost profile:
 #   docs/dev/test-profile.md.
@@ -318,7 +319,10 @@ check-links-external:
 # gates GATE_JOBS at a time (output buffered per gate, never interleaved),
 # each timed (wall + CPU); the table goes to stdout and GATE_TIMES (JSON),
 # and each gate's CPU time is ratcheted against
-# [test/duration-baseline.json](test/duration-baseline.json): RATCHET=warn
+# GATE_BASELINE, the baseline of the environment (the dev host's
+# [test/duration-baseline.json](test/duration-baseline.json) by default; CI
+# passes [test/duration-baseline-ci.json](test/duration-baseline-ci.json)),
+# under its GATE_CACHE section (warm, or cold: CI's caches missed): RATCHET=warn
 # (local default) prints SLOWER above 1.2x; RATCHET=fail (CI) also fails
 # above 2x + 30 s. GATE_JOBS defaults to 1 (shared hosts: AGENTS.md §7);
 # CI runs 2.
@@ -327,7 +331,10 @@ check-links-external:
 GATE_JOBS ?= 1
 RATCHET ?= warn
 GATE_TIMES ?= $(CURDIR)/.tmp/gate-times.json
-GATES = python3 test/lib/gates.py run --make "$(MAKE)" -j $(GATE_JOBS) --ratchet $(RATCHET) --json $(GATE_TIMES)
+GATE_BASELINE ?= test/duration-baseline.json
+GATE_CACHE ?= warm
+GATES = python3 test/lib/gates.py run --make "$(MAKE)" -j $(GATE_JOBS) --ratchet $(RATCHET) --json $(GATE_TIMES) \
+	--baseline $(GATE_BASELINE) --cache $(GATE_CACHE)
 TARGETS ?= all
 test-times:
 	$(GATES) $(TARGETS)

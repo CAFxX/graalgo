@@ -4,9 +4,40 @@ What the per-push gates cost, what dominates each, and the levers. The
 owner's rule: more tests are welcome, longer test runs are not; test
 efficiency is nearly as important as effectiveness. Re-measure with
 `make test-times` ([test/lib/gates.py](../../test/lib/gates.py)); the CPU
-times are ratcheted against
-[test/duration-baseline.json](../../test/duration-baseline.json) (local:
-SLOWER warning above 1.2x; CI: failure above 2x + 30 s).
+times are ratcheted against the baseline of the environment (local:
+SLOWER warning above 1.2x; CI: failure above 2x + 30 s; see "Baselines per
+environment" below).
+
+## Baselines per environment
+
+The ratchet compares like with like. A gate's CPU time depends on the host
+(the 16-core dev host vs the 4-vCPU GitHub runner: snapshot-check 659 vs
+~1370 s) and on whether the Go build and gc-oracle caches were warm
+(generate: 1.7 s warm on the dev host, 38 s on a cold runner). c35a2888 went
+red comparing a cold CI run with the warm dev-host numbers. So:
+
+- one file per environment:
+  [test/duration-baseline.json](../../test/duration-baseline.json) (dev
+  host; `make test-times` default) and
+  [test/duration-baseline-ci.json](../../test/duration-baseline-ci.json)
+  (the runner; ci.yml passes `GATE_BASELINE=`);
+- inside each, `cpu`/`wall` hold warm-cache numbers and
+  `cpu_cold`/`wall_cold` cold-cache ones. `GATE_CACHE` (`--cache`) says
+  which a run is: CI sets `cold` when its `actions/cache/restore` matched
+  no key, locally it is `warm`. A warm run compares with `cpu`, falling
+  back to `cpu_cold` (never lower, so the fallback is only lax); a cold run
+  compares only with `cpu_cold`, a target without one is NEW (never
+  failed). Both paths are planted in
+  [test_gates.py](../../test/lib/test_gates.py).
+- recording: `python3 test/lib/gates.py record RUN.json --baseline FILE`
+  files the run under the section of its `cache`. Dev host: from
+  `.tmp/gate-times.json` of a warm `make test-times`. CI: download the
+  `gate-times` artifact of a green run (`gh run download <id> -n
+  gate-times`) and record it into `duration-baseline-ci.json`. Re-record
+  only for a reviewed, intended cost change, and say so in the commit.
+  The CI file was seeded (cold, setup targets and snapshot-check only)
+  from the two red runs of c35a2888; the first green warm run should fill
+  the rest.
 
 ## How measured (2026-11-20 .. 24)
 
@@ -90,7 +121,9 @@ reboot), so they read lower than the same gates under the usual 10–20 load.
   gates.py: timed, ratcheted, `GATE_JOBS` at a time with buffered output
   (the truffle JVM-test gates sharing `out/test-tmp` never overlap). CI:
   `GATE_JOBS=2`, the Go build cache and the gc-oracle cache restored by
-  `actions/cache`, and the docs tier for a Markdown-only change off master.
+  `actions/cache/restore` (saved even by a red run, so caches do not stay
+  cold while master is red), the runner's own baseline, and the docs tier
+  for a Markdown-only change off master.
 - `make quick`: the inner loop (repo gates, module suites, slices).
 
 ## Remaining top costs and next levers
