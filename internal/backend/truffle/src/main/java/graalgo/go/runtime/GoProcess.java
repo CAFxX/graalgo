@@ -43,6 +43,8 @@ public final class GoProcess {
     public final TypeTable types;
     /** The {@code uintptr} handle table of this process (GG-0062). */
     public final Handles handles = new Handles();
+    /** The pc table and stack walks of this process (runtime.Callers, tracebacks). */
+    public final Stacks stacks = new Stacks();
     /**
      * {@code sync}'s pool cleanup ({@code runtime_registerPoolCleanup}), run by {@code runtime.GC}
      * as gc runs it at the start of every collection; null until {@code sync} initializes.
@@ -100,8 +102,10 @@ public final class GoProcess {
      */
     @TruffleBoundary
     public Fatal fatal(String text) {
-        writeErr(("fatal error: " + text + "\n\ngoroutine " + sched.currentGoroutine().id + " [running]:\n")
-                .getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder("fatal error: ").append(text).append("\n\ngoroutine ")
+                .append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.current(0, MAX_FRAMES + 1));
+        writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));
         sched.requestExit(2);
         return new Fatal();
     }
@@ -129,8 +133,33 @@ public final class GoProcess {
             }
         }
         sb.append("\ngoroutine ").append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.of(top));
         writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));
         sched.requestExit(2);
+    }
+
+    /** {@code runtime.Stack}'s text: the calling goroutine's header and frames, gc's format. */
+    @TruffleBoundary
+    public String currentStack() {
+        StringBuilder sb = new StringBuilder("goroutine ").append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.current(0, MAX_FRAMES + 1));
+        return sb.toString();
+    }
+
+    /** gc's traceback frame limit ({@code tracebackInnerFrames + tracebackOuterFrames}). */
+    static final int MAX_FRAMES = 100;
+
+    /**
+     * The frames of a goroutine's traceback, gc's format (WP-TR-AUDIT-6): at most
+     * {@link #MAX_FRAMES}, then gc's elision line.
+     */
+    private static void traceback(StringBuilder sb, List<Stacks.Frame> frames) {
+        if (frames.size() > MAX_FRAMES) {
+            Stacks.render(sb, frames.subList(0, MAX_FRAMES));
+            sb.append("...additional frames elided...\n");
+        } else {
+            Stacks.render(sb, frames);
+        }
     }
 
     /**

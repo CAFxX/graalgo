@@ -6,11 +6,13 @@ import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.profiles.BranchProfile;
+import com.oracle.truffle.api.source.SourceSection;
 import graalgo.go.nodes.N.Expr;
 import graalgo.go.nodes.N.Jump;
 import graalgo.go.nodes.N.Stmt;
 import graalgo.go.runtime.G;
 import graalgo.go.runtime.Panics;
+import graalgo.go.runtime.Positions;
 import graalgo.go.values.Closure;
 import graalgo.go.values.Env;
 import graalgo.language.GoLanguage;
@@ -112,8 +114,12 @@ public final class RangeFunc extends Stmt {
      * The yield function: binds the iteration values into the enclosing frame's slots and runs
      * the body there. Arguments: {@code [env, k?, v?]}, env holding the loop's {@link State}.
      */
-    public static final class YieldRoot extends RootNode {
+    public static final class YieldRoot extends RootNode implements Positions.Root {
         private final String name;
+        /** The enclosing function's table: the body's statements are that function's. */
+        private final Positions positions;
+        /** The range statement's position in that table. */
+        private final int pos;
         @Child private Stmt body;
         private final int keySlot;
         private final int valueSlot;
@@ -123,9 +129,12 @@ public final class RangeFunc extends Stmt {
         private final BranchProfile misuse = BranchProfile.create();
 
         /** {@code brk}/{@code cont}: this loop's jumps (null when the body has none). */
-        public YieldRoot(GoLanguage language, String name, Stmt body, int keySlot, int valueSlot, Jump brk, Jump cont) {
+        public YieldRoot(GoLanguage language, String name, Positions positions, int pos, Stmt body, int keySlot,
+                int valueSlot, Jump brk, Jump cont) {
             super(language, FrameDescriptor.newBuilder().build());
             this.name = name;
+            this.positions = positions;
+            this.pos = pos;
             this.body = body;
             this.keySlot = keySlot;
             this.valueSlot = valueSlot;
@@ -176,8 +185,24 @@ public final class RangeFunc extends Stmt {
         }
 
         @Override
+        public Positions positions() {
+            return positions;
+        }
+
+        @Override
         public String getName() {
             return name;
+        }
+
+        @Override
+        public String getQualifiedName() {
+            return name;
+        }
+
+        /** The range statement. */
+        @Override
+        public SourceSection getSourceSection() {
+            return positions.section(pos);
         }
 
         @Override
