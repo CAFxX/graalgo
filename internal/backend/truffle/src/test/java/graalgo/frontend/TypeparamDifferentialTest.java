@@ -348,6 +348,12 @@ public final class TypeparamDifferentialTest {
     /**
      * Zero unexplained divergences graalgo vs gc on the included
      * test/typeparam files.
+     *
+     * <p>Each job is one graalgo JVM (its heap is capped by
+     * GRAALGO_JAVA_OPTS). The weekly CI job (4 vCPU / 16 GB) runs this with
+     * {@code -Dgraalgo.typeparam.jobs=2} and a capped heap: four uncapped
+     * JVMs (default heap = 1/4 of RAM each) starved the runner within two
+     * minutes ("lost communication with the server").
      */
     public void testZeroUnexplainedDivergences() throws Exception {
         Path tp = typeparamDir();
@@ -356,7 +362,7 @@ public final class TypeparamDifferentialTest {
                 "--dir", tp.toString(),
                 "--exclusions", exclusionsFile().toString(),
                 "--out", reportOut.toString(),
-                "--jobs", "4"));
+                "--jobs", System.getProperty("graalgo.typeparam.jobs", "4")));
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().put("GOTOOLCHAIN", "local");
         pb.environment().put("DH_GO", goroot().toString());

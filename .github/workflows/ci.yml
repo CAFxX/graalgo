@@ -119,9 +119,21 @@ jobs:
   full-suite:
     # The long differential suite, excluded from per-push CI by design
     # (Makefile header). Runs weekly and on manual dispatch.
+    #
+    # A standard runner has 4 vCPU / 16 GB. An uncapped `make test` once
+    # killed the runner ("lost communication with the server", no log) about
+    # three minutes in: TypeparamDifferentialTest runs the typeparam
+    # differential with 4 parallel graalgo JVMs whose default heap is 1/4 of
+    # RAM each (measured locally: ~13 GB resident within 25 s of its start).
+    # So: every JVM's heap is capped, that test runs 2 jobs, a sampler streams
+    # memory/load to the log, and the logs are uploaded even when the job dies.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 90
+    env:
+      # Test JVMs (ClassListRunner) and the graalgo-run JVMs the tests spawn.
+      JAVA_TEST_OPTS: -Xmx4g -XX:ActiveProcessorCount=4 -Dgraalgo.typeparam.jobs=2
+      GRAALGO_JAVA_OPTS: -Xmx2g -XX:ActiveProcessorCount=4
     steps:
       - uses: actions/checkout@v4
 
@@ -144,8 +156,46 @@ jobs:
           go-version: '1.27.1'
 
       - name: Export GO for the Makefiles
-        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+        run: |
+          echo "GO=$(which go)" >> "$GITHUB_ENV"
+          # (the runner context is not available in a job-level env mapping)
+          echo "FULL_SUITE_LOGS=$RUNNER_TEMP/full-suite-logs" >> "$GITHUB_ENV"
 
       - name: make test (full suite = test-java-fast + test-java-slow, quarantine-judged)
         # One step: `make test` already includes test-java-slow (Makefile).
-        run: make test
+        # The sampler prints a [watch] line every 20 s (the last ones before
+        # a runner loss are the evidence); make's output is streamed, not
+        # buffered.
+        timeout-minutes: 80
+        run: |
+          mkdir -p "$FULL_SUITE_LOGS"
+          .github/scripts/ci_watch.sh 20 "$FULL_SUITE_LOGS/watch.log" &
+          watch=$!
+          trap 'kill "$watch" 2>/dev/null || true' EXIT
+          make test 2>&1 | tee "$FULL_SUITE_LOGS/make-test.log"
+
+      - name: Summary (peak memory, per-class timings)
+        if: always()
+        run: |
+          {
+            echo "### full-suite"
+            if [ -s "$FULL_SUITE_LOGS/watch.log" ]; then
+              echo "min MemAvailable: $(grep -o 'avail=[0-9]*' "$FULL_SUITE_LOGS/watch.log" | cut -d= -f2 | sort -n | head -1) MB;" \
+                "max load: $(grep -o 'load=[0-9.]*' "$FULL_SUITE_LOGS/watch.log" | cut -d= -f2 | sort -n | tail -1);" \
+                "samples: $(wc -l < "$FULL_SUITE_LOGS/watch.log")"
+            fi
+            echo '```'
+            grep -h '^CLASS ' internal/backend/*/out/test-tmp/java-slow-*.log 2>/dev/null | sort -k3 -n -r | head -20
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-suite-logs
+          path: |
+            ${{ runner.temp }}/full-suite-logs
+            internal/backend/*/out/test-tmp/java-slow-*.log
+          if-no-files-found: warn
+          retention-days: 14

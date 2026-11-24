@@ -640,12 +640,19 @@ JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop
 JT_JAVA := $(or $(GRAALVM_HOME),$(HOME)/tools/graalvm-jdk-25)/bin/java
 JT_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
 JAVA_TEST_OPTS ?=
-# run_java_tests <module> <classpath> <classes> <extra -D props>
+# RangeConcurrentRegressionTest runs P3SyncMain 50 times in one JVM and the
+# live set grows ~130 MB per run (measured: 6.4 GB after 50, G1 evacuation
+# failures at 4 GB, "internal error building AST: Java heap space"): it gets
+# its own cap, above CI's global JAVA_TEST_OPTS one (a cap only: the JVM uses
+# what it needs). The retention itself is a product leak, not a test bug.
+JT_INTEROP_SLOW_OPTS ?= -Xmx8g
+# run_java_tests <module> <classpath> <classes> <extra JVM flags>; the extra
+# flags come AFTER JAVA_TEST_OPTS so a call can override a global heap cap.
 define run_java_tests
 	cd $(JT_BK)/$(1) && mkdir -p out/test-tmp && \
 	  TMPDIR="$(JT_BK)/$(1)/out/test-tmp" GOTMPDIR="$(JT_BK)/$(1)/out/test-tmp" \
 	  GRAALGO_GOFRONTEND="$(CURDIR)/internal/frontend/gofrontend" \
-	  $(JT_JAVA) -Djava.io.tmpdir="$(JT_BK)/$(1)/out/test-tmp" $(4) $(JT_FLAGS) \
+	  $(JT_JAVA) -Djava.io.tmpdir="$(JT_BK)/$(1)/out/test-tmp" $(JT_FLAGS) $(4) \
 	  -cp "$(2)" ClassListRunner $(3)
 endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
@@ -700,14 +707,15 @@ test-goroutine-modes: build java-test-classes
 
 # Each module's run is logged (exit status ignored: a JVM crash or INFRA
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then
-# decides. Logs live under the gitignored out/ dirs.
+# decides. Logs live under the gitignored out/ dirs. Each run is also
+# streamed (tee) so a hang or a lost runner leaves its progress in the CI
+# log instead of nothing (the CLASS lines carry per-class timings).
 JT_SLOW_LOGS := $(JT_BK)/truffle/out/test-tmp/java-slow-truffle.log $(JT_BK)/truffle/out/test-tmp/java-slow-runtime.log $(JT_BK)/interop/out/test-tmp/java-slow-interop.log
 test-java-slow: java-test-classes java-test-lists-check
 	rm -f $(JT_SLOW_LOGS)
-	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS)) > $(word 1,$(JT_SLOW_LOGS)) 2>&1
-	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),) > $(word 2,$(JT_SLOW_LOGS)) 2>&1
-	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),) > $(word 3,$(JT_SLOW_LOGS)) 2>&1
-	cat $(JT_SLOW_LOGS)
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS)) 2>&1 | tee $(word 1,$(JT_SLOW_LOGS))
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),) 2>&1 | tee $(word 2,$(JT_SLOW_LOGS))
+	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),$(JT_INTEROP_SLOW_OPTS)) 2>&1 | tee $(word 3,$(JT_SLOW_LOGS))
 	python3 test/java/quarantine_verdict.py $(JAVA_QUARANTINE) "$(JAVA_SLOW_ALL)" $(JT_SLOW_LOGS)
 
 test-java-timing: java-test-classes

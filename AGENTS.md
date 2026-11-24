@@ -61,7 +61,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   lines are only added and requirement statuses never move back (`req
   lint` rule (f)); `req seal` is one-shot.
 - `make test-java-slow` — the slow Java classes (the weekly CI
-  `full-suite` job, Mondays). Known
+  `full-suite` job, Mondays; it caps every JVM heap via `JAVA_TEST_OPTS` /
+  `GRAALGO_JAVA_OPTS` and runs the typeparam differential with 2 jobs,
+  because 4 uncapped JVMs starved the 16 GB runner; it streams a `[watch]`
+  memory sampler and uploads its logs even on failure). Known
   failures are listed in [test/java/quarantine.txt](test/java/quarantine.txt)
   (class, reason, owner — a RECOVERY.md track/work-package id or
   `lane:<name>` —, expiry — a future date or a RECOVERY.md milestone —;
