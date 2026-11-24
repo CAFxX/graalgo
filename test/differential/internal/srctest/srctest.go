@@ -182,6 +182,9 @@ func gcBuilds(goBin, src string) (bool, error) {
 	return false, nil
 }
 
+// execTimeoutScale multiplies the run timeout of programs importing os/exec.
+const execTimeoutScale = 4
+
 // classify determines a file's class from its build constraints, package
 // clause, func main presence, and import set.
 func classify(testDir, name string) typeparam.TFile {
@@ -232,6 +235,14 @@ func classify(testDir, name string) typeparam.TFile {
 	// srctest-exclusions.yaml (SPEC 5.6).
 	tf.Class = runClass
 	tf.Detail = "runnable program"
+	// A program that spawns child processes (os/exec: typically the go
+	// tool itself, which builds stdlib objects: link*_run.go) is slow
+	// on a loaded host; structural, not by name.
+	for _, im := range f.Imports {
+		if im.Path != nil && im.Path.Value == `"os/exec"` {
+			tf.TimeoutScale = execTimeoutScale
+		}
+	}
 	// The action line gc's own test driver (cmd/internal/testdir) obeys:
 	// `// skip` files are not run at all; `// compile` and `// build`
 	// files are only compiled (sieve.go runs forever); `// run` words

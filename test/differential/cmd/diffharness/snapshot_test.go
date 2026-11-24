@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"diffharness/internal/harness"
 	"diffharness/internal/typeparam"
@@ -219,6 +220,9 @@ func TestSrctestVerdictSignature(t *testing.T) {
 		{typeparam.Comparison{Same: false, Expected: "deferred-parity", Timing: true, ExpectedSig: pinned, Reasons: []string{"exit code 2 != 0"}}, "DIVERGE"},
 		{typeparam.Comparison{Same: true, Timing: true}, "MATCH"},
 		{typeparam.Comparison{Infra: true}, "INFRA"},
+		// An INFRA verdict (e.g. a reference timeout) is never masked by a
+		// listed entry, expected or pinned.
+		{typeparam.Comparison{Infra: true, Expected: "deferred-parity", ExpectedSig: pinned, Reasons: []string{"infra: reference timed out"}}, "INFRA"},
 	} {
 		if got := srctestVerdict(c.c); got != c.want {
 			t.Errorf("%+v: got %s want %s", c.c, got, c.want)
@@ -254,5 +258,25 @@ func TestClassifyTimingEntry(t *testing.T) {
 		if got := classify(c.name, c.diff, false, exp).kind; got != c.want {
 			t.Errorf("classify(%s, %q): got %s want %s", c.name, c.diff, got, c.want)
 		}
+	}
+}
+
+// The recorder and `snapshot check -verify-ref` run gc through runAll with
+// reference=true: a persistent timeout is INFRA there (never recorded as
+// gc's behavior), while a graalgo (non-reference) timeout is plain data.
+func TestRunAllReferenceTimeout(t *testing.T) {
+	b := &harness.Backend{
+		Name:  "gc",
+		Build: []string{"/bin/sh", "-c", `printf '#!/bin/sh\nexec sleep 5\n' > "$0"; chmod +x "$0"`, "{BIN}"},
+		Run:   []string{"{BIN}"},
+	}
+	cfg := &harness.Config{TimeoutSec: 1, TimeoutUnit: 100 * time.Millisecond}
+	progs := []harness.Program{{Name: "p", Main: "unused.go"}}
+	if outs := runAll(cfg, b, progs, t.TempDir(), 1, true); !harness.RefInfra(outs[0]) {
+		t.Fatalf("reference timeout must be INFRA: %+v", outs[0])
+	}
+	outs := runAll(cfg, b, progs, t.TempDir(), 1, false)
+	if !outs[0].TimedOut || outs[0].RetriedTimeout {
+		t.Fatalf("non-reference run must not be retried: %+v", outs[0])
 	}
 }
