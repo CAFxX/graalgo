@@ -38,7 +38,10 @@ import java.math.BigInteger;
 import java.math.MathContext;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -178,9 +181,12 @@ public final class NodeFactory {
         this.ltypes = new GoType[n];
         this.boxed = new boolean[n];
         for (int i = 0; i < n; i++) {
+            ltypes[i] = pkg.type(body.locals()[i].type(), env);
+        }
+        pointerLocals();
+        for (int i = 0; i < n; i++) {
             Gir.Local l = body.locals()[i];
-            GoType t = pkg.type(l.type(), env);
-            ltypes[i] = t;
+            GoType t = ltypes[i];
             boolean escapes = (l.flags() & (8 | 16)) != 0;
             boxed[i] = escapes && t.carrier() != GoType.C_FLAT;
             slots[i] = fdb.addSlot(boxed[i] ? FrameSlotKind.Object : kind(t), pkg.str(l.name()), null);
@@ -206,6 +212,104 @@ public final class NodeFactory {
         this.openDefers = hasDefer && !repeatable[0] && defers[0] <= MAX_OPEN_DEFERS && !FORCE_DEFER_CHAIN;
         if (openDefers) {
             deferBits = fdb.addSlot(FrameSlotKind.Int, null, null);
+        }
+    }
+
+    /** The defining conversions {@code uintptr(p)} of pointer locals ({@link #pointerLocals}). */
+    private final Set<Gir.Expr> ptrDefs = Collections.newSetFromMap(new IdentityHashMap<>());
+    /** The conversions back to {@code unsafe.Pointer} of pointer locals. */
+    private final Set<Gir.Expr> ptrUses = Collections.newSetFromMap(new IdentityHashMap<>());
+
+    /**
+     * Integer locals that only ever carry a pointer: every definition is {@code x :=
+     * uintptr(p)} ({@code p} an {@code unsafe.Pointer}) and every use is {@code
+     * unsafe.Pointer(x)}, {@code unsafe.Pointer(x ^ 0)} (or {@code | 0}, {@code + 0},
+     * {@code - 0}) — {@code internal/abi.NoEscape}'s shape, behind every {@code strings.Builder}
+     * and much of {@code reflect}. Such a local holds the pointer itself (its type becomes
+     * {@code p}'s): the integer is never observed, and the round trip through the handle table
+     * (a weak range per referent, a floor lookup back) was a tenth of a template render. The
+     * local must not escape (no closure, no address) and not be a parameter or result.
+     */
+    private void pointerLocals() {
+        Gir.Local[] ls = body.locals();
+        boolean[] cand = new boolean[ls.length];
+        boolean any = false;
+        for (int i = 0; i < ls.length; i++) {
+            GoType t = ltypes[i];
+            cand[i] = t.isInteger() && t.bits() == 64 && (ls[i].flags() & (8 | 16)) == 0;
+            any |= cand[i];
+        }
+        if (!any) {
+            return;
+        }
+        for (int p : body.params()) {
+            cand[p] = false;
+        }
+        for (int r : body.results()) {
+            cand[r] = false;
+        }
+        if (body.recv() >= 0) {
+            cand[body.recv()] = false;
+        }
+        int[] total = new int[ls.length];
+        int[] seen = new int[ls.length];
+        GoType[] ptype = new GoType[ls.length];
+        List<Gir.Expr> uses = new ArrayList<>();
+        visitGir(body.body(), o -> {
+            switch (o) {
+                case Gir.Expr.Local l -> total[l.local()]++;
+                case Gir.Stmt.Var v -> {
+                    for (int x : v.locals()) {
+                        cand[x] = false; // a var declaration: zero or any value
+                    }
+                }
+                case Gir.Stmt.Define d -> {
+                    if (d.lhs().length == 1 && d.rhs().length == 1 && d.lhs()[0] instanceof Gir.Expr.Local l
+                            && contains(d.fresh(), l.local()) && d.rhs()[0] instanceof Gir.Expr.Convert c
+                            && ty(c.x()).u().kind == GoType.UNSAFE_POINTER) {
+                        seen[l.local()]++;
+                        ptype[l.local()] = ty(c.x());
+                    }
+                }
+                case Gir.Expr.Convert c -> {
+                    if (ty(c.type()).u().kind == GoType.UNSAFE_POINTER) {
+                        Gir.Expr x = c.x();
+                        if (x instanceof Gir.Expr.Binary b && (b.op() == Gir.BinOp.XOR || b.op() == Gir.BinOp.OR
+                                || b.op() == Gir.BinOp.ADD || b.op() == Gir.BinOp.SUB) && b.y() instanceof Gir.Expr.Const k
+                                && k.value().kind() == Gir.ConstKind.INT && pkg.str(k.value().text()).equals("0")) {
+                            x = b.x();
+                        }
+                        if (x instanceof Gir.Expr.Local l) {
+                            seen[l.local()]++;
+                            uses.add(c);
+                        }
+                    }
+                }
+                default -> {
+                }
+            }
+        });
+        boolean[] ok = new boolean[ls.length];
+        for (int i = 0; i < ls.length; i++) {
+            ok[i] = cand[i] && ptype[i] != null && seen[i] == total[i];
+            if (ok[i]) {
+                ltypes[i] = ptype[i];
+            }
+        }
+        visitGir(body.body(), o -> {
+            if (o instanceof Gir.Stmt.Define d && d.lhs().length == 1 && d.lhs()[0] instanceof Gir.Expr.Local l
+                    && ok[l.local()]) {
+                ptrDefs.add(d.rhs()[0]);
+            }
+        });
+        for (Gir.Expr u : uses) {
+            Gir.Expr x = ((Gir.Expr.Convert) u).x();
+            if (x instanceof Gir.Expr.Binary b) {
+                x = b.x();
+            }
+            if (ok[((Gir.Expr.Local) x).local()]) {
+                ptrUses.add(u);
+            }
         }
     }
 
@@ -1239,6 +1343,14 @@ public final class NodeFactory {
             case Gir.Expr.TypeAssert ta:
                 return typeAssert(ta);
             case Gir.Expr.Convert c:
+                if (!ptrDefs.isEmpty()) {
+                    if (ptrDefs.contains(c)) {
+                        return expr(c.x()); // x := uintptr(p) of a pointer local: x holds p
+                    } else if (ptrUses.contains(c)) {
+                        Gir.Expr x = c.x() instanceof Gir.Expr.Binary b ? b.x() : c.x();
+                        return readLocal(((Gir.Expr.Local) x).local());
+                    }
+                }
                 if (c == slicedConversion) {
                     // (*[N]T)(p)[lo:hi:max]: gc sizes the conversion's check by the slice
                     // bounds, so the array type may overrun the referent (Unsafes.ToPtr).
@@ -1248,7 +1360,8 @@ public final class NodeFactory {
                         return new Unsafes.ToPtr(expr(c.x()), to.elem, true);
                     }
                 }
-                return convert(ty(c.x()), ty(c.type()), c.x());
+                Expr arith = pointerArith(c);
+                return arith != null ? arith : convert(ty(c.x()), ty(c.type()), c.x());
             case Gir.Expr.Call c:
                 return call(c);
             case Gir.Expr.MethodCall mc:
@@ -1636,6 +1749,31 @@ public final class NodeFactory {
         }
         return ta.commaOk() ? new Ifaces.AssertConcreteOk(x, target)
                 : typed(target, new Ifaces.AssertConcrete(x, from, target));
+    }
+
+    /**
+     * {@code unsafe.Pointer(uintptr(p) + y)} and {@code unsafe.Pointer(uintptr(p) - y)} — the
+     * pointer-arithmetic form of unsafe.Pointer rule (3), one expression — as {@code
+     * unsafe.Add(p, ±y)}, or null for any other conversion. The two agree on every result
+     * (the round trip resolves {@code base(p) + off + y} back into {@code p}'s referent or is
+     * fatal with checkptr's message; a result inside another object is checkptr's "invalid
+     * allocation" either way), operands evaluate in the same order, and the intermediate
+     * integer is unobservable — but the round trip gives every referent a handle range
+     * (Handles), which made {@code reflect}'s {@code add} the cost of every field access.
+     */
+    private Expr pointerArith(Gir.Expr.Convert c) {
+        if (ty(c.type()).u().kind != GoType.UNSAFE_POINTER
+                || !(c.x() instanceof Gir.Expr.Binary b)
+                || b.op() != Gir.BinOp.ADD && b.op() != Gir.BinOp.SUB
+                || !(b.x() instanceof Gir.Expr.Convert pc)
+                || ty(pc.x()).u().kind != GoType.UNSAFE_POINTER
+                || !ty(b.type()).isInteger() || ty(b.type()).bits() != 64
+                || !ty(b.y()).isInteger()) {
+            return null;
+        }
+        Expr p = expr(pc.x());
+        I64 y = asI64(expr(b.y()));
+        return new Unsafes.Add(p, b.op() == Gir.BinOp.ADD ? y : ArithFactory.NegI64NodeGen.create(y));
     }
 
     /** The conversion {@code to(x)}, {@code x} of type {@code from}. */

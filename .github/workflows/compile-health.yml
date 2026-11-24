@@ -1,0 +1,47 @@
+# Compile health of the realistic programs (test/bench/realistic): nightly.
+#
+# `make pe-report` runs each stdlib pipeline (json, regexp, text, template,
+# request handler, flate, allocation mix) once with Truffle compilation
+# tracing and fails on any failed compilation (a function left in the AST
+# interpreter) or, with --max-churn, on a root deoptimized or invalidated
+# more than N times (a deopt loop before Truffle's cycle detection gives up
+# on it). The per-push pe-check-m1a covers the same std paths under
+# synchronous compilation (test/m1a/pe_std.sh); this run is the background-
+# compilation, whole-program view. ~3 min.
+name: compile-health
+
+on:
+  schedule:
+    - cron: '45 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  pe-report:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25.0.4'  # pinned: docs/dev/ENV.md + lib/*-25.0.4.1.1.jar
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: Build
+        run: make generate build
+
+      - name: Compile health (exit 1 = failed compilation or deopt churn)
+        run: make pe-report PE_REPORT_ARGS="--max-churn 15"

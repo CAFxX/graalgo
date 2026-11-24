@@ -15,7 +15,8 @@ its thresholds, workload tiers and benchmark portfolio — is
 one directory each, on one harness ([suite/h](../../test/bench/suite/h/h.go)):
 the clock is `runtime.nanotime` by `//go:linkname` and output is `println`,
 so the programs need nothing the new path cannot run yet. Each program runs
-its workload for at least 4 s of rounds (at most 2,000) and prints one
+its workload for at least 4 s of rounds (at most 2,000; `--min-total S`
+links a longer minimum into the harness, for long-running steady state) and prints one
 `ROUND` line per round, the `RESULT` (identical every round, or the harness
 panics) and the best round.
 
@@ -334,24 +335,63 @@ goroutines are virtual threads behind one drainer (item 1 halves it at best).
 
 [test/bench/realistic/](../../test/bench/realistic/), `make
 bench-realistic` (the suite runner with `--dir`, gc at `GOMAXPROCS=4`,
-peak RSS and CPU per leg). 2026-11-20, master `a366807f`, 3 interleaved
-reps, load 7 → 34; steady medians in ms. Full tables, the GC matrix,
-goroutine scaling and the compilation evidence: [north-star.md](north-star.md) §4.
+peak RSS and CPU per leg). Full tables, the GC matrix, goroutine scaling
+and the first compilation evidence: [north-star.md](north-star.md) §4.
 
-| Program | gc | gc+PGO | graalgo | ×gc | time to peak | compile failures |
+### 8.1 Lane perf-pe (2026-11-23)
+
+Before: master `d61f219b`; after: `wt/perf/pe`; both trees built side by
+side and run interleaved (base, new, base, new …) on the shared host, load
+average 17–33; graalgo `-Xmx2g -XX:ActiveProcessorCount=4` under `nice -n
+19`, gc at `GOMAXPROCS=4`. Each ratio is against the gc leg of the same
+interleaved pair. **Long-running** is `--min-total 20` (at least 20 s of
+rounds per leg, `BENCH_MIN_TOTAL`), 2 reps; **default** is the runner's
+4 s, 3 reps. Steady = median of the last half of the rounds.
+
+| Program | long ×gc before | long ×gc after | default ×gc before | default ×gc after | time to peak after (long) | compile failures before → after |
 |---|---:|---:|---:|---:|---:|---|
-| `jsonrt` | 2.62 | 2.69 | 37.5 | 14× | 2.5 s | 1 (`goto`, PE) |
-| `regexscan` | 2.43 | 2.37 | 262.9 | 108× | 1.1 s | 1 (`goto`, PE: `tryBacktrack`) |
-| `textproc` | 5.67 | 5.20 | 96.0 | 17× | 0.7 s | 0 |
-| `tmplrender` | 2.46 | 2.44 | 75.7 | 31× | 1.6 s | 1 (deopt loop) |
-| `reqpipe` | 1.58 | 1.53 | 46.8 | 30× | 1.8 s | 2 (`goto`, PE) |
-| `deflate` | 11.46 | 10.92 | 198.4 | 17× | 1.9 s | 3 (`goto`, PE; inlining depth) |
-| `allocmix` (60 s, G1) | 31.0 | — | 46.8 | 1.5× | 0.7 s | 0 |
+| `jsonrt` | 11.1× | **4.4×** | 25.1× | 13.3× | 10.2 s | 1 → 0 |
+| `regexscan` | 90.6× | **4.5×** | 92.3× | 4.4× | 1.6 s | 1 → 0 |
+| `textproc` | 15.2× | **1.6×** | 17.4× | 6.1× | 3.1 s | 0 → 0 |
+| `tmplrender` | 20.6× | **4.5×** | 24.6× | 29.7× | 6.3 s | 1 → 0 |
+| `reqpipe` | 22.0× | **4.0×** | 40.2× | 12.5× | 5.1 s | 2 → 0 |
+| `deflate` | 15.6× | **4.5×** | 26.5× | 10.0× | 4.0 s | 3 → 0 |
+| geomean (steady) | 21.8× | **3.7×** | 31.9× | 10.5× | | 8 → 0 |
+| geomean (best round) | 22.6× | 4.5× | 39.2× | 9.8× | | |
 
-Geomean of the six pipelines: 27× gc (steady), 19× (best rounds) — against
-the micro-suite's 1.4× (§4). New gap items, ahead of §5's list: partial-
-evaluation failures in `goto` blocks (`Ctl.GotoBlock`), goroutine creation
-O(live goroutines) (north-star §4.3; fixed in the opt-in carrier mode,
-[ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md): flat, 6× gc per spawn,
-`make bench-goroutines`), reflection-heavy paths.
+The micro-benchmark suite (§1, 3 interleaved reps): geomean 1.41× → 1.39×
+steady, 1.48× → 1.47× best — no change beyond noise (`strconv` and
+`workerpool` move ±30 % between reps of either tree). `allocmix` and
+`goroutines` were not rerun (no compile failure, not on these paths).
 
+What changed (truffle-design §15 rows *Loops* and *Pointers*):
+
+1. **Zero failed compilations** (`make pe-report`,
+   [pe-report.sh](../../test/bench/realistic/pe-report.sh)): `goto`
+   dispatch with a constant program counter per label branch (regexp's
+   backtracker, jsonwire's number scanner, flate's decoder); `GoType`
+   layout computed once behind a boundary (PE inlined the recursion
+   through defined types: "Too deep inlining" in flate); the strip-mined
+   loop's `limit` node specialized in the interpreter (it ran only in
+   compiled code and deopt-looped `text/template`). Gate: `make
+   pe-check-m1a` runs [pe_std.sh](../../test/m1a/pe_std.sh) (~17 s, a
+   planted failure must fail it).
+2. **uintptr round trips** (JFR, 1 ms sampling): the handle table was
+   O(live ranges) per 4,096 conversions (`textproc` round times grew with
+   the heap); now amortized O(1). `unsafe.Pointer(uintptr(p) ± y)` is
+   `unsafe.Add`; `abi.NoEscape`'s shape keeps the pointer in the local.
+3. **Checked conversions**: `(*T)(unsafe.Pointer)` caches four identity
+   locations inline; `coincides` has an identity front cache; `unsafe.String`
+   over a byte backing store skips the leaf walks.
+
+Remaining gaps, by evidence: (a) **warmup** — the default 4 s window is
+10.5× because hot functions reach tier 2 only after 2–10 s
+(`tmplrender` is no faster there); background compilation competes with
+the shared host, and a 20 s steady state is 3.7×. (b) **calls that stay
+calls**: in `jsonrt` at steady state ~45 % of samples are the Truffle call
+sequence (`doInvoke`, `profiledPERoot`, entry polls) — json v2's arshalers
+are func values (indirect, megamorphic) and the boxed `Object[]` calling
+convention (truffle-design H8) costs every non-inlined call. (c) **reflect
+over the pointer model**: `leafAt`/`gcOffOfLeaf`/`extent` walks behind
+views and conversions are still ~15 % of `tmplrender`. (d) **footprint**:
+peak RSS 1.1–1.5 GB at `-Xmx2g` against gc's 18 MB.

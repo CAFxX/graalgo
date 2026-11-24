@@ -439,7 +439,10 @@ directory's README repeats its status.
     workloads on the new node package, rewritten by
     [bench.py](../test/m1a/bench.py) to need no standard library
     (`make bench-m1a`), and as the partial-evaluation gate of the new
-    nodes (`make pe-check-m1a`, per-push: zero failed compilations).
+    nodes (`make pe-check-m1a`, per-push: zero failed compilations);
+    [pe_std.sh](../test/m1a/pe_std.sh) extends that gate to the
+    standard-library paths of the realistic programs
+    ([pe/stdhot.go](../test/m1a/pe/stdhot.go)) and plants a violation.
   - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output
@@ -454,7 +457,14 @@ directory's README repeats its status.
     [realistic/](../test/bench/realistic/README.md) holds whole-workload
     programs (stdlib pipelines, allocation tail latency, goroutine scaling)
     of [north-star.md](arch/north-star.md) on the same runner (`--dir`;
-    peak RSS, CPU time, `STAT` lines): `make bench-realistic`, not a gate.
+    peak RSS, CPU time, `STAT` lines): `make bench-realistic`, not a gate;
+    [pe-report.sh](../test/bench/realistic/pe-report.sh) (with
+    [pe_report.py](../test/bench/realistic/pe_report.py)) prints their
+    failed, deoptimized and invalidated compilations (`make pe-report`;
+    nightly with `--max-churn` as
+    [compile-health.yml](../.github/workflows/compile-health.yml); parser
+    test [test_pe_report.py](../test/bench/realistic/test_pe_report.py) in
+    `make pe-check-m1a`).
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):
