@@ -191,18 +191,29 @@ jobs:
         # a runner loss are the evidence); make's output is streamed, not
         # buffered.
         timeout-minutes: 80
+        # Without pipefail the pipeline's status is tee's, so a failing
+        # `make test` reported success (dispatch run 45456985959: test-java-fast
+        # failed, the job was green): `shell: bash` runs `-eo pipefail`, and
+        # make's own exit status is kept in make-test.rc for the summary.
+        shell: bash
         run: |
+          set -o pipefail
           mkdir -p "$FULL_SUITE_LOGS"
           .github/scripts/ci_watch.sh 20 "$FULL_SUITE_LOGS/watch.log" &
           watch=$!
           trap 'kill "$watch" 2>/dev/null || true' EXIT
-          make test 2>&1 | tee "$FULL_SUITE_LOGS/make-test.log"
+          rc=0
+          make test 2>&1 | tee "$FULL_SUITE_LOGS/make-test.log" || rc=$?
+          echo "$rc" > "$FULL_SUITE_LOGS/make-test.rc"
+          exit "$rc"
 
-      - name: Summary (peak memory, per-class timings)
+      - name: Summary (make's exit status, peak memory, per-class timings)
         if: always()
+        shell: bash
         run: |
           {
             echo "### full-suite"
+            echo "make test exit status: $(cat "$FULL_SUITE_LOGS/make-test.rc" 2>/dev/null || echo 'none (step did not finish)')"
             if [ -s "$FULL_SUITE_LOGS/watch.log" ]; then
               echo "min MemAvailable: $(grep -o 'avail=[0-9]*' "$FULL_SUITE_LOGS/watch.log" | cut -d= -f2 | sort -n | head -1) MB;" \
                 "max load: $(grep -o 'load=[0-9.]*' "$FULL_SUITE_LOGS/watch.log" | cut -d= -f2 | sort -n | tail -1);" \
