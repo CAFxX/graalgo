@@ -9,7 +9,7 @@ import graalgo.values.GoStructDescriptor;
  * {@code time.Time} per heap tick until {@link #stop()} (slow receivers
  * drop ticks — gc parity).
  *
- * <p>verifies: GG-0017 (time slice)
+ * <p>verifies: GG-0073 (time slice)
  */
 public final class GoTickerT extends GoTimerT {
     public GoTickerT(GoTimer timer, GoStructDescriptor timeDesc) {

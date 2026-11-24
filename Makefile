@@ -18,7 +18,7 @@
 #   `make all` = generate build snapshot-check check test-v2 test-toolexec
 #                test-gir test-p3frontend test-ci test-java-fast
 #                test-regression test-m1a pe-check-m1a test-m1w13
-#                test-imgcheck test-m1r test-m1c test-m1d:
+#                test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes:
 #     generate  rebuilds the gofrontend binary + overlay.json, the 18
 #               generated synth_*.go, and the GIR Go/Java codecs
 #     build     compiles both backend modules (javac, -Werror)
@@ -60,7 +60,9 @@
 #               checks (test/m1a/defer_path.sh)
 #     pe-check-m1a
 #               partial-evaluation gate of the new node package over the
-#               benchmark set (~15 s): any failed compilation fails it
+#               benchmark set and the std paths of the realistic programs
+#               (~35 s; test/m1a/pe_std.sh with its planted violation): any
+#               failed compilation fails it
 #     test-m1w13
 #               the pointer-model gate (~1.5 min; GG-0072/GG-0062): programs
 #               that use package unsafe through graalgo-tool on the new node
@@ -87,12 +89,18 @@
 #               table, the reflect probe, encoding/json, regexp,
 #               text/template and friends, the same way
 #               ([test/m1d/](test/m1d/))
+#     test-goroutine-modes
+#               the goroutine-mode matrix (~45 s; GG-0073: carrier mode is
+#               the default): the scheduler suites and a few m1a/m1r/m1c
+#               goroutine programs in the thread-per-goroutine fallback,
+#               goroutine programs in carrier mode under -ea, and
+#               Context.close(true) of a running program in both modes
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
-#   `make test` — the full differential suite (graalgo.test.Runner,
-#   SchedTestRunner, IfaceTestRunner). It takes 30+ minutes and runs in
-#   local verification and the weekly CI job, not per-push.
-#   `make test-java-slow` — weekly CI job.
+#   `make test` — the full suite: test-java-fast + test-java-slow (every
+#   class of graalgo.test.Runner, SchedTestRunner, IfaceTestRunner, on
+#   the right classpaths, judged against test/java/quarantine.txt). LONG;
+#   the weekly CI full-suite job, not per-push.
 #   `make check-links-external`, `make test-diffharness` — per-push CI
 #   (markdown-links.yml, ci.yml's harness self-test) outside `make all`;
 #   `make pre-land` runs `all`, both, and CI's drift check.
@@ -202,9 +210,9 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic pe-check-m1a test-m1r test-m1c test-m1d test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
 
-all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d
+all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -484,12 +492,17 @@ M1A_PROGRAMS ?=
 # The test/bench workloads on the new node package (test/m1a/bench.sh):
 # bench-m1a prints best-round times against gc (not a gate); pe-check-m1a is
 # the partial-evaluation gate of the new nodes (CompilationFailureAction=
-# ExitVM, synchronous compilation): any failed compilation fails it.
-# M1A_BENCH narrows both to the given benchmarks.
+# ExitVM, synchronous compilation): any failed compilation fails it; then
+# the same check on the standard-library paths of test/bench/realistic (json,
+# regexp, flate, template, strings/maps/sort) with its planted violation
+# (test/m1a/pe_std.sh). M1A_BENCH narrows both to the given benchmarks and
+# skips pe_std.sh.
 bench-m1a: build
 	GO="$(GO)" test/m1a/bench.sh $(M1A_BENCH)
 pe-check-m1a: build
+	python3 test/bench/realistic/test_pe_report.py
 	GO="$(GO)" test/m1a/bench.sh --pe-check $(M1A_BENCH)
+	@if [ -z "$(strip $(M1A_BENCH))" ]; then echo GO="$(GO)" test/m1a/pe_std.sh; GO="$(GO)" test/m1a/pe_std.sh; fi
 M1A_BENCH ?=
 
 # The benchmark suite (not a gate; ~25 min for the whole suite with --pgo):
@@ -509,6 +522,28 @@ BENCH_ARGS ?=
 # --gg-variant zgc="-XX:+UseZGC" or --gc-variant gogc400="GOGC=400".
 bench-realistic: build
 	GO="$(GO)" test/bench/suite.sh --dir test/bench/realistic --gc-env GOMAXPROCS=4 $(BENCH_ARGS)
+
+# Goroutine scaling (not a gate; north-star.md §4.3, ADR-0018): the realistic
+# `goroutines` program at each GOR_N of GOR_NS, gc against graalgo in the
+# default carrier mode (the thread-per-goroutine fallback,
+# -Dgraalgo.sched.goroutines=thread, is quadratic: 100,000 take minutes to
+# spawn). 1,000,000 goroutines need a ~5 GB heap: GOR_JAVA_OPTS sets -Xmx12g;
+# run it alone on a shared host (minutes per N).
+GOR_NS ?= 10000 100000 1000000
+GOR_JAVA_OPTS ?= -Xmx12g -XX:ActiveProcessorCount=4
+bench-goroutines: build
+	for n in $(GOR_NS); do \
+	  GOR_N=$$n GRAALGO_JAVA_OPTS="$(GOR_JAVA_OPTS)" GO="$(GO)" test/bench/suite.sh \
+	    --dir test/bench/realistic --gc-env GOMAXPROCS=4 --reps 1 $(BENCH_ARGS) goroutines || exit 1; \
+	done
+
+# The compilation report of the realistic programs (~1.5 min; nightly as
+# .github/workflows/compile-health.yml with --max-churn): failed, deoptimized
+# and invalidated Truffle compilations per program
+# (test/bench/realistic/pe-report.sh). PE_REPORT_ARGS: e.g. "--sync jsonrt".
+pe-report: build
+	GO="$(GO)" test/bench/realistic/pe-report.sh $(PE_REPORT_ARGS)
+PE_REPORT_ARGS ?=
 
 # Toolexec milestone M1r/M1b differential gate (per-push in `make all`): programs
 # that import standard-library packages, built through graalgo-tool against
@@ -610,11 +645,15 @@ gate1: build
 	python3 tools/gate1/run.py $(PKG) --out tools/gate1/.tmp/$(PKG) \
 		--graalgo-run "$(CURDIR)/internal/backend/graalgo-run"
 
-# Full test suite: all phase differential/test runners. LONG (30+ min);
-# for local verification and nightly runs, not per-push CI.
-test: build
-	$(MAKE) -C internal/backend/truffle test
-	$(MAKE) -C internal/backend/interop test
+# Full test suite: every class the module runners register (the union of
+# the fast and slow lists below, enforced by java-test-lists-check), each on
+# its module's correct classpath, with the slow half judged against
+# test/java/quarantine.txt. LONG; weekly CI (full-suite), not per-push.
+# It used to run the module runners directly (graalgo.test.Runner on a
+# classpath WITHOUT interop's ServiceLoader registrations, no quarantine):
+# every fmt-using corpus program failed there with "unsupported expression
+# kind ifacemethod" while passing under test-java-slow.
+test: test-java-fast test-java-slow
 
 # Backend Java unit tests, split by measured cost (SPEC §5.10: fast→slow).
 # The module runners (graalgo.test.Runner, SchedTestRunner, IfaceTestRunner)
@@ -644,20 +683,27 @@ JT_TRUFFLE_CP := $(JT_RUNNER):$(JT_BK)/truffle/out/test-classes:$(JT_BK)/truffle
 JT_RUNTIME_CP := $(JT_TRUFFLE_CP):$(JT_BK)/interop/out/classes
 JT_INTEROP_CP := $(JT_RUNNER):$(JT_BK)/interop/out/test-classes:$(JT_BK)/interop/out/classes:$(JT_BK)/truffle/out/classes:$(JT_JARS)
 JT_JAVA := $(or $(GRAALVM_HOME),$(HOME)/tools/graalvm-jdk-25)/bin/java
-JT_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
+JT_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m $(JAVA_TEST_OPTS)
 JAVA_TEST_OPTS ?=
-# run_java_tests <module> <classpath> <classes> <extra -D props>
+# RangeConcurrentRegressionTest runs P3SyncMain 50 times in one JVM and the
+# live set grows ~130 MB per run (measured: 6.4 GB after 50, G1 evacuation
+# failures at 4 GB, "internal error building AST: Java heap space"): it gets
+# its own cap, above CI's global JAVA_TEST_OPTS one (a cap only: the JVM uses
+# what it needs). The retention itself is a product leak, not a test bug.
+JT_INTEROP_SLOW_OPTS ?= -Xmx8g
+# run_java_tests <module> <classpath> <classes> <extra JVM flags>; the extra
+# flags come AFTER JAVA_TEST_OPTS so a call can override a global heap cap.
 define run_java_tests
 	cd $(JT_BK)/$(1) && mkdir -p out/test-tmp && \
 	  TMPDIR="$(JT_BK)/$(1)/out/test-tmp" GOTMPDIR="$(JT_BK)/$(1)/out/test-tmp" \
 	  GRAALGO_GOFRONTEND="$(CURDIR)/internal/frontend/gofrontend" \
-	  $(JT_JAVA) -Djava.io.tmpdir="$(JT_BK)/$(1)/out/test-tmp" $(4) $(JT_FLAGS) \
+	  $(JT_JAVA) -Djava.io.tmpdir="$(JT_BK)/$(1)/out/test-tmp" $(JT_FLAGS) $(4) \
 	  -cp "$(2)" ClassListRunner $(3)
 endef
 JT_TRUFFLE_PROPS := -Dgraalgo.repo.dir="$(CURDIR)"
-JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.go.types.LeafTableTest graalgo.go.nodes.EntryPollTest graalgo.go.intrinsics.BytealgKernelTest graalgo.conventions.NodeConventionsTest
+JAVA_FAST_TRUFFLE := graalgo.frontend.SectionClampTest graalgo.values.ValuesTest graalgo.values.CallSiteProbesTest graalgo.values.CellIdentityTest graalgo.runtime.FreezeSignatureTest graalgo.frontend.WrapInterfaceTest graalgo.frontend.BoxingArrayStorageTest graalgo.frontend.ArrayValueSemanticsTest graalgo.frontend.AtomicCellFieldAddrTest graalgo.frontend.CommaOkLvalueTest graalgo.frontend.v2.BinaryDecoderTest graalgo.frontend.ComplexBinaryOpTest graalgo.runtime.SliceGrowthTest graalgo.frontend.FrontendRobustnessTest graalgo.frontend.StraightLineCorpusTest graalgo.frontend.ArithmeticCorpusTest graalgo.frontend.ControlFlowCorpusTest graalgo.frontend.CompositeCorpusTest graalgo.go.types.LeafTableTest graalgo.go.runtime.HandlesTest graalgo.go.nodes.EntryPollTest graalgo.go.intrinsics.BytealgKernelTest graalgo.conventions.NodeConventionsTest
 JAVA_SLOW_TRUFFLE := graalgo.launcher.MainTest graalgo.frontend.PanicCorpusTest graalgo.frontend.GenericsCorpusTest graalgo.frontend.VarsCorpusTest graalgo.runtime.BuiltinsCorpusTest graalgo.frontend.TypeparamDifferentialTest
-JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.JfrParkCostTest
+JAVA_FAST_RUNTIME := graalgo.jfr.JfrRegistrationTest graalgo.sched.audit.PinAuditTest graalgo.sched.SchedulerCoreTest graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.runtime.SelectSelfClaimTest graalgo.sched.ChannelDifferentialTest graalgo.sched.IoSlotsTest graalgo.sched.TimerDifferentialTest graalgo.runtime.FreezeGapTest graalgo.runtime.ZeroSizeSliceTest graalgo.runtime.StructSizeNestedTest graalgo.runtime.GcInteropTest graalgo.runtime.GcVisibilityTest graalgo.jfr.JfrEventsTest graalgo.runtime.sync.SyncStressTest graalgo.runtime.sync.GoPoolTest graalgo.sched.WakeupModelTest graalgo.sched.WakeupRaceStressTest graalgo.sched.CarriersTest graalgo.sched.JfrParkCostTest
 JAVA_SLOW_RUNTIME := graalgo.sched.launcher.GoDebugTest graalgo.launcher.LauncherOsArgsTest graalgo.runtime.TimerTest graalgo.runtime.GcDifferentialTest graalgo.runtime.GcTortureTest
 JAVA_FAST_INTEROP := graalgo.p3sync.launcher.PolyglotEmbeddingTest graalgo.iface.IfaceDispatchNodeTest graalgo.frontend.DescriptorNamesTest graalgo.iface.LinknameTest graalgo.iface.SyncMapTest graalgo.iface.ItabForIntrinsicTest graalgo.iface.AtomicContentionTest graalgo.p3time.TimeChanLenCapTest graalgo.p3reflect.ReflectTypesTest graalgo.p3link.CondIsolationTest graalgo.rtmemstats.RtMemStatsTest graalgo.frontend.RtMemStatsBuilderTest graalgo.p3unsafe.UnsafeDeriveTest graalgo.p3unsafe.HeaderViewTest graalgo.p3unsafe.PrefixViewTest graalgo.p3unsafe.PrefixParentTest graalgo.p3reflect.AbiNameEncodingTest graalgo.p3reflect.GcMaskTest graalgo.p3reflect.MapKeyHashTest graalgo.iface.IfaceMethodTablesTest graalgo.frontend.ChanBuilderTest graalgo.p3os.GoOsErrnoTest graalgo.p3sync.launcher.StackDepthLimitTest graalgo.p3sync.launcher.CallPathWarmupTest
 JAVA_SLOW_INTEROP := graalgo.p3sync.launcher.LinknameEndToEndTest graalgo.p3sync.launcher.RangeConcurrentRegressionTest
@@ -681,16 +727,40 @@ test-java-fast: java-test-classes java-test-lists-check
 	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
 	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
 
+# The goroutine-mode matrix (GG-0073; per-push in `make all`). Carrier mode is
+# the default, so every other gate runs it; this target keeps the
+# thread-per-goroutine fallback honest and checks what only a mode switch or
+# a carrier migration can break: (1) the scheduler suites and a few
+# goroutine-heavy m1a/m1r/m1c programs with -Dgraalgo.sched.goroutines=thread
+# (spawn_flat.go is left out: it fails there by design); (2) goroutine
+# programs in carrier mode under -ea, so Truffle's per-thread assertions
+# (EncapsulatingNodeReference) see goroutines migrate between carriers;
+# (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
+# and leak-free, in both modes.
+THREAD_MODE_JAVA := graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.sched.WakeupRaceStressTest graalgo.jfr.JfrEventsTest
+THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go
+THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go
+THREAD_MODE_M1C := test/m1c/programs/sync_contention.go test/m1c/programs/time_timers.go
+THREAD_MODE_OPTS = $(GRAALGO_JAVA_OPTS) -Dgraalgo.sched.goroutines=thread
+test-goroutine-modes: build java-test-classes
+	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(THREAD_MODE_JAVA),-Dgraalgo.sched.goroutines=thread)
+	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1a/run.sh $(THREAD_MODE_M1A)
+	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1r/run.sh $(THREAD_MODE_M1R)
+	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1c/run.sh $(THREAD_MODE_M1C)
+	GRAALGO_JAVA_OPTS="$(GRAALGO_JAVA_OPTS) -ea" GO="$(GO)" test/m1r/run.sh test/m1r/programs/carrier_migration.go $(THREAD_MODE_M1A)
+	GO="$(GO)" test/m1r/cancel.sh
+
 # Each module's run is logged (exit status ignored: a JVM crash or INFRA
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then
-# decides. Logs live under the gitignored out/ dirs.
+# decides. Logs live under the gitignored out/ dirs. Each run is also
+# streamed (tee) so a hang or a lost runner leaves its progress in the CI
+# log instead of nothing (the CLASS lines carry per-class timings).
 JT_SLOW_LOGS := $(JT_BK)/truffle/out/test-tmp/java-slow-truffle.log $(JT_BK)/truffle/out/test-tmp/java-slow-runtime.log $(JT_BK)/interop/out/test-tmp/java-slow-interop.log
 test-java-slow: java-test-classes java-test-lists-check
 	rm -f $(JT_SLOW_LOGS)
-	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS)) > $(word 1,$(JT_SLOW_LOGS)) 2>&1
-	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),) > $(word 2,$(JT_SLOW_LOGS)) 2>&1
-	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),) > $(word 3,$(JT_SLOW_LOGS)) 2>&1
-	cat $(JT_SLOW_LOGS)
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_TRUFFLE),$(JT_TRUFFLE_PROPS)) 2>&1 | tee $(word 1,$(JT_SLOW_LOGS))
+	-$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_SLOW_RUNTIME),) 2>&1 | tee $(word 2,$(JT_SLOW_LOGS))
+	-$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_SLOW_INTEROP),$(JT_INTEROP_SLOW_OPTS)) 2>&1 | tee $(word 3,$(JT_SLOW_LOGS))
 	python3 test/java/quarantine_verdict.py $(JAVA_QUARANTINE) "$(JAVA_SLOW_ALL)" $(JT_SLOW_LOGS)
 
 test-java-timing: java-test-classes

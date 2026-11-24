@@ -50,7 +50,7 @@ ensure_daemon() {
     # the daemon's environment (matches the truffle Makefile's export).
     export GRAALGO_GOFRONTEND="$BACKEND/../frontend/gofrontend"
     # Daemon needs the truffle jars for compilation; run with full cp
-    setsid env GRAALGO_GOFRONTEND="$GRAALGO_GOFRONTEND" "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
+    setsid env GRAALGO_GOFRONTEND="$GRAALGO_GOFRONTEND" "$JAVA" --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m \
         -cp "$HERE:$FULL_CP" FastCycleDaemon \
         >"$HERE/daemon.log" 2>&1 < /dev/null &
     disown

@@ -15,9 +15,14 @@ peak RSS and CPU time per leg; `STAT` lines collected).
 | `reqpipe` | handler-shaped: JSON decode, regexp check, map under a mutex, JSON encode through `bufio`/`io.Writer` |
 | `deflate` | `compress/flate` round trip of 1 MiB of text |
 | `allocmix` | live heap ~100 MB plus allocation churn; unit-latency p50/p99/p99.9/max |
-| `goroutines` | `GOR_N` goroutines: spawn, idle RSS per goroutine, lifecycle rounds |
+| `goroutines` | `GOR_N` goroutines: spawn, idle RSS per goroutine, lifecycle rounds (`make bench-goroutines`: 10k/100k/1M, graalgo in carrier mode, ADR-0018) |
 
 GC matrix: `BENCH_ARGS='--gg-variant par=-XX:+UseParallelGC --gg-variant
 zgc=-XX:+UseZGC allocmix'`. They need the M1d stdlib (`fmt`, `reflect`,
-`os`); on a tree without it the graalgo leg fails at link. Add a program:
+`os`); on a tree without it the graalgo leg fails at link. Long-running steady state: `BENCH_ARGS='--min-total 20 …'` (at least 20 s
+of rounds per leg; the default is 4 s, where JIT warmup still shows).
+`make pe-report` ([pe-report.sh](pe-report.sh), [pe_report.py](pe_report.py))
+runs each program once with Truffle compilation tracing and prints the
+failed compilations (root, reason) and the roots deoptimized or invalidated
+most often; the target is zero failures. Add a program:
 a directory with `main.go` calling `h.Run` from `graalgo/bench/h`.

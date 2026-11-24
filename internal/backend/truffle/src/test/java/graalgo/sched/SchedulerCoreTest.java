@@ -487,7 +487,7 @@ public final class SchedulerCoreTest {
         SchedulerCore.install(sched);
         try {
             AtomicBoolean actionRan = new AtomicBoolean();
-            AtomicReference<Thread> actionThread = new AtomicReference<>();
+            AtomicReference<GoroutineHandle> actionGoroutine = new AtomicReference<>();
             CountDownLatch resumed = new CountDownLatch(1);
             GoroutineHandle h = sched.spawn(() -> {
                 try {
@@ -497,15 +497,14 @@ public final class SchedulerCoreTest {
                 }
                 sched.parkCurrent(() -> {
                     actionRan.set(true);
-                    actionThread.set(Thread.currentThread());
+                    actionGoroutine.set(sched.currentGoroutine());
                 });
                 resumed.countDown();
             });
             sched.unpark(h); // before the goroutine parks
             assertTrue(resumed.await(5, TimeUnit.SECONDS), "resumed after early unpark");
             assertTrue(actionRan.get(), "wake action ran (dropped pre-fix)");
-            assertTrue(actionThread.get() != null && actionThread.get().isVirtual(),
-                    "wake action ran on the vthread");
+            assertTrue(actionGoroutine.get() == h, "wake action ran on the woken goroutine");
             sched.awaitQuiescence();
         } finally {
             SchedulerCore.install(null);
@@ -513,7 +512,7 @@ public final class SchedulerCoreTest {
     }
 
     /**
-     * verifies: GG-0017 (Go panic parity).
+     * verifies: GG-0073 (Go panic parity).
      * Reviewer1 P1-1: an uncaught panic in a SPAWNED goroutine must be
      * recorded (launcher exits 2), not a silent exit 0 with a raw JVM
      * stack trace.
@@ -537,7 +536,7 @@ public final class SchedulerCoreTest {
     /**
      * Internal errors are loud: a RuntimeException escaping a goroutine
      * body is recorded as a crash (launcher exits 1), never swallowed.
-     * verifies: GG-0017 (Goexit/panic/crash discipline).
+     * verifies: GG-0073 (Goexit/panic/crash discipline).
      * A RuntimeException escaping a goroutine body is recorded as a
      * crash (launcher exits 1), never swallowed.
      */

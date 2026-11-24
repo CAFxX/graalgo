@@ -9,6 +9,9 @@
 # (java missing, test classes not built, TortureBattery class not
 # loadable) — never reported as a leg failure.
 # Needs: make -C internal/backend/truffle out/test-classes/.built (and make build)
+# Env: TORTURE_JAVA_OPTS — extra JVM flags for every leg (e.g.
+# -Dgraalgo.sched.goroutines=thread for the thread-per-goroutine fallback;
+# carrier mode, ADR-0018, is the default).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 RT="$ROOT/internal/backend/truffle"
@@ -38,7 +41,9 @@ leg() {
   local legname="$1"; shift
   local log="$OUTDIR/$logname.log"
   echo "--- leg $logname ($legname $*) ---"
-  timeout 300 "$JAVA" "${jflags[@]}" -cp "$CP" \
+  # shellcheck disable=SC2086 # TORTURE_JAVA_OPTS is a flag list
+  timeout 300 "$JAVA" --add-exports java.base/jdk.internal.vm=ALL-UNNAMED ${TORTURE_JAVA_OPTS:-} \
+    "${jflags[@]}" -cp "$CP" \
     graalgo.sched.torture.TortureBattery "$legname" "$@" \
     > "$log" 2>&1
   local rc=$?

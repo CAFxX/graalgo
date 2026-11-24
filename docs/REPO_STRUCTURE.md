@@ -166,9 +166,10 @@ directory's README repeats its status.
       (P3SyncMain) runs every program as `Context.eval` of the
       frontend/v1 wire document (truffle-design TR-1).
       Nodes and runtime call each other, so they compile in one javac
-      round. Two test runners: `graalgo.test.Runner` (nodes, values,
-      corpus differentials) and `graalgo.sched.SchedTestRunner`
-      (scheduler/runtime). Until RECOVERY T0.D (2026-11-18) this was two
+      round. Two test-class registries: `graalgo.test.Runner` (nodes,
+      values, corpus differentials) and `graalgo.sched.SchedTestRunner`
+      (scheduler/runtime); `make test-java-fast`/`test-java-slow`/`test`
+      run their classes (the module Makefile has no `test` target). Until RECOVERY T0.D (2026-11-18) this was two
       modules (`truffle/` + `runtime/`) plus 8 phase-1 stub classes whose
       same-FQN replacements won by classpath order; the stubs are deleted
       and [check_duplicate_fqn.py](../.github/scripts/check_duplicate_fqn.py)
@@ -332,11 +333,16 @@ directory's README repeats its status.
     ([test-profile.md](dev/test-profile.md)); `test_*.py` are their
     self-tests (`make check`).
   - [m1r/](../test/m1r/) — the differential gate of the standard library
-    through the `-toolexec` path (`make test-m1r`, ~15 s, per-push in `make all`):
+    through the `-toolexec` path (`make test-m1r`, ~20 s, per-push in `make all`):
     [run.sh](../test/m1r/run.sh) builds each program of
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
-    compares stdout, normalized stderr and exit status with gc.
+    compares stdout, normalized stderr and exit status with gc (in the
+    default carrier goroutine mode; `spawn_flat.go` is the spawn-scaling
+    check of ADR-0018); [cancel.sh](../test/m1r/cancel.sh) builds
+    [cancel/probe.go](../test/m1r/cancel/probe.go) and cancels it from the
+    embedder (`Context.close(true)`, both goroutine modes; run by `make
+    test-goroutine-modes`).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r
@@ -443,7 +449,10 @@ directory's README repeats its status.
     workloads on the new node package, rewritten by
     [bench.py](../test/m1a/bench.py) to need no standard library
     (`make bench-m1a`), and as the partial-evaluation gate of the new
-    nodes (`make pe-check-m1a`, per-push: zero failed compilations).
+    nodes (`make pe-check-m1a`, per-push: zero failed compilations);
+    [pe_std.sh](../test/m1a/pe_std.sh) extends that gate to the
+    standard-library paths of the realistic programs
+    ([pe/stdhot.go](../test/m1a/pe/stdhot.go)) and plants a violation.
   - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
     channel ping-pong); [run.sh](../test/bench/run.sh) checks output
@@ -458,7 +467,14 @@ directory's README repeats its status.
     [realistic/](../test/bench/realistic/README.md) holds whole-workload
     programs (stdlib pipelines, allocation tail latency, goroutine scaling)
     of [north-star.md](arch/north-star.md) on the same runner (`--dir`;
-    peak RSS, CPU time, `STAT` lines): `make bench-realistic`, not a gate.
+    peak RSS, CPU time, `STAT` lines): `make bench-realistic`, not a gate;
+    [pe-report.sh](../test/bench/realistic/pe-report.sh) (with
+    [pe_report.py](../test/bench/realistic/pe_report.py)) prints their
+    failed, deoptimized and invalidated compilations (`make pe-report`;
+    nightly with `--max-churn` as
+    [compile-health.yml](../.github/workflows/compile-health.yml); parser
+    test [test_pe_report.py](../test/bench/realistic/test_pe_report.py) in
+    `make pe-check-m1a`).
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):

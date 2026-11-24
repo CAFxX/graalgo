@@ -129,6 +129,7 @@ public final class NodeConventionsTest {
         "D2-limit Fixtures$Dsl#cached",
         "D4-idempotent Fixtures$Dsl#isSmall",
         "D6-neverdefault Fixtures$Dsl#make",
+        "G1-calltarget Fixtures$LocationlessCall#enter",
         "N1-cfdims Fixtures$BadArrays#table",
         "N1-children Fixtures$BadArrays#kids",
         "N1-field Fixtures$BadFields#count",

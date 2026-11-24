@@ -684,7 +684,7 @@ final class ReflectIntrinsics {
         Closure c = (Closure) fn;
         Object[] a = loadArgs(node, ft, args, 1);
         a[0] = c.env();
-        storeResults(node, ft, rets, c.target().call(a));
+        storeResults(node, ft, rets, c.target().call(node, a));
     }
 
     /**
@@ -701,7 +701,7 @@ final class ReflectIntrinsics {
         }
         Object[] a = loadArgs(node, ft, args, 2);
         a[1] = Receivers.adapt(m, r.data, node);
-        storeResults(node, ft, rets, m.target().call(a));
+        storeResults(node, ft, rets, m.target().call(node, a));
     }
 
     private static final FrameDescriptor FUNC_ENV = Env.layout(2);
@@ -755,7 +755,8 @@ final class ReflectIntrinsics {
             for (int i = 0; i < nout; i++) {
                 rets.refs[i] = ft.results[i].zeroFlat();
             }
-            impl.target().call(impl.env(), new Slice(args, 0, 0, 0, nin, nin), new Slice(rets, 0, 0, 0, nout, nout));
+            impl.target().call((com.oracle.truffle.api.nodes.Node) null, impl.env(), new Slice(args, 0, 0, 0, nin, nin),
+                    new Slice(rets, 0, 0, 0, nout, nout));
             if (nout == 0) {
                 return null;
             }
@@ -814,7 +815,7 @@ final class ReflectIntrinsics {
             Object[] b = a.clone();
             b[0] = null;
             b[1] = Receivers.adapt(m, a[1], this);
-            return m.target().call(b);
+            return m.target().call((com.oracle.truffle.api.nodes.Node) null, b);
         }
     }
 

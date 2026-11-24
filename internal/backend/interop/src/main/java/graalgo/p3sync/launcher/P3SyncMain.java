@@ -32,7 +32,7 @@ import graalgo.sched.launcher.GoDebug;
  * <p>Exit codes match Phase 1/2: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
  *
- * <p>verifies: GG-0017 (sync slice)
+ * <p>verifies: GG-0073 (sync slice)
  */
 public final class P3SyncMain {
     private P3SyncMain() {}

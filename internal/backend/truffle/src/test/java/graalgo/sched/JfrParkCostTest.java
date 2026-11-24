@@ -17,7 +17,7 @@ import jdk.jfr.Recording;
  * scheduler hot path), with a JFR recording enabled vs disabled.
  *
  * <p>No scheduler, no vthreads, no drainer: just the hooks in a tight
- * loop, so box load cannot inject scheduling noise. Budgets are
+ * loop, timed in thread CPU time, so box load cannot inject scheduling noise. Budgets are
  * machine-relative (multiples of the local {@code nanoTime} cost — the
  * pattern from {@code testDisabledGuardCostNegligible}), because absolute
  * nanosecond budgets do not transfer across machines. Tight enough to
@@ -71,12 +71,20 @@ public final class JfrParkCostTest {
         }
         // Timed run (second loop so the first also serves as warmup).
         h.parkSeq.set(1L);
-        long t0 = System.nanoTime();
+        long t0 = cpuNanos();
         for (int i = 0; i < ITERS; i++) {
             JfrEvents.notePark(h, ParkReason.QUANTUM);
             JfrEvents.parkResumed(h);
         }
-        return (double) (System.nanoTime() - t0) / ITERS;
+        return (double) (cpuNanos() - t0) / ITERS;
+    }
+
+    /**
+     * This thread's CPU time: every loop here is timed in it, so the host descheduling the
+     * thread (a shared, oversubscribed box) does not count against either side of a budget.
+     */
+    private static long cpuNanos() {
+        return java.lang.management.ManagementFactory.getThreadMXBean().getCurrentThreadCpuTime();
     }
 
     private static double median(double[] xs) {
@@ -95,11 +103,14 @@ public final class JfrParkCostTest {
         }
         long sink = 0;
         int n = 1_000_000;
-        long t0 = System.nanoTime();
-        for (int i = 0; i < n; i++) {
-            sink += System.nanoTime();
+        double nanoCost = Double.MAX_VALUE; // best of 3: the reference is a lower bound
+        for (int r = 0; r < 3; r++) {
+            long t0 = cpuNanos();
+            for (int i = 0; i < n; i++) {
+                sink += System.nanoTime();
+            }
+            nanoCost = Math.min(nanoCost, (double) (cpuNanos() - t0) / n);
         }
-        double nanoCost = (double) (System.nanoTime() - t0) / n;
         if (sink == 0) {
             throw new AssertionError("unreachable");
         }

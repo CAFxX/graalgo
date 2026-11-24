@@ -46,7 +46,7 @@ import graalgo.values.GoKind;
  * {@code NodeFactory.registerExprKind} hook (P2-D8 precedent) — no
  * Phase-1 {@code NodeFactory} change.
  *
- * <p>verifies: GG-0017 (sync slice); verifies: GG-0020 (atomic slice)
+ * <p>verifies: GG-0073 (sync slice); verifies: GG-0020 (atomic slice)
  */
 public final class SyncNewNode extends GoExprNode {
 

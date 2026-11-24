@@ -38,7 +38,7 @@ done
 # GRAALGO_JAVA_OPTS: extra JVM flags (word-split), e.g. resource caps for
 # test runs on shared hosts: "-Xmx2g -XX:ActiveProcessorCount=4".
 # shellcheck disable=SC2086
-exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m -XX:-UsePerfData ${GRAALGO_JAVA_OPTS:-} \
+exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m -XX:-UsePerfData ${GRAALGO_JAVA_OPTS:-} \
   --sun-misc-unsafe-memory-access=allow \
   -Djava.io.tmpdir="${TMPDIR:-/tmp}" \
   -cp "$CP" graalgo.p3sync.launcher.P3SyncMain "$@"

@@ -234,25 +234,44 @@ class Gen:
 
     def float_divisor_safe(self, b):
         """Ensure a float divisor isn't a compile-time zero (Go rejects
-        constant x/0.0). Runtime zero is fine (yields +Inf)."""
+        constant x/0.0). Runtime zero is fine (yields +Inf).
+
+        A divisor made only of float literals, operators, parentheses and
+        float32()/float64() conversions is a Go constant: it is evaluated
+        EXACTLY (Go constants are arbitrary precision; Python floats are
+        not) and replaced by 1.0 when it is zero or small enough to round
+        to zero under a float32() conversion. (Until 2026-11-23 the
+        identifier test matched the exponent `e` of literals like 1e10, so
+        `(1e10 - 1e10)` passed as "runtime": ~2-10% of every nightly soak
+        batch was GC_BUILD_FAIL "division by zero".)"""
         import re as _re
-        t = b.strip()
-        # Normalize: float32(X)/float64(X) -> (X); strip outer parens.
-        t = _re.sub(r'float(?:32|64)\(', '(', t)
-        while t.startswith("(") and t.endswith(")"):
-            t = t[1:-1].strip()
-        # If it references any identifier, it's runtime → safe (Inf ok).
-        if _re.search(r'[a-zA-Z_]', t):
-            return b
-        # Constant expression: evaluate safely; if zero, use 1.0.
+        from fractions import Fraction
+        t = _re.sub(r'float(?:32|64)\(', '(', b.strip())
+        if not _re.fullmatch(r'[\d\s\.\+\-\*\/\(\)eE]+', t):
+            return b  # references a variable or call: runtime value
+        exact = _re.sub(r'\d+(?:\.\d*)?(?:[eE][+-]?\d+)?',
+                        lambda m: "F('%s')" % m.group(0), t)
         try:
-            if not _re.fullmatch(r'[\d\s\.\+\-\*\/\(\)eE]+', t):
-                return b
-            v = eval(t, {"__builtins__": {}}, {})  # noqa: S307
-            if v == 0:
-                return "1.0"
+            v = eval(exact, {"__builtins__": {}, "F": Fraction}, {})  # noqa: S307
+        except ZeroDivisionError:
+            return "1.0"
         except Exception:
-            pass
+            return "1.0"  # unparseable constant: never risk a build failure
+        if abs(v) < Fraction(1, 10**40):
+            return "1.0"
+        # A float32()/float64() conversion makes the expression a TYPED
+        # constant, rounded to that precision at each typed step: e.g.
+        # (1e10 + 0.75) - float32(1e10) is exactly 0.75 but 0 as float32.
+        # float32: not modeled, never risk it; float64: also check the
+        # double-precision value.
+        if 'float32(' in b:
+            return "1.0"
+        if 'float64(' in b:
+            try:
+                if abs(eval(t, {"__builtins__": {}}, {})) < 1e-300:  # noqa: S307
+                    return "1.0"
+            except Exception:
+                return "1.0"
         return b
 
     def float_expr(self, want, depth):

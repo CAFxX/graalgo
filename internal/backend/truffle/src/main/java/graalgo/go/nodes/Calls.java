@@ -211,9 +211,14 @@ public final class Calls {
         /**
          * Runs one deferred call while the function exits; {@code cur} is what is unwinding it:
          * null (normal return), a {@link GoPanic} or a {@link Goexit}. Without either it is a
-         * plain call. With a panic the goroutine state names the panic and the call's argument
-         * array, which is what makes {@code recover()} effective in exactly the function called
-         * here; during a Goexit no panic is named, so {@code recover()} returns nil (GG-0070).
+         * plain call. With a panic the goroutine state names the panic, and the call's argument
+         * array carries it as a hidden trailing element (the recover token), which is what makes
+         * {@code recover()} effective in exactly the function called here: any call that function
+         * makes builds a fresh argument array without it. During a Goexit no panic is named, so
+         * {@code recover()} returns nil (GG-0070). (The token is an element, not the array's
+         * identity: compiled code with argument type speculation hands the callee a copy of the
+         * argument array, so an identity test made recover() return nil once the deferred
+         * function was compiled, BUG-0049.)
          * The result is what still unwinds the function afterwards: null once a panic is
          * recovered (or the Goexit that panic interrupted, which then resumes), a panic raised
          * by the call (chained to the one it ran for), or a Goexit called by it (gc: it aborts
@@ -234,12 +239,10 @@ public final class Calls {
             }
             G g = G.current(this);
             GoPanic outer = g.panic;
-            Object[] outerArgs = g.recoverArgs;
             GoPanic running = cur instanceof GoPanic p ? p : null;
             g.panic = running;
-            g.recoverArgs = running == null ? null : args;
             try {
-                invoke(site, target, args);
+                invoke(site, target, running == null ? args : withRecoverToken(args, running));
                 if (running != null && running.recovered) {
                     return running.resumeExit;
                 }
@@ -250,7 +253,6 @@ public final class Calls {
                 return e;
             } finally {
                 g.panic = outer;
-                g.recoverArgs = outerArgs;
             }
         }
 
@@ -471,7 +473,7 @@ public final class Calls {
                 }
             }
             if (forward) {
-                passRecover(this, frame, a);
+                a = passRecover(this, frame, a);
             }
             return call.call(a);
         }
@@ -633,7 +635,7 @@ public final class Calls {
                 throw Panics.nilDeref(this);
             }
             if (forward) {
-                passRecover(this, frame, a);
+                a = passRecover(this, frame, a);
             }
             return dispatch.execute(r, a);
         }
@@ -661,11 +663,24 @@ public final class Calls {
      * argument array {@code a} inherits that eligibility, as gc skips {@code WRAPPER} frames.
      * The runner restores the goroutine state when the deferred call returns.
      */
-    static void passRecover(Node n, VirtualFrame frame, Object[] a) {
-        G g = G.current(n);
-        if (g.recoverArgs == frame.getArguments()) {
-            g.recoverArgs = a;
+    static Object[] passRecover(Node n, VirtualFrame frame, Object[] a) {
+        GoPanic p = G.current(n).panic;
+        return p != null && hasRecoverToken(frame.getArguments(), p) ? withRecoverToken(a, p) : a;
+    }
+
+    /** {@code args} plus the recover token {@code p} as a trailing element (see callDeferred). */
+    static Object[] withRecoverToken(Object[] args, GoPanic p) {
+        Object[] a = new Object[args.length + 1];
+        for (int i = 0; i < args.length; i++) {
+            a[i] = args[i];
         }
+        a[args.length] = p;
+        return a;
+    }
+
+    /** Whether a frame's argument array carries the recover token of the panic {@code p}. */
+    static boolean hasRecoverToken(Object[] args, GoPanic p) {
+        return args.length > 0 && args[args.length - 1] == p;
     }
 
     /** Several results as the call boundary's tuple. */
@@ -987,9 +1002,8 @@ public final class Calls {
     public static final class Recover extends Ref {
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            G g = G.current(this);
-            GoPanic p = g.panic;
-            if (p != null && !p.recovered && g.recoverArgs == frame.getArguments()) {
+            GoPanic p = G.current(this).panic;
+            if (p != null && !p.recovered && hasRecoverToken(frame.getArguments(), p)) {
                 p.recovered = true;
                 return p.value;
             }

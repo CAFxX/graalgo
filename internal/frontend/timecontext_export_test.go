@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestSyntheticContextM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005
+// TestSyntheticContextM5 verifies: GG-0073 — P3-M5 (WS E, ADR-0005
 // Appendix M) synthetic package shape: the single-result desugar helpers
 // (__withCancel/__withCancelCause/__withDeadline/__withTimeout/
 // __deadlineOf/__parseDuration, cancelFunc/cancelCauseFunc methods) are
@@ -93,7 +93,7 @@ func main() {
 	}
 }
 
-// TestMultiResultFailFastKept verifies: GG-0017 — outside the 2-target
+// TestMultiResultFailFastKept verifies: GG-0073 — outside the 2-target
 // desugar position, the 5 reachable multi-result operations still fail
 // fast with the named M5 scope error. (Single-target
 // `d := time.ParseDuration(s)` is a go/types type error before the
@@ -135,7 +135,7 @@ func main() { time.ParseDuration("1s") }
 	}
 }
 
-// TestDeadlineCallableP4 verifies the P4 restoration of GG-0017 —
+// TestDeadlineCallableP4 verifies the P4 restoration of GG-0073 —
 // P3-M5 (afc0dfb amendment, ADR-0005 Appendix M) deliberately omitted
 // `Deadline` from the synthetic Context interface, so an interface-typed
 // call was a go/types type error. The general interface multi-result
@@ -215,7 +215,7 @@ func main() {
 	}
 }
 
-// TestMultiResultDesugarM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005
+// TestMultiResultDesugarM5 verifies: GG-0073 — P3-M5 (WS E, ADR-0005
 // Appendix M) call-site desugar: the 5 reachable multi-result operations
 // (WithCancel, WithCancelCause, WithDeadline, WithTimeout,
 // ParseDuration) in 2-target position lower to single-result helper

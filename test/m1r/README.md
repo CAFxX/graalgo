@@ -12,7 +12,17 @@ std packages under test — the place for intrinsic and std-behavior fixes
 (e.g. [reflectlite_views.go](programs/reflectlite_views.go),
 [preempt_spin.go](programs/preempt_spin.go)).
 
+**Goroutine mode:** every program runs in the default carrier mode
+(goroutines as continuations on carrier threads, GG-0073,
+[ADR-0018](../../docs/dev/adr/ADR-0018-carrier-goroutines.md)).
+[spawn_flat.go](programs/spawn_flat.go) checks that goroutine creation does not
+slow down with the live count; the thread-per-goroutine fallback fails it by
+design, so `make test-goroutine-modes` (which reruns a few programs in that mode)
+leaves it out. [cancel.sh](cancel.sh) builds [cancel/probe.go](cancel/probe.go)
+(goroutines parked and spinning) and cancels it with
+`Context.close(true)` in both modes: bounded, cancelled, no thread left.
+
 **Not here:** `sync`/`time`/syscall programs ([test/m1c/](../m1c/README.md)),
 import-free language programs ([test/m1a/](../m1a/README.md)).
 
-**Run:** `make test-m1r` (~15 s) or `make test-m1r M1R_PROGRAMS="test/m1r/programs/x.go"`.
+**Run:** `make test-m1r` (~20 s) or `make test-m1r M1R_PROGRAMS="test/m1r/programs/x.go"`.

@@ -42,6 +42,9 @@ fi
 # 2. gc run (10s timeout)
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
+# The binary is never needed again (triage rebuilds from source): kept,
+# ~2 MB x every soak program made the nightly report artifact 3.4 GB.
+rm -f "$gcbin"
 
 # 3. graalgo run (120s timeout; JVM startup dominates)
 timeout 120 "${GRAALGO_RUN[@]}" --gmp="$GMP" "$GO_FILE" \

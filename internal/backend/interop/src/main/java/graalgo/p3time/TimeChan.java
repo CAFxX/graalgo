@@ -15,7 +15,7 @@ import graalgo.runtime.TimerChan;
  * translator is the only sender; the channel is never closed by the
  * runtime (gc never closes timer channels).
  *
- * <p>verifies: GG-0017 (time slice)
+ * <p>verifies: GG-0073 (time slice)
  */
 public final class TimeChan extends TimerChan {
     public TimeChan() {

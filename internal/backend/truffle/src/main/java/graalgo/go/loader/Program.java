@@ -279,12 +279,12 @@ public final class Program {
         for (PackageUnit u : initOrder) {
             Gir.Init init = u.sections().init;
             if (init.varInit() >= 0) {
-                u.func(init.varInit()).instance(null).get().call(new Object[] {null});
+                u.func(init.varInit()).instance(null).get().call(graalgo.go.runtime.GoProcess.NO_CALLER, (Object) null);
             }
             for (int fn : init.inits()) {
-                u.func(fn).instance(null).get().call(new Object[] {null});
+                u.func(fn).instance(null).get().call(graalgo.go.runtime.GoProcess.NO_CALLER, (Object) null);
             }
         }
-        main.funcNamed("main").instance(null).get().call(new Object[] {null});
+        main.funcNamed("main").instance(null).get().call(graalgo.go.runtime.GoProcess.NO_CALLER, (Object) null);
     }
 }

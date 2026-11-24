@@ -63,6 +63,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.sync.GoPoolTest.class);
         TESTS.add(graalgo.sched.WakeupModelTest.class);
         TESTS.add(graalgo.sched.WakeupRaceStressTest.class);
+        TESTS.add(graalgo.sched.CarriersTest.class);
         TESTS.add(graalgo.sched.JfrParkCostTest.class);
     }
 

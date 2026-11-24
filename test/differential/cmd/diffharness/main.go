@@ -150,6 +150,10 @@ func loadCorpus(rf *runFlags, cfg *harness.Config) ([]harness.Program, []harness
 func runOne(cfg *harness.Config, prog harness.Program, workRoot string) []harness.Outcome {
 	outs := make([]harness.Outcome, len(cfg.Backends))
 	for i := range cfg.Backends {
+		if i == 0 { // the reference (oracle) backend
+			outs[i] = harness.RunReference(cfg, &cfg.Backends[i], prog, workRoot)
+			continue
+		}
 		outs[i] = harness.RunProgram(cfg, &cfg.Backends[i], prog, workRoot)
 	}
 	return outs
@@ -198,6 +202,11 @@ func cmdRun(args []string) error {
 	diverged, infra := 0, 0
 	for _, p := range progs {
 		outs := runOne(cfg, p, workRoot)
+		if harness.RefInfra(outs[0]) {
+			infra++
+			fmt.Printf("INFRA    %-28s %s: reference timed out (also on the extended retry): no verdict\n", p.Name, outs[0].Backend)
+			continue
+		}
 		for i := 1; i < len(outs); i++ {
 			if reInfra.MatchString(outs[i].BuildLog) || reInfra.MatchString(outs[i].Stderr) {
 				infra++

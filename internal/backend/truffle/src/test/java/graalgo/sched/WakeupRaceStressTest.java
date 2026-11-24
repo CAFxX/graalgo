@@ -231,17 +231,39 @@ public final class WakeupRaceStressTest {
      * forth by direct handoff, never through the drainer's lanes. The pair
      * must still yield the slot at the quantum (a handoff inherits the
      * slot's quantum deadline), so a CPU-bound spinner queued in the run
-     * lane gets its share: here at least a fifth of the wall time (about
-     * half is expected). A handoff that granted a fresh quantum would let
+     * lane gets its share. A handoff that granted a fresh quantum would let
      * the pair hold the slot forever and the spinner would get none.
+     *
+     * <p>The metric counts <em>turns</em>, not wall time, so an oversubscribed
+     * host cannot read as starvation: with one slot, the spinner sees a turn
+     * boundary when the pair's round counter moved between two of its polls
+     * (the pair ran in between). It asserts (1) the spinner gets
+     * {@value #HANDOFF_TURNS} turns before a generous cap (the starvation
+     * the test guards gives zero) and (2) the median pair turn, measured by
+     * the spinner as the gap it was off the slot, is within
+     * {@value #HANDOFF_SLICE_RATIO}x the median spinner turn (both are about
+     * a quantum when fair; a median ignores the turns the OS descheduled the
+     * carrier in, which inflate both kinds equally and rarely). The previous
+     * metric, spinner run time (inter-poll gaps under 50 us) over the wall
+     * window, charged every millisecond the host kept the carrier off the
+     * CPU, in the spinner's turns ({@code os-gaps}) or in the pair's and the
+     * switches, against the spinner: at load 20 on 16 cores it read 0.13-0.18
+     * (threshold 0.2) in 3 of 10 runs whose turns were fair (median pair turn
+     * 1.1-1.8x the spinner's). Planting a fresh quantum per handoff gives
+     * 5 (carrier) and 34 (thread mode) turns in the cap, with pair turns of
+     * 118-318 ms.
      */
     public void testHandoffPairDoesNotStarveSpinner() throws Exception {
-        final long runNanos = 600_000_000L;
+        final long capNanos = 5_000_000_000L; // only a starved run reaches it
         final long quantum = 2_000_000L;
-        final AtomicLong spinnerRunNanos = new AtomicLong();
         final AtomicLong rounds = new AtomicLong();
         final java.util.concurrent.atomic.AtomicBoolean stop =
                 new java.util.concurrent.atomic.AtomicBoolean();
+        final long[] spinnerTurns = new long[HANDOFF_TURNS];
+        final long[] pairTurns = new long[HANDOFF_TURNS];
+        final int[] turns = new int[1];
+        final long[] osGapNanos = new long[1];
+        final long[] mountedNanos = new long[1];
         final long[] window = new long[2];
         withScheduler(1, quantum, () -> {
             GoChan ping = new GoChan(0, 0L);
@@ -257,8 +279,10 @@ public final class WakeupRaceStressTest {
                 }
             });
             sched.spawn(() -> {
-                window[0] = System.nanoTime();
-                while (!stop.get()) {
+                long start = System.nanoTime();
+                window[0] = start;
+                // The cap ends a starved run (the spinner never runs to set stop).
+                while (!stop.get() && System.nanoTime() - start < capNanos) {
                     ping.send(1L);
                     pong.recv();
                     rounds.incrementAndGet();
@@ -267,32 +291,68 @@ public final class WakeupRaceStressTest {
                 ping.close();
             });
             sched.spawn(() -> {
-                long last = System.nanoTime();
-                long ran = 0;
-                long start = last;
-                while (last - start < runNanos) {
+                long start = System.nanoTime();
+                long last = start;
+                long turnStart = start;
+                long seen = rounds.get();
+                int n = 0;
+                while (n < HANDOFF_TURNS && last - start < capNanos) {
                     graalgo.safepoint.Safepoint.poll();
                     long now = System.nanoTime();
-                    if (now - last < 50_000L) {
-                        ran += now - last; // still mounted: count it as run time
+                    long r = rounds.get();
+                    if (r != seen) {
+                        // The pair ran between the two polls: a turn boundary.
+                        spinnerTurns[n] = last - turnStart;
+                        pairTurns[n] = now - last;
+                        n++;
+                        seen = r;
+                        turnStart = now;
+                    } else if (now - last >= 50_000L) {
+                        osGapNanos[0] += now - last; // off the CPU, still holding the slot
+                    } else {
+                        mountedNanos[0] += now - last; // the old metric's run time
                     }
                     last = now;
                 }
-                spinnerRunNanos.set(ran);
+                turns[0] = n;
                 window[1] = System.nanoTime();
                 stop.set(true);
             });
         });
+        int n = turns[0];
         long wall = window[1] - window[0];
-        double share = (double) spinnerRunNanos.get() / wall;
-        System.out.printf("  [handoff-fairness] spinner share %.2f of %d ms, pair rounds %d%n",
-                share, wall / 1_000_000, rounds.get());
-        if (share < 0.2) {
-            throw new AssertionError("ping-pong pair starved the spinner: share " + share);
+        long spinnerMed = medianOf(spinnerTurns, n);
+        long pairMed = medianOf(pairTurns, n);
+        System.out.printf("  [handoff-fairness] %d turns in %d ms: median spinner turn %d us, "
+                + "median pair turn %d us, os-gaps %d ms, old wall-share metric %.2f, pair rounds %d%n",
+                n, wall / 1_000_000, spinnerMed / 1_000, pairMed / 1_000, osGapNanos[0] / 1_000_000,
+                (double) mountedNanos[0] / Math.max(1, wall), rounds.get());
+        if (n < HANDOFF_TURNS) {
+            throw new AssertionError("ping-pong pair starved the spinner: " + n + " of "
+                    + HANDOFF_TURNS + " turns in " + wall / 1_000_000 + " ms");
+        }
+        if (pairMed > HANDOFF_SLICE_RATIO * Math.max(spinnerMed, quantum)) {
+            throw new AssertionError("ping-pong pair holds the slot for " + pairMed / 1_000
+                    + " us per turn against the spinner's " + spinnerMed / 1_000 + " us");
         }
         if (rounds.get() == 0) {
             throw new AssertionError("spinner starved the ping-pong pair");
         }
+    }
+
+    /** Turns {@link #testHandoffPairDoesNotStarveSpinner} waits for (~4 ms each when fair). */
+    private static final int HANDOFF_TURNS = 40;
+
+    /** Bound on median pair turn / median spinner turn (about 1 when fair). */
+    private static final int HANDOFF_SLICE_RATIO = 4;
+
+    private static long medianOf(long[] xs, int n) {
+        if (n == 0) {
+            return 0;
+        }
+        long[] c = java.util.Arrays.copyOf(xs, n);
+        java.util.Arrays.sort(c);
+        return c[n / 2];
     }
 
     /**

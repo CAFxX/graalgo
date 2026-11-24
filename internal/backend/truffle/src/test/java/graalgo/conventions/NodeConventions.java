@@ -82,7 +82,9 @@ public final class NodeConventions {
         Map.entry("B6-invalidate", "PE-reachable write of a @CompilationFinal/@Child field, or tree rewrite, not preceded by transferToInterpreterAndInvalidate"),
         Map.entry("N4-unexploded", "PE-reachable loop over a @Children array without @ExplodeLoop"),
         Map.entry("B2-frame", "@TruffleBoundary method takes a VirtualFrame/Frame (forces materialization)"),
-        Map.entry("B3-boundary", "PE-reachable code calls a PE-hostile JDK method outside a @TruffleBoundary"));
+        Map.entry("B3-boundary", "PE-reachable code calls a PE-hostile JDK method outside a @TruffleBoundary"),
+        Map.entry("G1-calltarget", "calls CallTarget.call(Object...): its EncapsulatingNodeReference bracket would "
+            + "span a goroutine park and be restored on another carrier; pass a location, call(Node, Object...)"));
 
     record Violation(String rule, String location, String detail) implements Comparable<Violation> {
         String key() {
@@ -293,6 +295,7 @@ public final class NodeConventions {
                             || d.contains("Lcom/oracle/truffle/api/frame/Frame;"))) {
                         report("B2-frame", i.dotted() + "#" + m.methodName().stringValue(), d);
                     }
+                    checkCallTargetCall(i, m);
                 }
                 checkStatics(i);
                 checkFinalClass(i);
@@ -315,6 +318,29 @@ public final class NodeConventions {
     }
 
     // ---- statics, final classes, records --------------------------------------------------
+
+    /**
+     * G1-calltarget: {@code CallTarget.call(Object...)} sets the calling thread's
+     * EncapsulatingNodeReference on entry and restores it on exit. A goroutine that parks inside
+     * the call can resume on another carrier (carrier mode, GG-0073), which then restores the
+     * first carrier's reference: a Truffle assertion under -ea, a cross-thread race without.
+     */
+    private void checkCallTargetCall(Info i, MethodModel m) {
+        if (m.code().isEmpty()) {
+            return;
+        }
+        for (CodeElement e : m.code().get()) {
+            if (e instanceof InvokeInstruction ii && ii.name().stringValue().equals("call")
+                    && ii.type().stringValue().equals("([Ljava/lang/Object;)Ljava/lang/Object;")
+                    && CALL_TARGETS.contains(ii.owner().asInternalName())) {
+                report("G1-calltarget", i.dotted() + "#" + m.methodName().stringValue(), ii.owner().asInternalName());
+                return;
+            }
+        }
+    }
+
+    private static final Set<String> CALL_TARGETS = Set.of("com/oracle/truffle/api/CallTarget",
+        "com/oracle/truffle/api/RootCallTarget");
 
     private void checkStatics(Info i) {
         for (FieldModel f : i.model.fields()) {

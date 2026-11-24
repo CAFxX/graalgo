@@ -225,7 +225,7 @@ remediated and re-tested. Sign-off granted.
 
 **GG IDs activated:** GG-SCHED-0001 (quantum expiry),
 GG-SCHED-0002 (drainer), GG-SCHED-0003 (cap), GG-WAKE-0001
-(ack-before-unpark), GG-WAKE-0003 (lane order), GG-0017 (crash
+(ack-before-unpark), GG-WAKE-0003 (lane order), `GG-0017` (crash
 discipline) — core slice per PLAN.md.
 
 ## 2026-10-05 ~13:45 CEST — P2-M2 START (channels + select, WS B)
@@ -275,7 +275,7 @@ DEPENDENCY for the parent, not done here. P2-M2 therefore owns:
 - Send-on-closed in select: poison — panics only if select would
   otherwise block with no default; default wins over poison.
 
-**GG-0017 chan slice →active** when the first channel test lands
+**`GG-0017` chan slice →active** when the first channel test lands
 (activation policy).
 
 ## 2026-10-05 ~15:30 CEST — P2-M2 implementation + tests complete
@@ -303,7 +303,7 @@ DEPENDENCY for the parent, not done here. P2-M2 therefore owns:
 panic messages). No scheduling-observable divergences found; nothing to
 add to the P2-M10 divergence list yet.
 
-**GG-0017 chan slice →active** (first channel test landed with
+**`GG-0017` chan slice →active** (first channel test landed with
 `verifies: GG-0017` annotations).
 
 **Design notes for reviewers:**

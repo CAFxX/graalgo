@@ -291,9 +291,9 @@ convention.
 
 `ChannelTest.java` carries 21 `verifies: GG-0017` markers; the differential
 file carries 0, though its 10 tests are equally "first real tests" of
-GG-0017 chan-slice semantics.
+`GG-0017` chan-slice semantics.
 
-**GG-0017 activation assessment (brief item 6):** activation itself is
+**`GG-0017` activation assessment (brief item 6):** activation itself is
 **valid**. PLAN.md's policy ("→active exactly when its first real test
 lands with a `verifies: GG-XXXX` annotation") is satisfied: P2-M1 activated
 only the *core* slice (crash discipline), and `ChannelTest` is the first
@@ -301,7 +301,7 @@ real channel test, carrying the markers in the project's established
 `verifies:`-comment form (same form Phase-1 used, e.g.
 `// verifies: GG-0027` in `MainTest.java`). **Fix:** add the markers to the
 10 differential tests for consistency, so a future grep for "what tests
-verify GG-0017" doesn't miss half the suite.
+verify `GG-0017`" doesn't miss half the suite.
 
 ### P2-10 — Confusing comment on `testCh06SelectDefault`
 
@@ -320,7 +320,7 @@ in the Go source so the translation is 1:1).
 ## Coverage matrix (PLAN.md section 4 P2-M2 acceptance)
 
 Acceptance: *"channels + select (WS B) — differential vs gc on channel
-semantics corpus incl. close-while-parked and select-fairness (GG-0017
+semantics corpus incl. close-while-parked and select-fairness (`GG-0017`
 chan→active)"*, decomposed:
 
 | # | Acceptance sub-criterion | Test(s) | Assessment |
@@ -344,7 +344,7 @@ chan→active)"*, decomposed:
 | 17 | Select parked on recv wakes on close with (zero,false) | `testSelectWakesOnClose` (C:459), `testSelectCloseWhileParked` (C:485) | PASS |
 | 18 | Range-over-channel drain | `testCh04ProducerConsumer` byte-identical | PASS differential; no Java unit equivalent (fine — differential covers it) |
 | 19 | Wakeup accounting under contention (no lost/duplicated values) | `testPingPongStress` (C:537) | PASS — 20x50 exact sum/count |
-| 20 | GG-0017 chan slice activation | `verifies: GG-0017` in `ChannelTest` | PASS — policy satisfied (P2-9 nit on the differential file) |
+| 20 | `GG-0017` chan slice activation | `verifies: GG-0017` in `ChannelTest` | PASS — policy satisfied (P2-9 nit on the differential file) |
 
 (C:nnn = `ChannelTest.java` line.)
 
@@ -394,7 +394,7 @@ starving implementation fails with certainty. It tests *fairness*, not just
 - `testBlockedSendDoesNotPinCarrier` genuinely falsifies P2-D4 (drainer
   mechanics verified in code).
 - `testSelectFairness` is a real fairness test, not random-choice smoke.
-- GG-0017 chan-slice activation follows the plan's policy.
+- `GG-0017` chan-slice activation follows the plan's policy.
 - Lost-wakeup discipline in the tests (quiescence timeouts as loud
   failures rather than silent hangs) is good practice and consistent.
 

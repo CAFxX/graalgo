@@ -70,8 +70,12 @@ public final class GoType {
         }
     }
 
+    private static final java.util.concurrent.atomic.AtomicInteger ID_SEQ = new java.util.concurrent.atomic.AtomicInteger(1);
+
     public final String key;
     public final int kind;
+    /** A well-spread identity hash, fixed at creation (runtime caches keyed by type identity). */
+    public final int idHash;
     // Defined types.
     public final String pkg;
     public final String name;
@@ -138,6 +142,7 @@ public final class GoType {
         this.lock = lock;
         this.key = key;
         this.kind = kind;
+        this.idHash = ID_SEQ.getAndIncrement() * 0x9E3779B9;
         this.pkg = pkg;
         this.name = name;
         this.targs = targs;
@@ -301,22 +306,34 @@ public final class GoType {
         return nByte;
     }
 
+    /**
+     * The layout, computed once (again after {@link #expectLayout} records gc's). The slow path
+     * is a boundary: partial evaluation of a node that asks a non-constant type for its layout
+     * must not inline the recursion through defined types ("Too deep inlining" failed the
+     * compilation of functions slicing an array of a defined type).
+     */
     private void layout() {
-        if (kind == NAMED) {
-            GoType t = u();
-            nPrim = t.nPrim();
-            nRef = t.nRef();
-            nByte = t.nByte;
-            gcSize = t.gcSize;
-            gcAlign = declaredAlign > 0 ? declaredAlign : t.gcAlign;
-            if (expectedLayout != null) {
-                checkExpectedLayout(t);
-            }
+        if (!laidOut) {
+            layoutSlow();
+        }
+    }
+
+    @TruffleBoundary
+    private void layoutSlow() {
+        if (kind != NAMED) {
+            computeLayout();
             return;
         }
-        if (!laidOut) {
-            computeLayout();
+        GoType t = u();
+        nPrim = t.nPrim();
+        nRef = t.nRef();
+        nByte = t.nByte;
+        gcSize = t.gcSize;
+        gcAlign = declaredAlign > 0 ? declaredAlign : t.gcAlign;
+        if (expectedLayout != null) {
+            checkExpectedLayout(t);
         }
+        laidOut = true;
     }
 
     /**
@@ -340,6 +357,9 @@ public final class GoType {
                 System.arraycopy(offsets, 0, e, 2, offsets.length);
                 expectedLayout = e;
                 declaredAlign = align;
+                if (kind == NAMED) {
+                    laidOut = false;
+                }
             }
         }
     }

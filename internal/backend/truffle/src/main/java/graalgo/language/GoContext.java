@@ -2,6 +2,7 @@ package graalgo.language;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.TruffleContext;
+import com.oracle.truffle.api.TruffleSafepoint;
 import com.oracle.truffle.api.TruffleLanguage.ContextReference;
 import com.oracle.truffle.api.TruffleLanguage.Env;
 import com.oracle.truffle.api.nodes.Node;
@@ -47,17 +48,32 @@ public final class GoContext {
     final Env env;
     private final TruffleContext truffleContext;
     private final boolean virtualThreads;
+    /** Goroutines are continuations on carriers (ADR-0018), not one thread each. */
+    private final boolean carrierMode;
 
     GoContext(GoLanguage language, Env env) {
         this.language = language;
         this.env = env;
         this.truffleContext = env.getContext();
-        String threads = env.getOptions().get(GoLanguage.GoroutineThreads);
+        // Unset: carrier mode (GG-0073), or -Dgraalgo.sched.goroutines=thread (the fallback).
+        String threads = env.getOptions().hasBeenSet(GoLanguage.GoroutineThreads)
+                ? env.getOptions().get(GoLanguage.GoroutineThreads)
+                : SchedulerCore.carrierModeDefault() ? "carrier" : "virtual";
         switch (threads) {
-            case "virtual" -> virtualThreads = true;
-            case "platform" -> virtualThreads = false;
-            default -> throw new IllegalArgumentException(
-                    "go.GoroutineThreads must be 'virtual' or 'platform', got '" + threads + "'");
+            case "carrier" -> {
+                carrierMode = true;
+                virtualThreads = false;
+            }
+            case "thread", "virtual" -> {
+                carrierMode = false;
+                virtualThreads = true;
+            }
+            case "platform" -> {
+                carrierMode = false;
+                virtualThreads = false;
+            }
+            default -> throw new IllegalArgumentException("go.GoroutineThreads must be 'carrier', "
+                    + "'thread', 'virtual' or 'platform', got '" + threads + "'");
         }
     }
 
@@ -195,11 +211,24 @@ public final class GoContext {
 
     /**
      * Goroutine carrier factory for the scheduler: polyglot threads, entered
-     * in this context for their whole life (§2.6 item 2), virtual unless
-     * {@code go.GoroutineThreads=platform}.
+     * in this context for their whole life (§2.6 item 2): a few platform
+     * carriers (carrier mode, the default), else one virtual thread per
+     * goroutine unless {@code go.GoroutineThreads=platform}.
      */
     private Function<Runnable, Thread> goroutineThreads() {
+        if (carrierMode) {
+            // Carriers: platform polyglot threads, a handful per program (Carriers).
+            return body -> env.newTruffleThreadBuilder(body).virtual(false).build();
+        }
         return body -> env.newTruffleThreadBuilder(body).virtual(virtualThreads).build();
+    }
+
+    /** A new scheduler for this context's goroutines. */
+    private SchedulerCore newScheduler(int gomaxprocs) {
+        SchedulerCore s = new SchedulerCore(gomaxprocs, SchedulerCore.DEFAULT_QUANTUM_NANOS, goroutineThreads(),
+                carrierMode ? language.threadSlot::get : null, carrierMode);
+        s.setTornDown(this::closing);
+        return s;
     }
 
     /**
@@ -247,8 +276,7 @@ public final class GoContext {
             if (gmp <= 0) {
                 gmp = Runtime.getRuntime().availableProcessors();
             }
-            SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS,
-                    goroutineThreads());
+            SchedulerCore sched = newScheduler(gmp);
             scheduler = sched;
             graalgo.go.runtime.GoProcess p =
                     new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types);
@@ -257,7 +285,7 @@ public final class GoContext {
             sched.start();
             try {
                 sched.spawnMain(() -> p.run(() -> program.run(p)));
-                return sched.awaitExit();
+                return awaitExit(sched);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IllegalStateException("interrupted while awaiting program exit", e);
@@ -267,6 +295,32 @@ public final class GoContext {
         } finally {
             releaseRun(this);
         }
+    }
+
+    /**
+     * Waits for the program's exit as a Truffle-blocked thread (playbook §10): an embedder's
+     * {@code Context.close(true)} (or a hard exit) interrupts the wait and throws its
+     * cancellation here. The scheduler is then torn down before the cancellation propagates —
+     * parked goroutines unwind, running ones end at their next Truffle safepoint, and the
+     * carriers (polyglot threads entered for their whole life) stop — because the polyglot
+     * layer waits for every thread of the context to leave before it can finish closing.
+     */
+    private int awaitExit(SchedulerCore sched) throws InterruptedException {
+        int[] status = new int[1];
+        try {
+            TruffleSafepoint.setBlockedThreadInterruptible(null, s -> status[0] = s.awaitExit(), sched);
+        } catch (RuntimeException | Error e) {
+            if (closing()) {
+                terminatePrevious();
+            }
+            throw e;
+        }
+        return status[0];
+    }
+
+    /** Whether the polyglot layer is cancelling or hard-exiting this context. */
+    private boolean closing() {
+        return truffleContext.isCancelling() || truffleContext.isExiting();
     }
 
     private int runProgram(NodeFactory.Program program) {
@@ -280,14 +334,13 @@ public final class GoContext {
             // gc's default: one P per CPU.
             gmp = Runtime.getRuntime().availableProcessors();
         }
-        SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS,
-                goroutineThreads());
+        SchedulerCore sched = newScheduler(gmp);
         scheduler = sched;
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
         try {
-            sched.spawnMain(() -> program.root().getCallTarget().call());
-            return sched.awaitExit();
+            sched.spawnMain(() -> program.root().getCallTarget().call((com.oracle.truffle.api.nodes.Node) null));
+            return awaitExit(sched);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("interrupted while awaiting program exit", e);

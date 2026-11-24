@@ -54,7 +54,7 @@ import graalgo.values.GoKind;
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerStmtKind} hook — no Phase-1/Phase-2 change.
  *
- * <p>verifies: GG-0017 (chan slice)
+ * <p>verifies: GG-0073 (chan slice)
  */
 public final class SelectNode extends GoStmtNode {
 

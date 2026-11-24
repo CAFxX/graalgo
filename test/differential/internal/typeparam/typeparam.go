@@ -72,6 +72,8 @@ type TFile struct {
 	// GOROOT/test itself, as gc's test driver runs `// run` files).
 	Args   []string `json:"args,omitempty"`
 	RunDir string   `json:"-"`
+	// TimeoutScale is the run-timeout multiplier (0 = 1; harness.Program).
+	TimeoutScale int `json:"-"`
 }
 
 // Exclusion is one entry of the versioned exclusion list (GG-0033).
@@ -403,7 +405,7 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			continue
 		}
 		tf := included[idx]
-		prog := harness.Program{Name: tf.Name, Dir: dirs[k], Main: srcs[k], Args: tf.Args, RunDir: tf.RunDir}
+		prog := harness.Program{Name: tf.Name, Dir: dirs[k], Main: srcs[k], Args: tf.Args, RunDir: tf.RunDir, TimeoutScale: tf.TimeoutScale}
 		c := &comps[k]
 		fail := func(format string, args ...any) {
 			c.Same = false
@@ -412,6 +414,9 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 
 		// gc backend (fast, per-case).
 		bRef := scrubOutcome(harness.BuildOnly(cfg, ref, prog, workRoot), workRoot, ref, alt)
+		if refInfra(c, ref, bRef) {
+			continue
+		}
 
 		// graalgo build result from batch.
 		bAlt, ok := batchOut[batchKey("check", srcs[k])]
@@ -454,8 +459,11 @@ func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			c.Reasons = append(c.Reasons, "infra: no graalgo batch run result (batch JVM failed or output unparsable)")
 			continue
 		}
-		oRef := harness.RunProgram(cfg, ref, prog, workRoot)
-		// RunProgram does BuildOnly first; our batch already did the build.
+		oRef := harness.RunReference(cfg, ref, prog, workRoot)
+		if refInfra(c, ref, oRef) {
+			continue
+		}
+		// RunReference does BuildOnly first; our batch already did the build.
 		// For the run outcome, use the batch's run result directly.
 		// But we need to construct an Outcome for Compare.
 		oAltFull := harness.Outcome{
@@ -495,10 +503,13 @@ func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			fail("infra: stage: %v", err)
 			continue
 		}
-		prog := harness.Program{Name: tf.Name, Dir: dir, Main: src, Args: tf.Args, RunDir: tf.RunDir}
+		prog := harness.Program{Name: tf.Name, Dir: dir, Main: src, Args: tf.Args, RunDir: tf.RunDir, TimeoutScale: tf.TimeoutScale}
 		switch tf.Class {
 		case ClassCompile, ClassErrorCheck:
 			bRef := scrubOutcome(harness.BuildOnly(cfg, ref, prog, workRoot), workRoot, ref, alt)
+			if refInfra(c, ref, bRef) {
+				continue
+			}
 			bAlt := scrubOutcome(harness.BuildOnly(cfg, alt, prog, workRoot), workRoot, ref, alt)
 			if tf.Class == ClassCompile {
 				if !bRef.BuildOK {
@@ -512,11 +523,39 @@ func runPerFile(cfg *harness.Config, ref, alt *harness.Backend, included []TFile
 			}
 			continue
 		}
-		hc := harness.Compare(scrubOutcome(harness.RunProgram(cfg, ref, prog, workRoot), workRoot, ref, alt),
+		oRef := harness.RunReference(cfg, ref, prog, workRoot)
+		if refInfra(c, ref, oRef) {
+			continue
+		}
+		if oRef.RetriedTimeout {
+			prog = prog.Extended() // same timeout footing for the alternate
+		}
+		hc := harness.Compare(scrubOutcome(oRef, workRoot, ref, alt),
 			scrubOutcome(harness.RunProgram(cfg, alt, prog, workRoot), workRoot, ref, alt))
 		c.Same, c.Reasons = hc.Same, hc.Reasons
 	}
 	return comps
+}
+
+// refInfra marks c INFRA when the reference (gc) outcome oc is unusable as
+// an oracle: its run (after harness.RunReference's retry) or build timed
+// out. That is a property of the host, never of graalgo: it is never
+// compared (so it can neither diverge nor, via a listed entry, hide one),
+// and the run fails with the infra exit status. Reports whether it did.
+func refInfra(c *Comparison, ref *harness.Backend, oc harness.Outcome) bool {
+	if !harness.RefInfra(oc) {
+		if oc.RetriedTimeout {
+			fmt.Fprintf(os.Stderr, "note: %s: reference %s timed out once and passed the extended retry (slow host)\n", c.Program, ref.Name)
+		}
+		return false
+	}
+	what := "run"
+	if oc.BuildTimedOut {
+		what = "build"
+	}
+	c.Same, c.Infra = false, true
+	c.Reasons = append(c.Reasons, fmt.Sprintf("infra: reference backend %s %s timed out (also on the extended retry): the oracle has no verdict on this host", ref.Name, what))
+	return true
 }
 
 // crashRe matches a build log that reports a crash of the tool rather than

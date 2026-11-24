@@ -22,6 +22,10 @@ type Program struct {
 	// of a fresh empty one (GOROOT/test programs run in GOROOT/test, as
 	// gc's own test driver runs them, and may read files there).
 	RunDir string
+	// TimeoutScale multiplies the config's per-program run timeout
+	// (0 = 1). For programs that do real work in child processes (e.g.
+	// invoking the go tool) and so are slow on a loaded host.
+	TimeoutScale int
 }
 
 // DiscoverCorpus finds all corpus programs: immediate subdirectories of

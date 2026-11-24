@@ -78,16 +78,14 @@ $(GOFRONTEND): $(GOFRONTEND_SRC)
 # -Xss32m (M5 stance): guest-language recursion burns host stack — the
 # panic corpus's 10000-deep unwind (pn12) needs ~13-16m (~1.3-1.6KB per
 # nested call through Truffle's exception profiling); 32m is ~2x headroom.
-JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
+JAVA_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m
 # gofrontend location: ToolPaths' walk-up finds internal/frontend/ unaided;
 # the explicit export is a harmless redundancy (a stale env var is skipped
 # via the isExecutable check).
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
-# Corpus differential tests locate the corpus via -Dgraalgo.repo.dir.
-REPO_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
-JAVAC_FLAGS := -Xlint:deprecation -Werror
+JAVAC_FLAGS := -Xlint:deprecation -Werror --add-exports java.base/jdk.internal.vm=ALL-UNNAMED
 
-.PHONY: all main test smoke smoke-test clean check run run-sched pin-audit torture
+.PHONY: all main smoke smoke-test clean check run run-sched pin-audit torture
 
 all: main
 
@@ -118,20 +116,9 @@ run: main
 run-sched: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(SCHED_RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
-# Both module runners: graalgo.test.Runner (AST/values/launcher tests and
-# corpus differentials) and graalgo.sched.SchedTestRunner (scheduler and
-# runtime tests).
-test: main $(OUT_TEST)/.built
-	mkdir -p out/test-tmp
-	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the differential
-	# tests would fill it. GOTMPDIR covers go; -Djava.io.tmpdir covers Java
-	# (Java ignores the TMPDIR env var for java.io.tmpdir).
-	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(REPO_DIR_PROP) $(JAVA_FLAGS) \
-	-cp "$(TEST_CP)" graalgo.test.Runner
-	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
-	-cp "$(SCHED_TEST_CP)" graalgo.sched.SchedTestRunner
+# The module runners (graalgo.test.Runner, graalgo.sched.SchedTestRunner)
+# are class registries: the top-level `make test-java-fast` /
+# `test-java-slow` / `test` run their classes on the right classpaths.
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUN_CP)" -d $(OUT_TEST) $(SRC_TEST)
@@ -143,9 +130,10 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 #
 # debug-leftover exclusions: the launchers (Main, SchedMain) print usage and
 # diagnostics to stderr by design. SchedulerCore's panic/crash reporting and
-# Drainer's fatal-halt message: printing "panic: ..." on an uncaught Go
-# panic is Go parity (gc prints it), and a violated scheduler invariant must
-# be LOUD before halting (P1-4: drainer death is never silent). TimerHeap's
+# Drainer's and Carriers' fatal-halt messages: printing "panic: ..." on an
+# uncaught Go panic is Go parity (gc prints it), and a violated scheduler
+# invariant must be LOUD before halting (P1-4: drainer or carrier death is
+# never silent). TimerHeap's
 # callback-threw message: a throwing timer callback must be loud. GcInterop's
 # finalizer-panicked message: a panicking Go finalizer must be loud (gc
 # crashes the program). SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's
@@ -162,7 +150,7 @@ check: main $(OUT_TEST)/.built
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java' | grep -v 'src/main/java/graalgo/go/build/DeferPathTrace.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/sched/Carriers.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java' | grep -v 'src/main/java/graalgo/go/build/DeferPathTrace.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== v1 netpoller-deletion gate (P2-M3; updated P3-M9; GG-0063 poller replaces it in W8) =="
@@ -195,7 +183,9 @@ check: main $(OUT_TEST)/.built
 	@echo "--   unvetted barrier-bypass surface (incl. Class.forName evasion)"
 	@# Exclusion: PanicCorpusTest mentions sun.misc.Unsafe in javadoc only
 	@# (it filters the JDK's Unsafe deprecation warning out of stderr).
-	@if grep -rn --include='*.java' -E 'theUnsafe|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/ | grep -v 'src/test/java/graalgo/frontend/PanicCorpusTest.java'; then \
+	@# Vetted: Carriers' two jdk.internal.vm imports (Continuation,
+	@# ContinuationScope: carrier-mode goroutines, ADR-0018) — no memory access.
+	@if grep -rn --include='*.java' -E 'theUnsafe|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/ | grep -v 'src/test/java/graalgo/frontend/PanicCorpusTest.java' | grep -v -E '^src/main/java/graalgo/sched/Carriers\.java:[0-9]+:import jdk\.internal\.vm\.(Continuation|ContinuationScope);$$'; then \
 		echo "OFF-HEAP/BARRIER GATE FAILED"; exit 1; fi
 	@echo "off-heap/barrier gate clean"
 	@echo "== pin-surface grep gate (P2-M7, GG-0057) =="
@@ -217,7 +207,7 @@ check: main $(OUT_TEST)/.built
 	@echo "-- enabled; FAILS on any unexpected pin. Full corpus: make pin-audit."
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) --enable-native-access=ALL-UNNAMED -Xss32m \
+	$(JAVA) --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m \
 	-Dpinaudit.test.cp="$(SCHED_TEST_CP)" \
 	-cp "$(SCHED_RUN_CP)" graalgo.sched.audit.PinAudit --tests --gmp 2 \
 	> out/test-tmp/pin-smoke.log 2>&1; \
@@ -234,7 +224,7 @@ P2_CORPUS ?= ../../../test/corpus/phase2
 pin-audit: main $(OUT_TEST)/.built
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) --enable-native-access=ALL-UNNAMED -Xss32m \
+	$(JAVA) --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m \
 	-Dpinaudit.test.cp="$(SCHED_TEST_CP)" \
 	-cp "$(SCHED_RUN_CP)" graalgo.sched.audit.PinAudit \
 	--corpus $(P1_CORPUS) --corpus $(P2_CORPUS) --tests --gmp 2 \

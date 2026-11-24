@@ -113,7 +113,7 @@ Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
 4. `f8269ee` **Methodology P1-1**: GG-0013/GG-0023 locked→active with
    dated history entries (first real tests with `verifies:`
    annotations); `GG-0012` (already active) gained its P3-M1 `verifies:`
-   entry. GG-0017 untouched (Phase-2's record, still locked).
+   entry. `GG-0017` untouched (Phase-2's record, still locked).
 5. `ab98a09` **Methodology P1-2/P1-3/P1-4**: twopkg corpus gains a
    main-level `Counter` shadowing `helper.Counter`; third red-green
    proves the byte comparison catches the QUIET divergence (gc
@@ -200,7 +200,7 @@ was not edited.
 194/194; `go test -count=1 ./...` in `phases/phase3/src/p3frontend` green;
 `bash phases/phase3/corpus/sync/run_differential.sh` 25/25;
 `make -C phases/phase3 check` clean. No orphan [OPEN]s; kill criteria not
-triggered. GG-0017 sync slice →active.
+triggered. `GG-0017` sync slice →active.
 
 **P3-M2 is COMPLETE.** Next: P3-M3 (interface dispatch).
 
@@ -297,7 +297,7 @@ one-logical-change-per-commit sequence:
 
 **Reviews:** code reviewer **NO-GO** (2 P0 silent divergences — name-only assertion check, non-canonical descriptors — both proven empirically; 2 P1, 9 P2), methodology reviewer **GO-WITH-FINDINGS** (F1–F8). All remediated in 16 one-change-per-commit commits with red-green evidence; final reports: `reviews/phase3-m3/reviewer1-code.md`, `reviewer2-methodology.md`.
 
-**Final verification (sign-off tree `5fde351`, independent re-runs by coordinator):** phase-1 `make test` 208/208 + `make check` clean; phase-2 `make test` 194/194 + `make check` clean (pinning audit PASS, 0 unexpected); p3frontend `go test` ok; phase-3 `make test` 19/19; iface differential 13/13 byte-identical vs gc 1.27.1; sync differential 25/25. M9 re-measurement: 31 sites, 1227 dispatches — 41.9% mono / 51.6% poly (PIC-resident) / 6.5% mega (mechanism coverage, NOT a workload verdict; workload re-measurement deferred to Phase 4). GG-0014 →active; GG-0017 iface slice →active.
+**Final verification (sign-off tree `5fde351`, independent re-runs by coordinator):** phase-1 `make test` 208/208 + `make check` clean; phase-2 `make test` 194/194 + `make check` clean (pinning audit PASS, 0 unexpected); p3frontend `go test` ok; phase-3 `make test` 19/19; iface differential 13/13 byte-identical vs gc 1.27.1; sync differential 25/25. M9 re-measurement: 31 sites, 1227 dispatches — 41.9% mono / 51.6% poly (PIC-resident) / 6.5% mega (mechanism coverage, NOT a workload verdict; workload re-measurement deferred to Phase 4). GG-0014 →active; `GG-0017` iface slice →active.
 
 **P3-M3 is COMPLETE.** Next: P3-M4 (intrinsic surface completion).
 
@@ -323,7 +323,7 @@ one-logical-change-per-commit sequence:
 
 **Work split:** exporter worker (synthetic packages, exporter interceptions, p3frontend mirrors, timectx corpus tc00–tc16, red-green) + Java worker (`graalgo.p3time`, launcher registration, DIV-M3-1 unit regression). Spike-first risks: `any == any` (valueCtx keys), nil-channel blocking.
 
-**GG-0017 time/ctx slice:** activates when the first `verifies: GG-0017` timectx test lands.
+**`GG-0017` time/ctx slice:** activates when the first `verifies: GG-0017` timectx test lands.
 
 **Scope expansion (coordinator decision 2026-10-06, recorded):** both
 implementation workers completed their briefs, but integration exposed two
@@ -339,7 +339,7 @@ synchronous parent propagation — no leaked goroutines, since the
 launcher's `awaitQuiescence` hangs on parked goroutines unlike gc).
 Acceptance criteria unchanged. Follow-up workers dispatched for both.
 
-## P3-M5 — `time` + `context` lowering (WS E, GG-0017) — SIGN-OFF 2026-10-06
+## P3-M5 — `time` + `context` lowering (WS E, `GG-0017`) — SIGN-OFF 2026-10-06
 
 **Sign-off commit:** `9c04e7b87a21bf642a76160cbd2a670699f05461`
 
@@ -381,7 +381,7 @@ lowering (P2-M2 parent track) — recorded in [CHECKPOINT.md](CHECKPOINT.md) 202
 methods) — documented in ADR-0005, re-test on WS D. (c) tc11 fails (WS E
 limitation) — documented with re-test trigger.
 
-**GG-0017:** time/ctx slice activated via `verifies:` annotations.
+**`GG-0017`:** time/ctx slice activated via `verifies:` annotations.
 
 ## P3-M5 accepted (supervisor verification, 2026-10-07 ~01:30 CEST)
 

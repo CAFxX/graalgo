@@ -334,6 +334,12 @@ public final class PinAudit {
         List<String> cmd = new ArrayList<>();
         cmd.add(java);
         cmd.add("--enable-native-access=ALL-UNNAMED");
+        cmd.add("--add-exports=java.base/jdk.internal.vm=ALL-UNNAMED");
+        // jdk.VirtualThreadPinned fires for virtual threads only: the audit runs the
+        // thread-per-goroutine fallback (GG-0073). Carrier mode's equivalent, a park
+        // that cannot yield its continuation, takes the counted pinned-park path
+        // (Carriers, CarriersTest), not this event.
+        cmd.add("-Dgraalgo.sched.goroutines=thread");
         cmd.add("-Xss32m");
         cmd.add("-XX:StartFlightRecording:filename=" + jfr.toAbsolutePath()
                 + ",jdk.VirtualThreadPinned#enabled=true"

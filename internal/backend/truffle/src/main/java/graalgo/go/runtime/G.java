@@ -45,12 +45,6 @@ public final class G {
      * calls run, which is what makes {@code recover()} return nil during a Goexit (GG-0070).
      */
     public GoPanic panic;
-    /**
-     * The argument array of the deferred call being run for {@link #panic}: {@code recover()}
-     * is effective only in the function whose frame carries exactly this array, i.e. the one
-     * called directly by the deferring function.
-     */
-    public Object[] recoverArgs;
 
     /** The goroutine running on the current thread. */
     public static G current(Node node) {

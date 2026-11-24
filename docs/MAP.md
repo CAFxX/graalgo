@@ -21,7 +21,7 @@ and is **deleted at the M3 cutover** — never build on it.
 | change language semantics | lowering: [internal/toolexec/emit/](../internal/toolexec/emit/); execution: [graalgo/go/nodes/](../internal/backend/truffle/src/main/java/graalgo/go/nodes/) built by [graalgo/go/build/NodeFactory.java](../internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java); semantics: [SPEC.md](arch/SPEC.md), [truffle-design.md](arch/truffle-design.md) §15 | `make test-m1a` (add a program to [test/m1a/programs/](../test/m1a/programs/)) |
 | change the frontend (emitter) | [internal/toolexec/emit/](../internal/toolexec/emit/); its JVM-free oracle [girinterp/](../internal/toolexec/girinterp/) | `make test-toolexec`, then `make test-m1a` |
 | change the GIR schema | [internal/toolexec/ir/schema.txt](../internal/toolexec/ir/schema.txt) → `make generate` regenerates the Go codec and the Java one in [internal/backend/gir/](../internal/backend/gir/) | `make test-toolexec test-gir` |
-| change the node package / value model | [graalgo/go/](../internal/backend/truffle/src/main/java/graalgo/go/) (`loader`, `types`, `values`, `nodes`, `build`, `runtime`, `intrinsics`); package split in [truffle/README.md](../internal/backend/truffle/README.md); Java/Truffle conventions: [truffle-design.md](arch/truffle-design.md) §11, §16 | `make build test-m1a test-m1w13 pe-check-m1a`; `make test-java-fast` (`NodeConventionsTest`) |
+| change the node package / value model | [graalgo/go/](../internal/backend/truffle/src/main/java/graalgo/go/) (`loader`, `types`, `values`, `nodes`, `build`, `runtime`, `intrinsics`); package split in [truffle/README.md](../internal/backend/truffle/README.md); Java/Truffle conventions: [truffle-design.md](arch/truffle-design.md) §11, §16; playbook audit: [truffle-audit.md](arch/truffle-audit.md) | `make build test-m1a test-m1w13 pe-check-m1a`; `make test-java-fast` (`NodeConventionsTest`) |
 | add an intrinsic (Go symbol implemented in Java) | declare it in [registry.txt](../internal/toolexec/intrinsics/registry.txt), implement in [graalgo/go/intrinsics/](../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/), `make generate` | `make test-toolexec`, a program in [test/m1r/programs/](../test/m1r/programs/) |
 | fix a std package's behavior | upstream Go is never modified: fix the backend (above), or the facade [stdlib/fork/runtime/](../stdlib/fork/runtime/), or as last resort a diff in [stdlib/patches/](../stdlib/patches/); see [stdlib/README.md](../stdlib/README.md) | `make test-m1r test-m1c` |
 | add a syscall | [internal/toolexec/syscalls/table.txt](../internal/toolexec/syscalls/table.txt) (checked against std's call sites; a wrong entry is memory-unsafe, risk R15), executor [graalgo/syscall/](../internal/backend/truffle/src/main/java/graalgo/syscall/) | `cd internal/toolexec && go test ./syscalls`, `make test-m1c` |
@@ -132,7 +132,9 @@ shrink-only in [layering_allowlist.txt](../.github/scripts/layering_allowlist.tx
 
 Current: [SPEC.md](arch/SPEC.md), [RECOVERY.md](arch/RECOVERY.md),
 [toolexec-design.md](arch/toolexec-design.md),
-[truffle-design.md](arch/truffle-design.md), [abi-spike.md](arch/abi-spike.md),
+[truffle-design.md](arch/truffle-design.md),
+[truffle-audit.md](arch/truffle-audit.md) (playbook audit: findings, work
+packages, test matrix), [abi-spike.md](arch/abi-spike.md),
 [limitations.md](arch/limitations.md), [performance.md](arch/performance.md),
 [traceback-normalization.md](arch/traceback-normalization.md),
 [bridge-inventory.md](arch/bridge-inventory.md), [dev/](dev/).

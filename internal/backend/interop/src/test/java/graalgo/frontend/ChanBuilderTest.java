@@ -37,7 +37,7 @@ import graalgo.values.GoStruct;
  * fragments the exporter emits. Node execution runs on the real
  * scheduler so park/unpark paths are exercised, not stubbed.
  *
- * <p>verifies: GG-0017 (chan slice)
+ * <p>verifies: GG-0073 (chan slice)
  */
 public final class ChanBuilderTest {
 

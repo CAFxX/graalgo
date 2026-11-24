@@ -26,7 +26,9 @@
 //	      TIMING    listed `timing: true` (outcome depends on host speed)
 //	                and matches gc: a pass, not STALE
 //	      INFRA     the run failed for an infrastructure reason (e.g. a
-//	                corrupted frontend export) on every retry               -> fail, exit 3
+//	                corrupted frontend export) on every retry, or the
+//	                REFERENCE (gc) timed out even on its 2x-timeout
+//	                retry (host speed, never a graalgo behavior)            -> fail, exit 3
 //	    A backend with "lazyBuild" (graalgo) runs each program without its
 //	    build step first and re-runs only a diverging one with build+run
 //	    (whose outcome is the verdict); diverging without the build step
@@ -306,7 +308,10 @@ func trunc(s string, n int) string {
 }
 
 // runAll executes every program under the backend, jobs-at-a-time, and
-// returns the outcomes in program order.
+// returns the outcomes in program order, each produced by run. The oracle
+// (gc) runs through harness.RunReference: its timeouts are retried once with
+// an extended timeout and, if they persist, are INFRA (harness.RefInfra),
+// never a recorded or compared behavior.
 func runAll(cfg *harness.Config, b *harness.Backend, progs []harness.Program, workRoot string, jobs int,
 	run func(*harness.Config, *harness.Backend, harness.Program, string) harness.Outcome) []harness.Outcome {
 	outs := make([]harness.Outcome, len(progs))
@@ -401,8 +406,11 @@ func cmdSnapshotRecord(args []string) error {
 		Normalizer: snapshotNormalizer,
 	}
 	for r := 0; r < sf.runs; r++ {
-		outs := runAll(cfg, b, progs, workRoot, sf.jobs, harness.RunProgram)
+		outs := runAll(cfg, b, progs, workRoot, sf.jobs, harness.RunReference)
 		for i, p := range progs {
+			if harness.RefInfra(outs[i]) {
+				return fmt.Errorf("%w: reference %s timed out on %s (also on the extended retry): refusing to record a timeout as gc's behavior", errInfra, b.Name, p.Name)
+			}
 			e := entryFromOutcome(p, outs[i], corpusRoot)
 			if e.SourceSHA256, err = sourceHash(p); err != nil {
 				return err
@@ -481,8 +489,12 @@ func cmdSnapshotCheck(args []string) error {
 		if err != nil {
 			return err
 		}
-		outs := runAll(cfg, rb, live, workRoot, sf.jobs, harness.RunProgram)
+		outs := runAll(cfg, rb, live, workRoot, sf.jobs, harness.RunReference)
 		for i, p := range live {
+			if harness.RefInfra(outs[i]) {
+				verdicts = append(verdicts, verdict{p.Name, "INFRA", rb.Name + ": reference timed out (also on the extended retry): no verdict"})
+				continue
+			}
 			if d := diffEntries(want[p.Name], entryFromOutcome(p, outs[i], corpusRoot)); d != "" {
 				verdicts = append(verdicts, verdict{p.Name, "REF-DRIFT", rb.Name + ": " + d})
 			}

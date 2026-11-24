@@ -147,7 +147,7 @@ design; interface freeze impossible without breaking the toil bound (→ archite
     → Paraphrase: `panic(nil)` must produce `*PanicNilError`, replicating Go ≥1.21
     semantics exactly (differential-test the boundary).
 
-28. (Context, §3.5:432–433) — *"goroutine-local state (defer chain, panic context) lives in virtual-thread-scoped holders"* (GG-0017).
+28. (Context, §3.5:432–433) — *"goroutine-local state (defer chain, panic context) lives in virtual-thread-scoped holders"* (`GG-0017`).
     → Paraphrase: the defer chain and panic context are goroutine-local state; in Phase 1
     (single main goroutine; concurrency is Phase 2) they hang off the executing virtual thread.
 
@@ -272,7 +272,7 @@ design; interface freeze impossible without breaking the toil bound (→ archite
 54. GG-0011 (driver wrapper via -toolexec): SPEC §3.1 (items 35, 39), §4.2 (items 36–38).
     `GG-0012` (verbatim frontend vendoring): SPEC §3.2 (items 1, 2, 4). GG-0013 (no language pinning): SPEC §3.2 (item 3).
     GG-0014 (one Truffle AST): SPEC §3.3 (items 17–20). `GG-0015` (Java-object value model): SPEC §3.4 (items 5–14).
-    `GG-0016` (unsafe.Pointer v1): SPEC §3.4 + §7.3 (items 15, 16). GG-0017 (goroutines on vthreads — Phase 2, context only): SPEC §3.5 (item 28).
+    `GG-0016` (unsafe.Pointer v1): SPEC §3.4 + §7.3 (items 15, 16). `GG-0017` (goroutines on vthreads — Phase 2, context only): SPEC §3.5 (item 28).
     `GG-0019` (panic/defer/Goexit model): SPEC §3.5 (items 24–27). GG-0020 (intrinsic surface): SPEC §3.6 (items 29, 30), §4.1 (items 40, 41).
     GG-0021 (linkname by symbol name): SPEC §3.6 (items 31, 32). GG-0024 (debugging/SourceSections): SPEC §3.10 (item 22).
     GG-0030/GG-0031 (differential oracle + nondeterminism controls): SPEC §5.5 (item 46). GG-0032 (conformance corpora): SPEC §5.2 (item 44).

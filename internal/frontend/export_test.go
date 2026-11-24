@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -335,7 +336,7 @@ func TestDeepNesting(t *testing.T) {
 	}
 }
 
-// TestChannelOpsM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005 Appendix C)
+// TestChannelOpsM5 verifies: GG-0073 — P3-M5 (WS E, ADR-0005 Appendix C)
 // channel-operations lowering: make(chan)/send/recv/close/select lower to
 // the additive wire nodes (makechan/send/recv/chanclose/select), and
 // `for v := range ch` desugars to a for+select loop.
@@ -561,7 +562,7 @@ func assertGostmtZeroArg(t *testing.T, nodes []nodeKind) {
 	}
 }
 
-// TestGoWithArgsInLoop verifies: GG-0017 — P3-M5 (reviewer1 P2-4) the
+// TestGoWithArgsInLoop verifies: GG-0073 — P3-M5 (reviewer1 P2-4) the
 // `go f(args)` desugar inside a loop. The Appendix N desugar emits one
 // __go_arg_* temp per go *statement*; in a loop the temp vardecls must
 // sit inside the loop body (so the factory's loopcap pre-scan gives
@@ -713,5 +714,42 @@ func main() {
 		if !refsTemp {
 			t.Errorf("loop gostmt funclit does not reference the __go_arg_* temps")
 		}
+	}
+}
+
+// TestEncodeDocCheckedDetectsCorruption plants BUG-0012's host corruption
+// (one byte of the encoding zeroed) and the scanner-visible variant:
+// both must surface as ErrHostCorruption (main exits 3); a clean encoding
+// (including an escaped U+0000 in a string) passes through unchanged.
+func TestEncodeDocCheckedDetectsCorruption(t *testing.T) {
+	orig := marshalDoc
+	defer func() { marshalDoc = orig }()
+	doc := map[string]any{"name": "x\x00", "n": []int{1, 2, 3}}
+
+	out, err := encodeDocChecked(doc)
+	if err != nil || !strings.Contains(string(out), `"name": "x\u0000"`) {
+		t.Fatalf("clean encode: %q, %v", out, err)
+	}
+
+	marshalDoc = func(v any) ([]byte, error) {
+		b, err := orig(v)
+		b[len(b)/2] = 0
+		return b, err
+	}
+	if _, err := encodeDocChecked(doc); !errors.Is(err, ErrHostCorruption) {
+		t.Fatalf("zeroed byte: got %v, want ErrHostCorruption", err)
+	}
+
+	// MarshalIndent's re-scan of a compact encoding with a stale byte.
+	marshalDoc = func(any) ([]byte, error) {
+		var v any
+		return nil, json.Unmarshal([]byte(`{"a"t 1}`), &v)
+	}
+	if _, err := encodeDocChecked(doc); !errors.Is(err, ErrHostCorruption) {
+		t.Fatalf("scanner syntax error: got %v, want ErrHostCorruption", err)
+	}
+	marshalDoc = func(any) ([]byte, error) { return nil, errors.New("json: unsupported type") }
+	if _, err := encodeDocChecked(doc); err == nil || errors.Is(err, ErrHostCorruption) {
+		t.Fatalf("ordinary encode error: got %v, want a plain error", err)
 	}
 }

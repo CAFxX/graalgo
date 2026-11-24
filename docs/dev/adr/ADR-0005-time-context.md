@@ -3,7 +3,7 @@
 **Date:** 2026-10-06
 **Status:** accepted 2026-10-06 — P3-M5 implementation brief. Spec-first
 ordering honored: ADR committed before any exporter/factory change.
-**Scope:** closes PLAN.md §4 P3-M5 (WS E); GG-0017 time/ctx slice →active.
+**Scope:** closes PLAN.md §4 P3-M5 (WS E); `GG-0017` time/ctx slice →active.
 **Normative basis:** `phases/phase1/INTERFACE_FREEZE.md` (v1, in force)
 §§1, 2, 5; PLAN.md §§2–5 (WS E); ADR-0002/ADR-0003/ADR-0004 (precedent).
 
@@ -155,7 +155,7 @@ an in-range control asserting the identical section as before.
 
 ## Consequences
 
-- GG-0017 time/ctx slice →active when the first `verifies: GG-0017`
+- `GG-0017` time/ctx slice →active when the first `verifies: GG-0017`
   timectx test lands.
 - The synthetic packages retire in P3-M7 when the real `time`/`context`
   land from adapted sources (same retirement path as synthetic `sync`).

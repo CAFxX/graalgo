@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Backend describes one execution backend as command templates. Tokens in
@@ -131,6 +132,9 @@ type Config struct {
 	Backends   []Backend   `json:"backends"`
 	Exclusions []Exclusion `json:"exclusions"`
 	TimeoutSec int         `json:"timeoutSec"`
+	// TimeoutUnit is the unit of TimeoutSec (0 = one second); tests shrink
+	// it so timeout paths cost milliseconds. Never set from JSON.
+	TimeoutUnit time.Duration `json:"-"`
 }
 
 // LoadConfig reads and validates a JSON config file.

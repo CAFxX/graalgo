@@ -4,7 +4,6 @@ import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.locks.LockSupport;
 
 /**
  * The single platform-thread drainer (P2-D2, P2-D3).
@@ -17,7 +16,7 @@ import java.util.concurrent.locks.LockSupport;
  * hang forever with no recovery).
  *
  * <p>Admission does <strong>ack-before-unpark</strong> (GG-WAKE-0001):
- * {@code acked.set(generation)} precedes {@code LockSupport.unpark};
+ * {@code acked.set(generation)} precedes the unpark ({@link SchedulerCore#wake});
  * reversing the order loses wakeups.
  *
  * <p>All lane/inflight mutations happen on the drainer thread under
@@ -270,7 +269,7 @@ public final class Drainer {
                 // already parked in awaitAck) so ioEnter() returns only
                 // after the slot is actually released.
                 token.handle.acked.set(token.generation);
-                LockSupport.unpark(token.handle.thread);
+                sched.wake(token.handle, false);
             }
             case IO_EXIT -> {
                 // Re-acquire the slot through the priority lane (gc
@@ -358,7 +357,7 @@ public final class Drainer {
             }
             // GG-WAKE-0001: ack BEFORE unpark. Reversing loses wakeups.
             token.handle.acked.set(token.generation);
-            LockSupport.unpark(token.handle.thread);
+            sched.wake(token.handle, false);
             java.util.function.Consumer<GoroutineHandle> listener = admissionListener;
             if (listener != null) {
                 listener.accept(token.handle);
