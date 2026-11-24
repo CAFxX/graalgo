@@ -35,7 +35,7 @@ red comparing a cold CI run with the warm dev-host numbers. So:
   `gate-times` artifact of a green run (`gh run download <id> -n
   gate-times`) and record it into `duration-baseline-ci.json`. Re-record
   only for a reviewed, intended cost change, and say so in the commit.
-  The CI file was seeded (cold, setup targets and snapshot-check only)
+  The CI file was seeded (cold: setup targets, check, snapshot-check)
   from the two red runs of c35a2888; the first green warm run should fill
   the rest.
 

@@ -1,8 +1,9 @@
 {
- "_about": "CI (GitHub ubuntu-24.04 runner, 4 vCPU) gate costs; the dev host's are test/duration-baseline.json. cpu_cold/wall_cold: the higher of CI runs 45492338906 and 45492400435 (master c35a2888, both caches missed). Fill the gaps (and the warm cpu/wall sections) with `python3 test/lib/gates.py record gate-times.json --baseline test/duration-baseline-ci.json` from the gate-times artifact of a green CI run (docs/dev/test-profile.md).",
+ "_about": "CI (GitHub ubuntu-24.04 runner, 4 vCPU) gate costs; the dev host's are test/duration-baseline.json. cpu_cold/wall_cold: the higher of CI runs 45492338906 and 45492400435 (master c35a2888, both caches missed); `check` from those runs too although it failed (test_gates.py, one self-test; the rest of the gate ran), entered by hand since `record` skips failed gates. Fill the gaps (and the warm cpu/wall sections) with `python3 test/lib/gates.py record gate-times.json --baseline test/duration-baseline-ci.json` from the gate-times artifact of a green CI run (docs/dev/test-profile.md).",
  "cpu": {},
  "cpu_cold": {
   "build": 30.2,
+  "check": 363.8,
   "generate": 38.2,
   "graalgo": 5.1,
   "java-test-classes": 16.8,
@@ -11,6 +12,7 @@
  "wall": {},
  "wall_cold": {
   "build": 12.0,
+  "check": 424.0,
   "generate": 15.5,
   "graalgo": 2.0,
   "java-test-classes": 6.4,

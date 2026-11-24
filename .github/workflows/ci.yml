@@ -232,9 +232,21 @@ jobs:
           exit "$rc"
 
       - name: Summary (make's exit status, peak memory, per-class timings)
+        # Also copies the java-slow logs into the logs dir so the artifact is
+        # flat. No java-slow log (test-java-fast failed first, so `make test`
+        # stopped) is a normal outcome, not a step failure: under
+        # `-eo pipefail` a grep over an unmatched glob exited 2 and killed
+        # the step. make's status is printed from make-test.rc, never masked.
         if: always()
         shell: bash
         run: |
+          shopt -s nullglob
+          mkdir -p "$FULL_SUITE_LOGS"
+          slow=(internal/backend/*/out/test-tmp/java-slow-*.log)
+          for f in "${slow[@]}"; do
+            mod=${f#internal/backend/}; mod=${mod%%/*}
+            cp "$f" "$FULL_SUITE_LOGS/$mod-${f##*/}"
+          done
           {
             echo "### full-suite"
             echo "make test exit status: $(cat "$FULL_SUITE_LOGS/make-test.rc" 2>/dev/null || echo 'none (step did not finish)')"
@@ -244,7 +256,11 @@ jobs:
                 "samples: $(wc -l < "$FULL_SUITE_LOGS/watch.log")"
             fi
             echo '```'
-            grep -h '^CLASS ' internal/backend/*/out/test-tmp/java-slow-*.log 2>/dev/null | sort -k3 -n -r | head -20
+            if [ "${#slow[@]}" -gt 0 ]; then
+              { grep -h '^CLASS ' "${slow[@]}" || true; } | sort -k3 -n -r | head -20
+            else
+              echo "(no java-slow logs: test-java-slow did not run)"
+            fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -253,8 +269,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: full-suite-logs
-          path: |
-            ${{ runner.temp }}/full-suite-logs
-            internal/backend/*/out/test-tmp/java-slow-*.log
+          path: ${{ runner.temp }}/full-suite-logs
           if-no-files-found: warn
           retention-days: 14
