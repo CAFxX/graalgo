@@ -24,6 +24,18 @@ import java.util.List;
  * start, the fatal-panic report, and the standard error stream of {@code print}.
  */
 public final class GoProcess {
+    /**
+     * The caller location of a call the runtime makes from Java (a goroutine's entry, package
+     * initialization, a method value called by the runtime): none. Calls from Java always pass a
+     * location, {@code target.call(location, args)}: {@code CallTarget.call(Object...)} brackets
+     * the call with the calling thread's {@code EncapsulatingNodeReference} (set on entry, restored
+     * on exit), and in carrier mode a goroutine parked inside the call resumes on another carrier,
+     * so the restore would write the first carrier's reference from the second (a Truffle assertion
+     * under {@code -ea}, a cross-thread race without). NodeConventionsTest rule G1-calltarget
+     * rejects {@code call(Object...)} in the new path and the shared runtime.
+     */
+    public static final Node NO_CALLER = null;
+
     /** Package-level variables, one flat object per package (indexed by package unit). */
     public final Flat[] globals;
     private final SchedulerCore sched;
@@ -59,7 +71,7 @@ public final class GoProcess {
     /** The {@code go} statement: a new goroutine calling {@code target(args)}. */
     @TruffleBoundary
     public void go(RootCallTarget target, Object[] args) {
-        sched.spawn(() -> run(() -> target.call(args)));
+        sched.spawn(() -> run(() -> target.call(NO_CALLER, args)));
     }
 
     /**
@@ -191,7 +203,7 @@ public final class GoProcess {
             graalgo.go.types.Itab itab = v.type.itab(iface);
             if (itab != null) {
                 Method m = itab.methods()[0];
-                Object s = m.target().call(new Object[] {null, Receivers.adapt(m, v.data, null)});
+                Object s = m.target().call(NO_CALLER, null, Receivers.adapt(m, v.data, null));
                 return indent(s.toString());
             }
         }

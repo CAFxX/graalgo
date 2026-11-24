@@ -50,7 +50,7 @@ public final class GoCalls {
      */
     @com.oracle.truffle.api.CompilerDirectives.TruffleBoundary
     public static Object invoke(GoFunc fn, Object[] args) {
-        return fn.target().call(callArgs(fn, args));
+        return fn.target().call((com.oracle.truffle.api.nodes.Node) null, callArgs(fn, args));
     }
 
     /**

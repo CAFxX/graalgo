@@ -160,6 +160,17 @@ public final class Fixtures {
         }
     }
 
+    /** G1-calltarget: the location-less call (the located one, {@code call(Node, Object...)}, is clean). */
+    public static final class LocationlessCall {
+        static Object enter(com.oracle.truffle.api.RootCallTarget target, Object[] args) {
+            return target.call(args);
+        }
+
+        static Object located(com.oracle.truffle.api.RootCallTarget target, Node location, Object[] args) {
+            return target.call(location, args);
+        }
+    }
+
     /** B2-frame. */
     public static final class FrameBoundary extends Node {
         @TruffleBoundary

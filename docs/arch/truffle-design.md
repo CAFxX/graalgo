@@ -2178,6 +2178,7 @@ class file shows over the new node package (`graalgo.go.*`), the shared runtime
 | B2-frame | a `@TruffleBoundary` method taking a `VirtualFrame`/`Frame` |
 | B3-boundary | PE-reachable code calling a JDK method outside the B4 list, concatenating strings, entering a monitor or calling a record's generated `equals`/`hashCode`/`toString` |
 | B6-invalidate | a PE-reachable write of a `@CompilationFinal`/`@Child` field, or `replace`/`insert`, not preceded by `transferToInterpreterAndInvalidate` |
+| G1-calltarget | a call of `CallTarget.call(Object...)` anywhere in scope: it brackets the call with the calling thread's `EncapsulatingNodeReference`, and a goroutine that parks inside resumes on another carrier (carrier mode), which would restore the first carrier's reference; runtime code calls `call(Node location, Object...)` (`GoProcess.NO_CALLER` when there is no caller node) |
 
 *PE-reachable* is computed, not guessed: from every `execute*`,
 `isLoopCondition`, `@Specialization` and `@Fallback` method of an in-scope node,

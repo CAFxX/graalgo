@@ -309,7 +309,7 @@ public final class GoContext {
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
         try {
-            sched.spawnMain(() -> program.root().getCallTarget().call());
+            sched.spawnMain(() -> program.root().getCallTarget().call((com.oracle.truffle.api.nodes.Node) null));
             return sched.awaitExit();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
