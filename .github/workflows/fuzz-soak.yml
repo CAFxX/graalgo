@@ -72,15 +72,17 @@ jobs:
             --out "$GITHUB_WORKSPACE/fuzz-soak-out"
 
       - name: Layer 4b — native testing.F differential fuzzing
-        # 8 targets x 120 s of fuzzing + the replay differential.
+        # 8 targets x 120 s of fuzzing (~16 min) + the replay differential
+        # through the -toolexec path (test/fuzz/run.py; <= 40 entries per
+        # target, ~1 s each on a runner). It never produced a verdict before
+        # 2026-11-23: the replay read testdata/fuzz/, where go writes only
+        # failing inputs (the grown corpus lives in $GOCACHE/fuzz/).
         if: ${{ !cancelled() }}
         timeout-minutes: 45
-        env:
-          GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
-          JOBS: "4"
         run: |
+          make generate build
           ./test/differential/fuzz/run_fuzz_native.sh \
-            --fuzztime 120 \
+            --fuzztime 120 --max-per-target 40 \
             --out "$GITHUB_WORKSPACE/fuzz-native-out"
 
       - name: Upload soak reports

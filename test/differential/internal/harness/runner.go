@@ -8,22 +8,31 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 )
 
 // Outcome is everything observed from building and running one program
 // under one backend. Stderr and BuildLog are stored normalized.
 type Outcome struct {
-	Program  string        `json:"program"`
-	Backend  string        `json:"backend"`
-	BuildOK  bool          `json:"buildOk"`
-	BuildLog string        `json:"buildLog"`
-	Stdout   string        `json:"stdout"`
-	Stderr   string        `json:"stderr"`
-	ExitCode int           `json:"exitCode"`
-	TimedOut bool          `json:"timedOut"`
-	Duration time.Duration `json:"durationNs"`
+	Program  string `json:"program"`
+	Backend  string `json:"backend"`
+	BuildOK  bool   `json:"buildOk"`
+	BuildLog string `json:"buildLog"`
+	Stdout   string `json:"stdout"`
+	Stderr   string `json:"stderr"`
+	ExitCode int    `json:"exitCode"`
+	TimedOut bool   `json:"timedOut"`
+	// BuildTimedOut: the build step hit buildTimeout (BuildOK is false).
+	BuildTimedOut bool `json:"buildTimedOut,omitempty"`
+	// RetriedTimeout: the run timed out once and the retry with the
+	// extended timeout finished (RunReference only; a host-speed note).
+	RetriedTimeout bool          `json:"retriedTimeout,omitempty"`
+	Duration       time.Duration `json:"durationNs"`
 }
+
+// buildTimeout bounds one build step (a var so tests can shrink it).
+var buildTimeout = 120 * time.Second
 
 // BuildOnly runs just the build step of backend b for prog and returns the
 // outcome with only the build fields populated (BuildOK, BuildLog).
@@ -40,7 +49,7 @@ func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 	}
 	bin := filepath.Join(dir, "prog")
 	buildCmd := b.RenderBuild(prog.Main, bin)
-	buildCtx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	buildCtx, cancel := context.WithTimeout(context.Background(), buildTimeout)
 	defer cancel()
 	var blog bytes.Buffer
 	cmd := exec.CommandContext(buildCtx, buildCmd[0], buildCmd[1:]...)
@@ -49,6 +58,7 @@ func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 	cmd.Stderr = &blog
 	if err := cmd.Run(); err != nil {
 		oc.BuildOK = false
+		oc.BuildTimedOut = buildCtx.Err() == context.DeadlineExceeded
 		// Scrub the workRoot from the echoed command: it is backend- and
 		// run-specific, so leaving it in would make two identical build
 		// failures compare as different (false divergence signal).
@@ -92,10 +102,11 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 
 	bin := filepath.Join(workRoot, prog.Name, b.Name, "prog")
 	runCmd := b.RenderRunArgs(prog.Main, bin, prog.Args)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), prog.timeout(cfg))
 	defer cancel()
 	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, runCmd[0], runCmd[1:]...)
+	killGroupOnCancel(cmd)
 	cmd.Dir = runDir
 	if prog.RunDir != "" {
 		cmd.Dir = prog.RunDir
@@ -126,6 +137,72 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 		}
 	}
 	return oc
+}
+
+// refTimeoutRetryFactor is the factor RunReference extends a timed-out
+// reference run's timeout by for its single retry.
+const refTimeoutRetryFactor = 2
+
+// RunReference is RunProgram for the REFERENCE (gc) backend, whose
+// outcome is the oracle: a timeout there is a property of the host (a
+// loaded or slow CI runner), never of graalgo, so it must not be
+// compared as a behavior. A timed-out run is retried once with
+// refTimeoutRetryFactor times the timeout (Outcome.RetriedTimeout notes a
+// retry that finished); if it still times out, callers must treat the
+// outcome as INFRA (RefInfra) and never as a divergence.
+func RunReference(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
+	return runReference(func(p Program) Outcome { return RunProgram(cfg, b, p, workRoot) }, prog)
+}
+
+func runReference(run func(Program) Outcome, prog Program) Outcome {
+	oc := run(prog)
+	if !oc.TimedOut {
+		return oc
+	}
+	oc2 := run(prog.Extended())
+	oc2.RetriedTimeout = !oc2.TimedOut
+	return oc2
+}
+
+// Extended is prog with its timeout extended by the reference retry factor
+// (the footing a slow host's retried reference run was given; the
+// alternate backend's run must get the same).
+func (p Program) Extended() Program {
+	p.TimeoutScale = p.timeoutScale() * refTimeoutRetryFactor
+	return p
+}
+
+// RefInfra reports whether a reference outcome is unusable as an oracle:
+// the run (after RunReference's retry) or the build timed out. The
+// verdict is INFRA (exit 3), never DIVERGE.
+func RefInfra(oc Outcome) bool { return oc.TimedOut || oc.BuildTimedOut }
+
+// timeoutScale is the program's timeout multiplier (>= 1).
+func (p Program) timeoutScale() int {
+	if p.TimeoutScale < 1 {
+		return 1
+	}
+	return p.TimeoutScale
+}
+
+// timeout is the run timeout of p under cfg.
+func (p Program) timeout(cfg *Config) time.Duration {
+	unit := cfg.TimeoutUnit
+	if unit <= 0 {
+		unit = time.Second
+	}
+	return time.Duration(cfg.TimeoutSec*p.timeoutScale()) * unit
+}
+
+// killGroupOnCancel makes a context cancellation (the timeout) kill the
+// command's whole process group, and bounds the wait for its pipes. A
+// program that spawns children (the go tool, a shell) otherwise leaves them
+// alive holding stdout open: cmd.Run blocks until they exit, so a "timeout"
+// takes as long as the children, and they leak.
+func killGroupOnCancel(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	cmd.WaitDelay = 2 * time.Second
 }
 
 // overrideEnv applies KEY=VAL overrides onto a base environment.

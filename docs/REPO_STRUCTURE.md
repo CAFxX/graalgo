@@ -166,9 +166,10 @@ directory's README repeats its status.
       (P3SyncMain) runs every program as `Context.eval` of the
       frontend/v1 wire document (truffle-design TR-1).
       Nodes and runtime call each other, so they compile in one javac
-      round. Two test runners: `graalgo.test.Runner` (nodes, values,
-      corpus differentials) and `graalgo.sched.SchedTestRunner`
-      (scheduler/runtime). Until RECOVERY T0.D (2026-11-18) this was two
+      round. Two test-class registries: `graalgo.test.Runner` (nodes,
+      values, corpus differentials) and `graalgo.sched.SchedTestRunner`
+      (scheduler/runtime); `make test-java-fast`/`test-java-slow`/`test`
+      run their classes (the module Makefile has no `test` target). Until RECOVERY T0.D (2026-11-18) this was two
       modules (`truffle/` + `runtime/`) plus 8 phase-1 stub classes whose
       same-FQN replacements won by classpath order; the stubs are deleted
       and [check_duplicate_fqn.py](../.github/scripts/check_duplicate_fqn.py)

@@ -146,8 +146,6 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: make test (full differential suite)
+      - name: make test (full suite = test-java-fast + test-java-slow, quarantine-judged)
+        # One step: `make test` already includes test-java-slow (Makefile).
         run: make test
-
-      - name: Slow Java unit tests (corpus differentials, stress)
-        run: make test-java-slow

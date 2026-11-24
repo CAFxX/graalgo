@@ -67,12 +67,13 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   `lane:<name>` —, expiry — a future date or a RECOVERY.md milestone —;
   validated by `make java-test-lists-check`); the target fails on any failure
   outside the quarantine **and** on a quarantined class that now passes.
-- `make test` — the full differential suite (30+ minutes): never per-push,
-  never on a shared host without asking; the weekly CI `full-suite` job
-  runs it. (Nightly: `mutation.yml`, `fuzz-soak.yml`, `fuzz-newpath.yml` —
-  `make fuzz-newpath`, the new path's differential fuzzer — and
-  `compile-health.yml` — `make pe-report`, failed compilations and deopt
-  churn of the realistic programs; the layer-3
+- `make test` — the full suite, `test-java-fast` + `test-java-slow` (every
+  class the module runners register, each on its module's classpath, judged
+  against the quarantine): never per-push, never on a shared host without
+  asking; the weekly CI `full-suite` job runs it. (Nightly: `mutation.yml`,
+  `fuzz-soak.yml`, `fuzz-newpath.yml` — `make fuzz-newpath`, the new path's
+  differential fuzzer — and `compile-health.yml` — `make pe-report`, failed
+  compilations and deopt churn of the realistic programs; the layer-3
   `stdlib-gate.yml` is manual-only until BUG-0033 is triaged.)
 - Per-module Go tests: `go test ./...` inside the module's own directory
   (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its
@@ -115,6 +116,13 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   signature, and the count of marked entries is the shrink-only
   `timing-excl` ratchet (`.github/scripts/ratchet_budget.json`): never use
   it for a program that fails for any other reason.
+- **A timeout of the reference (gc) is INFRA, never a divergence.** gc
+  is the oracle: if it times out (a slow runner) the harness retries once
+  with 2x the timeout, and if it still times out the program is `INFRA`
+  (exit 3, fails loudly; never compared, never masked by an exclusion
+  entry). Only a graalgo-side timeout can diverge. Programs importing
+  `os/exec` (they run the go tool) get a 4x per-program timeout
+  (`test/differential/internal/harness/runner.go`: `RunReference`).
 
 ## 4. Worktrees and commits
 
@@ -132,7 +140,11 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - The coordinator watches **every** workflow of every push to `master`
   (`gh run list --commit <sha>`) to a verdict before the next merge; a
   red `master` is fixed (or the push reverted) before anything else
-  lands.
+  lands. Scheduled workflows count too: after every merge wave and at
+  least daily the coordinator runs
+  [ci_status.sh](.github/scripts/ci_status.sh) (latest run per
+  workflow/event on `master`, exit 1 on any red) and turns every red
+  row into lane work the same day.
 
 ## 5. Correctness contract
 

@@ -97,10 +97,10 @@
 #               Context.close(true) of a running program in both modes
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
-#   `make test` — the full differential suite (graalgo.test.Runner,
-#   SchedTestRunner, IfaceTestRunner). It takes 30+ minutes and runs in
-#   local verification and the weekly CI job, not per-push.
-#   `make test-java-slow` — weekly CI job.
+#   `make test` — the full suite: test-java-fast + test-java-slow (every
+#   class of graalgo.test.Runner, SchedTestRunner, IfaceTestRunner, on
+#   the right classpaths, judged against test/java/quarantine.txt). LONG;
+#   the weekly CI full-suite job, not per-push.
 #   `make check-links-external`, `make test-diffharness` — per-push CI
 #   (markdown-links.yml, ci.yml's harness self-test) outside `make all`;
 #   `make pre-land` runs `all`, both, and CI's drift check.
@@ -600,11 +600,15 @@ gate1: build
 	python3 tools/gate1/run.py $(PKG) --out tools/gate1/.tmp/$(PKG) \
 		--graalgo-run "$(CURDIR)/internal/backend/graalgo-run"
 
-# Full test suite: all phase differential/test runners. LONG (30+ min);
-# for local verification and nightly runs, not per-push CI.
-test: build
-	$(MAKE) -C internal/backend/truffle test
-	$(MAKE) -C internal/backend/interop test
+# Full test suite: every class the module runners register (the union of
+# the fast and slow lists below, enforced by java-test-lists-check), each on
+# its module's correct classpath, with the slow half judged against
+# test/java/quarantine.txt. LONG; weekly CI (full-suite), not per-push.
+# It used to run the module runners directly (graalgo.test.Runner on a
+# classpath WITHOUT interop's ServiceLoader registrations, no quarantine):
+# every fmt-using corpus program failed there with "unsupported expression
+# kind ifacemethod" while passing under test-java-slow.
+test: test-java-fast test-java-slow
 
 # Backend Java unit tests, split by measured cost (SPEC §5.10: fast→slow).
 # The module runners (graalgo.test.Runner, SchedTestRunner, IfaceTestRunner)

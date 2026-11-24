@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Replay native fuzz corpora differentially (GG-0037(i)).
 
-Reads testdata/fuzz/FuzzXxx/ corpus files (grown by `go test -fuzz`),
+Reads FuzzXxx/ corpus files (grown by `go test -fuzz` in
+$GOCACHE/fuzz/<import path>/; failing inputs in testdata/fuzz/),
 materializes each entry as a single-file Go program calling the target
 stdlib function, and writes a diffharness corpus directory. The caller
 then runs `diffharness run -config backends.json -corpus <dir>` for the
 gc-vs-graalgo differential.
 
-Usage: replay.py --fuzzdir DIR --out DIR
+Usage: replay.py --fuzzdir DIR [--fuzzdir DIR ...] --out DIR [--max-per-target N]
 """
 import argparse
 import ast as pyast
@@ -45,29 +46,20 @@ TEMPLATES = {
 }
 
 
-def go_quote_string(s):
-    # Go double-quoted literal with escapes.
+def go_quote_string(b):
+    """Go double-quoted literal holding exactly the bytes b (a Go string is
+    a byte sequence: invalid UTF-8 must survive the round trip)."""
     out = ['"']
-    for ch in s:
-        o = ord(ch)
+    for o in b:
+        ch = chr(o)
         if ch == '"':
             out.append('\\"')
         elif ch == '\\':
             out.append('\\\\')
-        elif ch == '\n':
-            out.append('\\n')
-        elif ch == '\t':
-            out.append('\\t')
-        elif ch == '\r':
-            out.append('\\r')
         elif 32 <= o < 127:
             out.append(ch)
-        elif o < 256:
-            out.append('\\x%02x' % o)
-        elif o < 65536:
-            out.append('\\u%04x' % o)
         else:
-            out.append('\\U%08x' % o)
+            out.append('\\x%02x' % o)
     out.append('"')
     return ''.join(out)
 
@@ -104,7 +96,7 @@ def parse_go_literal(typ, lit):
         return unquote_go_string(lit)
     if typ == '[]byte':
         if lit.startswith('"'):
-            return unquote_go_string(lit).encode('latin1')
+            return unquote_go_string(lit)
         inner = lit.strip('{}')
         return bytes(int(x) for x in inner.split(',') if x.strip())
     if typ in ('int', 'int64'):
@@ -112,16 +104,40 @@ def parse_go_literal(typ, lit):
     raise ValueError(f'unsupported corpus type {typ}')
 
 
+_SIMPLE_ESC = {'a': 7, 'b': 8, 'f': 12, 'n': 10, 'r': 13, 't': 9, 'v': 11,
+               '\\': 92, "'": 39, '"': 34}
+
+
 def unquote_go_string(lit):
-    # Use Python's literal parsing after translating Go escapes.
-    if len(lit) >= 2 and lit[0] == '"' and lit[-1] == '"':
-        inner = lit[1:-1]
-        # Translate Go-specific escapes Python doesn't know.
-        inner = inner.replace('\\x', '\\x')  # same syntax
-        return bytes(inner, 'utf-8').decode('unicode_escape').encode('latin1').decode('latin1')
+    """Bytes of a Go string literal as strconv.Quote writes it (the fuzz
+    corpus format): raw UTF-8 runes, \\xNN bytes, \\uNNNN / \\UNNNNNNNN
+    runes, octal and the single-letter escapes. (Until 2026-11-23 this went
+    through Python's unicode_escape + latin-1, which failed on every entry
+    holding a non-Latin-1 rune.)"""
     if len(lit) >= 2 and lit[0] == '`' and lit[-1] == '`':
-        return lit[1:-1]
-    raise ValueError(f'cannot unquote {lit!r}')
+        return lit[1:-1].encode('utf-8')
+    if not (len(lit) >= 2 and lit[0] == '"' and lit[-1] == '"'):
+        raise ValueError(f'cannot unquote {lit!r}')
+    s, out, i = lit[1:-1], bytearray(), 0
+    while i < len(s):
+        ch = s[i]
+        if ch != '\\':
+            out += ch.encode('utf-8')
+            i += 1
+            continue
+        e = s[i + 1]
+        if e == 'x':
+            out.append(int(s[i + 2:i + 4], 16)); i += 4
+        elif e in 'uU':
+            n = 4 if e == 'u' else 8
+            out += chr(int(s[i + 2:i + 2 + n], 16)).encode('utf-8'); i += 2 + n
+        elif e in '01234567':
+            out.append(int(s[i + 1:i + 4], 8)); i += 4
+        elif e in _SIMPLE_ESC:
+            out.append(_SIMPLE_ESC[e]); i += 2
+        else:
+            raise ValueError(f'bad escape \\{e} in {lit!r}')
+    return bytes(out)
 
 
 def render_arg(typ, val):
@@ -136,22 +152,32 @@ def render_arg(typ, val):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--fuzzdir', required=True, help='dir with testdata/fuzz/FuzzXxx/')
+    ap.add_argument('--fuzzdir', required=True, action='append',
+                    help='dir holding FuzzXxx/ corpus dirs; repeatable. `go test -fuzz`'
+                         ' writes the inputs it grows to $GOCACHE/fuzz/<import path>/'
+                         ' (only failing inputs land in testdata/fuzz/), so the driver'
+                         ' passes both')
     ap.add_argument('--out', required=True, help='diffharness corpus output dir')
+    ap.add_argument('--max-per-target', type=int, default=0,
+                    help='bound the replay per target (0: no bound); entries are'
+                         ' content-hash named, so the sorted prefix is a stable sample')
     args = ap.parse_args()
 
     n = 0
     for target, (imports, argtypes, body) in sorted(TEMPLATES.items()):
-        cdir = os.path.join(args.fuzzdir, target)
-        if not os.path.isdir(cdir):
-            print(f'skip {target}: no corpus dir')
+        paths = []
+        for fuzzdir in args.fuzzdir:
+            cdir = os.path.join(fuzzdir, target)
+            if os.path.isdir(cdir):
+                paths += [os.path.join(cdir, fn) for fn in sorted(os.listdir(cdir))
+                          if not fn.startswith('.')]
+        paths = [p for p in paths if os.path.isfile(p)]
+        if not paths:
+            print(f'skip {target}: no corpus entries')
             continue
-        for fn in sorted(os.listdir(cdir)):
-            if fn.startswith('.'):
-                continue
-            path = os.path.join(cdir, fn)
-            if not os.path.isfile(path):
-                continue
+        if args.max_per_target > 0:
+            paths = paths[:args.max_per_target]
+        for path in paths:
             try:
                 vals = parse_corpus_file(path)
             except ValueError as e:

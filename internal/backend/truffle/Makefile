@@ -83,11 +83,9 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.int
 # the explicit export is a harmless redundancy (a stale env var is skipped
 # via the isExecutable check).
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
-# Corpus differential tests locate the corpus via -Dgraalgo.repo.dir.
-REPO_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
 JAVAC_FLAGS := -Xlint:deprecation -Werror --add-exports java.base/jdk.internal.vm=ALL-UNNAMED
 
-.PHONY: all main test smoke smoke-test clean check run run-sched pin-audit torture
+.PHONY: all main smoke smoke-test clean check run run-sched pin-audit torture
 
 all: main
 
@@ -118,20 +116,9 @@ run: main
 run-sched: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(SCHED_RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
-# Both module runners: graalgo.test.Runner (AST/values/launcher tests and
-# corpus differentials) and graalgo.sched.SchedTestRunner (scheduler and
-# runtime tests).
-test: main $(OUT_TEST)/.built
-	mkdir -p out/test-tmp
-	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the differential
-	# tests would fill it. GOTMPDIR covers go; -Djava.io.tmpdir covers Java
-	# (Java ignores the TMPDIR env var for java.io.tmpdir).
-	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(REPO_DIR_PROP) $(JAVA_FLAGS) \
-	-cp "$(TEST_CP)" graalgo.test.Runner
-	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
-	-cp "$(SCHED_TEST_CP)" graalgo.sched.SchedTestRunner
+# The module runners (graalgo.test.Runner, graalgo.sched.SchedTestRunner)
+# are class registries: the top-level `make test-java-fast` /
+# `test-java-slow` / `test` run their classes on the right classpaths.
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUN_CP)" -d $(OUT_TEST) $(SRC_TEST)

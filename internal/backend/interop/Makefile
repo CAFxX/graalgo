@@ -28,7 +28,6 @@ OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
 RUN_CP := $(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)
-TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 # p3frontend Go sources and stdlib-fork tooling now live in their
 # Phase-4 homes (moved from phases/phase3 during the migration cleanup).
@@ -43,7 +42,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.int
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main test check clean run
+.PHONY: all main check clean run
 
 all: main
 
@@ -65,8 +64,8 @@ $(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES) $(TRUFFLE_CLASSES)/.built
 run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.p3sync.launcher.P3SyncMain $(ARGS)
 
-test: main $(OUT_TEST)/.built
-	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
+# graalgo.iface.IfaceTestRunner is a class registry: the top-level
+# `make test-java-fast` / `test-java-slow` / `test` run its classes.
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUN_CP)" -d $(OUT_TEST) $(SRC_TEST)
