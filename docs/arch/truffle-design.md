@@ -25,7 +25,7 @@ design"). The owner decided on §14's items on 2026-11-18; §14 records the
 outcome of each.
 
 **Audit (2026-11-24):** [truffle-audit.md](truffle-audit.md) checks this
-design and the as-built node package (§15, §16) against the owner's Truffle
+design and the as-built node package (§15–§17) against the owner's Truffle
 playbook; its findings and work packages (WP-TR-AUDIT-n) supersede the
 ordering of §10.2 where they differ.
 
@@ -2227,3 +2227,38 @@ ms, load 13–18; `mapint`/`mapstr` re-run 4 more rounds): `fib` 3.34 → 3.39,
 `closures` 0.90 → 0.90 — neutral, as expected of changes PE already saw
 through; compilations per run unchanged or fewer (`slicesum` 18 → 13,
 `strbuild` 16 → 10). Class files of `graalgo.go` +0.7 % (record accessors).
+
+## 17. Source sections, tags and stacks as built (WP-TR-AUDIT-6, 2026-11-25)
+
+[ADR-0020](../dev/adr/ADR-0020-sources-stacks.md) records the decisions; this
+section maps them onto §6. Deviations from §6 as designed:
+
+- **§6.2:** positions are the GIR body's own table (`graalgo.go.runtime.Positions`,
+  decoded on first use and shared by a function's split copies and its
+  range-over-func bodies); only statements (`N.Stmt`) and calls (`N.CallRef`)
+  store an index, not every `GoNode`, and the `Source` has no characters
+  (`CONTENT_NONE`) instead of loading the file lazily.
+- **§6.3:** `StatementTag` (positioned statements; not blocks or labels),
+  `RootTag` + `RootBodyTag` on one node, `Calls.Body` (the body after the
+  prologue, which is also the `return` target), and `CallTag` on the three
+  call nodes, through wrappers generated for `Stmt` and `Ref`. Not yet:
+  `ExpressionTag` (one wrapper per carrier family plus expression positions),
+  variable tags, `CallTag` on `go`/`defer` (their statements are tagged).
+- **§6.5:** pcs are `0x400000 + (id << 20) + (pos << 2)` (`Stacks`), the GIR
+  position index standing in for a call-site ordinal; the facade's `Caller`,
+  `Callers`, `CallersFrames`, `FuncForPC` and `Func` methods are Go over
+  `runtime.callers`/`funcInfo`/`pcFileLine`, and `runtime.Stack` is an
+  intrinsic. All-goroutine dumps, `created by` (async stacks) and gc's
+  boundary runtime frames are open ([limitations.md](limitations.md)).
+- **§6.7/§6.8:** `--cpusampler`, `--cputracer` and `--coverage` work
+  (`-Dpolyglot.cpusampler=true` in `GRAALGO_JAVA_OPTS`); the scripted check is
+  [test/m1r/tools.sh](../../test/m1r/tools.sh) (exact statement and root
+  counts of an `ExecutionListener`, a sampler stack with Go names and
+  sections, both goroutine modes). The inspector/DAP tests need scopes
+  (§6.4) first.
+
+Cost: one `@CompilationFinal int` per statement and call node, one `Body`
+node per function; no wrapper and no position read on any execute path. The
+GIR is unchanged (it already carried positions). `pe-check-m1a` and the
+bench suite before/after: see the lane report in
+[RECOVERY.md](RECOVERY.md)'s log.
