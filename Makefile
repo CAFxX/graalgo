@@ -449,6 +449,7 @@ M1A_PROGRAMS ?=
 bench-m1a: build
 	GO="$(GO)" test/m1a/bench.sh $(M1A_BENCH)
 pe-check-m1a: build
+	python3 test/bench/realistic/test_pe_report.py
 	GO="$(GO)" test/m1a/bench.sh --pe-check $(M1A_BENCH)
 	@if [ -z "$(strip $(M1A_BENCH))" ]; then echo GO="$(GO)" test/m1a/pe_std.sh; GO="$(GO)" test/m1a/pe_std.sh; fi
 M1A_BENCH ?=
@@ -471,8 +472,9 @@ BENCH_ARGS ?=
 bench-realistic: build
 	GO="$(GO)" test/bench/suite.sh --dir test/bench/realistic --gc-env GOMAXPROCS=4 $(BENCH_ARGS)
 
-# The compilation report of the realistic programs (not a gate, ~1.5 min):
-# failed, deoptimized and invalidated Truffle compilations per program
+# The compilation report of the realistic programs (~1.5 min; nightly as
+# .github/workflows/compile-health.yml with --max-churn): failed, deoptimized
+# and invalidated Truffle compilations per program
 # (test/bench/realistic/pe-report.sh). PE_REPORT_ARGS: e.g. "--sync jsonrt".
 pe-report: build
 	GO="$(GO)" test/bench/realistic/pe-report.sh $(PE_REPORT_ARGS)

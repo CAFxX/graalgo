@@ -67,8 +67,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   outside the quarantine **and** on a quarantined class that now passes.
 - `make test` — the full differential suite (30+ minutes): never per-push,
   never on a shared host without asking; the weekly CI `full-suite` job
-  runs it. (Nightly: `mutation.yml`, `fuzz-soak.yml` and `fuzz-newpath.yml` —
-  `make fuzz-newpath`, the new path's differential fuzzer; the layer-3
+  runs it. (Nightly: `mutation.yml`, `fuzz-soak.yml`, `fuzz-newpath.yml` —
+  `make fuzz-newpath`, the new path's differential fuzzer — and
+  `compile-health.yml` — `make pe-report`, failed compilations and deopt
+  churn of the realistic programs; the layer-3
   `stdlib-gate.yml` is manual-only until BUG-0033 is triaged.)
 - Per-module Go tests: `go test ./...` inside the module's own directory
   (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its

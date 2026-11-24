@@ -457,7 +457,11 @@ directory's README repeats its status.
     peak RSS, CPU time, `STAT` lines): `make bench-realistic`, not a gate;
     [pe-report.sh](../test/bench/realistic/pe-report.sh) (with
     [pe_report.py](../test/bench/realistic/pe_report.py)) prints their
-    failed, deoptimized and invalidated compilations (`make pe-report`).
+    failed, deoptimized and invalidated compilations (`make pe-report`;
+    nightly with `--max-churn` as
+    [compile-health.yml](../.github/workflows/compile-health.yml); parser
+    test [test_pe_report.py](../test/bench/realistic/test_pe_report.py) in
+    `make pe-check-m1a`).
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):

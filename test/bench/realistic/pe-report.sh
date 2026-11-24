@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test/bench/realistic/pe-report.sh — the compilation report of the realistic
-# programs (`make pe-report`, not a gate): each program is built through
+# programs (`make pe-report`; nightly: compile-health.yml): each program is built through
 # graalgo-tool and run once with Truffle compilation tracing; the report
 # lists, per program, the compilations done, failed, deoptimized and
 # invalidated, then every failed compilation (root, reason) and the roots
@@ -8,9 +8,11 @@
 # function in the AST interpreter for the rest of the run, so the target is
 # zero failures (docs/arch/performance.md §8).
 #
-# Usage: pe-report.sh [--sync] [--keep DIR] [name...]
-#   --sync      BackgroundCompilation=false (deterministic; slower)
-#   --keep DIR  keep the binaries and the raw traces in DIR
+# Usage: pe-report.sh [--sync] [--keep DIR] [--max-churn N] [name...]
+#   --sync         BackgroundCompilation=false (deterministic; slower)
+#   --keep DIR     keep the binaries and the raw traces in DIR
+#   --max-churn N  also fail when one root is deoptimized or invalidated more
+#                  than N times (the nightly compile-health check)
 # Default names: every program of test/bench/realistic except goroutines.
 # Env: GO, GRAALVM_HOME, GRAALGO_TMP, GRAALGO_JAVA_OPTS (default -Xmx2g
 #      -XX:ActiveProcessorCount=4), BENCH_TIMEOUT (seconds per run, default
@@ -25,10 +27,12 @@ ROOT="$GRAALGO_ROOT"
 
 sync=0
 keep=
+churn=
 while [ $# -gt 0 ]; do
     case "$1" in
         --sync) sync=1; shift ;;
         --keep) keep="$2"; shift 2 ;;
+        --max-churn) churn="$2"; shift 2 ;;
         -*) echo "pe-report.sh: unknown option $1" >&2; exit "$USAGE_EXIT" ;;
         *) break ;;
     esac
@@ -61,7 +65,7 @@ for name in "$@"; do
     GRAALGO_JAVA_OPTS="$OPTS" TMPDIR="$TMP" nice -n 19 timeout "${BENCH_TIMEOUT:-600}" \
         "$out/$name.gg" >"$out/$name.out" 2>"$out/$name.trace" || status=$?
     [ "$status" -eq 0 ] || { echo "pe-report.sh: $name exited $status" >&2; fail=1; }
-    python3 "$HERE/pe_report.py" "$name" "$out/$name.trace" || fail=1
+    python3 "$HERE/pe_report.py" "$name" "$out/$name.trace" $churn || fail=1
 done
 [ "$fail" -eq 0 ] || exit "$DIVERGENCE_EXIT"
 exit 0
