@@ -18,13 +18,16 @@ export, 11-20), "after" this lane merged with master bc89d2e2 (11-24, load
 ~20 with another lane's `make -j2 pre-land` alongside; snapshot-check and
 check from the 11-23 green run of the same tree); both run `make
 pre-land`'s list (`all`, `check-links-external`, `test-diffharness`) from
-warm Go build caches. The baseline file holds the "after" CPU times.
+warm Go build caches. The baseline file holds the "after" CPU times;
+the rows of the gates master added on 11-24 (pe-check-m1a's pe_std.sh,
+test-goroutine-modes) were measured on a quiet host (load ~1, right after a
+reboot), so they read lower than the same gates under the usual 10–20 load.
 
 | target | before wall s | CPU s | after wall s | CPU s | dominated by |
 |---|---:|---:|---:|---:|---|
 | test-diffharness | 814 | 1288 | 36 | 40 | gc builds (was: graalgo JVMs) |
 | snapshot-check | 723 | 1133 | 433 | 659 | 2 JVMs/program (now ~1), 113 MB v1 JSON each |
-| check | 219 | 349 | 177 | 278 | frontend go test, fresh exports |
+| check | 219 | 349 | 177 | 278 | frontend go test, fresh exports (re-measured on master 95b5da40 + this lane, quiet host 11-24: 163 / 268) |
 | test-m1a | 202 | 350 | 212 | 257 | one JVM start per program |
 | test-regression | 122 | 166 | 126 | 169 | v1 frontend + JVM per package |
 | test-toolexec | 72 | 132 | 40 | 128 | go vet + go test |
@@ -37,10 +40,11 @@ warm Go build caches. The baseline file holds the "after" CPU times.
 | test-m1d | 16 | 36 | 13 | 28 | JVM per program |
 | test-m1w13 | 15 | 28 | 13 | 20 | JVM per program |
 | test-imgcheck | 9 | 24 | 10 | 21 | 6 JVM runs |
-| pe-check-m1a | 9 | 15 | 13 | 17 | JIT compiles |
+| pe-check-m1a | 9 | 15 | 13 -> 28 | 17 -> 50 | JIT compiles; master added pe_std.sh (std paths of the realistic programs) |
+| test-goroutine-modes | - | - | 25 | 42 | new on master (GG-0073): one JVM per scheduler suite/program; CDS + gc-oracle cache apply |
 | build | 8 | 39 | 36 | 48 | javac |
 | java-test-classes | 7 | 20 | 19 | 23 | javac |
-| **total** (all targets) | **2487** | **3848** | **1313** | **1926** | 41.5 -> 21.9 min |
+| **total** (all targets) | **2487** | **3848** | **1313** | **1926** | 41.5 -> 21.9 min; master's 11-24 gates (pe_std.sh, goroutine modes) add ~1 min wall |
 
 ## Top costs before, and what dominated them
 
