@@ -16,10 +16,12 @@ projects/graalgo-fuzz/
 
 ## graalgo-slim.tar.gz
 
-Built from a graalgo worktree at the pinned commit:
+Built from a graalgo worktree at the pinned commit. Historical recipe: the
+`phases/` tree it uses was removed on 2026-10-14 (lane worktrees now live
+at `~/dev/graalgo/.worktrees/<lane>`, AGENTS.md §4).
 
 ```bash
-cd ~/dev/graalgo-wt/<lane>   # at the commit to fuzz
+cd ~/dev/graalgo/.worktrees/<lane>   # at the commit to fuzz
 tar -czf graalgo-slim.tar.gz \
   phases/phase1/src phases/phase1/lib internal/frontend \
   phases/phase1/Makefile \

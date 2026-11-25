@@ -159,9 +159,16 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 ## 4. Worktrees and commits
 
 - The integration checkout is `~/dev/graalgo` on `master`, which advances by
-  **fast-forward merges only**; never edit, build or commit there.
-- One git worktree + branch per lane under `~/dev/graalgo-wt/<lane>`
-  (`git worktree add ~/dev/graalgo-wt/<lane> -b wt/<area>/<lane> master`).
+  **fast-forward merges only**; never edit, build or commit there (its own
+  files: the lane worktrees inside it are not part of it).
+- One git worktree + branch per lane, **inside** the integration checkout at
+  `.worktrees/<lane>` (`cd ~/dev/graalgo && git worktree add
+  .worktrees/<lane> -b wt/<area>/<lane> master`). `/.worktrees/` is
+  gitignored and local-only: the checkout stays `git status`-clean, no gate
+  scans it (planted test `.github/scripts/test_worktrees_ignored.py`), and
+  nothing may delete it — never `git clean -x` there without
+  `-e '!.worktrees'`. Lanes started before 2026-11-25 used
+  `~/dev/graalgo-wt/<lane>` (moved with `git worktree move`).
   Work only in your worktree; the coordinator fast-forwards `master`. A
   non-fast-forward means you rebase in your worktree and re-verify.
 - Commit with **explicit pathspecs**; never `git add -A` or a bare

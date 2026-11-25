@@ -37,8 +37,8 @@
 #               new-path/v1 layering gate, the no-bridges gate (vs
 #               GATE_BASE or the merge-base), the exclusion-register
 #               gate (bug id + signature per deferred-parity entry), every
-#               .github/scripts/test_*.py, markdown links, `tools/req
-#               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
+#               .github/scripts/test_*.py, markdown links, `tools/req`'s
+#               tests + `lint`); and `internal/frontend/build.sh check` (gofmt/vet/
 #               tests, vendoring diff, frontend/v1 wire-format validator);
 #               vet-spikes (go vet of the test/spikes/abi probe modules)
 #     test-pin-smoke
@@ -317,7 +317,9 @@ check-repo:
 	  -unsigned ../../tools/stdlib-fork/exclusions.yaml \
 	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
 	python3 .github/scripts/check_markdown_links.py --skip-external
-	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
+	# the req CLI's own tests first (gate-of-the-gate, ~0.3 s, go-test cached;
+	# incl. its .worktrees skip), then the lint itself.
+	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) test . && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
 
 # The rest of per-push CI that `make all` does not cover (2026-11-20: lanes
 # that ran a hand-picked subset of the gates landed a girinterp regression
