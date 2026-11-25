@@ -141,7 +141,7 @@ baselined gate costs of [test/duration-baseline.json](../../test/duration-baseli
 | Step | What | Depends on | Per-push saving (dev wall / CPU; CI CPU) | Weekly / nightly saving |
 |---|---|---|---|---|
 | **D0** | **ADR-0017 stage 1** (accepted): `git mv` the archive docs to `docs/archive/` (planned), `test/corpus/lifecycle/normalize.py` → `test/lib/`; plus the proven-dead files of §6 | quiet window | 0 | 0 |
-| **D1** | **snapshot-check on the new path**: `test/differential/backends-newpath.json` (planned; the backend of §1) becomes the `snapshot-check` config; `corpus-exclusions.yaml` re-triaged to the 2 measured divergences (G4 ids); `test-diffharness` drops its `graalgo-sync-run` precondition; the diffharness default `-config` stops naming `backends.json`; `jvmcds.sh sync-env` leaves the recipe | — | **−376 s / −547 s; CI −725 s est.** (433 → 57 wall, 659 → 112 CPU measured) | mutation.yml's per-mutant gate gets ~6× cheaper once G6 lands |
+| **D1** | **snapshot-check on the new path**: `test/differential/backends-newpath.json` (planned) — the backend of §1 — becomes the `snapshot-check` config; `corpus-exclusions.yaml` re-triaged to the 2 measured divergences (G4 ids); `test-diffharness` drops its `graalgo-sync-run` precondition; the diffharness default `-config` stops naming `backends.json`; `jvmcds.sh sync-env` leaves the recipe | — | **−376 s / −547 s; CI −725 s est.** (433 → 57 wall, 659 → 112 CPU measured) | mutation.yml's per-mutant gate gets ~6× cheaper once G6 lands |
 | **D2** | **conformance and typeparam on the new path**: `run_conformance.sh` uses the new backend, `srctest-exclusions.yaml` re-triaged from §2.1 (39 stale entries deleted, 32 new reason-coded entries citing G1–G4/G7 ids); `TypeparamDifferentialTest` replaced by a `make test-typeparam` (planned) over `diffharness typeparam run` in the weekly job; `typeparam-exclusions.yaml` re-triaged | D1 | 0 (path-filtered job: conformance 234 s wall at 1 job on the new path) | weekly: TypeparamDifferentialTest's share of the 437 s v1 classes |
 | **D3** | **re-point or delete the v1-driven tools**: `test-jit`'s `peguard` → `pe-check-m1a`; `make bench` → `bench-suite`; delete `fast-run`/truffle `run`/`run-sched`/`smoke`/`pin-audit`, fuzz-soak 4a + `tools/fuzz-soak/harness`, the 76 wave `run_differential.sh` + `run_wave*.sh`; `stdlib-gate.yml` → one new-path runner over the wave programs with a register (BUG-0033); `tools/godebug-diff` → bundles or delete; new-path mutant set (G6) in `tools/mutation` | D1 (G6 for mutation) | test-ci ~−15 s CPU est. | fuzz-soak 4a (4 h nightly runner) gone |
 | **D4** | **`cmd/graalgo` = the launcher** (ADR-0017 stage 2 head): `internal/toolexec/cmd/graalgo-launcher` built as `graalgo`; `test-regression` then runs through it unchanged; `test/e2e` re-pointed; delete `internal/driver`, `internal/vet` | **G5 (M2 `go test`)** | test-regression 126 s / 169 s → ~60 s CPU est. (no gofrontend, bundle JVM) | – |
@@ -182,3 +182,16 @@ replacement typeparam run costs (162 s wall at 1 job, measured).
 
 `tools/stdlib-linkdiff` and `tools/stdlib-vendor` have no caller either, but
 WP-UPG1 may reuse them (ADR-0017): kept until that lane decides.
+
+## Decisions (coordinator, 2026-11-25)
+
+1. **G7 (syscalls, `net`, `os/exec` spawn) is deferred to M4** and accepted
+   as coverage dropped at M3: the affected programs get reason-coded
+   `deferred-parity` entries citing their BUG ids, never silent removal.
+2. **D6 (the §9.1 delete) is gated on G1–G4 closed**, not on the pass
+   rate alone: zero per-program regressions vs v1 except the ones G5 (M2)
+   and G7 (M4) own, each listed with its id. D0–D5 may land as soon as
+   they are green, in order.
+3. **test-regression's 7 packages become `package main` programs now**
+   where a package is a self-contained repro (cheap, keeps the coverage on
+   the new path before D4); the rest wait for M2's `go test` launcher.
