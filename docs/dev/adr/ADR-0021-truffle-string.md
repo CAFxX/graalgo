@@ -1,9 +1,10 @@
 # ADR-0021 — Go strings stay `Str`; TruffleString only as kernels and views
 
 **Date:** 2026-11-25
-**Status:** PROPOSED (lane research-tsbc, WP-TR-AUDIT-12 of
-[truffle-audit.md](../../arch/truffle-audit.md), finding F-9.1; the
-coordinator decides)
+**Status:** accepted 2026-11-25 by the coordinator (lane research-tsbc,
+WP-TR-AUDIT-12 of [truffle-audit.md](../../arch/truffle-audit.md), finding
+F-9.1). Follow-up: the cached hash in `Str` and the TruffleString search
+kernels over `Str` views go to the string/map perf work (WP-TR-AUDIT-4)
 **Scope:** the string representation of the new path
 (`graalgo.go.values.Str`, `graalgo.go.runtime.Strs`, the bytealg
 intrinsics). Evidence: [tstring-bytecode-study.md](../../arch/tstring-bytecode-study.md) §A.

@@ -1,9 +1,11 @@
 # ADR-0022 — Keep the AST interpreter; no Bytecode DSL migration on 25.0
 
 **Date:** 2026-11-25
-**Status:** PROPOSED (lane research-tsbc, WP-TR-AUDIT-12 of
-[truffle-audit.md](../../arch/truffle-audit.md) §4 and TR-13; the
-coordinator decides)
+**Status:** accepted 2026-11-25 by the coordinator: no migration now
+(lane research-tsbc, WP-TR-AUDIT-12 of
+[truffle-audit.md](../../arch/truffle-audit.md) §4 and TR-13). Revisit
+trigger: after the Truffle upgrade to ≥ 25.6 (WP-TR-AUDIT-8), and only if
+a heap census of a large program shows the AST dominates retained heap
 **Scope:** the execution model of the new path (SPEC §3.3, GG-0014; would
 need amendment A5). Evidence:
 [tstring-bytecode-study.md](../../arch/tstring-bytecode-study.md) §B.
