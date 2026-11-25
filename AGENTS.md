@@ -167,8 +167,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   lands. Scheduled workflows count too: after every merge wave and at
   least daily the coordinator runs
   [ci_status.sh](.github/scripts/ci_status.sh) (latest run per
-  workflow/event on `master`, exit 1 on any red) and turns every red
-  row into lane work the same day.
+  workflow/event on `master`, exit 1 on any red not superseded by a
+  later green schedule/dispatch run of the same workflow on a commit at
+  or after it) and turns every red row into lane work the same day.
 
 ## 5. Correctness contract
 
