@@ -137,7 +137,9 @@ Current: [SPEC.md](arch/SPEC.md), [RECOVERY.md](arch/RECOVERY.md),
 packages, test matrix), [abi-spike.md](arch/abi-spike.md),
 [limitations.md](arch/limitations.md), [performance.md](arch/performance.md),
 [traceback-normalization.md](arch/traceback-normalization.md),
-[bridge-inventory.md](arch/bridge-inventory.md), [dev/](dev/).
+[bridge-inventory.md](arch/bridge-inventory.md),
+[tstring-bytecode-study.md](arch/tstring-bytecode-study.md) (WP-TR-AUDIT-12:
+TruffleString and Bytecode DSL go/no-go, ADR-0021/0022 proposed), [dev/](dev/).
 History (read for context only): [FEASIBILITY.md](arch/FEASIBILITY.md),
 [PHASES.md](arch/PHASES.md), [phases/](arch/phases/), [reviews/](arch/reviews/),
 [spikes/](arch/spikes/), [research/](arch/research/), [docs/spec/](spec/),
