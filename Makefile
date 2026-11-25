@@ -501,11 +501,11 @@ test-v2:
 # gc/graalgo cache separation. $(GO)'s directory is put first on PATH
 # because the tests invoke `go` themselves.
 TOOLEXEC_TMP := $(CURDIR)/internal/toolexec/.tmp
-test-toolexec:
-	mkdir -p $(TOOLEXEC_TMP) && \
 # graalgo-tool's end-to-end tests (each its own GOCACHE, module and tool
 # binaries) run 4 at a time (t.Parallel; -parallel caps it at the CI
 # runner's vCPUs): the package was the gate's critical path, 30 -> 15 s.
+test-toolexec:
+	mkdir -p $(TOOLEXEC_TMP) && \
 	cd internal/toolexec && PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) vet ./... && \
 	PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) test -parallel 4 ./...
 
@@ -814,12 +814,12 @@ test-goroutine-modes: build java-test-classes
 	GO="$(GO)" test/m1r/cancel.sh
 	GO="$(GO)" test/m1r/tools.sh carrier,thread
 	GO="$(GO)" test/m1r/leak.sh
+	GO="$(GO)" test/m1r/batch.sh
 
 # Each module's run is logged (exit status ignored: a JVM crash or INFRA
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then
 # decides. Logs live under the gitignored out/ dirs. Each run is also
 # streamed (tee) so a hang or a lost runner leaves its progress in the CI
-	GO="$(GO)" test/m1r/batch.sh
 # log instead of nothing (the CLASS lines carry per-class timings).
 JT_SLOW_LOGS := $(JT_BK)/truffle/out/test-tmp/java-slow-truffle.log $(JT_BK)/truffle/out/test-tmp/java-slow-runtime.log $(JT_BK)/interop/out/test-tmp/java-slow-interop.log
 test-java-slow: java-test-classes java-test-lists-check
