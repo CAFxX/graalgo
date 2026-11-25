@@ -67,7 +67,8 @@ and is **deleted at the M3 cutover** — never build on it.
 
 ## Legacy (v1) — deleted at M3, do not build on it
 
-Authoritative list: [toolexec-design.md §9.1](arch/toolexec-design.md#91-m3-delete-inventory-w11).
+Authoritative list: [toolexec-design.md §9.1](arch/toolexec-design.md#91-m3-delete-inventory-w11);
+the measured readiness, gaps and ordered deletion steps: [m3-plan.md](arch/m3-plan.md).
 
 - [cmd/graalgo/](../cmd/graalgo/) (v1 driver; becomes the launcher at M3),
   [internal/driver/](../internal/driver/), [internal/vet/](../internal/vet/)
@@ -139,7 +140,8 @@ packages, test matrix), [abi-spike.md](arch/abi-spike.md),
 [traceback-normalization.md](arch/traceback-normalization.md),
 [bridge-inventory.md](arch/bridge-inventory.md),
 [tstring-bytecode-study.md](arch/tstring-bytecode-study.md) (WP-TR-AUDIT-12:
-TruffleString and Bytecode DSL go/no-go, ADR-0021/0022 proposed), [dev/](dev/).
+TruffleString and Bytecode DSL go/no-go, ADR-0021/0022 proposed),
+[m3-plan.md](arch/m3-plan.md) (M3 readiness and deletion steps), [dev/](dev/).
 History (read for context only): [FEASIBILITY.md](arch/FEASIBILITY.md),
 [PHASES.md](arch/PHASES.md), [phases/](arch/phases/), [reviews/](arch/reviews/),
 [spikes/](arch/spikes/), [research/](arch/research/), [docs/spec/](spec/),
