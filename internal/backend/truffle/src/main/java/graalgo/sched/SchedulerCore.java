@@ -728,7 +728,7 @@ public final class SchedulerCore {
      * a Java monitor across guest code: in carrier mode a quantum park is a continuation yield,
      * and the JDK freezes a continuation together with the monitors it holds, so every carrier
      * that then contends for the monitor blocks (BLOCKED, not parked: it is never given back)
-     * while the frozen owner waits for one of them to run it again — BUG-0050. The section's
+     * while the frozen owner waits for one of them to run it again — BUG-0054. The section's
      * code must not park in any other way; the deferred quantum park happens at the first poll
      * after {@link #enablePreemption} (the deadline stays expired). No-op off goroutines.
      */

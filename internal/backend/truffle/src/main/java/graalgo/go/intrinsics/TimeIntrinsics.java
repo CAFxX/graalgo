@@ -138,7 +138,7 @@ final class TimeIntrinsics {
                 // Chan timers send under the lock (gc's sendLock): stop/reset either precede the
                 // send and drain nothing, or follow it and drain the value. The send (sendTime's
                 // non-blocking select) runs with preemption off, as under gc's runtime lock: a
-                // quantum park here would freeze the goroutine holding this monitor (BUG-0050).
+                // quantum park here would freeze the goroutine holding this monitor (BUG-0054).
                 s.sched.disablePreemption();
                 try {
                     call(s, seq, delta);
