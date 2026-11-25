@@ -4,8 +4,8 @@
 // `diffharness snapshot check` against gc's snapshot) goes red. A gate that
 // has never been seen failing is not evidence.
 //
-// Every mutant runs on a SCRATCH COPY of the repository (rsync, .git and
-// scratch dirs excluded) — the working tree is never modified. Per mutant:
+// Every mutant runs on a SCRATCH COPY of the repository (rsync, .git,
+// scratch dirs and the lane worktrees under .worktrees/ excluded) — the working tree is never modified. Per mutant:
 //
 //  1. apply the exact-string mutation (the 'old' text must occur exactly
 //     once in the file, else the mutant is ERROR: ambiguous);
@@ -117,7 +117,7 @@ func main() {
 	copyDir := filepath.Join(c.work, "repo")
 	fmt.Printf("mutation: copying %s -> %s\n", repo, copyDir)
 	if err := run(c.work, nil, "rsync", "-a", "--delete",
-		"--exclude=.git", "--exclude=.tmp/", "--exclude=test-results/", "--exclude=out/test-tmp/",
+		"--exclude=.git", "--exclude=.tmp/", "--exclude=/.worktrees/", "--exclude=test-results/", "--exclude=out/test-tmp/",
 		repo+"/", copyDir+"/"); err != nil {
 		fatal(3, fmt.Errorf("rsync: %w", err))
 	}

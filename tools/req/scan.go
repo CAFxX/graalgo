@@ -55,6 +55,11 @@ func stripMarkdownCode(s string) string {
 	return s
 }
 
+// worktreesDir is the root-relative directory holding the lane worktrees
+// (AGENTS.md §4: <repo>/.worktrees/<lane>, gitignored). Each is another
+// checkout of this repo, never part of the tree being linted.
+const worktreesDir = ".worktrees"
+
 // scanAll walks scanDir and returns every requirement-ID mention.
 // ownIDLines suppresses the self-identifying `id:` line of requirement files.
 func scanAll(c *workCtx) ([]Ref, []string, error) {
@@ -67,6 +72,9 @@ func scanAll(c *workCtx) ([]Ref, []string, error) {
 		if d.IsDir() {
 			if d.Name() == ".git" {
 				return filepath.SkipDir
+			}
+			if path == filepath.Join(c.root, worktreesDir) {
+				return filepath.SkipDir // other checkouts: each lints itself
 			}
 			return nil
 		}

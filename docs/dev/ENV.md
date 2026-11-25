@@ -12,7 +12,8 @@ Pinned 2026-10-03; host layout updated 2026-11-18 for the current box.
     (verified against the published `.sha256`; note it is a bare hash, not `sha256sum -c` format)
 - OS: linux/amd64.
 - Repository: integration checkout `~/dev/graalgo` (`master`, fast-forward
-  only); one worktree per lane under `~/dev/graalgo-wt/<lane>`.
+  only); one worktree per lane inside it at `~/dev/graalgo/.worktrees/<lane>`
+  (gitignored, local-only; [AGENTS.md](../../AGENTS.md) §4).
 - Vendored stdlib tree (external, not in the repo): `~/dev/graalgo-stdlib/<goVersion>/`
   ([tools/stdlib-vendor/](../../tools/stdlib-vendor/)).
 - Requirements CLI: [tools/req/](../../tools/req/) (`cd tools/req && go run . lint`;

@@ -25,8 +25,11 @@ Deliberate scope-avoidance (frontend/v1 + M7 scope):
 
 ## Running
 
+Historical recipe: the `phases/` tree it uses was removed on 2026-10-14
+(lane worktrees now live at `~/dev/graalgo/.worktrees/<lane>`, AGENTS.md §4).
+
 ```bash
-GR=$HOME/dev/graalgo-wt/<lane>
+GR=$HOME/dev/graalgo/.worktrees/<lane>
 P3=$GR/phases/phase3; P2=$GR/phases/phase2; P1=$GR/phases/phase1
 JAVA=$HOME/tools/graalvm-jdk-25/bin/java
 CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls $P1/lib/*.jar | tr '\n' ':')"

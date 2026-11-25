@@ -124,7 +124,7 @@ shrink-only in [layering_allowlist.txt](../.github/scripts/layering_allowlist.tx
 | `BUG-NNNN` | graalgo bug ids cited by exclusions and quarantines | [bugs.md](dev/bugs.md) |
 | `ADR-NNNN` | architecture decision records | [docs/dev/adr/](dev/adr/) |
 | DV1–DV6 | launcher deviations with retirement triggers | [ADR-0010](dev/adr/ADR-0010-launcher-deviations.md) |
-| `wt/<area>/<lane>` | lane branch, worktree `~/dev/graalgo-wt/<lane>` | [AGENTS.md](../AGENTS.md) §4 |
+| `wt/<area>/<lane>` | lane branch, worktree `<repo>/.worktrees/<lane>` (gitignored) | [AGENTS.md](../AGENTS.md) §4 |
 | `p3*`, `phase1/`, `wave1/`… | research-era names (Phase 3, corpus waves); legacy | [REPO_STRUCTURE.md](REPO_STRUCTURE.md) |
 | `synth_*.go` | v1 hand-written stdlib stand-ins (frozen, deleted at M3) | [bridge-inventory.md](arch/bridge-inventory.md) |
 

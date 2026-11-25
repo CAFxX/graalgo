@@ -17,7 +17,8 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
 - `run_wave3.sh` — the shared runner (a `../wave1/run_wave.sh`
   derivative with wave-3 tmp paths: `TMPDIR=$P3/hidden_files/m9-tmp/wave3`,
   `GOCACHE=$HOME/.cache/graalgo/gocache-m9-wave3`). Usage:
-  `GR=~/dev/graalgo-wt/<lane> ./run_wave3.sh [pkg|all]`.
+  `GR=~/dev/graalgo/.worktrees/<lane> ./run_wave3.sh [pkg|all]`
+  (historical: the `phases/` tree it uses was removed on 2026-10-14).
 - Per-package `run_differential.sh`: thin wrapper
   `exec "$(dirname "$0")/../run_wave3.sh" <pkg>`.
 - Per-package `README.md`: scope boundary + retest trigger.

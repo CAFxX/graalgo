@@ -39,3 +39,7 @@ tools/fuzz/work/
 # differential harness run output (run.sh OUTDIR default): debris, never tracked
 test/differential/test-results/
 __pycache__/
+
+# lane worktrees (AGENTS.md §4: `git worktree add .worktrees/<lane> ...`):
+# other checkouts of this repo, local-only; no gate scans or deletes them
+/.worktrees/

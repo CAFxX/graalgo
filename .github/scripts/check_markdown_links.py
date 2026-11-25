@@ -381,6 +381,26 @@ def strip_inline_code(line):
 
 EXTERNAL_JOBS = 8
 
+# Never descend into build output, vendored trees, or git metadata.
+SKIP_DIRS = (".git", "out", "node_modules", ".github")
+# Root-anchored: <repo>/.worktrees/<lane> holds the lane worktrees (AGENTS.md
+# §4) -- other checkouts of this repo, each checked by its own lane.
+SKIP_ROOT_DIRS = (".worktrees",)
+
+
+def markdown_files(root):
+    """Every *.md under root, minus SKIP_DIRS (anywhere) and SKIP_ROOT_DIRS."""
+    root = os.fspath(root)
+    md_files = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        top = dirpath == root
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS
+                       and not (top and d in SKIP_ROOT_DIRS)]
+        for fn in filenames:
+            if fn.endswith(".md"):
+                md_files.append(os.path.join(dirpath, fn))
+    return md_files
+
 
 def main():
     skip_external = "--skip-external" in sys.argv
@@ -389,15 +409,8 @@ def main():
 
     errors = []
     transient = []
-    md_files = []
     external = []  # (file, line, url), checked below: once per URL, concurrently
-    for dirpath, dirnames, filenames in os.walk(root):
-        # Never descend into build output, vendored trees, or git metadata.
-        dirnames[:] = [d for d in dirnames
-                       if d not in (".git", "out", "node_modules", ".github")]
-        for fn in filenames:
-            if fn.endswith(".md"):
-                md_files.append(os.path.join(dirpath, fn))
+    md_files = markdown_files(root)
 
     for md in sorted(md_files):
         with open(md, encoding="utf-8", errors="replace") as f:
