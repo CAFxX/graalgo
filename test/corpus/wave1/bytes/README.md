@@ -64,8 +64,4 @@ conversion, explode, and invalid-input paths re-enable groups 2, 4 and 6.
 
 ## Running
 
-```bash
-./run_differential.sh
-# or
-../run_wave.sh bytes
-```
+`make stdlib-gate` (from the repo root; m3-plan D3 deleted the v1 wave runners).

@@ -14,5 +14,8 @@ Not per-push: `make fuzz-newpath N=200 SEED=1`, nightly in
   gate it belongs to ([test/m1a/](../m1a/README.md), [test/m1r/](../m1r/README.md), …)
 - [test_fuzz.py](test_fuzz.py) — the harness's own tests
 
-**Not here:** the v1-era fuzzer [tools/fuzz-soak/](../../tools/fuzz-soak/)
-(it drives `graalgo-sync-run`; v1's `tools/fuzz` was deleted, m3-plan D0).
+The nightly [fuzz-soak.yml](../../.github/workflows/fuzz-soak.yml) Layer 4a
+runs this generator too (`make fuzz-newpath FUZZ_CORPUS=0`, in batches, on a
+seed range disjoint from fuzz-newpath.yml's). v1's fuzzers are gone:
+`tools/fuzz` was deleted at m3-plan D0, `tools/fuzz-soak` (with its
+`graalgo-sync-run` harness) was deleted at D3.

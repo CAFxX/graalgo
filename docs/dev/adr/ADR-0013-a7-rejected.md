@@ -88,7 +88,7 @@ The torture battery flatters safepoint mode because its spinners are
 host-compiled lambdas whose actions do not go through the VM stub.
 
 Measured benefit that A7 was after, still unclaimed (best round, median of
-3, ms; gc from one `test/bench/run.sh` run):
+3, ms; gc from one `test/bench/run.sh` run, deleted at m3-plan D3):
 
 | Benchmark | gc | explicit poll | safepoint mode |
 |---|---|---|---|

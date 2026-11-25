@@ -1778,7 +1778,7 @@ Effort is in focused agent-days `[EST]`.
 
 | WP | Scope | Depends on | Acceptance (all measurable) | Effort |
 |---|---|---|---|---|
-| **TR-0** Gates and jars | Tool and TCK jars added to `lib/` with checksums. `make pe-check`: runs the benchmark set (branch `wt/recovery/jit`, `test/bench/`) and a corpus subset with `engine.CompilationFailureAction=ExitVM`, `engine.BackgroundCompilation=false`, performance warnings fatal; counts bailouts. DSL warnings are already errors (`-Werror`). | T0.B merged | `pe-check` red on a seeded bailout (a node calling `String.format` without a boundary), green otherwise; bailouts on the benchmark set = 0 | 1–2 |
+| **TR-0** Gates and jars | Tool and TCK jars added to `lib/` with checksums. `make pe-check` (v1; replaced by `pe-check-m1a` at m3-plan D3): runs the benchmark set (branch `wt/recovery/jit`, `test/bench/`) and a corpus subset with `engine.CompilationFailureAction=ExitVM`, `engine.BackgroundCompilation=false`, performance warnings fatal; counts bailouts. DSL warnings are already errors (`-Werror`). | T0.B merged | `pe-check` red on a seeded bailout (a node calling `String.format` without a boundary), green otherwise; bailouts on the benchmark set = 0 | 1–2 |
 | **TR-1** Language shell on v1 | `GoLanguage`/`GoContext` (policy `EXCLUSIVE`, second context refused); root nodes get the language; launchers create an `Engine`/`Context` and `eval` a byte `Source` (bundle MIME type reserved; v1 wire JSON under a temporary MIME type); goroutine threads through `newTruffleThreadBuilder`; `os.Exit` through `closeExited`. Statics stay. | T0.A, T0.D | every existing suite green through the polyglot launcher; a JUnit test evaluates a program from Java and reads its exit status; `--cpusampler` lists Go function names; second context fails with the documented message; benchmark set within 5 % of pre-TR-1 except goroutine-spawn microbenchmarks, which are recorded | 3–5 |
 | **TR-2** Decision spikes | P-A … P-F of §13.2 | TR-1 for P-A/B/C | a dated results section appended to this document; decisions T3, T4, T11, T12 confirmed or replaced | 4–6 |
 | **TR-3** Core node package (inside toolexec W4) | §12 layout; base classes; locals, cells, globals; arithmetic/compare/convert for all carriers (§3.1); strings, slices, arrays, structs; control flow (§4.8); static calls; roots with defers — open-coded up to *L* defers, the explicit per-goroutine chain otherwise, per-frame unwinding (accepted amendment A8, GG-0071), with *L*/*L*+1 boundary tests and the corpus on both paths; closures per SPEC §3.4 until A9 is decided (deferred pending benchmarks); panics. Unit test and PE test per node class (§11, T-rules). | TR-2 (calling convention), toolexec W2 schema | toolexec M1a's corpus gate; `pe-check` bailouts = 0 on that corpus under `CompileImmediately`; arithmetic differential sweep vs gc over all widths and operators including overflow, shifts ≥ width, `MIN / -1`, unsigned compare (generated, ≥ 10⁵ cases); `fib`, `loop`, `slicesum`, `structs` benchmarks ≤ 2× gc steady state `[EST]` as the first target, tightened after measurement | +6–10 over W4's 15–25 |
@@ -1802,8 +1802,8 @@ TR-8 → TR-9. Critical path for debugging (GG-0024): TR-1 → TR-3 → TR-10.
 
 | Quantity | How | Gate |
 |---|---|---|
-| PE bailouts | `make pe-check` (TR-0) | 0 on the benchmark set and corpus subset, per push once TR-0 lands |
-| Compiled speed vs gc | `test/bench/run.sh` on the JIT lane's branch | reported per WP; thresholds set after the first full measurement, never asserted in advance |
+| PE bailouts | `make pe-check-m1a` (TR-0's `pe-check`, replaced at m3-plan D3) | 0 on the benchmark set and corpus subset, per push once TR-0 lands |
+| Compiled speed vs gc | `make bench-suite` (v1's `test/bench/run.sh` was deleted at m3-plan D3) | reported per WP; thresholds set after the first full measurement, never asserted in advance |
 | Interpreter-only speed | same with `engine.Compilation=false` | tracked from P-D; feeds §8 |
 | Allocation per call | JFR allocation events on `fib`/`structs` | 0 in compiled code after TR-7 |
 | Interop conformance | Java suite (TR-8), Go suite (TR-9), TCK | all rows of §5.2/§5.3 |
@@ -2073,7 +2073,7 @@ chanpingpong 1582 → 1609, fib 8.71 → 11.81, iface 20.6 → 19.8, loop 48.5 �
 structs 59.4 → 59.6. `fib`'s best-of-15 is a warm-up artefact: its tier-2
 compilation (~300 ms) lands after round 15 because the earlier rounds are
 now faster (first 15 rounds: 377 ms → 292 ms of wall time); at 80 rounds the
-steady state is 8.5 → 6.5 ms. `make pe-check`: 0 bailouts.
+steady state is 8.5 → 6.5 ms. `make pe-check` (v1, replaced by `pe-check-m1a` at m3-plan D3): 0 bailouts.
 
 ## 14. Items for the owner
 

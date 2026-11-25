@@ -1,7 +1,9 @@
 # Fast debug cycle
 
-> **Status: shared tool; `fast-run` is v1** (it runs `graalgo.launcher.Main`
-> through gofrontend). `fast-build`/`fast-test` serve both paths.
+> **Status: shared tool; its `run`/`watch` subcommands are v1** (they run
+> `graalgo.launcher.Main` through gofrontend; their `make fast-run`/`fast-watch`
+> targets were deleted at m3-plan D3, the subcommands go with v1 at D6).
+> `fast-build`/`fast-test` serve both paths.
 
 **Target:** edit → rebuild → run → result in a few seconds.
 
@@ -10,18 +12,16 @@
 ```bash
 # From the repo root:
 make fast-build                    # incremental compile of changed Java files
-make fast-run PROG=path/to/file.go   # compile + run a Go program
 make fast-test TEST=com.foo.Bar    # compile + run a Java test class
 make fast-test TEST=com.foo.Bar METHOD=testX  # single test method
-make fast-watch PROG=path/to/file.go # rebuild + rerun on file change
 ```
 
 Or directly:
 ```bash
 internal/backend/fast-cycle/fast-cycle build
-internal/backend/fast-cycle/fast-cycle run foo.go
+internal/backend/fast-cycle/fast-cycle run foo.go     # v1
 internal/backend/fast-cycle/fast-cycle test graalgo.frontend.ArithmeticCorpusTest testArith1
-internal/backend/fast-cycle/fast-cycle watch foo.go
+internal/backend/fast-cycle/fast-cycle watch foo.go   # v1
 internal/backend/fast-cycle/fast-cycle stop    # stop the daemon
 internal/backend/fast-cycle/fast-cycle status  # check daemon
 ```

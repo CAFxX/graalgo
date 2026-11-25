@@ -18,5 +18,4 @@ triple desugar (mrM7).
 
 ## Running
 
-`./run_differential.sh` (gc leg runs now; the graalgo leg runs at
-integration when the p3frontend wiring lands).
+`make stdlib-gate` (from the repo root; m3-plan D3 deleted the v1 wave runners).

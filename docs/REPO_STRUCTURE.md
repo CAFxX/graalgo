@@ -30,10 +30,10 @@ directory's README repeats its status.
 
 | Status | Directories |
 |---|---|
-| new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/), [test/bench/realistic/](../test/bench/realistic/README.md) |
+| new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/), [test/bench/realistic/](../test/bench/realistic/README.md), [test/jit/](../test/jit/), [tools/mutation/](../tools/mutation/), [tools/godebug-diff/](../tools/godebug-diff/) (re-pointed at m3-plan D3) |
 | shared | the runtime packages of [internal/backend/truffle/](../internal/backend/truffle/README.md) (`sched`, `runtime`, `safepoint`, `jfr`, `language`), [test/corpus/](../test/corpus/README.md), [test/lib/](../test/lib/), [test/java/](../test/java/), [test/snapshots/](../test/snapshots/README.md), [tools/req/](../tools/req/README.md), [tools/torture/](../tools/torture/), [requirements/](../requirements/), [.github/](../.github/) |
 | v1 | [cmd/graalgo/](../cmd/graalgo/README.md) (becomes the launcher), [internal/frontend/](../internal/frontend/README.md), [internal/driver/](../internal/driver/), [internal/vet/](../internal/vet/README.md), [internal/backend/interop/](../internal/backend/interop/README.md), `graalgo.{frontend,values,sched.launcher}` + `launcher.Main` in truffle, [graalgo-run](../internal/backend/graalgo-run), [graalgo-sync-run](../internal/backend/graalgo-sync-run), [tools/gate1/](../tools/gate1/README.md) |
-| v1-driven | [test/differential/](../test/differential/README.md) (conformance/typeparam/mutation; `snapshot-check` runs the new path since m3-plan D1), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
+| v1-driven | [test/differential/](../test/differential/README.md) (conformance/typeparam; `snapshot-check` runs the new path since m3-plan D1), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md) |
 | history | [docs/archive/](archive/) (`phases/`, `reviews/`, `spikes/`, `research/`, `spec/`, FEASIBILITY, PHASES, frontend-v1/v2); [research/](../research/); [test/spikes/](../test/spikes/) |
 
 ## Directory tree
@@ -225,7 +225,8 @@ directory's README repeats its status.
       [FastCycleDaemon.java](../internal/backend/fast-cycle/FastCycleDaemon.java)
       plus the [`fast-cycle`](../internal/backend/fast-cycle/fast-cycle)
       wrapper script; wired into the root Makefile `fast-*` targets
-      (`fast-build`, `fast-run`, `fast-test`, `fast-watch`). See
+      (`fast-build`, `fast-test`; `fast-run`/`fast-watch` were deleted at
+      m3-plan D3). See
       [README.md](../internal/backend/fast-cycle/README.md).
     - [interop/](../internal/backend/interop/) — Go↔Java interop and
       isolates (also the natural home of Phase 5's privileged runtime
@@ -297,9 +298,15 @@ directory's README repeats its status.
   - [corpus/](../test/corpus/) — differential corpus programs (moved here
     from `phases/phase3/corpus/`, 2026-10-13).
     `phase1/`, `phase2/` (frozen v1-era corpora), `wave1/`–`wave3/`
-    (stdlib wave corpora, see [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh)),
-    and topic corpora (`atomic/`, `iface/`, `map/`, `slice/`, `sync/`,
-    `timectx/`, `traceback/`, `fastrand/`).
+    (stdlib wave corpora), and topic corpora (`atomic/`, `iface/`, `map/`,
+    `slice/`, `sync/`, `timectx/`, `traceback/`, `fastrand/`). Every
+    program that imports a package (486) runs in `make stdlib-gate`
+    (m3-plan D3, manual [stdlib-gate.yml](../.github/workflows/stdlib-gate.yml)):
+    test/m1r's runner against gc, judged by
+    [std_gate.py](../test/corpus/std_gate.py) (tested by
+    [test_std_gate.py](../test/corpus/test_std_gate.py)) against the
+    reviewed register [std-register.tsv](../test/corpus/std-register.tsv)
+    (BUG-0033's triage list).
     - [lifecycle/](../test/corpus/lifecycle/) — program lifecycle and
       panic model vs gc (exit on main return, fatal goroutine panics,
       deadlock detection, panic chains, runtime error values, GOMAXPROCS,
@@ -313,8 +320,8 @@ directory's README repeats its status.
     [newpath.sh](../test/differential/newpath.sh) sets up graalgo-tool and
     the fork, [newpath_build.sh](../test/differential/newpath_build.sh)
     builds each program, the built ones run batched in one JVM); v1's
-    register [corpus-exclusions-v1.yaml](../test/differential/corpus-exclusions-v1.yaml)
-    serves only the v1 mutation oracle until m3-plan G6/D3.
+    register `corpus-exclusions-v1.yaml` was deleted with the v1 mutation
+    oracle at m3-plan D3.
     Moved here from `tools/diffharness/` (2026-10-13). Reviewed,
     reason-coded expected divergences (SPEC §5.6):
     [corpus-exclusions.yaml](../test/differential/corpus-exclusions.yaml)
@@ -380,16 +387,18 @@ directory's README repeats its status.
     conventions; [programs/](../test/m1c/programs/) marked
     `//m1c:requires <probe>` are PENDING until the program of that name in
     [probes/](../test/m1c/probes/) matches gc (another lane's piece landed);
-    [mutants.sh](../test/m1c/mutants.sh) plants the bugs listed in
-    [mutants.py](../test/m1c/mutants.py) and requires the gate to fail.
+    its mutants are the `M1C-*` entries of
+    [tools/mutation/mutants.json](../tools/mutation/mutants.json) (nightly
+    `make mutation`; `test/m1c/mutants.sh` was deleted at m3-plan D3).
   - [m1d/](../test/m1d/) — the M1d gate (`make test-m1d`, ~15 s, per-push in `make all`):
     hello world and a verb matrix with the real `fmt`, `os` over
     `internal/poll` and the syscall role table, the reflect probe, and the
     packages on top (`encoding/json`, `regexp`, `text/template`, …);
     [run.sh](../test/m1d/run.sh) follows the m1r conventions and reads
     `// args:`, `// env:` and `// stdin:` directives of a program;
-    [mutants.sh](../test/m1d/mutants.sh) plants the bugs listed in
-    [mutants.py](../test/m1d/mutants.py) and requires the gate to fail.
+    its mutants are the `M1D-*` entries of
+    [tools/mutation/mutants.json](../tools/mutation/mutants.json) (nightly
+    `make mutation`; `test/m1d/mutants.sh` was deleted at m3-plan D3).
   - [fuzz/](../test/fuzz/) — the differential fuzzer of the new path
     (`make fuzz-newpath N= SEED=`, nightly
     [fuzz-newpath.yml](../.github/workflows/fuzz-newpath.yml), not per-push):
@@ -429,14 +438,16 @@ directory's README repeats its status.
     run through the graalgo driver + backend via `make test-regression`
     (in `make all`, hence per-push CI).
   - [jit/](../test/jit/) — JIT regression guard:
-    [run_pe_guard.sh](../test/jit/run_pe_guard.sh) runs
-    [peguard/main.go](../test/jit/peguard/main.go) with traced, synchronous
-    Truffle compilation and fails on any compilation failure (e.g. a partial
-    evaluation bailout), on a hot function or OSR loop that never compiles,
-    or on output that differs from gc's. `make test-jit` (part of
-    `make test-ci`). [run_pe_check.sh](../test/jit/run_pe_check.sh)
-    (`make pe-check`, TR-0) runs the whole benchmark set with
-    `CompilationFailureAction=ExitVM` and counts bailouts (must be 0).
+    [run_pe_guard.sh](../test/jit/run_pe_guard.sh) builds
+    [peguard/main.go](../test/jit/peguard/main.go) through graalgo-tool and
+    runs the bundle on the new path (m3-plan D3) with traced, synchronous
+    Truffle compilation, in a hot and a CompileImmediately breadth mode; it
+    fails on any compilation failure (e.g. a partial evaluation bailout),
+    on a hot function or OSR loop that never compiles, or on output that
+    differs from gc's, and checks itself with a planted graph-size limit.
+    `make test-jit` (part of `make test-ci`). The PE gate over the
+    benchmark set is `make pe-check-m1a` (v1's `run_pe_check.sh` was
+    deleted at D3).
   - [imgcheck/](../test/imgcheck/) — the descriptor-image gate (`make
     test-imgcheck`, per-push; toolexec W9a): [main.go](../test/imgcheck/main.go)
     walks the type descriptors of the generated corpus
@@ -490,8 +501,9 @@ directory's README repeats its status.
     ([pe/stdhot.go](../test/m1a/pe/stdhot.go)) and plants a violation.
   - [bench/](../test/bench/) — gc vs graalgo steady-state micro-benchmarks
     (fib, loops, slices, maps, structs, interface dispatch, string builder,
-    channel ping-pong); [run.sh](../test/bench/run.sh) checks output
-    equality with gc and prints best-round times (`make bench`; not a gate).
+    channel ping-pong), run by `make bench-m1a` and `pe-check-m1a` (v1's
+    `run.sh` runner was deleted at m3-plan D3; `make bench` is
+    `bench-suite`).
     [suite/](../test/bench/suite/) is the benchmark suite of
     [performance.md](arch/performance.md): 27 programs on a shared harness
     ([suite/h](../test/bench/suite/h/): `runtime.nanotime` by linkname,
@@ -562,20 +574,18 @@ directory's README repeats its status.
   into `~/dev/graalgo-stdlib/<ver>/` and verifies it against
   [vendor-manifest.json](../tools/stdlib-fork/vendor-manifest.json)) and
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
-  tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
-  [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
-  [fuzz-soak/](../tools/fuzz-soak/) (long-running generator fuzzing:
-  [gen/](../tools/fuzz-soak/gen/) program generator,
-  [harness/](../tools/fuzz-soak/harness/) batch/diff/triage scripts,
-  [gha/](../tools/fuzz-soak/gha/) GitHub Actions fan-out recipe,
-  [findings/](../tools/fuzz-soak/findings/) recorded findings,
-  [run_soak.sh](../tools/fuzz-soak/run_soak.sh) entry point used by
-  [fuzz-soak.yml](../.github/workflows/fuzz-soak.yml)),
+  tooling), [stdlib-excl/](../tools/stdlib-excl/) (stdlib exclusion-list
+  validator; v1's `run_stdlib_gate.sh` and `tools/fuzz-soak` were deleted
+  at m3-plan D3: the stdlib gate is `make stdlib-gate`, fuzz-soak.yml's
+  generator is [test/fuzz/gen.py](../test/fuzz/gen.py)),
   [torture/](../tools/torture/) (scheduler torture),
-  [godebug-diff/](../tools/godebug-diff/),
-  [mutation/](../tools/mutation/) (mutates graalgo on a scratch copy and
-  requires the per-push differential gate to go red; `make mutation`,
-  nightly [mutation.yml](../.github/workflows/mutation.yml)),
+  [godebug-diff/](../tools/godebug-diff/) (GODEBUG knob parity, gc vs the
+  new path's bundle runner),
+  [mutation/](../tools/mutation/) (plants the new-path mutants of
+  [mutants.json](../tools/mutation/mutants.json) on a scratch copy and
+  requires `snapshot-check` and the m1a/m1r/m1c/m1d/m1w13 gates, narrowed
+  to each mutant's kill programs, to go red; `make mutation`, nightly
+  [mutation.yml](../.github/workflows/mutation.yml)),
   [gate1/](../tools/gate1/) (`go test` trial harness; [shim/](../tools/gate1/shim/)
   is the minimal `testing.T` replacement its drivers import), and
   [req/](../tools/req/) (requirements CLI; `tools/req lint` runs in
@@ -616,7 +626,7 @@ new locations.
 | `tools/diffharness/` | [test/differential/](../test/differential/) (landed 2026-10-13) |
 | `phases/phase3/src/p3frontend/` | [internal/frontend/p3frontend/](../internal/frontend/p3frontend/) (landed 2026-10-14) |
 | `phases/phase3/stdlib-fork/` (tooling) | [tools/stdlib-fork/](../tools/stdlib-fork/) (landed 2026-10-14) |
-| `phases/phase3/fuzzing/` | [tools/fuzz-soak/](../tools/fuzz-soak/) (landed 2026-10-14) |
+| `phases/phase3/fuzzing/` | `tools/fuzz-soak/` (landed 2026-10-14; deleted at m3-plan D3, its generator lives on as [test/fuzz/gen.py](../test/fuzz/gen.py)) |
 | `phases/phase1/corpus/`, `phases/phase2/corpus/` | [test/corpus/phase1/](../test/corpus/phase1/), [test/corpus/phase2/](../test/corpus/phase2/) (landed 2026-10-14) |
 | `phases/phase2/tools/torture/` | [tools/torture/](../tools/torture/) (landed 2026-10-14) |
 | `modprobe/` | [test/e2e/](../test/e2e/) (landed 2026-10-14; harness, uuid cases, bug log) |

@@ -3,9 +3,8 @@
 Go programs exercising the wave-1 synthetic `sort` package
 (`internal/frontend/synth_sort.go`: faithful pdqsort/stable port +
 search; `Find`/`Slice`/`SliceStable`/`SliceIsSorted` fail-fast),
-differential vs stock gc 1.27.1. Run via `run_differential.sh` (thin
-wrapper over `corpus/wave1/run_wave.sh`; conventions:
-`corpus/wave1/README.md`).
+differential vs stock gc 1.27.1. Run by `make stdlib-gate` (from the repo root; m3-plan D3 deleted the v1 wave runners);
+conventions: `../README.md`.
 
 ## Programs
 

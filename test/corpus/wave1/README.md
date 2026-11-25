@@ -3,7 +3,8 @@
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
 bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
 see `phases/phase3/hidden_files/m7-CHECKLIST.md`), differential vs stock
-gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
+gc 1.27.1. Run by `make stdlib-gate` on the new path (m3-plan D3; see
+[../README.md](../README.md)).
 
 ## Layout
 
@@ -11,12 +12,8 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
   element: `strings/`, `encoding/json/`, `sort/`, ...
 - Programs: `<nn>_<name>.go` with `nn = 00, 01, ...` (two digits,
   zero-padded, ascending coverage order). `package main`, `func main`.
-- Per-package `run_differential.sh`: a thin wrapper that just calls
-  `../run_wave.sh <pkg>` (template below). Do NOT copy the harness logic.
 - `_smoke/` is infrastructure: two trivial programs proving the harness
-  runs end to end. Never treat it as a package corpus; `run_wave.sh`
-  with no argument skips all `_`-prefixed dirs (they run only when named
-  explicitly).
+  runs end to end. Never treat it as a package corpus.
 
 ## Program rules (adversarial, non-tautological)
 
@@ -67,45 +64,6 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
 
 ## The runner
 
-`run_wave.sh [pkg]` — builds the phase-3 java module once, then for each
-`<nn>_<name>.go` runs it under stock gc (built binary, run directly —
-`go run` masks the exit code) and under `P3SyncMain`, and byte-compares
-stdout, exit codes, and (for panic programs) the first stderr line.
-Known JVM Unsafe `WARNING:` lines on stderr are filtered (harness noise,
-cf. `p3frontend/DESIGN.md` §7). Modeled exactly on
-`corpus/timectx/run_differential.sh` (same phases, same comparisons);
-only the program discovery (per-package dirs, `[0-9][0-9]_*.go` glob,
-`.timing` marker) is wave-1 specific.
-
-Per-package thin wrapper (`<pkg>/run_differential.sh`):
-
-```bash
-#!/bin/bash
-# Differential corpus for the wave-1 `strings` package — thin wrapper
-# over the shared wave-1 runner (conventions: corpus/wave1/README.md).
-exec "$(dirname "$0")/../run_wave.sh" strings
-```
-
-## Tmp discipline (mandatory for all wave-1 workers)
-
-`/tmp` is a 512 MB tmpfs shared with other projects' LIVE work. It is
-not scratch space:
-
-- **NEVER** write to `/tmp` for any reason.
-- **NEVER** clean `/tmp` (or any part of it) — other agents' live work
-  lives there.
-
-Every wave-1 worker must export, for **every** `go`/`java` command
-(ad-hoc builds included — the phase Makefiles already route the test
-temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
-these itself to the wave-1 dirs):
-
-```bash
-export TMPDIR=$GR/.tmp/m7-tmp/<pkg>
-export GOCACHE=$HOME/.cache/graalgo/gocache-m7-<pkg>
-```
-
-`run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
-`TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m7-tmp/<pkg>` and its
-own `.gocache-m7-<pkg>`; never share a scratch dir with another worker.
+`make stdlib-gate` (m3-plan D3, which deleted v1's `run_wave.sh` and the
+per-package `run_differential.sh` wrappers): every program here runs on the
+new path against gc, judged against `test/corpus/std-register.tsv`.

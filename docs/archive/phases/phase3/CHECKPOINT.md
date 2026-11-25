@@ -68,7 +68,7 @@ package flattening (`p3i_<sha256hex8>_` prefix, go/types-driven selector
 rewrite, one merged file into the frozen `gofrontend` binary — the module
 is `package main` and unimportable, so the frozen CLI contract §2.1 is the
 consumption surface; recorded as a design deviation in DESIGN.md §8).
-Design: [src/p3frontend/DESIGN.md](../../../../tools/fuzz-soak/DESIGN.md) (spec-first). Tests: 6 (2 cycle
+Design: src/p3frontend/DESIGN.md (later tools/fuzz-soak/DESIGN.md, deleted at m3-plan D3) (spec-first). Tests: 6 (2 cycle
 subtests) — bootstrap deep-equal vs `ExportFile`, two-package differential
 vs gc (normal: byte-identical stdout, exit 0; panic: identical `panic:`
 line, exit 2), no language pinning (go1.27 tag + generics), determinism,

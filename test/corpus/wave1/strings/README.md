@@ -29,8 +29,4 @@ rejects calls until WS D lands.
 
 ## Running
 
-```bash
-./run_differential.sh
-# or
-../run_wave.sh strings
-```
+`make stdlib-gate` (from the repo root; m3-plan D3 deleted the v1 wave runners).

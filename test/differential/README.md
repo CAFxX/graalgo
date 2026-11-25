@@ -2,9 +2,10 @@
 
 > **Status: shared harness, mixed gates.** `make snapshot-check` runs the
 > **new path** ([backends-newpath.json](backends-newpath.json), m3-plan D1);
-> `run_conformance.sh`/`srctest`/`typeparam` and `make mutation` still run
+> `make mutation` runs the new path since m3-plan D3;
+> `run_conformance.sh`/`srctest`/`typeparam` still run
 > v1's `graalgo-sync-run`/`graalgo-run` ([backends-p3.json](backends-p3.json),
-> [backends.json](backends.json)) until m3-plan D2/D3.
+> [backends.json](backends.json)) until m3-plan D2.
 
 The conformance net for graalgo (SPEC §5.1/§5.5): compile and run the same
 corpus programs under gc and graalgo, compare observables, report
@@ -25,10 +26,10 @@ Gates built on it (current):
   they match gc.
 - `make mutation` (nightly): mutates graalgo itself
   ([../../tools/mutation/](../../tools/mutation/)) and requires the
-  snapshot gate to go red — the oracle validation of SPEC §5.7. Its mutants
-  target v1, so it gates them on v1's backend with v1's register,
-  [corpus-exclusions-v1.yaml](corpus-exclusions-v1.yaml), until m3-plan
-  G6/D3.
+  snapshot gate (and the m1a/m1r/m1c/m1d/m1w13 gates, narrowed to each
+  mutant's kill programs) to go red — the oracle validation of SPEC §5.7,
+  on the new path since m3-plan D3 (v1's mutant set and its register
+  `corpus-exclusions-v1.yaml` were deleted then).
 - `run_conformance.sh` (layer 2): GOROOT/test via the `srctest` adapter,
   expected divergences in [srctest-exclusions.yaml](srctest-exclusions.yaml).
 - `run.sh` (CI): harness self-test on gc-vs-gc only (the `validate`

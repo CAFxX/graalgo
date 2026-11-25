@@ -89,13 +89,15 @@ the measured readiness, gaps and ordered deletion steps: [m3-plan.md](arch/m3-pl
   [bridge-inventory.md](arch/bridge-inventory.md) (the frozen list)
 
 Still **v1-driven** today but not in §9.1 (they must be re-pointed at M3,
-see ADR-0017): [test/differential/](../test/differential/README.md)'s conformance, typeparam and mutation oracles (`make snapshot-check` runs the new path since m3-plan D1),
-[test/regression/](../test/regression/), [test/e2e/](../test/e2e/),
-[test/jit/](../test/jit/),
-`make bench` ([test/bench/run.sh](../test/bench/run.sh)),
-[tools/fuzz-soak/](../tools/fuzz-soak/),
-[tools/mutation/](../tools/mutation/), [tools/godebug-diff/](../tools/godebug-diff/),
-[tools/run_stdlib_gate.sh](../tools/run_stdlib_gate.sh), `make fast-run`.
+see ADR-0017): [test/differential/](../test/differential/README.md)'s conformance and typeparam oracles (`make snapshot-check` runs the new path since m3-plan D1),
+[test/regression/](../test/regression/), [test/e2e/](../test/e2e/).
+Re-pointed to the new path at m3-plan D3: [test/jit/](../test/jit/) (`make
+test-jit`), [tools/mutation/](../tools/mutation/) (`make mutation`),
+[tools/godebug-diff/](../tools/godebug-diff/), the stdlib gate (`make
+stdlib-gate`, [std_gate.py](../test/corpus/std_gate.py)) and fuzz-soak.yml's
+Layer 4a ([test/fuzz/gen.py](../test/fuzz/gen.py)); `make bench` is
+`bench-suite`. D3 deleted v1's `tools/fuzz-soak`, the wave runners,
+`run_stdlib_gate.sh`, `pe-check` and `fast-run`.
 
 **The boundary is enforced.** [check_layering.py](../.github/scripts/check_layering.py)
 (`make check-repo`) fails on any reference from `graalgo.go.*` (transitively)

@@ -4,8 +4,8 @@ Wave-3 corpus for the P3-M9 synthetic `container/heap`, `container/list`,
 `container/ring`, `hash/adler32`, `hash/crc32`, `hash/crc64`, `hash/fnv`,
 `hash/maphash` packages. Conventions are the wave-1 ones
 (`../wave1/README.md`: `NN_name.go` naming, deterministic-output rules,
-`.timing` / `.scopelimited` / `.panic` / `.synthetic` marker semantics,
-the tmp discipline, the shared-runner model) plus the wave-3 delta
+`.timing` / `.scopelimited` / `.panic` / `.synthetic` marker semantics)
+plus the wave-3 delta
 (`hash/maphash` pins structural properties only — see below).
 
 ## Layout
@@ -14,13 +14,9 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   `container/heap/`, `container/list/`, `container/ring/`,
   `hash/adler32/`, `hash/crc32/`, `hash/crc64/`, `hash/fnv/`,
   `hash/maphash/`.
-- `run_wave3.sh` — the shared runner (a `../wave1/run_wave.sh`
-  derivative with wave-3 tmp paths: `TMPDIR=$P3/hidden_files/m9-tmp/wave3`,
-  `GOCACHE=$HOME/.cache/graalgo/gocache-m9-wave3`). Usage:
-  `GR=~/dev/graalgo/.worktrees/<lane> ./run_wave3.sh [pkg|all]`
-  (historical: the `phases/` tree it uses was removed on 2026-10-14).
-- Per-package `run_differential.sh`: thin wrapper
-  `exec "$(dirname "$0")/../run_wave3.sh" <pkg>`.
+- Run by `make stdlib-gate` on the new path (m3-plan D3 deleted v1's
+  `run_wave3.sh` and the per-package `run_differential.sh` wrappers; see
+  [../README.md](../README.md)).
 - Per-package `README.md`: scope boundary + retest trigger.
 
 ## Package notes
@@ -67,15 +63,3 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
   `internal/godebug`, `internal/bisect` have no adapter: cpu needs cpuid
   intrinsics, godebug needs the godebugs table + runtime linknames, bisect's
   core needs `runtime.Callers`; none has an in-tree consumer.
-
-## Frontend selection (tier-1d note)
-
-`run_wave3.sh` shells out to `P3SyncMain`, which locates the `gofrontend`
-binary via `GRAALGO_GOFRONTEND` (override), else `<phase1>/frontend/gofrontend`.
-When the shared m9 tree's frontend is mid-flight (other workers' uncommitted
-edits), point `GRAALGO_GOFRONTEND` at a known-good build:
-
-```bash
-GRAALGO_GOFRONTEND=$GR/internal/frontend/gofrontend \
-  ./run_wave3.sh unique
-```

@@ -3,8 +3,7 @@
 Go programs exercising the wave-1 synthetic `errors` package
 (`internal/frontend/synth_errors.go`: real-Go New/Is/Unwrap/Join/AsType;
 As fail-fast — it needs reflect), differential vs stock gc
-1.27.1. Run via `run_differential.sh` (thin wrapper over
-`corpus/wave1/run_wave.sh`; conventions: `corpus/wave1/README.md`).
+1.27.1. Run by `make stdlib-gate` (from the repo root; m3-plan D3 deleted the v1 wave runners); conventions: `../README.md`.
 
 ## Programs
 

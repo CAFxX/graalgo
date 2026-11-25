@@ -1,7 +1,7 @@
 # wave-2 `unsafe` differential corpus (P3-M8)
 
-12 programs (9 differential, 2 trap pins, 2 scope-limited). Run with
-`./run_differential.sh` (thin wrapper over `../run_wave.sh unsafe`).
+12 programs (9 differential, 2 trap pins, 2 scope-limited). Run by
+`make stdlib-gate` (from the repo root; m3-plan D3 deleted the v1 wave runners).
 
 Frontend design note: the synthetic `unsafe` package exposes go/types'
 own `*types.Builtin` objects (shared from `types.Unsafe`), so operand
@@ -47,7 +47,7 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
    stderr line (`UnsafeEscapeException`, exit 1). gc implements both,
    so the gc leg exits 0: the exit code differs BY DESIGN. The `.panic`
    line and (empty) stdout are the assertions. Runner gap (see handoff):
-   `run_wave.sh` compares exit codes unconditionally; these need a
+   v1's `run_wave.sh` (deleted at m3-plan D3) compared exit codes unconditionally; these need a
    `.divergent` marker (skip exit comparison, still pin stdout+stderr).
    (`03b` was the third trap pin until PKG-007: `unsafe.Pointer → uintptr`
    now yields the handle as an integer identity token instead of trapping,

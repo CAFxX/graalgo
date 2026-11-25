@@ -356,3 +356,27 @@ corrupts its JSON under host load; reproduced with gofrontend alone, it
 reddened most pre-land runs of 11-23/24); m1d mutant
 `poller-lost-read-wakeup` survives on master too; two stale m1c mutant
 anchors (`compare-signed`, `index-misses-last-position`).
+
+## m3-plan D3/G6 (2026-11-25, lane m3-d3)
+
+- **test-jit** (in `test-ci`) runs `peguard` on the new path: 7 s wall /
+  13 s CPU on the dev host (hot, breadth and the planted graph-size run;
+  v1's was ~30 s, most of it the frontend's JSON IR). The breadth run
+  excludes the package variable initializers (`init·vars`): compiled
+  eagerly, unicode's tables alone take > 100 s of partial evaluation.
+- **check-repo** gains `tools/mutation`'s `go test` (every mutant anchor
+  applies exactly once, every kill program exists; < 1 s, cached) and
+  `test/corpus/test_std_gate.py` (< 0.1 s).
+- **Per-push programs added**: `test/m1a/programs/loopvar_range.go`,
+  `test/m1r/programs/nondeterminism.go`, `test/m1c/programs/goexit_timer.go`
+  (each < 1 s in its gate's batch JVM; the timer one sleeps 20 ms).
+- **mutation.yml** (nightly) runs the new path's 52 mutants: 1056 s wall /
+  2860 s CPU locally at `MUTATION_JOBS=1` (~10 s per killed mutant: an
+  incremental `make build` plus its kill programs; the 2 justified
+  survivors re-run every per-push differential gate, ~190 s each). v1's
+  oracle took 35–48 min on CI. The m1c/m1d `mutants.sh` (never run by any
+  job: 6 of their 23 anchors had rotted) are folded in; the stale anchors
+  noted above are fixed.
+- **stdlib-gate** (manual): `make stdlib-gate`, 486 programs, 415 s wall /
+  362 s CPU at one job (`test/m1r/run.sh`, one batch JVM).
+- **fuzz-soak 4a** stays deadline-bound (≤ 4 h) on the new path's generator.

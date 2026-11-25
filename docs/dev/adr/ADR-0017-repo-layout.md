@@ -39,14 +39,17 @@ The owner: "it's always difficult to know where things are". Measured on
    `SchedMain`, `gofrontend` outside them): `make snapshot-check`'s
    [backends-p3.json](../../../test/differential/backends-p3.json) and the
    diffharness `srctest`/`typeparam` modes; [test/jit/](../../../test/jit/)
-   (`test-jit`, `pe-check`); [test/bench/run.sh](../../../test/bench/run.sh);
+   (`test-jit` re-pointed to the new path, `pe-check` deleted for
+   `pe-check-m1a`: m3-plan D3); `test/bench/run.sh` (deleted at D3, `make
+   bench` = `bench-suite`);
    [test/lib/infra.sh](../../../test/lib/infra.sh); the
-   `run_differential.sh` of the topic and wave corpora;
+   `run_differential.sh` of the topic and wave corpora (deleted at D0/D3,
+   replaced by `make stdlib-gate`);
    [test/e2e/](../../../test/e2e/README.md); `tools/fuzz` (deleted in stage 1),
-   [tools/fuzz-soak/](../../../tools/fuzz-soak/), [tools/mutation/](../../../tools/mutation/),
-   [tools/godebug-diff/](../../../tools/godebug-diff/),
-   [tools/run_stdlib_gate.sh](../../../tools/run_stdlib_gate.sh);
-   `make fast-run`; v1-frontend Java tests in shared packages
+   `tools/fuzz-soak/` (deleted at D3), [tools/mutation/](../../../tools/mutation/)
+   and [tools/godebug-diff/](../../../tools/godebug-diff/) (re-pointed at D3),
+   `tools/run_stdlib_gate.sh` (deleted at D3);
+   `make fast-run` (deleted at D3); v1-frontend Java tests in shared packages
    (`GcDifferentialTest`, `ChannelDifferentialTest`, `TimerDifferentialTest`,
    `launcher.Differential`); `sched.nodes`/`sched.audit`/`launcher.ToolPaths`
    (reached only from `SchedMain`/`Main`). Tests that call the built `graalgo` binary
@@ -94,12 +97,12 @@ refer to the migration table below; "=" means unchanged):
 | test/m1a, test/m1r, test/m1c, test/m1w13, test/imgcheck | test/lang, test/std, test/sys, test/unsafe, test/descriptors | 3c |
 | test/differential, test/snapshots | test/conformance (harness, registers, snapshots) | 2 (re-point), 3c |
 | test/corpus | = frozen corpus; its `run_differential.sh` scripts deleted, normalize.py → test/lib | 1, 2 |
-| test/jit | test/pe (re-pointed to bundles) | 2, 3c |
+| test/jit | test/pe (re-pointed to bundles at m3-plan D3) | 2, 3c |
 | test/e2e | = (re-pointed to the launcher) | 2 |
-| test/fuzz, test/bench, test/regression, test/java, test/lib | = (bench `run.sh` re-pointed) | 2 |
+| test/fuzz, test/bench, test/regression, test/java, test/lib | = (bench `run.sh` deleted at m3-plan D3) | 2 |
 | test/spikes | docs/archive/spikes-abi once abi-spike residual risks close | 4 |
 | tools/gate1, tools/fuzz | deleted (tools/fuzz superseded by test/fuzz) | 2 |
-| tools/fuzz-soak, tools/mutation, tools/godebug-diff, tools/run_stdlib_gate.sh | re-pointed to the new path (WP-MUT, WP-UPG1) or deleted | 2 |
+| tools/fuzz-soak, tools/mutation, tools/godebug-diff, tools/run_stdlib_gate.sh | m3-plan D3: tools/mutation, tools/godebug-diff re-pointed to the new path; tools/fuzz-soak, run_stdlib_gate.sh deleted | 2 |
 | tools/stdlib-fork, stdlib-vendor, stdlib-linkdiff, stdlib-excl | kept if the upgrade runbook (WP-UPG1/2) uses them, else archived | 2 |
 | tools/req, tools/torture | = | — |
 

@@ -35,7 +35,7 @@ JAVA=$HOME/tools/graalvm-jdk-25/bin/java
 CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls $P1/lib/*.jar | tr '\n' ':')"
 # gc baseline (wordfreq.expected is checked in):
 go build -o /tmp/wf.gc wordfreq.go && /tmp/wf.gc > wordfreq.expected
-# graalgo leg (same invocation pattern as ../run_wave.sh):
+# graalgo leg (v1, historical: the wave runners were deleted at m3-plan D3):
 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP" \
     graalgo.p3sync.launcher.P3SyncMain --gmp=1 wordfreq.go
 ```

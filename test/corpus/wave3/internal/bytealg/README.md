@@ -9,7 +9,7 @@ LastIndexRabinKarp, MakeNoZero, MaxBruteForce, MaxLen).
 
 The package is synthetic-only (like `internal/reflectlite`): no user
 program can import `internal/*`, so `00_functions.go` is `.scopelimited` +
-`nogc` — neither leg runs under `run_wave3.sh`.
+`nogc` — neither leg ran under v1's `run_wave3.sh` (deleted at m3-plan D3).
 
 ## Correctness evidence (the tier1d harness)
 

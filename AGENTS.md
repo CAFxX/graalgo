@@ -22,7 +22,7 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   (truffle + interop Java modules), `snapshot-check`, `check`,
   `test-pin-smoke` (the scheduler/runtime suite in thread mode under
   `jdk.VirtualThreadPinned`), the module tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
-  `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
+  `test-ci` (smoke + `test-jit`, the JIT guard on the new path), `test-java-fast`, `test-regression`,
   and the new path's gates `test-m1a` (import-free corpus vs gc through
   the `-toolexec` path), `pe-check-m1a`, `test-m1w13`, `test-imgcheck`,
   `test-m1r`, `test-m1c` and `test-m1d` (std from upstream's source vs gc:
@@ -102,11 +102,18 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - `make test` — the full suite, `test-java-fast` + `test-java-slow` (every
   class the module runners register, each on its module's classpath, judged
   against the quarantine): never per-push, never on a shared host without
-  asking; the weekly CI `full-suite` job runs it. (Nightly: `mutation.yml`,
-  `fuzz-soak.yml`, `fuzz-newpath.yml` — `make fuzz-newpath`, the new path's
-  differential fuzzer — and `compile-health.yml` — `make pe-report`, failed
-  compilations and deopt churn of the realistic programs; the layer-3
-  `stdlib-gate.yml` is manual-only until BUG-0033 is triaged.)
+  asking; the weekly CI `full-suite` job runs it. (Nightly: `mutation.yml`
+  — `make mutation`, the new path's mutation oracle: every mutant of
+  `tools/mutation/mutants.json` must turn the per-push differential gates
+  red on its kill programs; `check-repo` keeps every anchor applicable —,
+  `fuzz-soak.yml` (4a: the new path's generator in batches until the
+  deadline; 4b: `testing.F` replay), `fuzz-newpath.yml` — `make
+  fuzz-newpath`, the new path's differential fuzzer — and
+  `compile-health.yml` — `make pe-report`, failed compilations and deopt
+  churn of the realistic programs; the layer-3 `stdlib-gate.yml` — `make
+  stdlib-gate`, the 486 `test/corpus` programs with imports vs gc against
+  the register `test/corpus/std-register.tsv` — is manual-only until
+  BUG-0033 is triaged.)
 - Per-module Go tests: `go test ./...` inside the module's own directory
   (each of `internal/toolexec`, `internal/frontend/v2`, `tools/*`, … has its
   own `go.mod`).
