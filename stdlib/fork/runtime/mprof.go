@@ -87,7 +87,12 @@ func (r *MemProfileRecord) Stack() []uintptr {
 // Most clients should use the runtime/pprof package or
 // the testing package's -test.memprofile flag instead
 // of calling MemProfile directly.
-func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool)
+//
+// graalgo: the JVM samples no allocation sites; the profile is empty
+// (docs/arch/limitations.md).
+func MemProfile(p []MemProfileRecord, inuseZero bool) (n int, ok bool) {
+	return 0, true
+}
 
 // BlockProfileRecord describes blocking events originated
 // at a particular call sequence (stack trace).
@@ -104,7 +109,11 @@ type BlockProfileRecord struct {
 // Most clients should use the [runtime/pprof] package or
 // the [testing] package's -test.blockprofile flag instead
 // of calling BlockProfile directly.
-func BlockProfile(p []BlockProfileRecord) (n int, ok bool)
+//
+// graalgo: blocking events are not sampled; the profile is empty.
+func BlockProfile(p []BlockProfileRecord) (n int, ok bool) {
+	return 0, true
+}
 
 // MutexProfile returns n, the number of records in the current mutex profile.
 // If len(p) >= n, MutexProfile copies the profile into p and returns n, true.
@@ -112,7 +121,11 @@ func BlockProfile(p []BlockProfileRecord) (n int, ok bool)
 //
 // Most clients should use the [runtime/pprof] package
 // instead of calling MutexProfile directly.
-func MutexProfile(p []BlockProfileRecord) (n int, ok bool)
+//
+// graalgo: contention is not sampled; the profile is empty.
+func MutexProfile(p []BlockProfileRecord) (n int, ok bool) {
+	return 0, true
+}
 
 // ThreadCreateProfile returns n, the number of records in the thread creation profile.
 // If len(p) >= n, ThreadCreateProfile copies the profile into p and returns n, true.
@@ -120,7 +133,11 @@ func MutexProfile(p []BlockProfileRecord) (n int, ok bool)
 //
 // Most clients should use the runtime/pprof package instead
 // of calling ThreadCreateProfile directly.
-func ThreadCreateProfile(p []StackRecord) (n int, ok bool)
+//
+// graalgo: thread creations are not recorded; the profile is empty.
+func ThreadCreateProfile(p []StackRecord) (n int, ok bool) {
+	return 0, true
+}
 
 // SetBlockProfileRate controls the fraction of goroutine blocking events
 // that are reported in the blocking profile. The profiler aims to sample
@@ -128,7 +145,16 @@ func ThreadCreateProfile(p []StackRecord) (n int, ok bool)
 //
 // To include every blocking event in the profile, pass rate = 1.
 // To turn off profiling entirely, pass rate <= 0.
-func SetBlockProfileRate(rate int)
+//
+// graalgo: the rate is recorded; nothing is sampled.
+func SetBlockProfileRate(rate int) {
+	if rate < 0 {
+		rate = 0
+	}
+	blockProfileRate = rate
+}
+
+var blockProfileRate, mutexProfileFraction int
 
 // SetMutexProfileFraction controls the fraction of mutex contention events
 // that are reported in the mutex profile. On average 1/rate events are
@@ -137,7 +163,15 @@ func SetBlockProfileRate(rate int)
 // To turn off profiling entirely, pass rate 0.
 // To just read the current rate, pass rate < 0.
 // (For n>1 the details of sampling may change.)
-func SetMutexProfileFraction(rate int) int
+//
+// graalgo: the rate is recorded and reported; nothing is sampled.
+func SetMutexProfileFraction(rate int) int {
+	old := mutexProfileFraction
+	if rate >= 0 {
+		mutexProfileFraction = rate
+	}
+	return old
+}
 
 // SetCPUProfileRate sets the CPU profiling rate to hz samples per second.
 // If hz <= 0, SetCPUProfileRate turns off profiling.
@@ -146,22 +180,67 @@ func SetMutexProfileFraction(rate int) int
 // Most clients should use the [runtime/pprof] package or
 // the [testing] package's -test.cpuprofile flag instead of calling
 // SetCPUProfileRate directly.
-func SetCPUProfileRate(hz int)
+//
+// graalgo: the CPU profiler is not implemented; the call has no effect.
+func SetCPUProfileRate(hz int) {}
 
 // StartTrace enables tracing for the current process.
 // While tracing, the data will be buffered and available via [ReadTrace].
 // StartTrace returns an error if tracing is already enabled.
 // Most clients should use the [runtime/trace] package or the [testing] package's
 // -test.trace flag instead of calling StartTrace directly.
-func StartTrace() error
+//
+// graalgo: the execution tracer is not implemented: StartTrace reports it.
+func StartTrace() error {
+	return traceUnsupported{}
+}
+
+type traceUnsupported struct{}
+
+func (traceUnsupported) Error() string { return "runtime: tracing is not supported by graalgo" }
 
 // StopTrace stops tracing, if it was previously enabled.
 // StopTrace only returns after all the reads for the trace have completed.
-func StopTrace()
+func StopTrace() {}
 
 // ReadTrace returns the next chunk of binary tracing data, blocking until data
 // is available. If tracing is turned off and all the data accumulated while it
 // was on has been returned, ReadTrace returns nil. The caller must copy the
 // returned data before calling ReadTrace again.
 // ReadTrace must be called from one goroutine at a time.
-func ReadTrace() (buf []byte)
+func ReadTrace() (buf []byte) {
+	return nil
+}
+
+// GoroutineProfile returns n, the number of records in the active goroutine stack profile.
+// If len(p) >= n, GoroutineProfile copies the profile into p and returns n, true.
+// If len(p) < n, GoroutineProfile does not change p and returns n, false.
+//
+// Most clients should use the [runtime/pprof] package instead
+// of calling GoroutineProfile directly.
+//
+// graalgo: the records are the goroutines, without their stacks (a
+// goroutine's stack is walkable only from itself).
+func GoroutineProfile(p []StackRecord) (n int, ok bool) {
+	n = NumGoroutine()
+	if len(p) < n {
+		return n, false
+	}
+	for i := range p[:n] {
+		p[i] = StackRecord{}
+	}
+	return n, true
+}
+
+// CPUProfile panics.
+// It formerly provided raw access to chunks of
+// a pprof-format profile generated by the runtime.
+// The details of generating that format have changed,
+// so this functionality has been removed.
+//
+// Deprecated: Use the [runtime/pprof] package,
+// or the handlers in the [net/http/pprof] package,
+// or the [testing] package's -test.cpuprofile flag instead.
+func CPUProfile() []byte {
+	panic("CPUProfile no longer available")
+}

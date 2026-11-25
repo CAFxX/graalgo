@@ -22,7 +22,8 @@ import org.graalvm.polyglot.io.ByteSequence;
  *
  * <ul>
  *   <li>a run does not exit 0 (the program checks its own results);
- *   <li>a runtime thread of a closed context (carrier, drainer, timer, goroutine) is still alive;
+ *   <li>a runtime thread of a closed context (carrier, drainer, timer, finalizer watcher,
+ *       goroutine) is still alive;
  *   <li>the live heap after a full GC grows by more than {@link #BUDGET_BYTES_PER_CYCLE} per
  *       cycle on average after {@link #WARMUP} warm-up cycles: everything a context owns
  *       (its scheduler, goroutines, timers, heap of Go values, AST, compiled code) must become
@@ -117,7 +118,7 @@ public final class ContextLeakProbe {
         for (Thread t : Thread.getAllStackTraces().keySet()) {
             String n = t.getName();
             if (n.startsWith("graalgo-carrier-") || n.equals("graalgo-drainer") || n.equals("graalgo-timer")
-                    || n.startsWith("goroutine-")) {
+                    || n.equals("graalgo-finalizers") || n.startsWith("goroutine-")) {
                 out.add(t);
             }
         }

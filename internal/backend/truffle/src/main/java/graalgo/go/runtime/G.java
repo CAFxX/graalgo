@@ -46,6 +46,16 @@ public final class G {
      */
     public GoPanic panic;
 
+    /**
+     * gc's per-goroutine runtime flags that packages reach by {@code //go:linkname}:
+     * {@code crypto/fips140}'s bypass ({@code g.fipsOnlyBypass}), the FIPS service indicator
+     * ({@code g.fipsIndicator}) and {@code runtime/debug.SetPanicOnFault}'s
+     * ({@code g.paniconfault}).
+     */
+    public boolean fipsOnlyBypass;
+    public byte fipsIndicator;
+    public boolean panicOnFault;
+
     /** The goroutine running on the current thread. */
     public static G current(Node node) {
         GoThreadSlot slot = GoLanguage.get(node).threadSlot();

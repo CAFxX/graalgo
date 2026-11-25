@@ -11,7 +11,6 @@ import com.oracle.truffle.api.dsl.NeverDefault;
 import com.oracle.truffle.api.dsl.ReportPolymorphism;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.FrameDescriptor;
-import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.instrumentation.Tag;
@@ -50,7 +49,7 @@ import java.util.function.Supplier;
  * Functions and calls (truffle-design §4.3, §4.5, §4.6).
  *
  * <p>Calling convention: {@code arguments[0]} is the callee's capture environment (a closure's
- * {@code MaterializedFrame}, null otherwise), {@code arguments[1..]} the Go arguments in carrier
+ * {@link Env}, null without captures), {@code arguments[1..]} the Go arguments in carrier
  * form, boxed; a method's receiver is the first Go argument. One result is returned boxed,
  * several as an {@code Object[]} tuple. Struct and array arguments are private copies made by
  * the caller.
@@ -436,7 +435,7 @@ public final class Calls {
         @Override
         public Object execute(VirtualFrame frame) {
             Safepoint.poll(this);
-            frame.setInt(bitsSlot, 0);
+            frame.setIntStatic(bitsSlot, 0);
             RuntimeException cur = null;
             try {
                 enter(frame);
@@ -456,11 +455,11 @@ public final class Calls {
         private RuntimeException runDefers(VirtualFrame frame, RuntimeException unwinding) {
             RuntimeException cur = unwinding;
             for (int i = sites.length - 1; i >= 0; i--) {
-                int bits = frame.getInt(bitsSlot);
+                int bits = frame.getIntStatic(bitsSlot);
                 if ((bits & (1 << i)) != 0) {
-                    frame.setInt(bitsSlot, bits & ~(1 << i));
-                    Object target = frame.getObject(targetSlots[i]);
-                    Object[] args = (Object[]) frame.getObject(argsSlots[i]);
+                    frame.setIntStatic(bitsSlot, bits & ~(1 << i));
+                    Object target = frame.getObjectStatic(targetSlots[i]);
+                    Object[] args = (Object[]) frame.getObjectStatic(argsSlots[i]);
                     cur = callDeferred(sites[i], target, args, cur);
                 }
             }
@@ -789,19 +788,20 @@ public final class Calls {
     // ---------------------------------------------------------------- closures
 
     /**
-     * A function literal: the func value {@code {target, environment frame}} (SPEC §3.4). The
-     * environment is a new frame holding the boxes of the captured variables, read from this
-     * frame's slots now — so a per-iteration loop variable is captured per iteration.
+     * A function literal: the func value {@code {target, env}} (SPEC §3.4) with the {@link Env}
+     * layout of its capture count: the boxes of the captured variables are read from this
+     * frame's slots now, so a per-iteration loop variable is captured per iteration. A literal
+     * without captures is one constant func value (gc's static closure): func values are not
+     * comparable, so no program can tell two evaluations apart.
      */
     public static final class MakeClosure extends Ref {
         private final Supplier<RootCallTarget> target;
-        private final FrameDescriptor envDescriptor;
         @CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] slots;
         @CompilerDirectives.CompilationFinal private RootCallTarget resolved;
+        @CompilerDirectives.CompilationFinal private Closure constant;
 
-        public MakeClosure(Supplier<RootCallTarget> target, FrameDescriptor envDescriptor, int[] slots) {
+        public MakeClosure(Supplier<RootCallTarget> target, int[] slots) {
             this.target = target;
-            this.envDescriptor = envDescriptor;
             this.slots = slots;
         }
 
@@ -811,12 +811,22 @@ public final class Calls {
             if (resolved == null) {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 resolved = target.get();
+                if (slots.length == 0) {
+                    constant = new Closure(resolved, null);
+                }
             }
-            MaterializedFrame env = Env.create(envDescriptor);
-            for (int i = 0; i < slots.length; i++) {
-                Env.set(env, i, frame.getObject(slots[i]));
+            switch (slots.length) {
+                case 0:
+                    return constant;
+                case 1:
+                    return new Closure(resolved, frame.getObjectStatic(slots[0]));
+                default:
+                    Object[] env = Env.create(slots.length);
+                    for (int i = 0; i < slots.length; i++) {
+                        Env.set(env, i, frame.getObjectStatic(slots[i]));
+                    }
+                    return new Closure(resolved, env);
             }
-            return new Closure(resolved, env);
         }
     }
 
@@ -839,16 +849,14 @@ public final class Calls {
         }
     }
 
-    /** A bound value (method value receiver) as a closure over a one-slot environment. */
+    /** A bound value (method value receiver) as a closure over a one-value {@link Env}. */
     public static final class Bind1 extends Ref {
         private final RootCallTarget target;
-        private final FrameDescriptor envDescriptor;
         @Child private Expr value;
         private final boolean nilCheck;
 
-        public Bind1(RootCallTarget target, FrameDescriptor envDescriptor, Expr value, boolean nilCheck) {
+        public Bind1(RootCallTarget target, Expr value, boolean nilCheck) {
             this.target = target;
-            this.envDescriptor = envDescriptor;
             this.value = value;
             this.nilCheck = nilCheck;
         }
@@ -859,23 +867,23 @@ public final class Calls {
             if (nilCheck && v == null) {
                 throw Panics.nilDeref(this);
             }
-            MaterializedFrame env = Env.create(envDescriptor);
-            Env.set(env, 0, v);
-            return new Closure(target, env);
+            return new Closure(target, v);
         }
     }
 
-    /** Slot {@code index} of the running closure's environment. */
+    /** Value {@code index} of the running closure's {@link Env} of {@code size} values. */
     public static final class EnvRead extends Ref {
         private final int index;
+        private final int size;
 
-        public EnvRead(int index) {
+        public EnvRead(int index, int size) {
             this.index = index;
+            this.size = size;
         }
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            return Env.get(frame.getArguments()[0], index);
+            return Env.get(frame.getArguments()[0], index, size);
         }
     }
 
@@ -920,7 +928,7 @@ public final class Calls {
                 CompilerDirectives.transferToInterpreterAndInvalidate();
                 resolved = target.get();
             }
-            frame.setObject(targetSlot, resolved);
+            frame.setObjectStatic(targetSlot, resolved);
             return a;
         }
     }
@@ -944,11 +952,11 @@ public final class Calls {
                 a[i + 1] = args[i].executeGeneric(frame);
             }
             if (c == null) {
-                frame.setObject(targetSlot, null);
+                frame.setObjectStatic(targetSlot, null);
                 return a;
             }
             a[0] = c.env();
-            frame.setObject(targetSlot, c.target());
+            frame.setObjectStatic(targetSlot, c.target());
             return a;
         }
     }
@@ -981,7 +989,7 @@ public final class Calls {
             }
             Method m = method(r.type);
             a[1] = Receivers.adapt(m, r.data, this);
-            frame.setObject(targetSlot, m.target());
+            frame.setObjectStatic(targetSlot, m.target());
             return a;
         }
 
@@ -1003,7 +1011,7 @@ public final class Calls {
         public void executeVoid(VirtualFrame frame) {
             Object[] a = call.prepare(frame);
             G g = G.current(this);
-            g.defers = new G.Defer(frame.getObject(call.targetSlot), a, g.defers);
+            g.defers = new G.Defer(frame.getObjectStatic(call.targetSlot), a, g.defers);
         }
     }
 
@@ -1027,8 +1035,8 @@ public final class Calls {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            frame.setObject(argsSlot, call.prepare(frame));
-            frame.setInt(bitsSlot, frame.getInt(bitsSlot) | (1 << bit));
+            frame.setObjectStatic(argsSlot, call.prepare(frame));
+            frame.setIntStatic(bitsSlot, frame.getIntStatic(bitsSlot) | (1 << bit));
         }
     }
 
@@ -1043,7 +1051,7 @@ public final class Calls {
         @Override
         public void executeVoid(VirtualFrame frame) {
             Object[] a = call.prepare(frame);
-            Object target = frame.getObject(call.targetSlot);
+            Object target = frame.getObjectStatic(call.targetSlot);
             if (target == null) {
                 throw Panics.plain(this, "go of nil func value");
             }

@@ -217,7 +217,8 @@ directory's README repeats its status.
       shrink-only `allowlist.txt`; [truffle-design.md §16](arch/truffle-design.md)).
     - [gir/](../internal/backend/gir/) — the Java GIR decoder/encoder
       (JDK-only, own [Makefile](../internal/backend/gir/Makefile));
-      `Gir.java`/`GirCodec.java` are generated from
+      `Gir.java`/`GirCodec.java`/`GirLocals.java` (the visitor of every
+      local reference in a subtree) are generated from
       [schema.txt](../internal/toolexec/ir/schema.txt). Tested by
       `make test-gir`. Its sources are also compiled into the truffle
       module, whose bundle loader (`graalgo.go.loader`) consumes them.
@@ -274,10 +275,11 @@ directory's README repeats its status.
   - [fork/](../stdlib/fork/) — the *replaced* packages of the `-toolexec`
     path (toolexec-design D8, §5.1): one complete directory per import
     path, taking the place of upstream's.
-    [fork/runtime/](../stdlib/fork/runtime/) is the facade `runtime` (the
-    identifiers std names outside the runtime family, declarations and
-    documentation upstream's, functions without bodies resolved by the
-    intrinsic registry); [fork/runtime/race/](../stdlib/fork/runtime/race/)
+    [fork/runtime/](../stdlib/fork/runtime/) is the facade `runtime`
+    (upstream's exported API, declarations and documentation upstream's,
+    functions without bodies resolved by the intrinsic registry, plus the
+    plain-Go linkname providers: coroutines, legacy random generators,
+    `runtime/debug` and `runtime/trace` hooks); [fork/runtime/race/](../stdlib/fork/runtime/race/)
     is the empty package a `GRAALGO_RACE=ignore` build links;
     [fork/internal/runtime/maps/](../stdlib/fork/internal/runtime/maps/) is
     the facade of the Swiss-table package (reflect's map iterator over the

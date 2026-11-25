@@ -100,10 +100,12 @@ import "unsafe"
 // need to use appropriate synchronization, such as mutexes or atomic updates,
 // to avoid read-write races.
 //
-// graalgo: finalizers are never run (docs/arch/limitations.md); "there is no
-// guarantee that finalizers will run before a program exits" covers every
-// program that is correct under gc.
-func SetFinalizer(obj any, finalizer any) {}
+// graalgo: an intrinsic (registry.txt; graalgo.go.runtime.Finalizers). The
+// JVM collector finds the object unreachable (a phantom reference), the
+// finalizer receives the object rebuilt over its own storage, and runs on a
+// runtime goroutine, one at a time; runtime.GC dispatches every finalizer its
+// collection found before it returns (docs/arch/limitations.md).
+func SetFinalizer(obj any, finalizer any)
 
 // KeepAlive marks its argument as currently reachable.
 // This ensures that the object is not freed, and its finalizer is not run,
@@ -129,7 +131,9 @@ func SetFinalizer(obj any, finalizer any) {}
 // Note: KeepAlive should only be used to prevent finalizers from
 // running prematurely. In particular, when used with [unsafe.Pointer],
 // the rules for valid uses of unsafe.Pointer still apply.
-func KeepAlive(x any) {}
+//
+// graalgo: an intrinsic, the JVM's reachability fence.
+func KeepAlive(x any)
 
 // AddCleanup attaches a cleanup function to ptr. Some time after ptr is no longer
 // reachable, the runtime will call cleanup(arg) in a separate goroutine.
@@ -194,14 +198,25 @@ func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup {
 		panic("runtime.AddCleanup: ptr is nil")
 	}
 	// A generic function cannot be an intrinsic (gc rejects one without a
-	// body): the instantiation-independent part is addCleanup.
-	return addCleanup(unsafe.Pointer(ptr), func() { cleanup(arg) })
+	// body): the instantiation-independent part is addCleanup, which also
+	// checks that arg is not ptr itself (upstream's check, here on the
+	// boxed argument).
+	id := addCleanup(unsafe.Pointer(ptr), func() { cleanup(arg) }, any(arg))
+	if id < 0 {
+		panic("runtime.AddCleanup: ptr is equal to arg, cleanup will never run")
+	}
+	return Cleanup{id: uint64(id)}
 }
 
-// addCleanup attaches fn to the object ptr points to; fn runs once after
-// the object becomes unreachable. graalgo: cleanups, like finalizers, are
-// never run (docs/arch/limitations.md).
-func addCleanup(ptr unsafe.Pointer, fn func()) Cleanup { return Cleanup{} }
+// addCleanup attaches fn to the object ptr points into; fn runs once, on a
+// runtime goroutine, after the object becomes unreachable (an intrinsic:
+// graalgo.go.runtime.Finalizers). It returns the cleanup's id, 0 when ptr
+// is in no allocated block (a global: gc registers nothing), or -1 when
+// arg is ptr.
+func addCleanup(ptr unsafe.Pointer, fn func(), arg any) int64
+
+// stopCleanup cancels the cleanup with the given id (an intrinsic).
+func stopCleanup(id int64)
 
 // Cleanup is a handle to a cleanup call for a specific object.
 type Cleanup struct {
@@ -213,4 +228,9 @@ type Cleanup struct {
 // has already been queued for execution (because ptr became unreachable).
 // To guarantee that Stop removes the cleanup function, the caller must ensure
 // that the pointer that was passed to AddCleanup is reachable across the call to Stop.
-func (c Cleanup) Stop() {}
+func (c Cleanup) Stop() {
+	if c.id == 0 {
+		return
+	}
+	stopCleanup(int64(c.id))
+}

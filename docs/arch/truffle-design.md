@@ -13,7 +13,9 @@ preemption instead of `Safepoint.poll()`), **A8** (open-coded defers) and
 decided on 2026-11-18 ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)):
 **A8 accepted** (SPEC §3.5 amended; requirements re-issued 2026-11-18 as GG-0070/GG-0071, locked on owner sign-off the same day); **A7 accepted conditionally
 on P-B** `[OPEN]`, then **REJECTED** after P-B failed ([ADR-0013](../dev/adr/ADR-0013-a7-rejected.md); SPEC unchanged); **A9 deferred pending
-benchmarks** (SPEC unchanged). Where a section below says "until accepted,
+benchmarks** (SPEC unchanged), then **decided by evidence 2026-11-25**
+([ADR-0023](../dev/adr/ADR-0023-closure-environments.md): `Object[]` capture
+arrays, SPEC §3.4 prose amended; the coordinator confirms). Where a section below says "until accepted,
 implementation follows SPEC", that applies to A7 and A9 only (§14.1 has the
 trade-offs).
 
@@ -2091,7 +2093,7 @@ its decision). Status column: owner decisions of 2026-11-18
 | A6 | §3.3 | Clarification, no change of intent: the megamorphic interface-call fallback is an itab method-table index, not a hash lookup; splitting is part of the devirtualization design. | TR-4 | Pending. |
 | A7 | §3.5; GG-SCHED-0001, `GG-0017` (superseded by `GG-0073`, then GG-0074) | Preemption by Truffle safepoints: a monitor thread submits a `ThreadLocalAction` that performs the quantum park; `Safepoint.poll()` at back-edges and function entries is deleted (T4, §2.7, TR-6). Supersede GG-SCHED-0001 and `GG-0017` with "quantum expiry is delivered at Truffle safepoints". | TR-6 (after P-B) | **REJECTED 2026-11-18** ([ADR-0013](../dev/adr/ADR-0013-a7-rejected.md)). Accepted conditionally on P-B by the owner ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)); P-B failed (pinned parks, hangs of plain programs, mount-hook recursion, counted loops, compiled `for {}`), so by the owner's rule the switch is not made. SPEC and the requirements are unchanged — `Safepoint.poll()` stays; the poll's cost on tight loops is WP-POLLCOST (RECOVERY.md). |
 | A8 | §3.5; `GG-0019` | Open-coded defers per function, statically lowered for the common case (defers outside loops and range-over-func bodies, at most *L*), with the explicit per-goroutine chain as the fallback (loops, range-over-func, over *L*); each frame runs its own pending defers on panic/Goexit; `recover`/`Goexit`/`runtime.Caller` match gc (T7, §4.5, TR-3). | TR-3 | **Accepted 2026-11-18** ([ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)). `GG-0019` superseded by `GG-0067`, whose lock had no owner sign-off; **re-issued 2026-11-18** as GG-0070 (semantics, incl. `panicnil` and caller frames per [traceback-normalization.md](traceback-normalization.md)) and GG-0071 (mechanism), **locked 2026-11-18 on owner sign-off**; SPEC §3.5 and Appendix B amended. |
-| A9 | §3.4 (text only; GG-0072 does not mention closures) | Closures are `GoFunc{target, captures}` over typed cells; `frame.materialize()` banned (T7, §4.4, rule F2). | TR-3 | **Deferred pending benchmarks** (owner, 2026-11-18): decided after the closure benchmarks; SPEC unchanged — `{RootCallTarget, MaterializedFrame\|null}`. |
+| A9 | §3.4 (text only; GG-0072 does not mention closures) | Closures are `GoFunc{target, captures}` over typed cells; `frame.materialize()` banned (T7, §4.4, rule F2). | TR-3 | **Deferred pending benchmarks** (owner, 2026-11-18); **decided by evidence 2026-11-25** ([ADR-0023](../dev/adr/ADR-0023-closure-environments.md)): `{RootCallTarget, env}`, env null / the one capture / an `Object[]`; no `MaterializedFrame`. |
 
 Other decisions requested:
 

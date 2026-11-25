@@ -447,6 +447,20 @@ func readImportcfg(path string) (map[string]string, error) {
 
 // readModinfo returns the "modinfo" payload of an importcfg.link (the
 // main module's build info, which cmd/go hands to the linker this way).
+// toolchainVersion is the version cmd/link would stamp (buildcfg.Version):
+// the first line of $GOROOT/VERSION, else the version graalgo-tool was built
+// with (the tracked toolchain, test/lib/toolexec.sh and the launcher).
+func toolchainVersion() string {
+	if g := os.Getenv("GOROOT"); g != "" {
+		if data, err := os.ReadFile(filepath.Join(g, "VERSION")); err == nil {
+			if v, _, _ := strings.Cut(string(data), "\n"); strings.HasPrefix(v, "go") {
+				return strings.TrimSpace(v)
+			}
+		}
+	}
+	return runtime.Version()
+}
+
 func readModinfo(path string) (string, error) {
 	if path == "" {
 		return "", nil
@@ -578,7 +592,19 @@ func link(args []string) {
 	// runtime.godebugDefault) and the module build info travel in the
 	// bundle; the backend applies them (design §3.6).
 	b := &bundle.Bundle{Runner: os.Getenv("GRAALGO_RUNNER"), X: fl.multi["X"], ModInfo: modinfo}
-	xs, err := golink.ParseX(fl.multi["X"])
+	// cmd/link's own settings after the flags' (ld.Main): the toolchain's
+	// GOROOT, which runtime.GOROOT reports (cmd/go clears GOROOT under
+	// -trimpath, and then there is none), its version (runtime.Version),
+	// and the build info that debug.ReadBuildInfo reads.
+	xargs := fl.multi["X"]
+	if g := os.Getenv("GOROOT"); g != "" {
+		xargs = append(xargs, "runtime.defaultGOROOT="+g)
+	}
+	xargs = append(xargs, "runtime.buildVersion="+toolchainVersion())
+	if modinfo != "" {
+		xargs = append(xargs, "runtime.modinfo="+modinfo)
+	}
+	xs, err := golink.ParseX(xargs)
 	if err != nil {
 		fatalf("link: %v", err)
 	}

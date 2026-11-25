@@ -16,12 +16,52 @@ import graalgo.language.GoLanguage;
 public final class IntrinsicTable {
     private IntrinsicTable() {}
 
-    public static final int VERSION = 2;
-    public static final String HASH = "3efda6f921f4e982";
+    public static final int VERSION = 3;
+    public static final String HASH = "85d0c99429853ae1";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
         switch (symbol) {
+            case "crypto/fips140.isBypassed":
+                return new R_crypto_fips140_isBypassed(language);
+            case "crypto/fips140.setBypass":
+                return new R_crypto_fips140_setBypass(language);
+            case "crypto/fips140.unsetBypass":
+                return new R_crypto_fips140_unsetBypass(language);
+            case "crypto/internal/boring/sig.BoringCrypto":
+                return new R_crypto_internal_boring_sig_BoringCrypto(language);
+            case "crypto/internal/boring/sig.FIPSOnly":
+                return new R_crypto_internal_boring_sig_FIPSOnly(language);
+            case "crypto/internal/boring/sig.StandardCrypto":
+                return new R_crypto_internal_boring_sig_StandardCrypto(language);
+            case "crypto/internal/constanttime.Select":
+                return new R_crypto_internal_constanttime_Select(language);
+            case "crypto/internal/constanttime.boolToUint8":
+                return new R_crypto_internal_constanttime_boolToUint8(language);
+            case "crypto/internal/fips140.fatal":
+                return new R_crypto_internal_fips140_fatal(language);
+            case "crypto/internal/fips140.getIndicator":
+                return new R_crypto_internal_fips140_getIndicator(language);
+            case "crypto/internal/fips140.setIndicator":
+                return new R_crypto_internal_fips140_setIndicator(language);
+            case "crypto/internal/fips140/subtle.xorBytes":
+                return new R_crypto_internal_fips140_subtle_xorBytes(language);
+            case "crypto/internal/fips140deps/time.monoTime":
+                return new R_crypto_internal_fips140deps_time_monoTime(language);
+            case "crypto/internal/sysrand.fatal":
+                return new R_crypto_internal_sysrand_fatal(language);
+            case "crypto/rand.fatal":
+                return new R_crypto_rand_fatal(language);
+            case "crypto/subtle.setDITDisabled":
+                return new R_crypto_subtle_setDITDisabled(language);
+            case "crypto/subtle.setDITEnabled":
+                return new R_crypto_subtle_setDITEnabled(language);
+            case "hash/crc32.castagnoliSSE42":
+                return new R_hash_crc32_castagnoliSSE42(language);
+            case "hash/crc32.castagnoliSSE42Triple":
+                return new R_hash_crc32_castagnoliSSE42Triple(language);
+            case "hash/crc32.ieeeCLMUL":
+                return new R_hash_crc32_ieeeCLMUL(language);
             case "internal/abi.FuncPCABI0":
                 return new R_internal_abi_FuncPCABI0(language);
             case "internal/abi.FuncPCABIInternal":
@@ -42,6 +82,14 @@ public final class IntrinsicTable {
                 return new R_internal_bytealg_IndexString(language);
             case "internal/bytealg.MakeNoZero":
                 return new R_internal_bytealg_MakeNoZero(language);
+            case "internal/chacha8rand.block":
+                return new R_internal_chacha8rand_block(language);
+            case "internal/cpu.cpuid":
+                return new R_internal_cpu_cpuid(language);
+            case "internal/cpu.getGOAMD64level":
+                return new R_internal_cpu_getGOAMD64level(language);
+            case "internal/cpu.xgetbv":
+                return new R_internal_cpu_xgetbv(language);
             case "internal/godebug.registerMetric":
                 return new R_internal_godebug_registerMetric(language);
             case "internal/godebug.setNewIncNonDefault":
@@ -146,6 +194,18 @@ public final class IntrinsicTable {
                 return new R_math_archTrunc(language);
             case "math.sqrt":
                 return new R_math_sqrt(language);
+            case "math/big.addMulVVWW":
+                return new R_math_big_addMulVVWW(language);
+            case "math/big.addVV":
+                return new R_math_big_addVV(language);
+            case "math/big.lshVU":
+                return new R_math_big_lshVU(language);
+            case "math/big.mulAddVWW":
+                return new R_math_big_mulAddVWW(language);
+            case "math/big.rshVU":
+                return new R_math_big_rshVU(language);
+            case "math/big.subVV":
+                return new R_math_big_subVV(language);
             case "math/bits.Len32":
                 return new R_math_bits_Len32(language);
             case "math/bits.Len64":
@@ -272,18 +332,24 @@ public final class IntrinsicTable {
                 return new R_runtime_GC(language);
             case "runtime.GOMAXPROCS":
                 return new R_runtime_GOMAXPROCS(language);
-            case "runtime.GOROOT":
-                return new R_runtime_GOROOT(language);
             case "runtime.Goexit":
                 return new R_runtime_Goexit(language);
             case "runtime.Gosched":
                 return new R_runtime_Gosched(language);
+            case "runtime.KeepAlive":
+                return new R_runtime_KeepAlive(language);
             case "runtime.NumCPU":
                 return new R_runtime_NumCPU(language);
             case "runtime.NumGoroutine":
                 return new R_runtime_NumGoroutine(language);
+            case "runtime.SetFinalizer":
+                return new R_runtime_SetFinalizer(language);
             case "runtime.Stack":
                 return new R_runtime_Stack(language);
+            case "runtime.addCleanup":
+                return new R_runtime_addCleanup(language);
+            case "runtime.breakpoint":
+                return new R_runtime_breakpoint(language);
             case "runtime.callers":
                 return new R_runtime_callers(language);
             case "runtime.cmpstring":
@@ -296,6 +362,12 @@ public final class IntrinsicTable {
                 return new R_runtime_fcntl(language);
             case "runtime.funcInfo":
                 return new R_runtime_funcInfo(language);
+            case "runtime.gogetenv":
+                return new R_runtime_gogetenv(language);
+            case "runtime.memequal":
+                return new R_runtime_memequal(language);
+            case "runtime.memhash":
+                return new R_runtime_memhash(language);
             case "runtime.nanotime":
                 return new R_runtime_nanotime(language);
             case "runtime.pcFileLine":
@@ -304,14 +376,22 @@ public final class IntrinsicTable {
                 return new R_runtime_rand(language);
             case "runtime.randn":
                 return new R_runtime_randn(language);
+            case "runtime.readMemStats":
+                return new R_runtime_readMemStats(language);
             case "runtime.runtimeError":
                 return new R_runtime_runtimeError(language);
+            case "runtime.stopCleanup":
+                return new R_runtime_stopCleanup(language);
             case "runtime.typePkgPath":
                 return new R_runtime_typePkgPath(language);
             case "runtime.typeString":
                 return new R_runtime_typeString(language);
+            case "runtime.vgetrandom":
+                return new R_runtime_vgetrandom(language);
             case "runtime.write":
                 return new R_runtime_write(language);
+            case "runtime/debug.setPanicOnFault":
+                return new R_runtime_debug_setPanicOnFault(language);
             case "sync.fatal":
                 return new R_sync_fatal(language);
             case "sync.runtime_Semacquire":
@@ -432,6 +512,8 @@ public final class IntrinsicTable {
                 return new R_syscall_rawSyscallNoError(language);
             case "syscall.rawVforkSyscall":
                 return new R_syscall_rawVforkSyscall(language);
+            case "syscall.runtimeClearenv":
+                return new R_syscall_runtimeClearenv(language);
             case "syscall.runtimeSetenv":
                 return new R_syscall_runtimeSetenv(language);
             case "syscall.runtimeUnsetenv":
@@ -452,6 +534,10 @@ public final class IntrinsicTable {
                 return new R_time_runtimeNow(language);
             case "time.stopTimer":
                 return new R_time_stopTimer(language);
+            case "vendor/golang.org/x/sys/cpu.cpuid":
+                return new R_vendor_golang_org_x_sys_cpu_cpuid(language);
+            case "vendor/golang.org/x/sys/cpu.xgetbv":
+                return new R_vendor_golang_org_x_sys_cpu_xgetbv(language);
             case "weak.runtime_makeStrongFromWeak":
                 return new R_weak_runtime_makeStrongFromWeak(language);
             case "weak.runtime_registerWeakPointer":
@@ -477,6 +563,267 @@ public final class IntrinsicTable {
         @Override
         public boolean isInternal() {
             return true;
+        }
+    }
+
+    /** {@code crypto/fips140.isBypassed}: {@code func() bool}. */
+    static final class R_crypto_fips140_isBypassed extends Root {
+        R_crypto_fips140_isBypassed(GoLanguage language) {
+            super(language, "crypto/fips140.isBypassed");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return RuntimeIntrinsics.crypto_fips140_isBypassed(this);
+        }
+    }
+
+    /** {@code crypto/fips140.setBypass}: {@code func()}. */
+    static final class R_crypto_fips140_setBypass extends Root {
+        R_crypto_fips140_setBypass(GoLanguage language) {
+            super(language, "crypto/fips140.setBypass");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            RuntimeIntrinsics.crypto_fips140_setBypass(this);
+            return null;
+        }
+    }
+
+    /** {@code crypto/fips140.unsetBypass}: {@code func()}. */
+    static final class R_crypto_fips140_unsetBypass extends Root {
+        R_crypto_fips140_unsetBypass(GoLanguage language) {
+            super(language, "crypto/fips140.unsetBypass");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            RuntimeIntrinsics.crypto_fips140_unsetBypass(this);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/boring/sig.BoringCrypto}: {@code func()}. */
+    static final class R_crypto_internal_boring_sig_BoringCrypto extends Root {
+        R_crypto_internal_boring_sig_BoringCrypto(GoLanguage language) {
+            super(language, "crypto/internal/boring/sig.BoringCrypto");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            CryptoIntrinsics.crypto_internal_boring_sig_BoringCrypto(this);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/boring/sig.FIPSOnly}: {@code func()}. */
+    static final class R_crypto_internal_boring_sig_FIPSOnly extends Root {
+        R_crypto_internal_boring_sig_FIPSOnly(GoLanguage language) {
+            super(language, "crypto/internal/boring/sig.FIPSOnly");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            CryptoIntrinsics.crypto_internal_boring_sig_FIPSOnly(this);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/boring/sig.StandardCrypto}: {@code func()}. */
+    static final class R_crypto_internal_boring_sig_StandardCrypto extends Root {
+        R_crypto_internal_boring_sig_StandardCrypto(GoLanguage language) {
+            super(language, "crypto/internal/boring/sig.StandardCrypto");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            CryptoIntrinsics.crypto_internal_boring_sig_StandardCrypto(this);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/constanttime.Select}: {@code func(int, int, int) int}. */
+    static final class R_crypto_internal_constanttime_Select extends Root {
+        R_crypto_internal_constanttime_Select(GoLanguage language) {
+            super(language, "crypto/internal/constanttime.Select");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CryptoIntrinsics.crypto_internal_constanttime_Select(this, (long) a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code crypto/internal/constanttime.boolToUint8}: {@code func(bool) uint8}. */
+    static final class R_crypto_internal_constanttime_boolToUint8 extends Root {
+        R_crypto_internal_constanttime_boolToUint8(GoLanguage language) {
+            super(language, "crypto/internal/constanttime.boolToUint8");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CryptoIntrinsics.crypto_internal_constanttime_boolToUint8(this, (boolean) a[1]);
+        }
+    }
+
+    /** {@code crypto/internal/fips140.fatal}: {@code func(string)}. */
+    static final class R_crypto_internal_fips140_fatal extends Root {
+        R_crypto_internal_fips140_fatal(GoLanguage language) {
+            super(language, "crypto/internal/fips140.fatal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.crypto_internal_fips140_fatal(this, (Str) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/fips140.getIndicator}: {@code func() uint8}. */
+    static final class R_crypto_internal_fips140_getIndicator extends Root {
+        R_crypto_internal_fips140_getIndicator(GoLanguage language) {
+            super(language, "crypto/internal/fips140.getIndicator");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return RuntimeIntrinsics.crypto_internal_fips140_getIndicator(this);
+        }
+    }
+
+    /** {@code crypto/internal/fips140.setIndicator}: {@code func(uint8)}. */
+    static final class R_crypto_internal_fips140_setIndicator extends Root {
+        R_crypto_internal_fips140_setIndicator(GoLanguage language) {
+            super(language, "crypto/internal/fips140.setIndicator");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.crypto_internal_fips140_setIndicator(this, (long) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/fips140/subtle.xorBytes}: {@code func(*uint8, *uint8, *uint8, int)}. */
+    static final class R_crypto_internal_fips140_subtle_xorBytes extends Root {
+        R_crypto_internal_fips140_subtle_xorBytes(GoLanguage language) {
+            super(language, "crypto/internal/fips140/subtle.xorBytes");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            CryptoIntrinsics.crypto_internal_fips140_subtle_xorBytes(this, a[1], a[2], a[3], (long) a[4]);
+            return null;
+        }
+    }
+
+    /** {@code crypto/internal/fips140deps/time.monoTime}: {@code func() int64}. */
+    static final class R_crypto_internal_fips140deps_time_monoTime extends Root {
+        R_crypto_internal_fips140deps_time_monoTime(GoLanguage language) {
+            super(language, "crypto/internal/fips140deps/time.monoTime");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return TimeIntrinsics.crypto_internal_fips140deps_time_monoTime(this);
+        }
+    }
+
+    /** {@code crypto/internal/sysrand.fatal}: {@code func(string)}. */
+    static final class R_crypto_internal_sysrand_fatal extends Root {
+        R_crypto_internal_sysrand_fatal(GoLanguage language) {
+            super(language, "crypto/internal/sysrand.fatal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.crypto_internal_sysrand_fatal(this, (Str) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code crypto/rand.fatal}: {@code func(string)}. */
+    static final class R_crypto_rand_fatal extends Root {
+        R_crypto_rand_fatal(GoLanguage language) {
+            super(language, "crypto/rand.fatal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.crypto_rand_fatal(this, (Str) a[1]);
+            return null;
+        }
+    }
+
+    /** {@code crypto/subtle.setDITDisabled}: {@code func()}. */
+    static final class R_crypto_subtle_setDITDisabled extends Root {
+        R_crypto_subtle_setDITDisabled(GoLanguage language) {
+            super(language, "crypto/subtle.setDITDisabled");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            RuntimeIntrinsics.crypto_subtle_setDITDisabled(this);
+            return null;
+        }
+    }
+
+    /** {@code crypto/subtle.setDITEnabled}: {@code func() bool}. */
+    static final class R_crypto_subtle_setDITEnabled extends Root {
+        R_crypto_subtle_setDITEnabled(GoLanguage language) {
+            super(language, "crypto/subtle.setDITEnabled");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return RuntimeIntrinsics.crypto_subtle_setDITEnabled(this);
+        }
+    }
+
+    /** {@code hash/crc32.castagnoliSSE42}: {@code func(uint32, []uint8) uint32}. */
+    static final class R_hash_crc32_castagnoliSSE42 extends Root {
+        R_hash_crc32_castagnoliSSE42(GoLanguage language) {
+            super(language, "hash/crc32.castagnoliSSE42");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CrcIntrinsics.hash_crc32_castagnoliSSE42(this, (long) a[1], a[2]);
+        }
+    }
+
+    /** {@code hash/crc32.castagnoliSSE42Triple}: {@code func(uint32, uint32, uint32, []uint8, []uint8, []uint8, uint32) (uint32, uint32, uint32)}. */
+    static final class R_hash_crc32_castagnoliSSE42Triple extends Root {
+        R_hash_crc32_castagnoliSSE42Triple(GoLanguage language) {
+            super(language, "hash/crc32.castagnoliSSE42Triple");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CrcIntrinsics.hash_crc32_castagnoliSSE42Triple(this, (long) a[1], (long) a[2], (long) a[3], a[4], a[5], a[6], (long) a[7]);
+        }
+    }
+
+    /** {@code hash/crc32.ieeeCLMUL}: {@code func(uint32, []uint8) uint32}. */
+    static final class R_hash_crc32_ieeeCLMUL extends Root {
+        R_hash_crc32_ieeeCLMUL(GoLanguage language) {
+            super(language, "hash/crc32.ieeeCLMUL");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CrcIntrinsics.hash_crc32_ieeeCLMUL(this, (long) a[1], a[2]);
         }
     }
 
@@ -607,6 +954,57 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return BytealgIntrinsics.internal_bytealg_MakeNoZero(this, (long) a[1]);
+        }
+    }
+
+    /** {@code internal/chacha8rand.block}: {@code func(*[4]uint64, *[32]uint64, uint32)}. */
+    static final class R_internal_chacha8rand_block extends Root {
+        R_internal_chacha8rand_block(GoLanguage language) {
+            super(language, "internal/chacha8rand.block");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            ChachaIntrinsics.internal_chacha8rand_block(this, a[1], a[2], (long) a[3]);
+            return null;
+        }
+    }
+
+    /** {@code internal/cpu.cpuid}: {@code func(uint32, uint32) (uint32, uint32, uint32, uint32)}. */
+    static final class R_internal_cpu_cpuid extends Root {
+        R_internal_cpu_cpuid(GoLanguage language) {
+            super(language, "internal/cpu.cpuid");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CpuIntrinsics.internal_cpu_cpuid(this, (long) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code internal/cpu.getGOAMD64level}: {@code func() int32}. */
+    static final class R_internal_cpu_getGOAMD64level extends Root {
+        R_internal_cpu_getGOAMD64level(GoLanguage language) {
+            super(language, "internal/cpu.getGOAMD64level");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return CpuIntrinsics.internal_cpu_getGOAMD64level(this);
+        }
+    }
+
+    /** {@code internal/cpu.xgetbv}: {@code func() (uint32, uint32)}. */
+    static final class R_internal_cpu_xgetbv extends Root {
+        R_internal_cpu_xgetbv(GoLanguage language) {
+            super(language, "internal/cpu.xgetbv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return CpuIntrinsics.internal_cpu_xgetbv(this);
         }
     }
 
@@ -1297,6 +1695,84 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return MathIntrinsics.math_sqrt(this, (double) a[1]);
+        }
+    }
+
+    /** {@code math/big.addMulVVWW}: {@code func([]math/big.Word, []math/big.Word, []math/big.Word, math/big.Word, math/big.Word) math/big.Word}. */
+    static final class R_math_big_addMulVVWW extends Root {
+        R_math_big_addMulVVWW(GoLanguage language) {
+            super(language, "math/big.addMulVVWW");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BigIntrinsics.math_big_addMulVVWW(this, a[1], a[2], a[3], a[4], a[5]);
+        }
+    }
+
+    /** {@code math/big.addVV}: {@code func([]math/big.Word, []math/big.Word, []math/big.Word) math/big.Word}. */
+    static final class R_math_big_addVV extends Root {
+        R_math_big_addVV(GoLanguage language) {
+            super(language, "math/big.addVV");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BigIntrinsics.math_big_addVV(this, a[1], a[2], a[3]);
+        }
+    }
+
+    /** {@code math/big.lshVU}: {@code func([]math/big.Word, []math/big.Word, uint) math/big.Word}. */
+    static final class R_math_big_lshVU extends Root {
+        R_math_big_lshVU(GoLanguage language) {
+            super(language, "math/big.lshVU");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BigIntrinsics.math_big_lshVU(this, a[1], a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code math/big.mulAddVWW}: {@code func([]math/big.Word, []math/big.Word, math/big.Word, math/big.Word) math/big.Word}. */
+    static final class R_math_big_mulAddVWW extends Root {
+        R_math_big_mulAddVWW(GoLanguage language) {
+            super(language, "math/big.mulAddVWW");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BigIntrinsics.math_big_mulAddVWW(this, a[1], a[2], a[3], a[4]);
+        }
+    }
+
+    /** {@code math/big.rshVU}: {@code func([]math/big.Word, []math/big.Word, uint) math/big.Word}. */
+    static final class R_math_big_rshVU extends Root {
+        R_math_big_rshVU(GoLanguage language) {
+            super(language, "math/big.rshVU");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BigIntrinsics.math_big_rshVU(this, a[1], a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code math/big.subVV}: {@code func([]math/big.Word, []math/big.Word, []math/big.Word) math/big.Word}. */
+    static final class R_math_big_subVV extends Root {
+        R_math_big_subVV(GoLanguage language) {
+            super(language, "math/big.subVV");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return BigIntrinsics.math_big_subVV(this, a[1], a[2], a[3]);
         }
     }
 
@@ -2130,18 +2606,6 @@ public final class IntrinsicTable {
         }
     }
 
-    /** {@code runtime.GOROOT}: {@code func() string}. */
-    static final class R_runtime_GOROOT extends Root {
-        R_runtime_GOROOT(GoLanguage language) {
-            super(language, "runtime.GOROOT");
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            return SyscallIntrinsics.runtime_GOROOT(this);
-        }
-    }
-
     /** {@code runtime.Goexit}: {@code func()}. */
     static final class R_runtime_Goexit extends Root {
         R_runtime_Goexit(GoLanguage language) {
@@ -2164,6 +2628,20 @@ public final class IntrinsicTable {
         @Override
         public Object execute(VirtualFrame frame) {
             RuntimeIntrinsics.runtime_Gosched(this);
+            return null;
+        }
+    }
+
+    /** {@code runtime.KeepAlive}: {@code func(interface {})}. */
+    static final class R_runtime_KeepAlive extends Root {
+        R_runtime_KeepAlive(GoLanguage language) {
+            super(language, "runtime.KeepAlive");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.runtime_KeepAlive(this, a[1]);
             return null;
         }
     }
@@ -2192,6 +2670,20 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.SetFinalizer}: {@code func(interface {}, interface {})}. */
+    static final class R_runtime_SetFinalizer extends Root {
+        R_runtime_SetFinalizer(GoLanguage language) {
+            super(language, "runtime.SetFinalizer");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.runtime_SetFinalizer(this, a[1], a[2]);
+            return null;
+        }
+    }
+
     /** {@code runtime.Stack}: {@code func([]uint8, bool) int}. */
     static final class R_runtime_Stack extends Root {
         R_runtime_Stack(GoLanguage language) {
@@ -2202,6 +2694,32 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_Stack(this, a[1], (boolean) a[2]);
+        }
+    }
+
+    /** {@code runtime.addCleanup}: {@code func(unsafe.Pointer, func(), interface {}) int64}. */
+    static final class R_runtime_addCleanup extends Root {
+        R_runtime_addCleanup(GoLanguage language) {
+            super(language, "runtime.addCleanup");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_addCleanup(this, a[1], a[2], a[3]);
+        }
+    }
+
+    /** {@code runtime.breakpoint}: {@code func()}. */
+    static final class R_runtime_breakpoint extends Root {
+        R_runtime_breakpoint(GoLanguage language) {
+            super(language, "runtime.breakpoint");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            RuntimeIntrinsics.runtime_breakpoint(this);
+            return null;
         }
     }
 
@@ -2283,6 +2801,45 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.gogetenv}: {@code func(string) string}. */
+    static final class R_runtime_gogetenv extends Root {
+        R_runtime_gogetenv(GoLanguage language) {
+            super(language, "runtime.gogetenv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyscallIntrinsics.runtime_gogetenv(this, (Str) a[1]);
+        }
+    }
+
+    /** {@code runtime.memequal}: {@code func(unsafe.Pointer, unsafe.Pointer, uintptr) bool}. */
+    static final class R_runtime_memequal extends Root {
+        R_runtime_memequal(GoLanguage language) {
+            super(language, "runtime.memequal");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_memequal(this, a[1], a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code runtime.memhash}: {@code func(unsafe.Pointer, uintptr, uintptr) uintptr}. */
+    static final class R_runtime_memhash extends Root {
+        R_runtime_memhash(GoLanguage language) {
+            super(language, "runtime.memhash");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_memhash(this, a[1], (long) a[2], (long) a[3]);
+        }
+    }
+
     /** {@code runtime.nanotime}: {@code func() int64}. */
     static final class R_runtime_nanotime extends Root {
         R_runtime_nanotime(GoLanguage language) {
@@ -2333,6 +2890,19 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.readMemStats}: {@code func(*[10]uint64) float64}. */
+    static final class R_runtime_readMemStats extends Root {
+        R_runtime_readMemStats(GoLanguage language) {
+            super(language, "runtime.readMemStats");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_readMemStats(this, a[1]);
+        }
+    }
+
     /** {@code runtime.runtimeError}: {@code func(int) error}. */
     static final class R_runtime_runtimeError extends Root {
         R_runtime_runtimeError(GoLanguage language) {
@@ -2343,6 +2913,20 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_runtimeError(this, (long) a[1]);
+        }
+    }
+
+    /** {@code runtime.stopCleanup}: {@code func(int64)}. */
+    static final class R_runtime_stopCleanup extends Root {
+        R_runtime_stopCleanup(GoLanguage language) {
+            super(language, "runtime.stopCleanup");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            RuntimeIntrinsics.runtime_stopCleanup(this, (long) a[1]);
+            return null;
         }
     }
 
@@ -2372,6 +2956,19 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.vgetrandom}: {@code func([]uint8, uint32) (int, bool)}. */
+    static final class R_runtime_vgetrandom extends Root {
+        R_runtime_vgetrandom(GoLanguage language) {
+            super(language, "runtime.vgetrandom");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return SyscallIntrinsics.runtime_vgetrandom(this, a[1], (long) a[2]);
+        }
+    }
+
     /** {@code runtime.write}: {@code func(uintptr, unsafe.Pointer, int32) int32}. */
     static final class R_runtime_write extends Root {
         R_runtime_write(GoLanguage language) {
@@ -2382,6 +2979,19 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return GodebugIntrinsics.runtime_write(this, (long) a[1], a[2], (long) a[3]);
+        }
+    }
+
+    /** {@code runtime/debug.setPanicOnFault}: {@code func(bool) bool}. */
+    static final class R_runtime_debug_setPanicOnFault extends Root {
+        R_runtime_debug_setPanicOnFault(GoLanguage language) {
+            super(language, "runtime/debug.setPanicOnFault");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_debug_setPanicOnFault(this, (boolean) a[1]);
         }
     }
 
@@ -3181,6 +3791,20 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code syscall.runtimeClearenv}: {@code func(map[string]int)}. */
+    static final class R_syscall_runtimeClearenv extends Root {
+        R_syscall_runtimeClearenv(GoLanguage language) {
+            super(language, "syscall.runtimeClearenv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            GodebugIntrinsics.syscall_runtimeClearenv(this, a[1]);
+            return null;
+        }
+    }
+
     /** {@code syscall.runtimeSetenv}: {@code func(string, string)}. */
     static final class R_syscall_runtimeSetenv extends Root {
         R_syscall_runtimeSetenv(GoLanguage language) {
@@ -3307,6 +3931,31 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return TimeIntrinsics.time_stopTimer(this, a[1]);
+        }
+    }
+
+    /** {@code vendor/golang.org/x/sys/cpu.cpuid}: {@code func(uint32, uint32) (uint32, uint32, uint32, uint32)}. */
+    static final class R_vendor_golang_org_x_sys_cpu_cpuid extends Root {
+        R_vendor_golang_org_x_sys_cpu_cpuid(GoLanguage language) {
+            super(language, "vendor/golang.org/x/sys/cpu.cpuid");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return CpuIntrinsics.vendor_golang_org_x_sys_cpu_cpuid(this, (long) a[1], (long) a[2]);
+        }
+    }
+
+    /** {@code vendor/golang.org/x/sys/cpu.xgetbv}: {@code func() (uint32, uint32)}. */
+    static final class R_vendor_golang_org_x_sys_cpu_xgetbv extends Root {
+        R_vendor_golang_org_x_sys_cpu_xgetbv(GoLanguage language) {
+            super(language, "vendor/golang.org/x/sys/cpu.xgetbv");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            return CpuIntrinsics.vendor_golang_org_x_sys_cpu_xgetbv(this);
         }
     }
 

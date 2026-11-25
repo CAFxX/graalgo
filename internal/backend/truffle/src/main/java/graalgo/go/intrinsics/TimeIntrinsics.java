@@ -54,6 +54,14 @@ final class TimeIntrinsics {
         return new Object[] {now.getEpochSecond(), (long) now.getNano(), System.nanoTime()};
     }
 
+    /**
+     * {@code crypto/internal/fips140deps/time.monoTime} (gc: {@code time_now}'s monotonic
+     * reading, {@code nanotime()}): the clock of {@link #time_runtimeNano}.
+     */
+    static long crypto_internal_fips140deps_time_monoTime(Node node) {
+        return System.nanoTime();
+    }
+
     /** No synctest bubbles (see SyncIntrinsics). */
     static boolean time_runtimeIsBubbled(Node node) {
         return false;

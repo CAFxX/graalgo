@@ -49,8 +49,6 @@ public final class RangeFunc extends Stmt {
     static final int PANIC = 2;
     static final int EXHAUSTED = 3;
 
-    private static final FrameDescriptor ENV = Env.layout(1);
-
     /** One execution of the loop: gc's {@code #stateN} plus the stashed exit. */
     static final class State {
         final MaterializedFrame outer;
@@ -79,24 +77,22 @@ public final class RangeFunc extends Stmt {
     public void executeVoid(VirtualFrame frame) {
         Closure f = (Closure) seq.executeGeneric(frame);
         State st = new State(frame.materialize());
-        MaterializedFrame env = Env.create(ENV);
-        Env.set(env, 0, st);
         boolean owner = false;
-        if (anchorSlot >= 0 && frame.getObject(anchorSlot) == null) {
+        if (anchorSlot >= 0 && frame.getObjectStatic(anchorSlot) == null) {
             G g = G.current(this);
             G.RangeDefers anchor = new G.RangeDefers(g.defers);
             g.defers = anchor;
-            frame.setObject(anchorSlot, anchor);
+            frame.setObjectStatic(anchorSlot, anchor);
             owner = true;
         }
         try {
             if (f == null) {
                 throw Panics.nilDeref(this);
             }
-            dispatch.execute(f.target(), new Object[] {f.env(), new Closure(yield, env)});
+            dispatch.execute(f.target(), new Object[] {f.env(), new Closure(yield, st)});
         } finally {
             if (owner) {
-                frame.setObject(anchorSlot, null);
+                frame.setObjectStatic(anchorSlot, null);
             }
         }
         if (st.state == PANIC) {
@@ -112,7 +108,7 @@ public final class RangeFunc extends Stmt {
 
     /**
      * The yield function: binds the iteration values into the enclosing frame's slots and runs
-     * the body there. Arguments: {@code [env, k?, v?]}, env holding the loop's {@link State}.
+     * the body there. Arguments: {@code [env, k?, v?]}, env the loop's {@link State} (a one-value {@link Env}).
      */
     public static final class YieldRoot extends RootNode implements Positions.Root {
         private final String name;
@@ -146,7 +142,7 @@ public final class RangeFunc extends Stmt {
         public Object execute(VirtualFrame frame) {
             Safepoint.poll(this);
             Object[] args = frame.getArguments();
-            State st = (State) Env.get(args[0], 0);
+            State st = (State) Env.get(args[0], 0, 1);
             if (st.state != READY) {
                 misuse.enter();
                 throw Panics.error(this, message(st.state));
@@ -154,10 +150,10 @@ public final class RangeFunc extends Stmt {
             st.state = PANIC;
             MaterializedFrame outer = st.outer;
             if (keySlot >= 0) {
-                outer.setObject(keySlot, args[1]);
+                outer.setObjectStatic(keySlot, args[1]);
             }
             if (valueSlot >= 0) {
-                outer.setObject(valueSlot, args[2]);
+                outer.setObjectStatic(valueSlot, args[2]);
             }
             try {
                 body.executeVoid(outer);
@@ -224,8 +220,8 @@ public final class RangeFunc extends Stmt {
         @Override
         public void executeVoid(VirtualFrame frame) {
             Object[] a = call.prepare(frame);
-            G.RangeDefers r = (G.RangeDefers) frame.getObject(anchorSlot);
-            r.list = new G.Defer(frame.getObject(call.targetSlot), a, r.list);
+            G.RangeDefers r = (G.RangeDefers) frame.getObjectStatic(anchorSlot);
+            r.list = new G.Defer(frame.getObjectStatic(call.targetSlot), a, r.list);
         }
     }
 }

@@ -47,7 +47,7 @@
 # signature). The version and a content hash travel in every linked
 # bundle; the runtime refuses a bundle linked against another registry.
 
-version 2
+version 3
 
 # --- runtime (facade, stdlib/fork/runtime) -------------------------------
 intrinsic runtime.Gosched      RuntimeIntrinsics func()
@@ -256,7 +256,7 @@ intrinsic runtime.entersyscall              SyscallIntrinsics func()
 intrinsic runtime.exitsyscall               SyscallIntrinsics func()
 intrinsic syscall.Getpagesize               SyscallIntrinsics func() int
 intrinsic syscall.runtime_envs              SyscallIntrinsics func() []string
-intrinsic runtime.GOROOT                    SyscallIntrinsics func() string
+intrinsic runtime.gogetenv                  SyscallIntrinsics func(string) string
 
 # --- time: clocks, sleep and timers the runtime provides by //go:linkname
 # (runtime/time.go), on the scheduler's timer heap -----------------------------
@@ -396,3 +396,61 @@ intrinsic syscall.runtimeUnsetenv              GodebugIntrinsics func(string)
 # (runtime/mheap.go), as JVM weak references ---------------------------------
 intrinsic weak.runtime_registerWeakPointer WeakIntrinsics func(unsafe.Pointer) unsafe.Pointer
 intrinsic weak.runtime_makeStrongFromWeak  WeakIntrinsics func(unsafe.Pointer) unsafe.Pointer
+
+# --- the runtime surface M3's gaps G1-G3 add (docs/arch/m3-plan.md §3) ------
+# Finalizers and cleanups (stdlib/fork/runtime/mfinal.go; graalgo.go.runtime.
+# Finalizers), memory statistics (mstats.go).
+intrinsic runtime.SetFinalizer RuntimeIntrinsics func(interface {}, interface {})
+intrinsic runtime.KeepAlive    RuntimeIntrinsics func(interface {})
+intrinsic runtime.addCleanup   RuntimeIntrinsics func(unsafe.Pointer, func(), interface {}) int64
+intrinsic runtime.stopCleanup  RuntimeIntrinsics func(int64)
+intrinsic runtime.readMemStats RuntimeIntrinsics func(*[10]uint64) float64
+intrinsic runtime.breakpoint   RuntimeIntrinsics func()
+intrinsic runtime.memhash      RuntimeIntrinsics func(unsafe.Pointer, uintptr, uintptr) uintptr
+intrinsic runtime.memequal     RuntimeIntrinsics func(unsafe.Pointer, unsafe.Pointer, uintptr) bool
+# What upstream's runtime provides to crypto by //go:linkname (fipsbypass.go,
+# runtime1.go, panic.go, dit.go, time.go, mgc.go).
+intrinsic crypto/fips140.setBypass                 RuntimeIntrinsics func()
+intrinsic crypto/fips140.unsetBypass               RuntimeIntrinsics func()
+intrinsic crypto/fips140.isBypassed                RuntimeIntrinsics func() bool
+intrinsic crypto/internal/fips140.getIndicator     RuntimeIntrinsics func() uint8
+intrinsic crypto/internal/fips140.setIndicator     RuntimeIntrinsics func(uint8)
+intrinsic crypto/internal/fips140.fatal            RuntimeIntrinsics func(string)
+intrinsic crypto/internal/sysrand.fatal            RuntimeIntrinsics func(string)
+intrinsic crypto/rand.fatal                        RuntimeIntrinsics func(string)
+intrinsic crypto/subtle.setDITEnabled              RuntimeIntrinsics func() bool
+intrinsic crypto/subtle.setDITDisabled             RuntimeIntrinsics func()
+intrinsic crypto/internal/fips140deps/time.monoTime TimeIntrinsics func() int64
+intrinsic runtime/debug.setPanicOnFault            RuntimeIntrinsics func(bool) bool
+intrinsic syscall.runtimeClearenv                  GodebugIntrinsics func(map[string]int)
+intrinsic runtime.vgetrandom                       SyscallIntrinsics func([]uint8, uint32) (int, bool)
+# crypto/internal/boring/sig (sig_amd64.s): markers whose code bytes tools
+# search binaries for; as calls they do nothing.
+intrinsic crypto/internal/boring/sig.BoringCrypto   CryptoIntrinsics func()
+intrinsic crypto/internal/boring/sig.FIPSOnly       CryptoIntrinsics func()
+intrinsic crypto/internal/boring/sig.StandardCrypto CryptoIntrinsics func()
+# gc's compiler intrinsics of crypto/internal/constanttime (ssagen/intrinsics.go:
+# boolToUint8 on every architecture — its Go body panics — and Select where
+# the target has a conditional move).
+replace crypto/internal/constanttime.boolToUint8 CryptoIntrinsics func(bool) uint8
+replace crypto/internal/constanttime.Select      CryptoIntrinsics func(int, int, int) int
+replace crypto/internal/fips140/subtle.xorBytes CryptoIntrinsics func(*uint8, *uint8, *uint8, int) # TEMPORARY (BUG-0058)
+# Assembly kernels of math/big (arith_amd64.s), hash/crc32 (crc32_amd64.s)
+# and internal/chacha8rand (chacha8_amd64.s).
+intrinsic math/big.addVV      BigIntrinsics func([]math/big.Word, []math/big.Word, []math/big.Word) math/big.Word
+intrinsic math/big.subVV      BigIntrinsics func([]math/big.Word, []math/big.Word, []math/big.Word) math/big.Word
+intrinsic math/big.lshVU      BigIntrinsics func([]math/big.Word, []math/big.Word, uint) math/big.Word
+intrinsic math/big.rshVU      BigIntrinsics func([]math/big.Word, []math/big.Word, uint) math/big.Word
+intrinsic math/big.mulAddVWW  BigIntrinsics func([]math/big.Word, []math/big.Word, math/big.Word, math/big.Word) math/big.Word
+intrinsic math/big.addMulVVWW BigIntrinsics func([]math/big.Word, []math/big.Word, []math/big.Word, math/big.Word, math/big.Word) math/big.Word
+intrinsic hash/crc32.castagnoliSSE42       CrcIntrinsics func(uint32, []uint8) uint32
+intrinsic hash/crc32.castagnoliSSE42Triple CrcIntrinsics func(uint32, uint32, uint32, []uint8, []uint8, []uint8, uint32) (uint32, uint32, uint32)
+intrinsic hash/crc32.ieeeCLMUL             CrcIntrinsics func(uint32, []uint8) uint32
+intrinsic internal/chacha8rand.block ChachaIntrinsics func(*[4]uint64, *[32]uint64, uint32)
+# x86 feature probes (internal/cpu cpu_x86.s, golang.org/x/sys/cpu
+# cpu_gc_x86.s): the model of graalgo's feature set (CpuIntrinsics).
+intrinsic internal/cpu.cpuid           CpuIntrinsics func(uint32, uint32) (uint32, uint32, uint32, uint32)
+intrinsic internal/cpu.xgetbv          CpuIntrinsics func() (uint32, uint32)
+intrinsic internal/cpu.getGOAMD64level CpuIntrinsics func() int32
+intrinsic vendor/golang.org/x/sys/cpu.cpuid  CpuIntrinsics func(uint32, uint32) (uint32, uint32, uint32, uint32)
+intrinsic vendor/golang.org/x/sys/cpu.xgetbv CpuIntrinsics func() (uint32, uint32)

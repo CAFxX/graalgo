@@ -68,12 +68,32 @@ func pcFileLine(pc uintptr) (file string, line int)
 // meaningful if the binary is copied to another machine.
 // Use the system path to locate the “go” binary, and use
 // “go env GOROOT” to find its GOROOT.
-func GOROOT() string
+func GOROOT() string {
+	s := gogetenv("GOROOT")
+	if s != "" {
+		return s
+	}
+	return defaultGOROOT
+}
+
+// defaultGOROOT is the toolchain's GOROOT, set by the link as cmd/link sets
+// it (graalgo-tool link: none under -trimpath, where cmd/go clears GOROOT).
+var defaultGOROOT string
+
+// gogetenv returns the value of the environment variable key as the process
+// started with it (an intrinsic).
+func gogetenv(key string) string
 
 // Version returns the Go tree's version string.
 // It is either the commit hash and date at the time of the build or,
 // when possible, a release tag like "go1.3".
-func Version() string
+func Version() string {
+	return buildVersion
+}
+
+// buildVersion is the toolchain's version, set by the link as cmd/link
+// sets it.
+var buildVersion string
 
 // NumGoroutine returns the number of goroutines that currently exist.
 func NumGoroutine() int

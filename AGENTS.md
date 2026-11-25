@@ -32,6 +32,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   Makefile header is the exact list. CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).
+- Every new-path gate builds with `-tags=purego`, as the product launcher
+  does (ADR-0010 DV3; [test/lib/toolexec.sh](test/lib/toolexec.sh)): gates
+  build what the product builds.
 - `make pre-land` — **the pre-land checklist; a lane runs it in full
   before reporting done**: `make all`, then `check-links-external` (the
   markdown-links workflow: every external URL, network; local `make

@@ -115,12 +115,22 @@ final class SyscallIntrinsics {
     }
 
     /**
-     * {@code runtime.GOROOT}: {@code $GOROOT} when set. gc falls back to the GOROOT recorded at
-     * link time; graalgo does not record it yet and returns "" (docs/arch/limitations.md).
+     * {@code runtime.gogetenv(key)}: the variable as the process started with it (gc reads its
+     * startup copy of the environment, which {@code os.Setenv} does not change); "" if unset.
      */
     @TruffleBoundary
-    static Str runtime_GOROOT(Node node) {
-        String s = System.getenv("GOROOT");
+    static Str runtime_gogetenv(Node node, Str key) {
+        String s = System.getenv(key.toString());
         return s == null || s.isEmpty() ? Str.EMPTY : Str.of(s);
+    }
+
+    /**
+     * {@code runtime.vgetrandom(p []byte, flags uint32) (ret int, supported bool)}, which
+     * {@code internal/syscall/unix.GetRandom} tries before the system call: there is no vDSO
+     * state here (gc's answer without the vDSO function), so callers make the
+     * {@code getrandom} system call.
+     */
+    static Object runtime_vgetrandom(Node node, Object p, long flags) {
+        return new Object[] {-1L, false};
     }
 }

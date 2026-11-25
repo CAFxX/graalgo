@@ -13,7 +13,9 @@
 # runtime-provided) or gc's compiler replaces it — the Java intrinsic the
 # registry (internal/toolexec/intrinsics/registry.txt) names for its symbol.
 # The exceptions are the registry's TEMPORARY entries (BUG-0037:
-# reflectlite.Swapper and pkgPath), each tied to an open bug.
+# reflectlite.Swapper and pkgPath; BUG-0058: crypto's xorBytes), each tied
+# to an open bug. Programs build with -tags=purego, as the launcher does
+# (test/lib/toolexec.sh).
 #
 # Compared per program: stdout (bytes), stderr (normalized by
 # test/lib/normalize.py: goroutine ids, frame lines, hex

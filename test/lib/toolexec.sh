@@ -18,6 +18,11 @@
 #                    the same for the named files (a command-line-arguments
 #                    package: what `go build file.go` builds for gc, so
 #                    file paths in tracebacks are the sources' own).
+#                    Both build with `-tags=purego`, as the product launcher
+#                    does (ADR-0010 DV3): the gates test the files the
+#                    product compiles (std crypto's pure-Go code, not its
+#                    assembly). A caller's own -tags must include purego
+#                    (the last -tags flag wins).
 #
 # A build through graalgo-tool without the fork fails at link: the upstream
 # runtime's assembly has no intrinsics (design §5.3).
@@ -46,10 +51,10 @@ toolexec_setup() {
 
 toolexec_build() {
     GRAALGO_STUB="$TOOLEXEC_STUB" GRAALGO_RUNNER="$2" \
-        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" "${@:3}" -o "$1" .
+        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" -tags=purego "${@:3}" -o "$1" .
 }
 
 toolexec_build_files() {
     GRAALGO_STUB="$TOOLEXEC_STUB" GRAALGO_RUNNER="$2" \
-        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" -o "$1" "${@:3}"
+        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" -tags=purego -o "$1" "${@:3}"
 }

@@ -57,6 +57,7 @@ final class SyscallTable {
         BY_NR[292] = new Entry(292, "dup3", false, 0, new Role[] {Role.VAL, Role.VAL, Role.VAL});
         BY_NR[293] = new Entry(293, "pipe2", false, 0, new Role[] {Role.struct(8, true), Role.VAL});
         BY_NR[302] = new Entry(302, "prlimit64", false, 0, new Role[] {Role.VAL, Role.VAL, Role.struct(16, false), Role.struct(16, true)});
+        BY_NR[318] = new Entry(318, "getrandom", false, 0, new Role[] {Role.bytes(1, true, true), Role.VAL, Role.VAL});
         BY_NR[439] = new Entry(439, "faccessat2", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
         BY_NR[452] = new Entry(452, "fchmodat2", false, 0, new Role[] {Role.VAL, Role.CSTR, Role.VAL, Role.VAL});
     }

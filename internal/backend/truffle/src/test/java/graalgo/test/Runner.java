@@ -44,8 +44,10 @@ public final class Runner {
         TESTS.add(graalgo.go.runtime.HandlesTest.class);
         TESTS.add(graalgo.go.nodes.KeyOpsTest.class);
         TESTS.add(graalgo.go.nodes.EntryPollTest.class);
+        TESTS.add(graalgo.go.nodes.FrameEnvTest.class);
         TESTS.add(graalgo.go.nodes.SourcesTest.class);
         TESTS.add(graalgo.go.intrinsics.BytealgKernelTest.class);
+        TESTS.add(graalgo.go.intrinsics.CrcKernelTest.class);
         TESTS.add(graalgo.conventions.NodeConventionsTest.class);
     }
 

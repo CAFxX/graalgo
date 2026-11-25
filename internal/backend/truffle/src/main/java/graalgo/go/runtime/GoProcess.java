@@ -66,6 +66,11 @@ public final class GoProcess {
     /** {@code internal/godebug}'s update hook ({@code setUpdate}): called with the GODEBUG setting when it changes. */
     public volatile graalgo.go.values.Closure godebugUpdate;
 
+    /** Finalizers and cleanups (runtime.SetFinalizer, runtime.AddCleanup) of this process. */
+    public final Finalizers finalizers;
+    /** {@code runtime.GC} calls so far (gc {@code MemStats.NumForcedGC}). */
+    public final java.util.concurrent.atomic.AtomicLong numForcedGC = new java.util.concurrent.atomic.AtomicLong();
+
     /** The link's {@code -X runtime.godebugDefault}: the program's default GODEBUG settings. */
     public final String godebugDefault;
     /** gc's {@code debug.panicnil}: 1 makes {@code panic(nil)} panic with a nil value. */
@@ -77,6 +82,7 @@ public final class GoProcess {
         this.err = err;
         this.types = types;
         this.godebugDefault = godebugDefault;
+        this.finalizers = new Finalizers(this, sched);
         this.panicNil = Godebug.startup("panicnil", godebugDefault, System.getenv("GODEBUG"));
     }
 
@@ -133,6 +139,20 @@ public final class GoProcess {
     @TruffleBoundary
     public Fatal fatal(String text) {
         StringBuilder sb = new StringBuilder("fatal error: ").append(text).append("\n\ngoroutine ")
+                .append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.current(0, MAX_FRAMES + 1));
+        writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));
+        sched.requestExit(2);
+        return new Fatal();
+    }
+
+    /**
+     * gc's crash on a fatal signal the program raised itself ({@code runtime.Breakpoint}'s
+     * {@code SIGTRAP}): the signal line, the register line, the goroutine, exit status 2.
+     */
+    @TruffleBoundary
+    public Fatal signal(String signal, String registers) {
+        StringBuilder sb = new StringBuilder(signal).append('\n').append(registers).append("\n\ngoroutine ")
                 .append(sched.currentGoroutine().id).append(" [running]:\n");
         traceback(sb, stacks.current(0, MAX_FRAMES + 1));
         writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));
