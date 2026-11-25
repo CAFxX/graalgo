@@ -71,9 +71,9 @@ WARN_RATIO, WARN_SLACK = 1.2, 5.0
 FAIL_SLACK = 30.0
 DEFAULT_BASELINE = os.path.join(ROOT, "test", "duration-baseline.json")
 # Gates that share a scratch directory with fixed file names never run
-# concurrently: the truffle module's JVM tests (pin-audit smoke in `check`,
-# the smoke tests, the fast Java classes) all use truffle/out/test-tmp.
-SERIAL_GROUPS = [{"check", "test-ci", "test-java-fast"}]
+# concurrently: the truffle module's JVM tests (test-pin-smoke, `check`'s
+# module gates, the smoke tests, the fast Java classes) use truffle/out/test-tmp.
+SERIAL_GROUPS = [{"check", "test-pin-smoke", "test-ci", "test-java-fast"}]
 # The weight of a gate the baseline has no wall time for (a new gate).
 SHARD_DEFAULT_WALL = 30.0
 
