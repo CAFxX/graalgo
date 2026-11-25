@@ -75,7 +75,7 @@ public final class BundleBatchMain {
 
     public static void main(String[] args) throws IOException {
         if (args.length != 2) {
-            System.err.println("usage: BundleBatchMain <manifest> <results>");
+            report("usage: BundleBatchMain <manifest> <results>\n");
             Runtime.getRuntime().halt(2);
         }
         List<Entry> entries = new ArrayList<>();
@@ -163,7 +163,7 @@ public final class BundleBatchMain {
                 // os.Exit(n), an uncaught panic or a fatal error: the context's hard exit.
                 status = ex.getExitStatus();
             } else {
-                System.err.println("graalgo: " + ex.getMessage());
+                report("graalgo: " + ex.getMessage() + "\n");
                 status = 2;
             }
         } catch (RuntimeException | Error ex) {
@@ -213,7 +213,14 @@ public final class BundleBatchMain {
     private static int internalError(Throwable t) {
         StringWriter w = new StringWriter();
         t.printStackTrace(new PrintWriter(w));
-        System.err.print("Exception in thread \"main\" " + w);
+        report("Exception in thread \"main\" " + w);
         return 1;
+    }
+
+    /** A line on the program's stderr, as {@link BundleMain} writes its own. */
+    private static void report(String text) {
+        byte[] b = text.getBytes(StandardCharsets.UTF_8);
+        System.err.write(b, 0, b.length);
+        System.err.flush();
     }
 }
