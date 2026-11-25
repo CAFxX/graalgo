@@ -464,3 +464,74 @@ cycle). Open: reflect's `mapaccess_faststr`/`mapassign_faststr0`
 intrinsics in `reqpipe` are still boundary calls; NaN keys hash alike
 (gc randomizes them), so many NaN keys in one map probe linearly.
 
+### 8.3 Lane perf-frames (2026-11-25): loops, frames, closure environments
+
+WP-TR-AUDIT-5 ([truffle-audit.md](truffle-audit.md) F-6.4, F-8.1, F-8.2;
+A9 decided by [ADR-0023](../dev/adr/ADR-0023-closure-environments.md)).
+Before: master `04e68ec5`. Suite and realistic: `--reps 3 --pgo` /
+`--reps 3`, the same tree before and after (host load 5–12); realistic
+and the closure programs also as interleaved A/B worktrees (3 reps each,
+medians; load 8–12).
+
+| Benchmark | ×gc before | ×gc after | ×gc+PGO after |
+|---|---:|---:|---:|
+| `closurealloc` (escaping closures, 0–3 captures; A/B) | 3.24× | **2.04×** | |
+| `sortslice` (`sort.Slice` + `slices.All`; A/B) | 1.35× | **1.22×** | |
+| `closures` (A/B) | 1.38× | 1.39× | |
+| suite geomean (28) | 1.43× | 1.39× | 1.45× (was 1.49×) |
+| realistic geomean (8, A/B) | 5.16× | 5.48× | |
+| realistic without `goroutines` (7, A/B) | 3.66× | 3.71× | |
+
+The suite moves within the host's noise (`structs` 7.1→6.1×, `chanpingpong`
+5.6→4.4×, `mapstr` 0.83→0.68×; `slicesum` 1.13→1.22×); graalgo's CPU ratio
+drops slightly on most programs. `goroutines` swings 57×–98× between runs of
+the *same* tree on this host and decides the realistic geomean; without it
+the realistic set is flat. `closures` does not move: its literals are
+non-escaping and were already scalar-replaced with the old frame
+environment; the win is on escaping closures (ADR-0023: 128 → 24 B per
+one-capture closure, 0 B without captures).
+
+Interpreter only (`-Dpolyglot.engine.Compilation=false`, interleaved A/B,
+5 reps, median of best rounds, ms): `loop` 217 → 199, `sort` 1011 → 948,
+`closures` 434 → 475, `structs` 109 → 125, `fib` 249 → 488. `fib` is the
+host JIT's inlining of the interpreter around the harness loop, not the
+nodes it runs: the same tree without static slots is equally slow, a
+variant of `Ctl.java` alone flips it, and with compilation on `fib`'s
+first round is faster (94 → 73 ms) and its time to peak unchanged
+(open item: diagnose the interpreter-only `fib` sensitivity).
+
+What changed:
+
+1. **Loops.** A compiled strip (ADR-0016's strip mining) reports the
+   iterations it ran beyond the one the loop node counts, and a backward
+   `goto` reports a back-edge (`Ctl.reportIterations`, guarded by
+   `hasNextTier`), so tier-2 and OSR see the real loop count. Every loop
+   form (for, range over slice/array/string/map/chan/int, select loops)
+   lowers to `Ctl.For`; range-over-func's body is a yield function whose
+   loop is the iterator's own. OSR compilations are named after their
+   function (`main.apply<OSR>`, was `Ctl.Repeat@1f2e3d<OSR>`).
+2. **Static slots.** Every slot the factory allocates (locals, temporaries,
+   `Mem.Aux`, defer bits) is `FrameSlotKind.Static`, read and written by
+   the `*Static` accessors: no tag store per write, no tag check per read.
+   (The debugger's default scope lists only auxiliary slots, so nothing
+   reads them generically.)
+3. **Dead-slot clearing** (`NodeFactory.deadAfter`, `N.ClearRefs`): the
+   reference slot of a local declared by a statement list is cleared after
+   the last statement of that list that references it; a local declared
+   inside a statement (header, nested block, case clause) after that
+   statement. References come from `GirLocals`, generated from the GIR
+   schema (every `local` field; a literal's captures, not its body). Bodies
+   with `goto` are skipped; GIR `Block` statements are not treated as
+   scopes (a `var ( ... )` group and a switch header's init are lowered to
+   blocks). `test/m1r/programs/frame_liveness.go` checks with weak
+   pointers that gc and graalgo free the same dead objects.
+4. **Closure environments** (ADR-0023): `null` for a capture-free literal
+   (one constant func value), the box itself for one capture, an
+   `Object[]` for more; `Bind1`, range-over-func and reflect's func values
+   use the same layouts.
+
+PE evidence: `pe-check-m1a` 0 failed compilations (`pe_std` 475
+compilations, plant fails as it must); `TracePerformanceWarnings=all` 0 on
+`loop`, `sort`, `closures`, `structs` (0 failed compilations; 1, 4, 4 and
+0 deoptimizations while warming up, no root recompiled in a cycle).
+

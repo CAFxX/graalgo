@@ -10,6 +10,7 @@ import com.oracle.truffle.api.instrumentation.ProbeNode;
 import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.instrumentation.Tag;
 import com.oracle.truffle.api.nodes.ControlFlowException;
+import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
@@ -363,7 +364,7 @@ public final class N {
 
         @Override
         public long executeLong(VirtualFrame frame) {
-            return frame.getLong(slot);
+            return frame.getLongStatic(slot);
         }
     }
 
@@ -376,7 +377,7 @@ public final class N {
 
         @Override
         public double executeDouble(VirtualFrame frame) {
-            return frame.getDouble(slot);
+            return frame.getDoubleStatic(slot);
         }
     }
 
@@ -389,7 +390,7 @@ public final class N {
 
         @Override
         public boolean executeBoolean(VirtualFrame frame) {
-            return frame.getBoolean(slot);
+            return frame.getBooleanStatic(slot);
         }
     }
 
@@ -402,7 +403,7 @@ public final class N {
 
         @Override
         public Object executeGeneric(VirtualFrame frame) {
-            return frame.getObject(slot);
+            return frame.getObjectStatic(slot);
         }
     }
 
@@ -417,7 +418,7 @@ public final class N {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            frame.setLong(slot, v.executeLong(frame));
+            frame.setLongStatic(slot, v.executeLong(frame));
         }
     }
 
@@ -432,7 +433,7 @@ public final class N {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            frame.setDouble(slot, v.executeDouble(frame));
+            frame.setDoubleStatic(slot, v.executeDouble(frame));
         }
     }
 
@@ -447,7 +448,7 @@ public final class N {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            frame.setBoolean(slot, v.executeBoolean(frame));
+            frame.setBooleanStatic(slot, v.executeBoolean(frame));
         }
     }
 
@@ -462,7 +463,28 @@ public final class N {
 
         @Override
         public void executeVoid(VirtualFrame frame) {
-            frame.setObject(slot, v.executeGeneric(frame));
+            frame.setObjectStatic(slot, v.executeGeneric(frame));
+        }
+    }
+
+    /**
+     * Clears the reference slots of locals that are dead from here on, so a long-lived frame
+     * does not keep their objects alive (gc's liveness maps; the factory's dead-slot analysis).
+     * In compiled code the stores fold into the virtual frame.
+     */
+    public static final class ClearRefs extends Stmt {
+        @CompilationFinal(dimensions = 1) private final int[] slots;
+
+        public ClearRefs(int[] slots) {
+            this.slots = slots;
+        }
+
+        @Override
+        @ExplodeLoop
+        public void executeVoid(VirtualFrame frame) {
+            for (int slot : slots) {
+                frame.clearObjectStatic(slot);
+            }
         }
     }
 
@@ -479,7 +501,7 @@ public final class N {
         @Override
         public long executeLong(VirtualFrame frame) {
             long x = v.executeLong(frame);
-            frame.setLong(slot, x);
+            frame.setLongStatic(slot, x);
             return x;
         }
     }

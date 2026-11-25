@@ -1,39 +1,38 @@
 package graalgo.go.values;
 
-import com.oracle.truffle.api.Truffle;
-import com.oracle.truffle.api.frame.FrameDescriptor;
-import com.oracle.truffle.api.frame.FrameSlotKind;
-import com.oracle.truffle.api.frame.MaterializedFrame;
-
 /**
- * The capture environment of a closure — the one place that knows its representation. Today it
- * is SPEC §3.4's {@code MaterializedFrame}: one object slot per captured variable, holding the
- * variable's {@link Flat} box. The closure nodes ({@code MakeClosure}, {@code Bind1},
- * {@code EnvRead}) go through these four methods only, so a typed-cell array can be swapped in
- * and benchmarked without touching the factory (truffle-design amendment A9, undecided).
+ * The capture environment of a closure — the one place that knows its representation (SPEC
+ * §3.4, ADR-0023, truffle-design amendment A9). The layout is fixed by the capture count
+ * {@code size}, which every creator and reader knows statically (the literal's captures, a
+ * bound receiver, an intrinsic's own state):
+ *
+ * <ul>
+ *   <li>{@code size == 0}: no environment ({@code null}); the closure is a constant.
+ *   <li>{@code size == 1}: the captured value itself (a {@link Flat} box, a bound receiver);
+ *       no allocation beyond the {@link Closure}.
+ *   <li>{@code size >= 2}: an {@code Object[size]}, one element per captured value.
+ * </ul>
+ *
+ * <p>A captured variable is captured by reference through its box, so the environment itself is
+ * never written after creation: escape analysis scalar-replaces it with the closure when the
+ * func value does not escape.
  */
 public final class Env {
     private Env() {}
 
-    private static final Object[] NO_ARGS = new Object[0];
-
-    /** The layout of an environment with {@code n} captured variables. */
-    public static FrameDescriptor layout(int n) {
-        FrameDescriptor.Builder b = FrameDescriptor.newBuilder();
-        b.addSlots(n, FrameSlotKind.Object);
-        return b.build();
+    /** An environment of {@code size >= 2} values, filled with {@link #set}. */
+    public static Object[] create(int size) {
+        assert size >= 2;
+        return new Object[size];
     }
 
-    public static MaterializedFrame create(FrameDescriptor layout) {
-        return Truffle.getRuntime().createMaterializedFrame(NO_ARGS, layout);
+    public static void set(Object[] env, int index, Object value) {
+        env[index] = value;
     }
 
-    public static void set(MaterializedFrame env, int index, Object box) {
-        env.setObject(index, box);
-    }
-
-    /** Capture {@code index} of the environment passed as a call's first argument. */
-    public static Object get(Object env, int index) {
-        return ((MaterializedFrame) env).getObject(index);
+    /** Value {@code index} of an environment of {@code size} values. */
+    public static Object get(Object env, int index, int size) {
+        assert size >= 1 && index < size;
+        return size == 1 ? env : ((Object[]) env)[index];
     }
 }

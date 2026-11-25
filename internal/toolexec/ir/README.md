@@ -4,7 +4,7 @@ The container written into each package archive and read by the JVM:
 string table, type table keyed by canonical type keys, one lazily decodable
 blob per function. [schema.txt](schema.txt) is the single source of truth;
 [gen/](gen/) + [schema/](schema/) generate [gir_gen.go](gir_gen.go) here and
-`Gir.java`/`GirCodec.java` in [internal/backend/gir/](../../backend/gir/README.md).
+`Gir.java`/`GirCodec.java`/`GirLocals.java` in [internal/backend/gir/](../../backend/gir/README.md).
 [typekey.go](typekey.go) defines canonical type keys (also used by the
 intrinsic registry's signatures). [testdata/](testdata/) holds golden and
 malformed vectors both codecs must agree on.

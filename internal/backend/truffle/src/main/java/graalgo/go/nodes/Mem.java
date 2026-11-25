@@ -114,18 +114,18 @@ public final class Mem {
 
         @Override
         public final Flat viewObj(VirtualFrame frame) {
-            return (Flat) frame.getObject(auxV);
+            return (Flat) frame.getObjectStatic(auxV);
         }
 
         @Override
         public final long viewOff(VirtualFrame frame) {
-            return frame.getLong(auxG);
+            return frame.getLongStatic(auxG);
         }
 
         /** Enters view mode: {@link #resolve} returns the null this returns. */
         final Flat view(VirtualFrame frame, Flat obj, long off) {
-            frame.setObject(auxV, obj);
-            frame.setLong(auxG, off);
+            frame.setObjectStatic(auxV, obj);
+            frame.setLongStatic(auxG, off);
             return null;
         }
 
@@ -144,29 +144,29 @@ public final class Mem {
 
         @Override
         public final int byt(VirtualFrame frame) {
-            return frame.getInt(auxB);
+            return frame.getIntStatic(auxB);
         }
 
         final void set(VirtualFrame frame, int p, int r, int b) {
             if ((need & P) != 0) {
-                frame.setInt(auxP, p);
+                frame.setIntStatic(auxP, p);
             }
             if ((need & R) != 0) {
-                frame.setInt(auxR, r);
+                frame.setIntStatic(auxR, r);
             }
             if ((need & B) != 0) {
-                frame.setInt(auxB, b);
+                frame.setIntStatic(auxB, b);
             }
         }
 
         @Override
         public final int prim(VirtualFrame frame) {
-            return frame.getInt(auxP);
+            return frame.getIntStatic(auxP);
         }
 
         @Override
         public final int ref(VirtualFrame frame) {
-            return frame.getInt(auxR);
+            return frame.getIntStatic(auxR);
         }
     }
 

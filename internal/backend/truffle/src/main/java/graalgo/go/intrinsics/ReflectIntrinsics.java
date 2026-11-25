@@ -1,8 +1,6 @@
 package graalgo.go.intrinsics;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.FrameDescriptor;
-import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -704,7 +702,7 @@ final class ReflectIntrinsics {
         storeResults(node, ft, rets, m.target().call(node, a));
     }
 
-    private static final FrameDescriptor FUNC_ENV = Env.layout(2);
+    private static final int FUNC_ENV = 2;
 
     /**
      * {@code makeFuncValue(t, impl) unsafe.Pointer}: a func value of type {@code t} whose call
@@ -713,7 +711,7 @@ final class ReflectIntrinsics {
      */
     @TruffleBoundary
     static Object reflect_makeFuncValue(Node node, Object rtype, Object impl) {
-        MaterializedFrame env = Env.create(FUNC_ENV);
+        Object[] env = Env.create(FUNC_ENV);
         Env.set(env, 0, funcType(node, rtype));
         Env.set(env, 1, impl);
         GoLanguage lang = GoLanguage.get(node);
@@ -739,7 +737,7 @@ final class ReflectIntrinsics {
         @Override
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
-            return run((GoType) Env.get(a[0], 0), (Closure) Env.get(a[0], 1), a);
+            return run((GoType) Env.get(a[0], 0, FUNC_ENV), (Closure) Env.get(a[0], 1, FUNC_ENV), a);
         }
 
         @TruffleBoundary
@@ -769,7 +767,6 @@ final class ReflectIntrinsics {
         }
     }
 
-    private static final FrameDescriptor METHOD_ENV = Env.layout(1);
 
     /**
      * {@code methodFunc(t, name) unsafe.Pointer}: the func value of the method expression
@@ -782,13 +779,11 @@ final class ReflectIntrinsics {
         if (m == null) {
             throw new IllegalStateException("reflect: no method " + name + " on " + t.str());
         }
-        MaterializedFrame env = Env.create(METHOD_ENV);
-        Env.set(env, 0, m);
         GoLanguage lang = GoLanguage.get(node);
-        return new Closure(lang.runtimeTypes().sharedTarget("reflect.methodFunc.func", () -> new MethodExprRoot(lang)), env);
+        return new Closure(lang.runtimeTypes().sharedTarget("reflect.methodFunc.func", () -> new MethodExprRoot(lang)), m);
     }
 
-    /** The code of every func value {@link #reflect_methodFunc} returns: env {@code [Method]}. */
+    /** The code of every func value {@link #reflect_methodFunc} returns: env the {@link Method} (a one-value {@link Env}). */
     private static final class MethodExprRoot extends RootNode {
         MethodExprRoot(GoLanguage language) {
             super(language);
@@ -811,7 +806,7 @@ final class ReflectIntrinsics {
 
         @TruffleBoundary
         private Object run(Object[] a) {
-            Method m = (Method) Env.get(a[0], 0);
+            Method m = (Method) Env.get(a[0], 0, 1);
             Object[] b = a.clone();
             b[0] = null;
             b[1] = Receivers.adapt(m, a[1], this);

@@ -356,7 +356,9 @@ iteration order, so the runtime must own the iterator); strings as immutable
 `GoString{byte[]}` (a window into a `byte[]`, so `unsafe.String`/`unsafe.StringData`
 can share storage; `java.lang.String` is UTF-16 and wrong for arbitrary Go
 bytes); interfaces as `(dynamicType descriptor, data)` + itab; closures as
-`{RootCallTarget, MaterializedFrame|null}`. "Go pointer" = Java reference to the
+`{RootCallTarget, env}` — env null without captures, the captured box itself
+for one, an `Object[]` for more (amendment A9,
+[ADR-0023](../dev/adr/ADR-0023-closure-environments.md)). "Go pointer" = Java reference to the
 referent plus a gc byte offset within it, never a native address:
 the GC moves objects freely; write barriers and exact roots come free from the
 JVM; pinning happens only at the cgo/FFI boundary, scoped to the call
