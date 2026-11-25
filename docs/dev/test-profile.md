@@ -58,6 +58,23 @@ Changes (each with a planted violation; see the commits):
   the entry: a miss); signal-killed or crashed gc runs are never stored;
   the oracle key hashes gcoracle.sh and the leg's shell functions.
 
+Measured `make pre-land` (dev host, `-j 1`, `nice -n 19`, `SNAPSHOT_JOBS=1`,
+`GRAALGO_JAVA_OPTS=-Xmx4g`, load 10–14; wall is noisy, CPU is the number):
+
+| run | tree | wall s | CPU s (user+sys) | notes |
+|---|---|---:|---:|---|
+| master | a09719ea | 1045 | 1807 | gc-oracle cold |
+| this lane | 8026dfc6 (= master f7da9e04 + lane) | 950 | 1699 | includes master's new leak.sh/tools.sh (~+20 CPU s); frontend suite missed (the merge changed it) |
+| `make check`, unchanged tree | 8026dfc6 | 22 | 19 | was 162 / 280 with the pin smoke and the uncached frontend suite |
+
+Per tier: CI per-push build-and-check 12.3 min on one runner -> four
+shards of ~360 s of baseline work each (snapshot-check alone is 339 s):
+~6–7 min expected (to be confirmed by the first sharded run, whose four
+gate-times artifacts re-record the CI baseline); conformance and the
+nightly mutation run lose ~20% and up to ~3x of their gate time (CDS; 4
+programs at a time); the weekly full-suite is unchanged (12 min, its
+two v1 classes are 437 of its 608 s).
+
 Evaluated and not taken: `-XX:TieredStopAtLevel=1` (bundle JVM: -31% CPU,
 same wall; sync JVM: -17% CPU, +11% wall; it changes the host JIT the
 runtime's concurrency is tested under); `-XX:+UseSerialGC` (no gain); the
@@ -72,7 +89,12 @@ one JVM, process isolation kept for exit/deadlock/signal programs) for the
 m1* gates (~0.3 s x ~300 programs); slicing snapshot-check across two CI
 shards (needs per-slice exclusion accounting); `t.Parallel` in
 graalgo-tool's e2e tests; the slow runtime classes the pin smoke runs per
-push (GcDifferentialTest ~41 s, LauncherOsArgsTest ~20 s on CI).
+push (GcDifferentialTest ~41 s, LauncherOsArgsTest ~20 s on CI);
+test-goroutine-modes (35 s / 91 CPU s at f7da9e04, growing with each
+probe: m1a/m1r/m1c thread-mode programs one JVM each, cancel.sh, tools.sh
+and leak.sh's 12 contexts x 2 modes): one JVM per mode running every
+probe and program in fresh Contexts of a shared engine, the same
+assertions (toolexec_setup itself is only ~0.9 s per script).
 
 ## Baselines per environment
 
