@@ -51,7 +51,9 @@ buffer with Go's `copy`, compare, repeat for a minute under `nice -n 19`
 busy loops on every core); expect 0 corruptions. Until then:
 
 - keep host load moderate (`make -j2`, one JVM per lane, AGENTS.md §7):
-  the rate is ~0 below load ~12 and climbs steeply above ~20;
+  the rate is ~0 below load ~12 and climbs steeply above ~20 (but on
+  2026-11-25 gofrontend's detection fired at load ~13, 25 minutes after
+  the PC hard-crashed and rebooted overnight — treat any load as exposed);
 - `gofrontend` scans its encoded document for NUL bytes (and treats a
   syntax error in encoding/json's re-scan of its own output alike) and
   exits **3** (infrastructure failure, `ErrHostCorruption`) instead of
