@@ -11,6 +11,9 @@ stderr and exit status.
   value model…), [multipkg/](multipkg/) modules and girinterp's programs
 - [transform.py](transform.py) — makes phase-1 corpus programs print their
   `// observe:` variables (tested by [test_transform.py](test_transform.py))
+- [tbnorm.py](tbnorm.py) — the stderr normalizer of programs with a
+  `// m1a:traceback` line: keeps each traceback frame's name and file:line
+  (tested by [test_tbnorm.py](test_tbnorm.py); ADR-0020)
 - [defer_path.sh](defer_path.sh) — pins the open-coded defer limit and
   re-runs defer programs with every function forced onto the chain
 - [bench.sh](bench.sh) / [bench.py](bench.py) — [test/bench/](../bench/README.md)

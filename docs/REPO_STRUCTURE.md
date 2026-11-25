@@ -345,7 +345,11 @@ directory's README repeats its status.
     embedder (`Context.close(true)` with goroutines blocked everywhere,
     system calls included; thread-local action reach; `os.Exit` and panic
     as Truffle hard exits; both goroutine modes, ADR-0019; run by `make
-    test-goroutine-modes`).
+    test-goroutine-modes`); [tools.sh](../test/m1r/tools.sh) builds
+    [tools/probe.go](../test/m1r/tools/probe.go) and runs Truffle tools on it
+    (an `ExecutionListener` on statements and roots in both goroutine modes,
+    a collecting `CPUSampler` in carrier mode: Go names and file:line;
+    ADR-0020, BUG-0050; run by `make test-goroutine-modes`).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r
@@ -443,7 +447,10 @@ directory's README repeats its status.
     [programs/](../test/m1a/programs/) adds programs for areas the corpus
     is thin on (open-coded and chained defers, Goexit, recover through
     wrappers, range-over-func, the flat value model, interfaces, generics,
-    goroutines, bounds and conversion edge cases);
+    goroutines, bounds and conversion edge cases); a program with a
+    `// m1a:traceback` line has its traceback frames (names, file:line)
+    compared too, normalized by [tbnorm.py](../test/m1a/tbnorm.py) (tested by
+    [test_tbnorm.py](../test/m1a/test_tbnorm.py); ADR-0020);
     [multipkg/](../test/m1a/multipkg/) holds multi-package modules.
     [defer_path.sh](../test/m1a/defer_path.sh) pins GG-0071's open-coding
     limit and runs the defer programs with every function forced onto the

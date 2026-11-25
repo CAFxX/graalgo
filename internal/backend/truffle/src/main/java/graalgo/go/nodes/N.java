@@ -1,9 +1,19 @@
 package graalgo.go.nodes;
 
 import com.oracle.truffle.api.CompilerDirectives;
+import com.oracle.truffle.api.CompilerDirectives.CompilationFinal;
+import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.instrumentation.GenerateWrapper;
+import com.oracle.truffle.api.instrumentation.InstrumentableNode;
+import com.oracle.truffle.api.instrumentation.ProbeNode;
+import com.oracle.truffle.api.instrumentation.StandardTags;
+import com.oracle.truffle.api.instrumentation.Tag;
 import com.oracle.truffle.api.nodes.ControlFlowException;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.nodes.RootNode;
+import com.oracle.truffle.api.source.SourceSection;
+import graalgo.go.runtime.Positions;
 
 /**
  * The node families of the Go AST (SPEC §3.3, truffle-design §4.1): statically typed expression
@@ -20,9 +30,26 @@ import com.oracle.truffle.api.nodes.Node;
 public final class N {
     private N() {}
 
-    public abstract static class GoNode extends Node {}
+    public abstract static class GoNode extends Node {
+        /**
+         * The section of position {@code pos} of the function this node belongs to (null if it
+         * belongs to none, e.g. a generated wrapper). Off the hot path: tools and stack walks.
+         */
+        @TruffleBoundary
+        protected final SourceSection sectionAt(int pos) {
+            if (pos <= 0) {
+                return null;
+            }
+            Positions ps = Positions.of(getRootNode());
+            return ps == null ? null : ps.section(pos);
+        }
+    }
 
-    /** Any expression; {@code executeGeneric} is the boxing boundary (calls, interfaces). */
+    /**
+     * Any expression; {@code executeGeneric} is the boxing boundary (calls, interfaces). Not
+     * instrumentable: expressions are typed by carrier family ({@link I64}, {@link F64}, ...), and
+     * Go's steppable unit is the statement; calls are, through {@link Ref}.
+     */
     public abstract static class Expr extends GoNode {
         public abstract Object executeGeneric(VirtualFrame frame);
     }
@@ -56,11 +83,100 @@ public final class N {
         }
     }
 
-    /** Reference carriers: strings, slices, maps, pointers, interfaces, funcs, flat values. */
-    public abstract static class Ref extends Expr {}
+    /**
+     * Reference carriers: strings, slices, maps, pointers, interfaces, funcs, flat values. Every
+     * call returns a boxed result and is a {@code Ref}, so this is where the {@code CallTag}
+     * wrapper goes (WP-TR-AUDIT-6); only a positioned call is instrumentable.
+     */
+    @GenerateWrapper
+    public abstract static class Ref extends Expr implements InstrumentableNode {
+        @Override
+        public boolean isInstrumentable() {
+            return false;
+        }
 
-    public abstract static class Stmt extends GoNode {
+        @Override
+        public WrapperNode createWrapper(ProbeNode probe) {
+            return new RefWrapper(this, probe);
+        }
+    }
+
+    /**
+     * A positioned call ({@link Calls.Call}, {@link Calls.CallClosure}, {@link Calls.IfaceCall}):
+     * instrumentable with {@code CallTag} when the factory gave it a position.
+     */
+    public abstract static class CallRef extends Ref implements Positions.At {
+        /** Set by the factory before the tree is adopted, never after: a constant. */
+        @CompilationFinal private int pos;
+
+        /** Set once by the factory, before the tree is adopted. */
+        public final void setPos(int pos) {
+            this.pos = pos;
+        }
+
+        @Override
+        public final int pos() {
+            return pos;
+        }
+
+        @Override
+        public final boolean isInstrumentable() {
+            return pos > 0;
+        }
+
+        @Override
+        public final boolean hasTag(Class<? extends Tag> tag) {
+            return tag == StandardTags.CallTag.class;
+        }
+
+        @Override
+        public final SourceSection getSourceSection() {
+            return sectionAt(pos);
+        }
+    }
+
+    /**
+     * A statement. The factory gives each statement of the Go source its position (truffle-design
+     * §6.2); a positioned statement carries {@code StatementTag}, a function body
+     * ({@link Calls.Body}) {@code RootTag} and {@code RootBodyTag}. Wrappers are inserted only
+     * while an instrument is attached: an uninstrumented tree is unchanged (playbook §12).
+     */
+    @GenerateWrapper
+    public abstract static class Stmt extends GoNode implements InstrumentableNode, Positions.At {
+        /** Set by the factory before the tree is adopted, never after: a constant. */
+        @CompilationFinal private int pos;
+
         public abstract void executeVoid(VirtualFrame frame);
+
+        /** Set once by the factory, before the tree is adopted. */
+        public final void setPos(int pos) {
+            this.pos = pos;
+        }
+
+        @Override
+        public final int pos() {
+            return pos;
+        }
+
+        @Override
+        public boolean isInstrumentable() {
+            return pos > 0;
+        }
+
+        @Override
+        public boolean hasTag(Class<? extends Tag> tag) {
+            return tag == StandardTags.StatementTag.class;
+        }
+
+        @Override
+        public SourceSection getSourceSection() {
+            return sectionAt(pos);
+        }
+
+        @Override
+        public WrapperNode createWrapper(ProbeNode probe) {
+            return new StmtWrapper(this, probe);
+        }
     }
 
     /**

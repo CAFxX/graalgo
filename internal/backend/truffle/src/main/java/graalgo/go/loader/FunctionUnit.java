@@ -71,6 +71,26 @@ public final class FunctionUnit {
         }
     }
 
+    /**
+     * gc's name of the function in tracebacks and {@code runtime.FuncForPC}: the symbol, with
+     * {@code [...]} after a generic function's name or a generic receiver's type name
+     * ({@code pkg.F[...]}, {@code pkg.(*T[...]).M}).
+     */
+    public String traceName() {
+        if (func.tparams().length == 0) {
+            return symbol;
+        }
+        String local = pkg.str(func.name());
+        int dot = local.lastIndexOf('.');
+        if (dot < 0) {
+            return pkg.path + "." + local + "[...]";
+        }
+        String recv = local.substring(0, dot);
+        String method = local.substring(dot);
+        recv = recv.endsWith(")") ? recv.substring(0, recv.length() - 1) + "[...])" : recv + "[...]";
+        return pkg.path + "." + recv + method;
+    }
+
     public boolean isBodyless() {
         return (func.flags() & 1) != 0;
     }
