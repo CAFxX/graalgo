@@ -16,7 +16,7 @@ case "$1" in
 version) echo "go version go1.99 fake"; exit 0 ;;
 build) echo x >> "$GO_COUNT"; out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && out="$2"; shift; done
        grep -q REJECT main.go && { echo "main.go:1: rejected"; exit 1; }
-       printf '#!/bin/bash\\necho "%s $MARK"\\necho err >&2\\nexit %s\\n' "$(head -1 main.go)" "$(sed -n 2p main.go)" > "$out"
+       printf '#!/bin/bash\\necho "%s $MARK"\\necho "err${ERR:+ $ERR}" >&2\\nexit %s\\n' "$(head -1 main.go)" "$(sed -n 2p main.go)" > "$out"
        chmod +x "$out" ;;
 esac
 """
@@ -47,11 +47,12 @@ class GcOracleTest(unittest.TestCase):
     def tearDown(self):
         subprocess.call(["rm", "-rf", self.d])
 
-    def leg(self, line="hello", status="0", material="m", mark="", cache=None):
+    def leg(self, line="hello", status="0", material="m", mark="", cache=None, driver_extra="", err=""):
         env = dict(os.environ, GO=self.go, GO_COUNT=self.count, LIB=HERE, TMP=self.tmp,
-                   LINE=line, STATUS=status, MATERIAL=material, MARK=mark,
+                   LINE=line, STATUS=status, MATERIAL=material, MARK=mark, ERR=err,
                    GC_ORACLE_CACHE=cache or os.path.join(self.d, "cache"))
-        out = subprocess.run(["bash", "-c", DRIVER], env=env, capture_output=True, text=True)
+        driver = DRIVER.replace("gc_live() {", driver_extra + "\ngc_live() {") if driver_extra else DRIVER
+        out = subprocess.run(["bash", "-c", driver], env=env, capture_output=True, text=True)
         self.assertEqual(out.returncode, 0, out.stderr)
         return out.stdout
 
@@ -98,6 +99,49 @@ class GcOracleTest(unittest.TestCase):
         self.leg(cache="off")
         self.leg(cache="off")
         self.assertEqual(self.builds(), 6)
+        for st in ("139", "137"):  # killed by a signal: the host, not gc
+            self.leg(status=st)
+            self.leg(status=st)
+        self.assertEqual(self.builds(), 10)
+        # a crash of the gc runtime itself (its stderr), whatever the status
+        self.leg(status="2", err="fatal error: unexpected signal during runtime execution")
+        self.leg(status="2", err="fatal error: unexpected signal during runtime execution")
+        self.assertEqual(self.builds(), 12)
+        # only the first two legs (status 0, and nothing else) stored nothing either:
+        # 124, scratch mark, off, signals, crash
+        self.assertEqual(self.entries(), [])
+
+    def entries(self):
+        c = os.path.join(self.d, "cache")
+        return sorted(e for e in os.listdir(c) if not e.startswith(".")) if os.path.isdir(c) else []
+
+    def test_corrupt_entry_is_a_miss(self):
+        # BUG-0012 (the host loses bytes in copies): each way an entry can be
+        # damaged is a miss that deletes it, never a replay
+        live = self.leg(status="3")
+        for damage in ("truncate", "flip", "no-manifest", "drop-file"):
+            [e] = self.entries()
+            ent = os.path.join(self.d, "cache", e)
+            if damage == "truncate":
+                open(os.path.join(ent, "gc.out"), "w").close()
+            elif damage == "flip":
+                with open(os.path.join(ent, "gc.err"), "r+b") as f:
+                    f.write(b"E")
+            elif damage == "no-manifest":
+                os.unlink(os.path.join(ent, "MANIFEST"))
+            else:
+                os.unlink(os.path.join(ent, "gc.err"))
+            n = self.builds()
+            self.assertEqual(self.leg(status="3"), live, damage)
+            self.assertEqual(self.builds(), n + 1, damage)  # rebuilt live
+            self.assertEqual(self.leg(status="3"), live, damage)
+            self.assertEqual(self.builds(), n + 1, damage)  # the fresh entry replays
+
+    def test_leg_text_is_in_the_key(self):
+        # a changed run_leg (how the gate runs gc) is a new question
+        self.leg()
+        self.leg(driver_extra="run_leg() { local st=0; ( cd \"$(dirname \"$1\")\" && \"$1\" x >\"$2\" 2>\"$3\" ) || st=$?; return \"$st\"; }")
+        self.assertEqual(self.builds(), 2)
 
 
 if __name__ == "__main__":

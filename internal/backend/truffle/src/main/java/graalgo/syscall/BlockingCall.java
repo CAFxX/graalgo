@@ -223,12 +223,14 @@ final class BlockingCall implements Runnable {
         } catch (Throwable t) {
             failure = t;
         } finally {
+            // Off the in-flight set (and done with the abort descriptor) BEFORE the goroutine can
+            // see DONE: a goroutine that returned from its call never finds it still in flight.
+            aborter.leave(this);
             if (state.compareAndSet(RUNNING, DONE)) {
                 LockSupport.unpark(waiter);
             } else {
                 free(block); // abandoned: this thread is last
             }
-            aborter.leave(this);
         }
     }
 

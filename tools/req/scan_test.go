@@ -343,3 +343,29 @@ func TestScan_SortedByFileThenLine(t *testing.T) {
 		t.Fatalf("refs order = %v, want %v", got, want)
 	}
 }
+
+// The lane worktrees live at <root>/.worktrees/<lane> (AGENTS.md §4): other
+// checkouts of the repo, whose ids are their own lane's business. Only the
+// root-anchored directory is skipped; a nested .worktrees is ordinary tree.
+func TestScan_SkipsRootWorktrees(t *testing.T) {
+	_, c := scanCtx(t, map[string]string{
+		".worktrees/lane/code.go": "package x\n\n// GG-9999: a lane's own id\n",
+		".worktrees/lane/doc.md":  "GG-9998 in a lane's doc.\n",
+		"sub/.worktrees/code.go":  "package x\n\n// GG-0002: not the lane dir\n",
+		"code.go":                 "package x\n\n// GG-0001: implement the thing\n",
+	})
+	refs, _, err := scanAll(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := refsByID(refs)
+	if _, ok := byID["GG-9999"]; ok {
+		t.Fatalf("ids under <root>/.worktrees must not be scanned: %v", byID["GG-9999"])
+	}
+	if _, ok := byID["GG-9998"]; ok {
+		t.Fatalf("ids under <root>/.worktrees must not be scanned: %v", byID["GG-9998"])
+	}
+	if len(byID["GG-0001"]) != 1 || len(byID["GG-0002"]) != 1 {
+		t.Fatalf("ids outside <root>/.worktrees must be found: %v", byID)
+	}
+}

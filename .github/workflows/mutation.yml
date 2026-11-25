@@ -50,7 +50,10 @@ jobs:
         run: make generate build
 
       - name: Mutation run (exit 1 = unjustified survivor, 3 = infra/red baseline)
-        run: make mutation MUTATION_WORK="$RUNNER_TEMP/mutation"
+        # MUTATION_JOBS=4: the gate runs four programs at a time on the
+        # 4-vCPU runner (a surviving mutant runs its whole slice, then the
+        # full corpus; one at a time it took most of the job's 35-48 min)
+        run: make mutation MUTATION_WORK="$RUNNER_TEMP/mutation" MUTATION_JOBS=4
 
       - name: Upload mutation report
         if: always()

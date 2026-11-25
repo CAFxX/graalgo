@@ -47,16 +47,34 @@ burn:
 \t@echo burned
 bad:
 \t@echo about to fail; exit 7
+waits-for-light:
+\t@for i in $$(seq 40); do [ -f light.started ] && break; sleep 0.05; done; test -f light.started
+check-links-external:
+\t@touch light.started; sleep 0.2; echo light done
 """
 
 
-# Inherited variables that change what gates.py or the inner make do.
-LEAKY_ENV = ("GITHUB_ACTIONS", "CI", "GATE_JOBS", "GATE_CACHE", "GATE_TIER_BASE",
+# gates.py with an empty LIGHT set (the planted control of the light-gate test)
+NO_LIGHT = ("import sys, runpy; path = sys.argv[1]; "
+            "g = runpy.run_path(path, run_name='gates_no_light'); g['LIGHT'].clear(); "
+            "sys.exit(g['main'](sys.argv[2:]))")
+
+
+# Inherited variables that change what gates.py or the inner make do. Every
+# GATE_* variable is dropped by prefix, not by list: the CI job's GATE_SHARD
+# (added after the list was written) leaked into these runs and turned the
+# self-tests into a shard-4/4 run of nothing (master 054b1f58 red).
+LEAKY_ENV = ("GITHUB_ACTIONS", "CI",
              "MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES")
+LEAKY_PREFIXES = ("GATE_",)
+
+
+def leaky(name):
+    return name in LEAKY_ENV or name.startswith(LEAKY_PREFIXES)
 
 
 def hermetic_env(**extra):
-    env = {k: v for k, v in os.environ.items() if k not in LEAKY_ENV}
+    env = {k: v for k, v in os.environ.items() if not leaky(k)}
     env.update(extra)
     return env
 
@@ -69,6 +87,26 @@ def jload(path):
 def jdump(path, v):
     with open(path, "w") as f:
         json.dump(v, f)
+
+
+class HermeticEnvTest(unittest.TestCase):
+    def test_drops_every_gate_variable(self):
+        # any GATE_* the CI job (or a future gates.py option) sets must not
+        # reach the self-tests' runs; a list of names went stale once already
+        planted = {"GATE_SHARD": "4/4", "GATE_SOMETHING_NEW": "x", "GITHUB_ACTIONS": "true",
+                   "MAKEFLAGS": "-j2"}
+        old = {k: os.environ.get(k) for k in planted}
+        os.environ.update(planted)
+        try:
+            env = hermetic_env(GATE_CACHE="cold")
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual([k for k in env if k in planted], [])
+        self.assertEqual(env["GATE_CACHE"], "cold")  # explicit extras still apply
 
 
 class GatesTest(unittest.TestCase):
@@ -207,6 +245,76 @@ class GatesTest(unittest.TestCase):
         for changed in (["docs/a.md", "Makefile"], ["test/m1a/README.md"], ["stdlib/x/README.md"],
                         [".github/workflows/ci.yml"], [], None):
             self.assertEqual(gates.tier_targets(changed, full), full, changed)
+
+    def test_light_gate_runs_beside_the_others(self):
+        # -j 1, the heavy gate listed first: it can only pass if the LIGHT
+        # gate (check-links-external) runs at the same time
+        self.assertIn("check-links-external", gates.LIGHT)
+        rc, out = self.run_gates("-j", "1", "--no-setup", "waits-for-light", "check-links-external")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("PASS check-links-external", out)
+        # planted: without the exemption the same run serializes and fails
+        os.remove(os.path.join(self.d, "light.started"))
+        p = subprocess.run([sys.executable, "-c", NO_LIGHT, GATES, "run", "--dir", self.d,
+                            "--logdir", self.d, "-j", "1", "--no-setup",
+                            "waits-for-light", "check-links-external"],
+                           capture_output=True, text=True, env=hermetic_env())
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL waits-for-light", p.stdout)
+
+    def test_shards_partition(self):
+        # LPT: longest first, each to the lightest shard; a gate the
+        # baseline does not know weighs SHARD_DEFAULT_WALL
+        walls = {"a": 100, "b": 60, "c": 50, "d": 10}
+        shards, load = gates.shard_targets(["d", "c", "b", "a", "new"], 2, walls)
+        # a(100) -> 0; b(60) -> 1; c(50) -> 1 (60 < 100); new(30) -> 0
+        # (100 < 110); d(10) -> 1 (110 < 130)
+        self.assertEqual(shards, [["a", "new"], ["b", "c", "d"]])
+        self.assertEqual(load, [100 + gates.SHARD_DEFAULT_WALL, 120])
+        # more shards than gates: the extra ones are empty, never a gate twice
+        self.assertEqual(gates.shard_targets(["a"], 3, walls)[0], [["a"], [], []])
+        # the real list: for every N and both environments' baselines the
+        # shards are disjoint and cover every gate of the per-push set
+        root = os.path.dirname(os.path.dirname(HERE))
+        full = [t for t in gates.all_targets(os.path.join(root, "Makefile")) + ["test-diffharness"]
+                if t not in gates.SETUP]
+        for base in ("duration-baseline.json", "duration-baseline-ci.json"):
+            for cache in ("warm", "cold"):
+                walls = gates.load_walls(os.path.join(root, "test", base), cache)
+                for n in range(1, 7):
+                    got = gates.shard_targets(full, n, walls)[0]
+                    flat = [t for s in got for t in s]
+                    self.assertEqual(sorted(flat), sorted(full), (base, cache, n))
+        for bad in ("0/2", "3/2", "2", "a/b", ""):
+            with self.assertRaises(ValueError):
+                gates.parse_shard(bad)
+
+    def test_shard_run(self):
+        base = os.path.join(self.d, "base.json")
+        jdump(base, {"wall": {"ok1": 50, "ok2": 40, "burn": 30}})
+        # shard 1/2 = ok1 alone; shard 2/2 = ok2 + burn (40 + 30 > 50, but
+        # burn goes to the lighter shard 2 at 40 < 50); each with SETUP
+        rc, out = self.run_gates("--baseline", base, "--shard", "1/2", "--ratchet", "off")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("PASS ok1", out)
+        self.assertIn("PASS generate", out)
+        self.assertNotIn("PASS ok2", out)
+        self.assertNotIn("PASS burn", out)
+        rc, out = self.run_gates("--baseline", base, "--ratchet", "off", env=hermetic_env(GATE_SHARD="2/2"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("PASS ok2", out)
+        self.assertIn("PASS burn", out)
+        self.assertNotIn("PASS ok1", out)
+        # a planted failure in a shard fails that shard
+        rc, out = self.run_gates("--baseline", base, "--shard", "1/1", "ok1", "bad")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("FAIL bad", out)
+        # an empty shard runs nothing, not even SETUP, and passes
+        rc, out = self.run_gates("--baseline", base, "--shard", "3/3", "ok1", "ok2")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("PASS", out)
+        rc, out = self.run_gates("--shard", "4/3", "ok1")
+        self.assertEqual(rc, 2, out)
 
     def test_record(self):
         rj, base = os.path.join(self.d, "r.json"), os.path.join(self.d, "b.json")

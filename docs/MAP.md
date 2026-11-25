@@ -124,7 +124,7 @@ shrink-only in [layering_allowlist.txt](../.github/scripts/layering_allowlist.tx
 | `BUG-NNNN` | graalgo bug ids cited by exclusions and quarantines | [bugs.md](dev/bugs.md) |
 | `ADR-NNNN` | architecture decision records | [docs/dev/adr/](dev/adr/) |
 | DV1–DV6 | launcher deviations with retirement triggers | [ADR-0010](dev/adr/ADR-0010-launcher-deviations.md) |
-| `wt/<area>/<lane>` | lane branch, worktree `~/dev/graalgo-wt/<lane>` | [AGENTS.md](../AGENTS.md) §4 |
+| `wt/<area>/<lane>` | lane branch, worktree `<repo>/.worktrees/<lane>` (gitignored) | [AGENTS.md](../AGENTS.md) §4 |
 | `p3*`, `phase1/`, `wave1/`… | research-era names (Phase 3, corpus waves); legacy | [REPO_STRUCTURE.md](REPO_STRUCTURE.md) |
 | `synth_*.go` | v1 hand-written stdlib stand-ins (frozen, deleted at M3) | [bridge-inventory.md](arch/bridge-inventory.md) |
 
@@ -137,7 +137,9 @@ Current: [SPEC.md](arch/SPEC.md), [RECOVERY.md](arch/RECOVERY.md),
 packages, test matrix), [abi-spike.md](arch/abi-spike.md),
 [limitations.md](arch/limitations.md), [performance.md](arch/performance.md),
 [traceback-normalization.md](arch/traceback-normalization.md),
-[bridge-inventory.md](arch/bridge-inventory.md), [dev/](dev/).
+[bridge-inventory.md](arch/bridge-inventory.md),
+[tstring-bytecode-study.md](arch/tstring-bytecode-study.md) (WP-TR-AUDIT-12:
+TruffleString and Bytecode DSL go/no-go, ADR-0021/0022 proposed), [dev/](dev/).
 History (read for context only): [FEASIBILITY.md](arch/FEASIBILITY.md),
 [PHASES.md](arch/PHASES.md), [phases/](arch/phases/), [reviews/](arch/reviews/),
 [spikes/](arch/spikes/), [research/](arch/research/), [docs/spec/](spec/),

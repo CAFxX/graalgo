@@ -15,8 +15,8 @@
 #
 # CI SCOPE — honest, not aspirational. Kept in sync with the `all:` rule
 # by .github/scripts/check_makefile.py (part of `make check`).
-#   `make all` = generate build snapshot-check check test-v2 test-toolexec
-#                test-gir test-p3frontend test-ci test-java-fast
+#   `make all` = generate build snapshot-check check test-pin-smoke test-v2
+#                test-toolexec test-gir test-p3frontend test-ci test-java-fast
 #                test-regression test-m1a pe-check-m1a test-m1w13
 #                test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes:
 #     generate  rebuilds the gofrontend binary + overlay.json, the 18
@@ -29,18 +29,25 @@
 #               that is not a reviewed, reason-coded expected divergence,
 #               and on stale expected-divergence entries.
 #     check     static gates: module grep gates (placeholder, debug-leftover,
-#               v1 netpoller, off-heap/NIO, pin surface, pinned jars) +
-#               pin-audit smoke; duplicate FQN; dead paths; MR-table
+#               v1 netpoller, off-heap/NIO, pin surface, pinned jars);
+#               duplicate FQN; dead paths; MR-table
 #               subset; check-repo (tracked-file size/binary, doc paths,
 #               GG ids, this Makefile's .PHONY/header, generated-files
 #               list, placeholder + runtime-unimplemented ratchets, the
 #               new-path/v1 layering gate, the no-bridges gate (vs
 #               GATE_BASE or the merge-base), the exclusion-register
 #               gate (bug id + signature per deferred-parity entry), every
-#               .github/scripts/test_*.py, markdown links, `tools/req
-#               lint`); and `internal/frontend/build.sh check` (gofmt/vet/
+#               .github/scripts/test_*.py, markdown links, `tools/req`'s
+#               tests + `lint`); and `internal/frontend/build.sh check` (gofmt/vet/
 #               tests, vendoring diff, frontend/v1 wire-format validator);
 #               vet-spikes (go vet of the test/spikes/abi probe modules)
+#     test-pin-smoke
+#               the pin-audit smoke (P2-M7, GG-0057; ~1.5 min): the whole
+#               scheduler/runtime suite (SchedTestRunner, fast and slow
+#               classes) in thread-per-goroutine mode under
+#               jdk.VirtualThreadPinned; fails on a pin or a failing test.
+#               Was part of `check` until 2026-11-25 (its own gate so CI's
+#               shards balance)
 #     test-v2 / test-toolexec / test-gir / test-p3frontend
 #               the Go/Java module suites (frontend v2, -toolexec wrapper,
 #               GIR Java codec, p3frontend loader)
@@ -91,8 +98,9 @@
 #               ([test/m1d/](test/m1d/))
 #     test-goroutine-modes
 #               the goroutine-mode matrix (~45 s; GG-0074: carrier mode is
-#               the default): the scheduler suites and a few m1a/m1r/m1c
-#               goroutine programs in the opt-in thread-per-goroutine mode,
+#               the default): a few m1a/m1r/m1c goroutine programs in the
+#               opt-in thread-per-goroutine mode (the scheduler suites run
+#               in it in test-pin-smoke),
 #               goroutine programs in carrier mode under -ea, and
 #               Context.close(true) of a running program in both modes
 #
@@ -108,8 +116,10 @@
 #   gate timed (wall + CPU) and ratcheted against
 #   test/duration-baseline.json (CI: test/duration-baseline-ci.json);
 #   GATE_JOBS gates at a time. CI runs `all`
-#   and test-diffharness this way (GATE_JOBS=2, RATCHET=fail; off master,
-#   a Markdown-only change runs only the docs tier). Cost profile:
+#   and test-diffharness this way, as four parallel jobs (GATE_SHARD=I/4:
+#   disjoint shards covering the list, gates.py --shard; GATE_JOBS=2,
+#   RATCHET=fail; off master, a Markdown-only change runs only the docs
+#   tier). Cost profile:
 #   docs/dev/test-profile.md.
 #   `make quick` — the inner-loop tier (minutes; never landing evidence).
 #   `make fuzz-newpath` — the differential fuzzer of the new path
@@ -214,9 +224,9 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines bench-spawn-flat pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-pin-smoke test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines bench-spawn-flat pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
 
-all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
+all: generate build snapshot-check check test-pin-smoke test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -259,10 +269,19 @@ check:
 	# gofrontend gate: gofmt/vet/tests + vendoring diff + frontend/v1
 	# wire-format validation (internal/frontend/build.sh check).
 	# /tmp is a 512M shared tmpfs: keep the fresh-export JSONs on the
-	# persistent disk (same pattern as test-v2/test-p3frontend).
-	mkdir -p $(CURDIR)/internal/frontend/.tmp && \
-	cd internal/frontend && TMPDIR="$(CURDIR)/internal/frontend/.tmp" \
-	GOTMPDIR="$(CURDIR)/internal/frontend/.tmp" GO="$(GO)" ./build.sh check
+	# persistent disk, OUTSIDE the frontend module (<repo>/.tmp, gitignored):
+	# a TMPDIR inside it made every t.TempDir path a test input, so go test
+	# never cached the frontend suite (~40 s per check).
+	mkdir -p $(CURDIR)/.tmp/frontend-check && \
+	cd internal/frontend && TMPDIR="$(CURDIR)/.tmp/frontend-check" \
+	GOTMPDIR="$(CURDIR)/.tmp/frontend-check" GO="$(GO)" ./build.sh check
+
+# The pin-audit smoke (Makefile header; internal/backend/truffle's
+# pin-smoke): the scheduler/runtime suite in thread mode under
+# jdk.VirtualThreadPinned. Shares truffle/out/test-tmp with test-ci and
+# test-java-fast (gates.py never runs them at once).
+test-pin-smoke: build java-test-classes
+	$(MAKE) -C internal/backend/truffle pin-smoke
 
 # The ABI spike's probe modules (test/spikes/abi/*, abi-spike.md) are built
 # by no other target and would rot silently: vet (which type-checks and
@@ -298,7 +317,9 @@ check-repo:
 	  -unsigned ../../tools/stdlib-fork/exclusions.yaml \
 	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
 	python3 .github/scripts/check_markdown_links.py --skip-external
-	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
+	# the req CLI's own tests first (gate-of-the-gate, ~0.3 s, go-test cached;
+	# incl. its .worktrees skip), then the lint itself.
+	cd tools/req && PATH="$(dir $(GO)):$$PATH" $(GO) test . && PATH="$(dir $(GO)):$$PATH" $(GO) run . lint
 
 # The rest of per-push CI that `make all` does not cover (2026-11-20: lanes
 # that ran a hand-picked subset of the gates landed a girinterp regression
@@ -766,20 +787,21 @@ test-java-fast: java-test-classes java-test-lists-check
 # The goroutine-mode matrix (GG-0074; per-push in `make all`). Carrier mode is
 # the default, so every other gate runs it; this target keeps the opt-in
 # thread-per-goroutine mode honest and checks what only a mode switch or
-# a carrier migration can break: (1) the scheduler suites and a few
-# goroutine-heavy m1a/m1r/m1c programs with -Dgraalgo.sched.goroutines=thread;
+# a carrier migration can break: (1) a few goroutine-heavy m1a/m1r/m1c
+# programs with -Dgraalgo.sched.goroutines=thread — the scheduler suites run
+# in thread mode in test-pin-smoke: every class SchedTestRunner registers, a
+# superset of the four this target ran too until 2026-11-25 (LifecycleTest,
+# ChannelTest, WakeupRaceStressTest, JfrEventsTest), the same JVM mode;
 # (2) goroutine programs in carrier mode under -ea, so Truffle's per-thread assertions
 # (EncapsulatingNodeReference) see goroutines migrate between carriers;
 # (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
 # and leak-free, in both modes; (4) test/m1r/leak.sh: successive contexts in
 # one JVM leave no thread and no live heap behind (BUG-0052), in both modes.
-THREAD_MODE_JAVA := graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.sched.WakeupRaceStressTest graalgo.jfr.JfrEventsTest
 THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go test/m1a/programs/traceback_goroutine.go
 THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go test/m1r/programs/callers.go
 THREAD_MODE_M1C := test/m1c/programs/sync_contention.go test/m1c/programs/time_timers.go
 THREAD_MODE_OPTS = $(GRAALGO_JAVA_OPTS) -Dgraalgo.sched.goroutines=thread
 test-goroutine-modes: build java-test-classes
-	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(THREAD_MODE_JAVA),-Dgraalgo.sched.goroutines=thread)
 	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1a/run.sh $(THREAD_MODE_M1A)
 	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1r/run.sh $(THREAD_MODE_M1R)
 	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1c/run.sh $(THREAD_MODE_M1C)
@@ -877,8 +899,11 @@ snapshot-check: build
 # (~1-2 h): nightly in .github/workflows/mutation.yml, not per-push.
 MUTATION_SLICE ?= 06_nested_defer,60_narrow_unary_widen,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,55_slice_bounds,56_map_ops,57_defer_order
 MUTATION_WORK ?=
+# Programs the gate runs at a time (1: shared host; mutation.yml's 4-vCPU
+# runner passes 4, as per-push snapshot-check runs there).
+MUTATION_JOBS ?= 1
 mutation: generate build
-	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) \
+	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) -jobs $(MUTATION_JOBS) \
 	  $(if $(MUTATION_WORK),-work $(MUTATION_WORK)) $(if $(MUTANTS),-only $(MUTANTS))
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).

@@ -221,7 +221,7 @@ Cost of staying: every item above waits, and the LTS only gets CPU fixes.
 | 9 | Test-mode matrix of §7 | test | M | each mode proven able to fail by a planted fault | WP-NODETEST |
 | 10 | Benchmark method: peak vs warmup, compile health in the report, long runs, splitting check (F-16.1–3, F-8.4) — partly done (perf-pe): `--min-total S` long runs and the 4 s vs 20 s regimes reported separately in [performance.md](performance.md) §8.1; `make pe-report` for compile health | perf | S | report shows three regimes; rerun of north-star §4.1 | WP-PERF |
 | 11 | Carrier-mode Truffle-state prototype gate (F-10.4, F-14.3) | sched | M | the three checks of F-10.4 | precondition of the carrier-mode lane |
-| 12 | `TruffleString` prototype; Bytecode DSL bake-off (F-9.1, §4) | research | M+L | written comparison with numbers; go/no-go | TR-13; **decisions** |
+| 12 | `TruffleString` prototype; Bytecode DSL bake-off (F-9.1, §4) | research | M+L | written comparison with numbers; go/no-go — done: [tstring-bytecode-study.md](tstring-bytecode-study.md), decisions proposed in ADR-0021/ADR-0022 | TR-13; **decisions** |
 | 13 | Minimal interop + TCK (F-11) | interop | L | TCK green; one test per message row | TR-8 (after 7) |
 
 Suggested order: 1, 3, 2, 10 (unblock measurement) → 6, 4, 5 → 8 → 12 → M3 → 7 → 13; 11 before any carrier-mode code.

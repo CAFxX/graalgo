@@ -46,6 +46,17 @@ on:
 
 jobs:
   build-and-check:
+    # Four parallel jobs (runners are free and parallel; one 4-vCPU runner
+    # was CPU-bound at ~12 min): each runs the setup targets and one shard
+    # of the gate list (test/lib/gates.py --shard: longest-first over the
+    # runner baseline's wall times, disjoint shards whose union is the whole
+    # list, checked by test/lib/test_gates.py), then the drift check over
+    # what its gates wrote. A red shard is a red run.
+    name: build-and-check (${{ matrix.shard }}/4)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     env:
@@ -65,15 +76,18 @@ jobs:
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
+        if: matrix.shard == 1  # repo-wide, once per run
         run: python3 .github/scripts/check_no_bridges.py
 
       - name: No-bridges gate regression tests (pins the gate fix)
+        if: matrix.shard == 1  # repo-wide, once per run
         # The gate's exemptions are pinned by
         # .github/scripts/test_check_no_bridges.py — run it here so a
         # future gate regression fails CI instead of reverting silently.
         run: python3 .github/scripts/test_check_no_bridges.py
 
       - name: Duplicate-FQN overlay check (review R-01)
+        if: matrix.shard == 1  # repo-wide, once per run
         run: python3 .github/scripts/check_duplicate_fqn.py
 
       - name: Set up GraalVM JDK 25
@@ -115,10 +129,14 @@ jobs:
           path: |
             ~/.cache/go-build
             .tmp/gc-oracle
-          key: gates-${{ runner.os }}-go1.27.1-${{ github.sha }}
-          restore-keys: gates-${{ runner.os }}-go1.27.1-
+          # per shard (each caches what its gates build), falling back to
+          # any shard's newest entry
+          key: gates-${{ runner.os }}-go1.27.1-s${{ matrix.shard }}-${{ github.sha }}
+          restore-keys: |
+            gates-${{ runner.os }}-go1.27.1-s${{ matrix.shard }}-
+            gates-${{ runner.os }}-go1.27.1-
 
-      - name: make all + harness self-test, timed and tiered
+      - name: make all + harness self-test (this shard), timed and tiered
         # `make test-times` runs exactly `make all`'s list (test/lib/gates.py
         # reads the `all:` rule) plus test-diffharness (the harness
         # self-test: build/vet/unit tests of diffharness and its comparator
@@ -130,7 +148,8 @@ jobs:
         # its baseline + 30 s. Like with like (docs/dev/test-profile.md):
         # the runner's own baseline (test/duration-baseline-ci.json, not the
         # dev host's), and its cold-cache section when the restore above
-        # missed (GATE_CACHE=cold). Tiers: off master, a push or PR whose
+        # missed (GATE_CACHE=cold). GATE_SHARD picks this job's part of the
+        # list (after the tier). Tiers: off master, a push or PR whose
         # changes are all docs (Markdown outside the code trees) runs the
         # docs tier (`check` + the gates that read a doc); master always
         # runs the full list.
@@ -138,13 +157,14 @@ jobs:
           DH_TIMEOUT: "90"
           GATE_TIER_BASE: ${{ github.ref != 'refs/heads/master' && (github.event.pull_request.base.sha || github.event.before) || '' }}
           GATE_CACHE: ${{ steps.gates-cache.outputs.cache-matched-key != '' && 'warm' || 'cold' }}
+          GATE_SHARD: ${{ matrix.shard }}/4
         run: make test-times GATE_JOBS=2 RATCHET=fail GATE_BASELINE=test/duration-baseline-ci.json TARGETS="all test-diffharness" GATE_TIMES="$RUNNER_TEMP/gate-times.json"
 
-      - name: Upload the gate times (re-record test/duration-baseline-ci.json from these)
+      - name: Upload the gate times (re-record test/duration-baseline-ci.json from all four)
         if: success() || failure()
         uses: actions/upload-artifact@v4
         with:
-          name: gate-times
+          name: gate-times-${{ matrix.shard }}
           path: ${{ runner.temp }}/gate-times.json
           if-no-files-found: ignore
 
@@ -155,7 +175,7 @@ jobs:
           path: |
             ~/.cache/go-build
             .tmp/gc-oracle
-          key: gates-${{ runner.os }}-go1.27.1-${{ github.sha }}
+          key: gates-${{ runner.os }}-go1.27.1-s${{ matrix.shard }}-${{ github.sha }}
 
       - name: Fail on drift (generated files differ from committed, or new untracked files)
         # `git diff --exit-code` alone misses a generated file that is

@@ -13,6 +13,7 @@ package main
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -59,6 +60,12 @@ func walkJSONNodes(n any, f func(map[string]any)) {
 // (a silent memory-ordering miscompile on amd64: LoadAcquintptr is a plain
 // Go `return *ptr` there).
 func TestSyncPoolRtatomicLowersToSyncop(t *testing.T) {
+	// The file is outside this module, so go test's result cache does not
+	// hash it: build.sh check passes its hash in GRAALGO_FE_EXT_INPUTS, and
+	// reading the variable here puts it in the cache key (a changed corpus
+	// program re-runs the test; build.sh check fails a test file that names
+	// a ../ path without this read).
+	_ = os.Getenv("GRAALGO_FE_EXT_INPUTS")
 	out, err := ExportFile("../../test/differential/corpus/46_sync_pool/main.go")
 	if err != nil {
 		t.Fatalf("ExportFile(46_sync_pool): %v", err)
