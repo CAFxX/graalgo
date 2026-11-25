@@ -53,6 +53,8 @@ import graalgo.language.GoLanguage;
  */
 public final class CancelProbe {
     static final long CLOSE_BUDGET_MILLIS = 1_000;
+    /** A {@code close(true)} still running after this long prints every thread's stack. */
+    static final long CLOSE_DUMP_MILLIS = 2_000;
     /** From the program's exit point (its READY.exit file) to the end of the eval. */
     static final long EXIT_BUDGET_MILLIS = 2_000;
     /** Goroutines parked on one channel: 10k with carriers; thread mode creates a thread each. */
@@ -71,7 +73,8 @@ public final class CancelProbe {
         for (String mode : args[1].split(",")) {
             for (String scenario : mode.equals("carrier") ? List.of("park", "exit", "panic") : List.of("park", "exit")) {
                 long t0 = System.nanoTime();
-                Thread watchdog = Thread.ofPlatform().daemon(true).start(() -> dumpAfter(mode + " " + scenario));
+                Thread watchdog = Thread.ofPlatform().daemon(true).start(
+                        () -> dumpAfter(mode + " " + scenario, TimeUnit.SECONDS.toMillis(HANG_DUMP_SECONDS)));
                 String verdict = probe(bundle, args[0], mode, scenario);
                 watchdog.interrupt();
                 System.err.println("cancel-probe " + mode + " " + scenario + ": " + verdict + " ["
@@ -85,15 +88,15 @@ public final class CancelProbe {
         Runtime.getRuntime().halt(failed == 0 ? 0 : 1);
     }
 
-    /** A case still running after {@link #HANG_DUMP_SECONDS}: print every thread's stack (diagnosis). */
-    private static void dumpAfter(String what) {
+    /** A step still running after {@code millis}: print every thread's stack (diagnosis). */
+    private static void dumpAfter(String what, long millis) {
         try {
-            Thread.sleep(TimeUnit.SECONDS.toMillis(HANG_DUMP_SECONDS));
+            Thread.sleep(millis);
         } catch (InterruptedException e) {
             return;
         }
-        StringBuilder sb = new StringBuilder("cancel-probe " + what + ": still running after " + HANG_DUMP_SECONDS
-                + " s; threads:\n");
+        StringBuilder sb = new StringBuilder("cancel-probe " + what + ": still running after " + millis
+                + " ms; threads:\n");
         for (Map.Entry<Thread, StackTraceElement[]> e : Thread.getAllStackTraces().entrySet()) {
             sb.append('"').append(e.getKey().getName()).append("\" ").append(e.getKey().getState()).append('\n');
             for (StackTraceElement f : e.getValue()) {
@@ -179,7 +182,12 @@ public final class CancelProbe {
             Thread.sleep(100); // let the spinners run
             evidence = threadLocalActions(context, runner, mode.equals("thread") ? parked : 0, problems);
             long t0 = System.nanoTime();
+            // A slow close is diagnosed while it is slow (a 10 s close is the teardown waiting
+            // its whole deadline for a goroutine that cannot run: BUG-0056, BUG-0050).
+            Thread slow = Thread.ofPlatform().daemon(true).start(
+                    () -> dumpAfter(mode + " " + scenario + " close(true)", CLOSE_DUMP_MILLIS));
             context.close(true);
+            slow.interrupt();
             long closeMillis = (System.nanoTime() - t0) / 1_000_000;
             evidence += ", close(true) " + closeMillis + " ms";
             runner.join(CLOSE_BUDGET_MILLIS);

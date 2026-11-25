@@ -28,8 +28,9 @@ import org.graalvm.polyglot.management.ExecutionListener;
  *       statement wrappers in place (the program writes its result, 55, to the process's stdout);
  *   <li>{@code spin}: a collecting {@link CPUSampler} (10 ms period) over the whole run records
  *       {@code main.fib}, with its section in {@code main.go}, called from
- *       {@code main.main.func1}: Go names and file:line on the sampled stacks (carrier mode only:
- *       in thread mode a sampled program does not finish, BUG-0050).
+ *       {@code main.main.func1}: Go names and file:line on the sampled stacks, in both modes (in
+ *       thread mode a sampled program used to never finish: a sampler interrupt lost a
+ *       goroutine's wake, BUG-0050, fixed).
  * </ul>
  * Usage: {@code ToolsProbe <linked executable> <modes>}, modes a comma-separated subset of
  * {@code carrier,thread}. Exit 0 when every check passes.
@@ -44,12 +45,7 @@ public final class ToolsProbe {
             System.setProperty("graalgo.sched.goroutines", mode);
             try {
                 count(bundle, args[0], mode, problems);
-                if (mode.equals("thread")) {
-                    // A sampled program running a goroutine thread does not finish (BUG-0050).
-                    System.out.println(mode + " spin: skipped (BUG-0050)");
-                } else {
-                    spin(bundle, args[0], mode, problems);
-                }
+                spin(bundle, args[0], mode, problems);
             } catch (Throwable t) {
                 problems.add(mode + ": " + t);
             }

@@ -40,8 +40,17 @@ public final class GoroutineHandle {
     volatile int runState;
     /** Pending unpark permit, accessed through a VarHandle. */
     volatile boolean permit;
-    /** The carrier the goroutine last ran on (its pinned park blocks that thread). */
+    /**
+     * The carrier the goroutine last ran on (its pinned park blocks that thread); null once the
+     * goroutine ended, so a waker reads it once and null-checks it ({@code Carriers.unpark}).
+     */
     Carriers.Carrier carrier;
+    /**
+     * {@code Carriers.PARK_INTERRUPTIBLY}: a thread-local action interrupted this goroutine's
+     * Truffle-blocked park; Truffle's next call of the interruptible returns at once. Touched
+     * only by the thread the goroutine parks on.
+     */
+    boolean parkInterrupted;
     /** The goroutine's {@code GoroutineState} holder value while unmounted. */
     graalgo.runtime.GoroutineState savedState;
     /** The goroutine's node-package {@code G} while unmounted. */

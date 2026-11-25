@@ -27,7 +27,7 @@ opt-in thread-per-goroutine mode. [cancel.sh](cancel.sh) builds [cancel/probe.go
 both modes (`graalgo.launcher.ToolsProbe`: a statement/root
 `ExecutionListener` sees `main.fib`'s exact calls and statements at their
 lines, a collecting `CPUSampler` records Go names and `main.go` sections —
-carrier mode only, BUG-0050; ADR-0020).
+in both goroutine modes, ADR-0020).
 
 **Not here:** `sync`/`time`/syscall programs ([test/m1c/](../m1c/README.md)),
 import-free language programs ([test/m1a/](../m1a/README.md)).

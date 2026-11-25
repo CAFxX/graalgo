@@ -66,7 +66,13 @@ final class BlockingCall implements Runnable {
     private static final long EINTR = 4;
 
     private static final AtomicInteger THREADS = new AtomicInteger();
-    /** Platform threads for may-block calls: outside the goroutine carrier pool. */
+    /**
+     * Platform threads for may-block calls: outside the goroutine carrier pool. Unbounded, as
+     * gc's thread per goroutine blocked in a system call is (gc stops at {@code
+     * debug.SetMaxThreads}, 10,000 by default, with a fatal error; here the JVM's own thread
+     * limit is the bound, and a call whose thread cannot be created fails as an internal error
+     * of its goroutine — the program is not torn down for it).
+     */
     private static final ExecutorService OFF_POOL = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "graalgo-syscall-" + THREADS.incrementAndGet());
         t.setDaemon(true);
@@ -110,6 +116,12 @@ final class BlockingCall implements Runnable {
      */
     static Object[] run(Node node, SchedulerCore sched, Entry e, long nr, long[] w, Role[] roles, Flat[] objs,
             long[] offs, byte[][] data, long total) {
+        return run(node, sched, e, nr, w, roles, objs, offs, data, total, OFF_POOL);
+    }
+
+    /** {@link #run} on {@code offPool} (tests: a pool that refuses the call). */
+    static Object[] run(Node node, SchedulerCore sched, Entry e, long nr, long[] w, Role[] roles, Flat[] objs,
+            long[] offs, byte[][] data, long total, java.util.concurrent.Executor offPool) {
         MemorySegment block = malloc(Math.max(total, 16));
         MemorySegment[] segs = new MemorySegment[roles.length];
         long at = 0;
@@ -124,16 +136,30 @@ final class BlockingCall implements Runnable {
         }
         BlockingCall c = new BlockingCall(e, nr, w, block, Aborter.of(sched));
         boolean done = false;
+        boolean notStarted = false;
         try {
             sched.ioEnter();
             if (c.aborter.enter(c)) {
+                try {
+                    offPool.execute(c);
+                } catch (RuntimeException | Error x) {
+                    // The call never started (no thread for it: RejectedExecutionException,
+                    // OutOfMemoryError): the program is live, so nothing is aborted — this
+                    // goroutine still owns the buffers, the call leaves the in-flight set (or the
+                    // abort descriptor could never close), the slot is re-acquired, and the
+                    // failure propagates as an internal error (BUG-0057).
+                    notStarted = true;
+                    c.aborter.leave(c);
+                    free(block);
+                    sched.ioExit();
+                    throw x;
+                }
                 c.submitted = true;
-                OFF_POOL.execute(c);
                 c.await(sched);
                 done = c.state.get() == DONE;
             }
         } finally {
-            if (!done) {
+            if (!done && !notStarted) {
                 // Leaving early: a cancellation is in flight (rethrown), or the scheduler is
                 // torn down. The program is over; the off-pool thread owns the buffers now.
                 c.abandon();
@@ -284,6 +310,11 @@ final class BlockingCall implements Runnable {
         private int fd = -1;
         /** Calls that may still poll {@link #fd} or whose goroutine waits; guarded by this. */
         private final List<BlockingCall> inflight = new ArrayList<>();
+
+        /** Calls in flight now (tests). */
+        synchronized int inflightCount() {
+            return inflight.size();
+        }
 
         /** The scheduler's aborter, created (and hooked into its teardown) on first use. */
         static Aborter of(SchedulerCore sched) {

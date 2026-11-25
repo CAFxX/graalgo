@@ -4,7 +4,7 @@
 # graalgo.launcher.ToolsProbe on it (its Javadoc lists the checks: a
 # statement/root ExecutionListener counts main.fib's calls and statements at
 # their lines, a collecting CPUSampler records Go names and main.go
-# sections — carrier mode only, BUG-0050). Run by `make
+# sections — both goroutine modes). Run by `make
 # test-goroutine-modes` in both modes.
 #
 # Usage: test/m1r/tools.sh [MODES]   (default "carrier")

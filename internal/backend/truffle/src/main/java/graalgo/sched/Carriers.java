@@ -14,6 +14,7 @@ import java.util.function.Supplier;
 import com.oracle.truffle.api.TruffleSafepoint;
 import graalgo.language.GoThreadSlot;
 import graalgo.runtime.GoroutineState;
+import graalgo.runtime.sync.PinLock;
 import jdk.internal.vm.Continuation;
 import jdk.internal.vm.ContinuationScope;
 
@@ -68,13 +69,24 @@ final class Carriers {
     private static final long SPARE_IDLE_NANOS = TimeUnit.SECONDS.toNanos(10);
 
     /**
-     * {@link LockSupport#park(Object)} as a Truffle {@code Interruptible}: Truffle delivers a
-     * thread-local action to a blocked thread by interrupting it, so the interrupt (which
-     * {@code park} only returns on) becomes the {@link InterruptedException} Truffle waits for.
+     * A goroutine's {@link LockSupport#park(Object)} as a Truffle {@code Interruptible} (thread
+     * mode, and a pinned park in carrier mode): Truffle delivers a thread-local action to a
+     * blocked thread by interrupting it, so the interrupt (which {@code park} only returns on)
+     * becomes the {@link InterruptedException} Truffle waits for. Truffle then runs the action
+     * and calls the interruptible AGAIN: that call returns at once (a spurious wakeup, which
+     * every caller re-checks). Parking again there lost wakes (BUG-0050): the park the interrupt
+     * ended may also have consumed the waker's permit (unpark and interrupt together), and the
+     * action itself may park and swallow it, so a re-park could wait forever for a wake that had
+     * already happened — the caller's condition, never the permit, says whether to wait on.
      */
-    static final TruffleSafepoint.Interruptible<Object> PARK_INTERRUPTIBLY = blocker -> {
-        LockSupport.park(blocker);
+    static final TruffleSafepoint.Interruptible<GoroutineHandle> PARK_INTERRUPTIBLY = h -> {
+        if (h.parkInterrupted) {
+            h.parkInterrupted = false;
+            return;
+        }
+        LockSupport.park(h);
         if (Thread.interrupted()) {
+            h.parkInterrupted = true;
             throw new InterruptedException();
         }
     };
@@ -162,6 +174,13 @@ final class Carriers {
      * pending; may return spuriously (callers re-check their condition).
      */
     void park(GoroutineHandle h) {
+        if (PinLock.isHeldByCurrentThread()) {
+            // The pin lock belongs to the carrier THREAD: a goroutine that yielded holding it
+            // would hand it to every goroutine that runs on this carrier next (reentrant, so
+            // their pin sections would not exclude each other) and starve the rest. Pin
+            // sections are short and never park (SchedulerCore defers quantum parks past them).
+            throw new IllegalStateException("graalgo.sched: goroutine " + h.id + " parks inside a pin section");
+        }
         if ((boolean) PERMIT.getAndSet(h, false)) {
             return;
         }
@@ -186,7 +205,7 @@ final class Carriers {
                 if (inContext) {
                     // The carrier is a polyglot thread: blocked, it still answers thread-local
                     // actions (cancel, hard exit, samplers, debugger) — playbook §10.
-                    TruffleSafepoint.setBlockedThreadInterruptible(null, PARK_INTERRUPTIBLY, this);
+                    TruffleSafepoint.setBlockedThreadInterruptible(null, PARK_INTERRUPTIBLY, h);
                 } else {
                     LockSupport.park(this);
                 }
@@ -217,7 +236,15 @@ final class Carriers {
                 }
             }
         } else if (s == PINNED) {
-            LockSupport.unpark(h.carrier.thread);
+            // Read once, and maybe null: between the state read and this one the goroutine can
+            // take our permit without our wake (a spurious return, or a thread-local action
+            // interrupting its Truffle-blocked park), run to completion and have run() clear
+            // h.carrier — BUG-0055. Null then means it consumed the permit and needs no wake; a
+            // carrier it moved on to gets a harmless spurious unpark.
+            Carrier c = h.carrier;
+            if (c != null) {
+                LockSupport.unpark(c.thread);
+            }
         }
         // RUNNING / PARKING / QUEUED: the goroutine (or its carrier, after the yield) sees the
         // permit.

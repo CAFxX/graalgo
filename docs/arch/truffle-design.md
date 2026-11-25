@@ -2260,7 +2260,7 @@ section maps them onto §6. Deviations from §6 as designed:
   (`-Dpolyglot.cpusampler=true` in `GRAALGO_JAVA_OPTS`); the scripted check is
   [test/m1r/tools.sh](../../test/m1r/tools.sh) (exact statement and root
   counts of an `ExecutionListener`, a sampler stack with Go names and
-  sections; the sampler check is carrier-only, BUG-0050). The inspector/DAP tests need scopes
+  sections, in both goroutine modes). The inspector/DAP tests need scopes
   (§6.4) first.
 
 Cost: one `@CompilationFinal int` per statement and call node, one `Body`

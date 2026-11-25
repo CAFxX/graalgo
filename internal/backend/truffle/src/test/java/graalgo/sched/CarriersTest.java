@@ -237,6 +237,153 @@ public final class CarriersTest {
         s.terminate(1_000);
     }
 
+    /**
+     * BUG-0055: a waker that read PINNED, then lost the CPU while the pinned goroutine took its
+     * permit without its wake (a spurious return, or a sampler's thread-local action interrupting
+     * the Truffle-blocked park), ran to completion and had {@code run()} clear {@code carrier},
+     * dereferenced the null carrier — an NPE on the drainer, whose fail-loud handler halts the
+     * JVM. The waker's stale view is forced, not sampled: the handle is put in the state the
+     * waker sees after its state read (PINNED, no permit, carrier already cleared). Mutation:
+     * {@code h.carrier.thread} without the null check — red (NPE).
+     */
+    public void testUnparkOfPinnedGoroutineThatEndedMeanwhile() throws Exception {
+        SchedulerCore s = carrierScheduler(1);
+        try {
+            GoroutineHandle h = new GoroutineHandle(() -> { });
+            h.runState = Carriers.PINNED;
+            h.permit = false;
+            h.carrier = null;
+            s.carriersForTest().unpark(h, false);
+            assertTrue(h.permit, "the permit is granted (the goroutine, if it parks again, sees it)");
+        } finally {
+            assertTrue(s.terminate(10_000).isEmpty(), "carriers stopped");
+        }
+    }
+
+    /**
+     * BUG-0056: a goroutine spawned after {@code terminateCarriers} snapshotted the live list was
+     * never unparked (the drainer is stopped), so the teardown waited its whole deadline (10 s
+     * for a closing context) for a goroutine that could never run. Forced interleaving: the
+     * spawner is running (blocked on a latch) when terminate starts; once terminate's unpark of
+     * the snapshot reached it (its permit is set, so the snapshot is taken) it spawns. Fixed,
+     * that spawn is refused with the teardown unwind and terminate returns at once. Mutation:
+     * no terminated check in spawn — red (terminate takes the full 10 s, a goroutine stays live).
+     */
+    public void testSpawnRacingTerminateDoesNotStallTeardown() throws Exception {
+        SchedulerCore s = carrierScheduler(1);
+        SchedulerCore prev = SchedulerCore.install(s);
+        CountDownLatch inBody = new CountDownLatch(1);
+        CountDownLatch spawnNow = new CountDownLatch(1);
+        AtomicInteger refused = new AtomicInteger();
+        GoroutineHandle spawner;
+        try {
+            spawner = s.spawn(() -> {
+                inBody.countDown();
+                try {
+                    spawnNow.await();
+                } catch (InterruptedException e) {
+                    throw new IllegalStateException(e);
+                }
+                try {
+                    s.spawn(() -> { });
+                } catch (SchedulerCore.GoroutineTerminated t) {
+                    refused.incrementAndGet();
+                    throw t;
+                }
+            });
+            assertTrue(inBody.await(20, TimeUnit.SECONDS), "spawner running");
+        } finally {
+            SchedulerCore.install(prev);
+        }
+        List<List<Thread>> stuck = java.util.Collections.synchronizedList(new ArrayList<>());
+        Thread term = Thread.ofPlatform().start(() -> {
+            try {
+                stuck.add(s.terminate(10_000));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        long t0 = System.nanoTime();
+        awaitTrue(() -> spawner.permit, "terminate's live-list snapshot reached the spawner");
+        spawnNow.countDown();
+        assertTrue(term.join(java.time.Duration.ofSeconds(20)), "terminate returned");
+        long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);
+        assertTrue(ms < 1_000, "terminate took " + ms + " ms (waited for a goroutine that cannot run)");
+        assertTrue(stuck.size() == 1 && stuck.get(0).isEmpty(), "carriers stopped: " + stuck);
+        assertTrue(s.numGoroutines() == 0, "live goroutines after teardown: " + s.numGoroutines());
+        assertTrue(refused.get() == 1, "the late spawn was refused");
+    }
+
+    /**
+     * BUG-0050: a Truffle-blocked goroutine park ({@link Carriers#PARK_INTERRUPTIBLY}: thread
+     * mode, and a pinned park) whose wake and a thread-local action's interrupt (CPU sampler,
+     * debugger) arrived together threw for the interrupt and lost the wake: Truffle runs the
+     * action and calls the interruptible again, which parked with no permit left — forever,
+     * although the waker had published the goroutine's admission (a sampled thread-mode program
+     * never finished). Truffle's re-invocation contract is driven directly, so the interleaving
+     * is forced: permit and interrupt pending, first call, then the second call. Mutation: the
+     * second call parks again — red (it never returns).
+     */
+    public void testInterruptedParkDoesNotLoseTheWake() throws Exception {
+        GoroutineHandle h = new GoroutineHandle(() -> { });
+        java.util.concurrent.atomic.AtomicReference<String> problem = new java.util.concurrent.atomic.AtomicReference<>();
+        Thread t = Thread.ofPlatform().start(() -> {
+            java.util.concurrent.locks.LockSupport.unpark(Thread.currentThread()); // the waker
+            Thread.currentThread().interrupt(); // a thread-local action's delivery
+            try {
+                Carriers.PARK_INTERRUPTIBLY.apply(h);
+                problem.set("the interrupt was not reported to Truffle");
+            } catch (InterruptedException expected) {
+                // Truffle runs the action, then calls the interruptible again.
+            }
+            try {
+                Carriers.PARK_INTERRUPTIBLY.apply(h);
+            } catch (InterruptedException e) {
+                problem.set("no interrupt is pending: " + e);
+            }
+        });
+        boolean returned = t.join(java.time.Duration.ofSeconds(5));
+        if (!returned) {
+            java.util.concurrent.locks.LockSupport.unpark(t);
+            t.join();
+        }
+        assertTrue(returned, "the re-invoked park returned (the wake was not lost)");
+        assertTrue(problem.get() == null, String.valueOf(problem.get()));
+    }
+
+    /**
+     * A goroutine never parks holding the pin lock (review round 4, finding 5): the lock is owned
+     * by the carrier thread, so a yield inside a pin section would let the next goroutine on that
+     * carrier re-enter the section (the lock is reentrant) and block every other carrier's. The
+     * park fails loud instead. Mutation: no check in {@code Carriers.park} — red (the park goes
+     * ahead with the lock held).
+     */
+    public void testParkInsidePinSectionFailsLoud() throws Exception {
+        SchedulerCore s = carrierScheduler(1);
+        SchedulerCore prev = SchedulerCore.install(s);
+        java.util.concurrent.atomic.AtomicReference<Throwable> got = new java.util.concurrent.atomic.AtomicReference<>();
+        CountDownLatch done = new CountDownLatch(1);
+        try {
+            s.spawn(() -> {
+                graalgo.runtime.sync.PinLock.LOCK.lock();
+                try {
+                    s.carriersForTest().park(s.currentGoroutine());
+                } catch (IllegalStateException e) {
+                    got.set(e);
+                } finally {
+                    graalgo.runtime.sync.PinLock.LOCK.unlock();
+                    done.countDown();
+                }
+            });
+            assertTrue(done.await(5, TimeUnit.SECONDS), "the park inside the pin section returned");
+            assertTrue(got.get() != null, "the park failed loud");
+            assertTrue(!graalgo.runtime.sync.PinLock.LOCK.isLocked(), "pin lock released");
+        } finally {
+            SchedulerCore.install(prev);
+            assertTrue(s.terminate(10_000).isEmpty(), "carriers stopped");
+        }
+    }
+
     private static boolean allDead(SchedulerCore s) {
         return s.carriersForTest().stop().stream().noneMatch(Thread::isAlive);
     }

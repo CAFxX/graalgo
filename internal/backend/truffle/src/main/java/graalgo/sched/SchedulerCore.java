@@ -857,7 +857,7 @@ public final class SchedulerCore {
         if (carriers != null) {
             carriers.park(h);
         } else if (inContext) {
-            TruffleSafepoint.setBlockedThreadInterruptible(null, Carriers.PARK_INTERRUPTIBLY, this);
+            TruffleSafepoint.setBlockedThreadInterruptible(null, Carriers.PARK_INTERRUPTIBLY, h);
         } else {
             LockSupport.park(this);
         }
@@ -1072,6 +1072,18 @@ public final class SchedulerCore {
         }
         synchronized (quiescenceLock) {
             if (carriers != null) {
+                if (terminated) {
+                    // terminateCarriers snapshots the live list under this lock after setting
+                    // terminated: a goroutine linked after that snapshot would never be
+                    // unparked (the drainer is stopped), and the teardown would wait its whole
+                    // deadline for it (BUG-0056). Refused instead: the spawner unwinds as at its
+                    // next park. (Thread mode needs no check: the new thread sees terminated in
+                    // awaitAck and ends by itself.)
+                    if (!system) {
+                        liveUser.decrementAndGet();
+                    }
+                    throw TERMINATED;
+                }
                 linkLive(h);
             }
             liveGoroutines.incrementAndGet();
