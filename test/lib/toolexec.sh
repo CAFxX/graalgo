@@ -13,7 +13,11 @@
 #   toolexec_build <out> <runner> [build flags...]
 #                    `go build` of the package in the current directory
 #                    through graalgo-tool with the fork applied; the linked
-#                    program runs on <runner>.
+#                    program runs on <runner>. With `-tags=purego`, as the
+#                    product launcher builds (ADR-0010 DV3): the gates test
+#                    the files the product compiles (std crypto's pure-Go
+#                    code, not its assembly). A caller's own -tags must
+#                    include purego (the last -tags flag wins).
 #
 # A build through graalgo-tool without the fork fails at link: the upstream
 # runtime's assembly has no intrinsics (design §5.3).
@@ -42,5 +46,5 @@ toolexec_setup() {
 
 toolexec_build() {
     GRAALGO_STUB="$TOOLEXEC_STUB" GRAALGO_RUNNER="$2" \
-        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" "${@:3}" -o "$1" .
+        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" -tags=purego "${@:3}" -o "$1" .
 }

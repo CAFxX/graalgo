@@ -10,7 +10,13 @@ exit status with gc.
 **Add a test:** a `package main` in [programs/](programs/) that imports the
 std packages under test — the place for intrinsic and std-behavior fixes
 (e.g. [reflectlite_views.go](programs/reflectlite_views.go),
-[preempt_spin.go](programs/preempt_spin.go)).
+[preempt_spin.go](programs/preempt_spin.go)). The runtime surface M3's gaps
+G1–G3 added is pinned by [finalizers.go](programs/finalizers.go)
+(finalizers and cleanups after `runtime.GC`), [iter_pull.go](programs/iter_pull.go)
+(coroutines), [std_kernels.go](programs/std_kernels.go) (crypto, `hash/crc32`,
+`math/big`, `chacha8rand`, `hash/maphash`) and
+[runtime_facade.go](programs/runtime_facade.go) (memory statistics, the
+`runtime/debug` knobs, linknames, GOROOT and build info).
 
 **Goroutine mode:** every program runs in the default carrier mode
 (goroutines as continuations on carrier threads, GG-0074,
