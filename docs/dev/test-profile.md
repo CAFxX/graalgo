@@ -8,6 +8,72 @@ times are ratcheted against the baseline of the environment (local:
 SLOWER warning above 1.2x; CI: failure above 2x + 30 s; see "Baselines per
 environment" below).
 
+## Round 2 (2026-11-25): where the minutes went, and what changed
+
+Profiled on master a542c799 (one `pre-land` through gates.py with a timing
+SHELL wrapper over every recipe line, `nice -n 19`, `-j 1`, load 7–13),
+the CI gate-times artifacts of a542c799 (warm) and 09acff6b (cold), and the
+weekly full-suite's CLASS lines. Ranked by dev-host wall time:
+
+| # | where | wall s | CPU s | what |
+|--:|---|---:|---:|---|
+| 1 | snapshot-check | 298 | 503 | 62 v1 JVMs: gofrontend 1.5 s + 113 MB JSON parse each (v1, retires at M3) |
+| 2 | test-m1a | 153 | 233 | ~190 programs, serial: 0.36 s JVM each (CDS) + leg overhead |
+| 3 | `check`'s pin-audit smoke | 108 | 192 | the whole SchedTestRunner suite (fast + slow classes) in thread mode under JFR |
+| 4 | test-regression | ~110 | ~170 | 7 v1 `graalgo test` packages (tls-wrap-hang needs `-Xmx4g`) |
+| 5 | `check`'s frontend `go test` | 47 | 66 | never cached: TMPDIR inside the module made every t.TempDir path a test input |
+| 6 | test-p3frontend | 37 | 57 | go vet + go test (execs the v1 backend: not safely cacheable) |
+| 7 | test-java-fast | 35 | 35 | corpus classes, fixed sleeps |
+| 8 | test-goroutine-modes | 31 | 63 | thread-mode programs; 4 Java classes the pin smoke also runs (removed) |
+| 9 | test-diffharness | 30 | 36 | gc builds of the corpus |
+| 10 | test-toolexec | 29 | 118 | go test; graalgo-tool's e2e package is the critical path (30 s) |
+| – | check-links-external | 21 | 0.5 | network: waited for a job slot |
+
+CI (one 4-vCPU runner, 12.3 min job): CPU-bound (2300 CPU s in 700 s of
+gates); `check` alone 361 s wall was the longest gate.
+
+Changes (each with a planted violation; see the commits):
+
+- **CI shards** (`gates.py --shard I/N`, ci.yml matrix of 4): disjoint
+  shards covering the list, longest-processing-time-first over the
+  runner baseline's wall times; `gates.py shards 4` prints them. Each job
+  runs setup + its shard + the drift check. Expected job wall: ~6–7 min
+  (the snapshot-check shard is the floor) instead of 12.3.
+- **test-pin-smoke**: the pin-audit smoke left `check` for its own gate
+  (same command), so a shard can run it beside the static gates; and
+  test-goroutine-modes dropped its Java leg (4 classes in thread mode),
+  a strict subset of what the pin smoke runs in the same mode.
+- **frontend go test cacheable**: `make check` points TMPDIR at
+  `<repo>/.tmp/frontend-check`; the one input outside the module (a
+  corpus program) is hashed into `GRAALGO_FE_EXT_INPUTS`, which the test
+  that reads it looks up; build.sh check fails a test naming a `../`
+  path without that lookup. 47 -> 1.4 s on an unchanged tree.
+- **LIGHT gates**: check-links-external runs beside the others without a
+  job slot (-21 s at `-j 1`).
+- **mutation.yml**: the gate runs 4 programs at a time (`MUTATION_JOBS`,
+  default 1 locally). **conformance.yml**: graalgo-sync-run maps the CDS
+  archive (round 1 measured -23% CPU per program).
+- **Cache integrity** (BUG-0012): gcoracle entries and CDS archives carry
+  a sha256 MANIFEST written last and verified on load (a mismatch deletes
+  the entry: a miss); signal-killed or crashed gc runs are never stored;
+  the oracle key hashes gcoracle.sh and the leg's shell functions.
+
+Evaluated and not taken: `-XX:TieredStopAtLevel=1` (bundle JVM: -31% CPU,
+same wall; sync JVM: -17% CPU, +11% wall; it changes the host JIT the
+runtime's concurrency is tested under); `-XX:+UseSerialGC` (no gain); the
+JDK 25 AOT cache (`-XX:AOTCacheOutput` produced no usable cache with the
+JVMCI-enabled launch; dynamic CDS stays); a cache of gofrontend's v1
+export (113 MB per program, ~7 GB for the corpus; v1 retires at M3);
+go test caching for test-toolexec/test-p3frontend (their tests exec
+`go build`/the backend, whose inputs go test cannot hash).
+
+Next levers (round 3): a batch BundleMain (programs in fresh Contexts of
+one JVM, process isolation kept for exit/deadlock/signal programs) for the
+m1* gates (~0.3 s x ~300 programs); slicing snapshot-check across two CI
+shards (needs per-slice exclusion accounting); `t.Parallel` in
+graalgo-tool's e2e tests; the slow runtime classes the pin smoke runs per
+push (GcDifferentialTest ~41 s, LauncherOsArgsTest ~20 s on CI).
+
 ## Baselines per environment
 
 The ratchet compares like with like. A gate's CPU time depends on the host
