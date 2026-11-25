@@ -60,13 +60,21 @@ NO_LIGHT = ("import sys, runpy; path = sys.argv[1]; "
             "sys.exit(g['main'](sys.argv[2:]))")
 
 
-# Inherited variables that change what gates.py or the inner make do.
-LEAKY_ENV = ("GITHUB_ACTIONS", "CI", "GATE_JOBS", "GATE_CACHE", "GATE_TIER_BASE",
+# Inherited variables that change what gates.py or the inner make do. Every
+# GATE_* variable is dropped by prefix, not by list: the CI job's GATE_SHARD
+# (added after the list was written) leaked into these runs and turned the
+# self-tests into a shard-4/4 run of nothing (master 054b1f58 red).
+LEAKY_ENV = ("GITHUB_ACTIONS", "CI",
              "MAKE", "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEOVERRIDES")
+LEAKY_PREFIXES = ("GATE_",)
+
+
+def leaky(name):
+    return name in LEAKY_ENV or name.startswith(LEAKY_PREFIXES)
 
 
 def hermetic_env(**extra):
-    env = {k: v for k, v in os.environ.items() if k not in LEAKY_ENV}
+    env = {k: v for k, v in os.environ.items() if not leaky(k)}
     env.update(extra)
     return env
 
@@ -79,6 +87,26 @@ def jload(path):
 def jdump(path, v):
     with open(path, "w") as f:
         json.dump(v, f)
+
+
+class HermeticEnvTest(unittest.TestCase):
+    def test_drops_every_gate_variable(self):
+        # any GATE_* the CI job (or a future gates.py option) sets must not
+        # reach the self-tests' runs; a list of names went stale once already
+        planted = {"GATE_SHARD": "4/4", "GATE_SOMETHING_NEW": "x", "GITHUB_ACTIONS": "true",
+                   "MAKEFLAGS": "-j2"}
+        old = {k: os.environ.get(k) for k in planted}
+        os.environ.update(planted)
+        try:
+            env = hermetic_env(GATE_CACHE="cold")
+        finally:
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual([k for k in env if k in planted], [])
+        self.assertEqual(env["GATE_CACHE"], "cold")  # explicit extras still apply
 
 
 class GatesTest(unittest.TestCase):
