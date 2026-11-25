@@ -320,7 +320,8 @@ for 1M, the lane's scratch spawn program (`-Xmx10g`, once):
 | 100,000 | 0.20 s | 1.24 s (6.1×) | 2,749 | 4,710 (1.7×) | 58 ms | 2.69 s (47×) |
 | 1,000,000 | 1.9 s | 11.5 s (6.0×) | 2,757 | 2,289 (0.83×), peak RSS 4.0 GB | 0.23 s (wake+exit) | 76 s (wake+exit, first round) |
 
-Spawn is flat in the live count (the `spawn_flat` gate); the heap per idle
+Spawn is flat in the live count (the `spawn_flat` check, `make
+bench-spawn-flat`, weekly); the heap per idle
 goroutine is ~2.3 KB (frozen stack 1.26 KB). The round is dominated by the
 wake: one deoptimization per goroutine in the first round (ADR-0018) and
 the drainer hops per wake and exit.

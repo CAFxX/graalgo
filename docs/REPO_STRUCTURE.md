@@ -339,8 +339,8 @@ directory's README repeats its status.
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
     compares stdout, normalized stderr and exit status with gc (in the
-    default carrier goroutine mode; `spawn_flat.go` is the spawn-scaling
-    check of ADR-0018); [cancel.sh](../test/m1r/cancel.sh) builds
+    default carrier goroutine mode; `spawn_parked.go` keeps 20,000
+    goroutines parked at once, functional output only); [cancel.sh](../test/m1r/cancel.sh) builds
     [cancel/probe.go](../test/m1r/cancel/probe.go) and cancels it from the
     embedder (`Context.close(true)` with goroutines blocked everywhere,
     system calls included; thread-local action reach; `os.Exit` and panic
@@ -485,6 +485,10 @@ directory's README repeats its status.
     [compile-health.yml](../.github/workflows/compile-health.yml); parser
     test [test_pe_report.py](../test/bench/realistic/test_pe_report.py) in
     `make pe-check-m1a`).
+    [scaling/spawn_flat.go](../test/bench/scaling/spawn_flat.go) is the
+    spawn-scaling check of ADR-0018 (spawn cost flat in the live count; a
+    wall-clock ratio compared with gc's output by the m1r runner): `make
+    bench-spawn-flat`, weekly in ci.yml's full-suite job, never per-push.
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):

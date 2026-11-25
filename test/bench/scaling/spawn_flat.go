@@ -1,11 +1,14 @@
 // spawn_flat: goroutine creation costs the same however many goroutines are
 // alive (ADR-0018). 20,000 goroutines are spawned in batches of 1,000 and stay
 // parked on a channel; the fastest of the two last batches (19,000 alive) must
-// be within 3x the fastest of the two first (or under 50 ms), and the round must take
-// under 2 s (after a warm-up round). gc prints "spawn flat" and "spawn fast"
-// (~5 ms); a creation path that walks every live goroutine (one polyglot
-// thread per goroutine: ~5x per spawn at 20,000, ~15 s for the round) prints
-// "spawn grows" and "spawn slow".
+// be within 3x the fastest of the two first (or under 50 ms), after a warm-up
+// round. gc prints "spawn flat"; a creation path that walks every live
+// goroutine (one polyglot thread per goroutine: ~5x per spawn at 20,000)
+// prints "spawn grows". A wall-clock check, so it lives in the benchmark tier
+// (make bench-spawn-flat: compared with gc's output by test/m1r/run.sh;
+// weekly in ci.yml's full-suite job), never in a per-push gate; the per-push
+// structural guard is CarriersTest (no polyglot thread per goroutine), and
+// test/m1r/programs/spawn_parked.go keeps the functional workload per push.
 package main
 
 import (
@@ -48,9 +51,7 @@ func round() []time.Duration {
 
 func main() {
 	round() // warm-up: the spawn path compiled
-	t0 := time.Now()
 	ts := round()
-	total := time.Since(t0)
 	early := min(ts[0], ts[1])
 	late := min(ts[batches-2], ts[batches-1])
 	// A batch under 50 ms (50 µs a spawn) is flat whatever the ratio: gc's
@@ -59,10 +60,5 @@ func main() {
 		fmt.Println("spawn flat")
 	} else {
 		fmt.Println("spawn grows: first batches", early, "last batches", late)
-	}
-	if total < 2*time.Second {
-		fmt.Println("spawn fast")
-	} else {
-		fmt.Println("spawn slow:", total)
 	}
 }

@@ -116,6 +116,9 @@
 #   ([test/fuzz/](test/fuzz/)): the hand-written adversarial corpus plus N
 #   generated programs from SEED, each vs live gc (~1 s a program); nightly
 #   (fuzz-newpath.yml), never per-push.
+#   `make bench-spawn-flat` — goroutine spawn cost flat in the live count
+#   (ADR-0018), a wall-clock check: weekly in ci.yml's full-suite job,
+#   never per-push (host load moves it).
 #
 
 
@@ -211,7 +214,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines bench-spawn-flat pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
 
 all: generate build snapshot-check check test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
 
@@ -545,6 +548,19 @@ bench-goroutines: build
 	    --dir test/bench/realistic --gc-env GOMAXPROCS=4 --reps 1 $(BENCH_ARGS) goroutines || exit 1; \
 	done
 
+# Spawn-scaling check (benchmark tier; weekly in ci.yml's full-suite job,
+# never per-push: a wall-clock assertion follows host speed and load):
+# test/bench/scaling/spawn_flat.go times batches of 1,000 spawns with 1,000
+# vs 19,000 goroutines alive and prints "spawn flat" when the late batches
+# stay within 3x the early ones (or under 50 ms) — gc's output, which
+# test/m1r/run.sh compares with graalgo's in the default carrier mode. The
+# O(1)-spawn regression signal of ADR-0018 (the thread-per-goroutine path
+# grows ~5x at 20,000); per push, CarriersTest guards the mechanism (no
+# polyglot thread per goroutine) and test/m1r/programs/spawn_parked.go the
+# workload.
+bench-spawn-flat: build
+	GO="$(GO)" test/m1r/run.sh test/bench/scaling/spawn_flat.go
+
 # The compilation report of the realistic programs (~1.5 min; nightly as
 # .github/workflows/compile-health.yml with --max-churn): failed, deoptimized
 # and invalidated Truffle compilations per program
@@ -739,9 +755,8 @@ test-java-fast: java-test-classes java-test-lists-check
 # the default, so every other gate runs it; this target keeps the
 # thread-per-goroutine fallback honest and checks what only a mode switch or
 # a carrier migration can break: (1) the scheduler suites and a few
-# goroutine-heavy m1a/m1r/m1c programs with -Dgraalgo.sched.goroutines=thread
-# (spawn_flat.go is left out: it fails there by design); (2) goroutine
-# programs in carrier mode under -ea, so Truffle's per-thread assertions
+# goroutine-heavy m1a/m1r/m1c programs with -Dgraalgo.sched.goroutines=thread;
+# (2) goroutine programs in carrier mode under -ea, so Truffle's per-thread assertions
 # (EncapsulatingNodeReference) see goroutines migrate between carriers;
 # (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
 # and leak-free, in both modes.

@@ -8,6 +8,10 @@
   allocation and tail latency, goroutine scaling) for
   [north-star.md](../../docs/arch/north-star.md), on the same runner
   (`--dir`): `make bench-realistic`.
+- [scaling/spawn_flat.go](scaling/spawn_flat.go) — goroutine spawn cost flat
+  in the live count (ADR-0018), a wall-clock ratio compared with gc's output
+  by the m1r runner: `make bench-spawn-flat`, weekly in ci.yml's full-suite
+  job (the one benchmark that asserts; never per-push).
 - `fib/`, `loop/`, `slicesum/`, `maps/`, `structs/`, `iface/`, `strbuild/`,
   `chanpingpong/` — micro-benchmarks (`main.go` each). [run.sh](run.sh) runs
   them on **v1** ([graalgo-sync-run](../../internal/backend/graalgo-sync-run))

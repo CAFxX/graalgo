@@ -114,7 +114,7 @@ JVM at `nice 19`, `-XX:ActiveProcessorCount=4`; gc `GOMAXPROCS=4`):
 | 1,000,000 | 1.9 s | infeasible (O(N²)) | 11.5 s (`-Xmx10g`, peak RSS 4.0 GB) | 2,757 | 2,289 |
 
 Per-goroutine creation is flat (1,000 vs 19,000 alive: the `spawn_flat`
-gate) at ~10 µs on that host, 6–8× gc's 1.8 µs (the target was 5×). The
+check) at ~10 µs on that host, 6–8× gc's 1.8 µs (the target was 5×). The
 heap per parked goroutine at 100,000 is ~2.3 KB (class histogram: the
 frozen stack chunk 1.26 KB, the handle with its atomics 0.27 KB, drainer
 bookkeeping 0.15 KB, Go state 0.4 KB); RSS per goroutine above that is G1
@@ -165,7 +165,7 @@ thread" holds only until the default-flip lane lands.
   in ~4 GB RSS; the thread-mode fallback is unchanged.
 - `jdk.internal.vm.Continuation` is JDK-internal: every launcher and test
   JVM gains the `--add-exports` flag, and a JDK upgrade must re-run the
-  carrier gates (`CarriersTest`, the m1r program `spawn_flat.go`, and every
+  carrier gates (`CarriersTest`, `make bench-spawn-flat`, and every
   other gate, which run carrier mode). Native images
   keep thread mode (truffle-design §7.4, amendment A1).
 - `Thread.currentThread()` in runtime code is a carrier, shared by many
@@ -175,8 +175,12 @@ thread" holds only until the default-flip lane lands.
   naming.
 - Gates: `graalgo.sched.CarriersTest` (fast Java list: the structural
   no-thread-per-goroutine check, pinned park and syscall compensation,
-  teardown) and the m1r program `spawn_flat.go` vs gc (`make test-m1r`,
-  ~5 s); since the flip every gate runs carrier mode, and `make
+  teardown) and the m1r program `spawn_parked.go` vs gc (`make test-m1r`:
+  20,000 goroutines parked at once, functional output only); the
+  spawn-scaling ratio is a wall-clock check, so it moved out of the
+  per-push gate (2026-11-25) to the benchmark tier:
+  `test/bench/scaling/spawn_flat.go` vs gc (`make bench-spawn-flat`,
+  weekly in ci.yml's full-suite job); since the flip every gate runs carrier mode, and `make
   test-goroutine-modes` (~30 s, per push) reruns the scheduler suites and six
   goroutine programs in the fallback; it also runs
   `test/m1r/programs/carrier_migration.go` (parks inside reflect calls,
