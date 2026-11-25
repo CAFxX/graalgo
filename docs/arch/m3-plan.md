@@ -116,15 +116,78 @@ regression).
 
 | # | Gap | Programs | Proposed work | Size | Prio |
 |---|---|---|---|---|---|
-| G1 ★ | **link floor of `crypto/*`, `hash/crc32`, `math/big`, `hash/maphash`, `iter`**: `crypto/fips140.isBypassed` (23), `crypto/internal/fips140.fatal` (9), `fips140/subtle.xorBytes` (1), `hash/crc32.castagnoliSSE42` (17), `math/big.addMulVVWW` (2), `runtime.memhash` (3), `runtime.coroswitch` (2, `iter.Pull`) | 57 corpus (21 ★) | intrinsics or facade bodies for the named symbols (already "Up" in RECOVERY's north-star ranking) | 4–7 | P0 |
-| G2 ★ | **runtime API surface of the facade**: `runtime.ReadMemStats` (3), `MemProfile` (2), `runtime/debug.setGCPercent`, `setPanicOnFault`, `runtime.Breakpoint` (3, not declared), `internal/cpu.cpuid` (12: `testing` imports), `runtime.fastrand`/`fastrandn` linknames (4), `syscall.runtimeClearenv` (1), `runtime.GOROOT()` (`winbatch.go`) | 10 srctest + 18 corpus (5 ★) | facade `runtime` + intrinsics (BUG-0017's list on the new path) | 3–5 | P0 |
-| G3 ★ | **finalizers**: `SetFinalizer` never runs on the new path (`deferfin`, `mallocfin`, `tinyfin`, `lc32_finalizer_wakes_main`) or a finalizer panic is not fatal (`lc33`) | 3 srctest + 2 corpus (2 ★) | finalizer queue on the new value model (BUG-0016's fix done for `graalgo.go`) | 2–4 | P1 |
+| G1 ★ | **link floor of `crypto/*`, `hash/crc32`, `math/big`, `hash/maphash`, `iter`**: `crypto/fips140.isBypassed` (23), `crypto/internal/fips140.fatal` (9), `fips140/subtle.xorBytes` (1), `hash/crc32.castagnoliSSE42` (17), `math/big.addMulVVWW` (2), `runtime.memhash` (3), `runtime.coroswitch` (2, `iter.Pull`) | 57 corpus (21 ★) | **closed** (§3.1): 48/57 match gc; the 9 left are G7 (sockets: 4), gc-nondeterministic programs (random keys, hedged ECDSA: 4) and BUG-0061 (1) | done | – |
+| G2 ★ | **runtime API surface of the facade**: `runtime.ReadMemStats` (3), `MemProfile` (2), `runtime/debug.setGCPercent`, `setPanicOnFault`, `runtime.Breakpoint` (3, not declared), `internal/cpu.cpuid` (12: `testing` imports), `runtime.fastrand`/`fastrandn` linknames (4), `syscall.runtimeClearenv` (1), `runtime.GOROOT()` (`winbatch.go`) | 10 srctest + 18 corpus (5 ★) | **closed** (§3.1): corpus 16/17, srctest 6/11 match gc; left: BUG-0059 (`MemProfile` records, 2), BUG-0060 (`recover` rule, 2, now reached), `recover4.go` (`mmap`, G7), `testing/05_subtests` (unnormalized test durations, a G9 harness artifact) | done | – |
+| G3 ★ | **finalizers**: `SetFinalizer` never runs on the new path (`deferfin`, `mallocfin`, `tinyfin`, `lc32_finalizer_wakes_main`) or a finalizer panic is not fatal (`lc33`) | 3 srctest + 2 corpus (2 ★) | **closed** (§3.1): srctest 3/3, corpus `lc32`, `lc33`, `gc05`, `gc06` match gc; `gc01`/`gc07` are nondeterministic under gc itself (tiny allocator, racy reads) | done | – |
 | G4 ★ | **new-path node bugs found by the run**: `ClassCastException` `Iface`↔`RawIface` (`switch.go`, `testing/quick`), `Complex` (`shift3.go`); `len` of a constant-length array pointer skips the call (`range.go`, `const4.go`: side effect elided); nil dereference at a large offset not trapped (`nilptr.go`) and nil method value calls (`ddd.go`, `method.go`); `new(x)` (`newexpr.go`, BUG-0005 still open on the new path); `slicecap.go`; zero-size allocation identity (`zerosize.go`); false `checkptr` traps (`inline_literal.go`, `unsafebuiltins.go`, `03c_uintptr2ptr_trap.go`: gc traps only under `-d=checkptr`); `runtime.Caller` skip through inlined frames (`inline_caller.go`); traceback `main.main(...)` vs `main.main()` (`27_panic_trace`, `maymorestack.go`); generics: nil array length NPE (`boundmethod.go`, `interfacearg.go`), local generic type definitions (`issue54456.go`, `nested.go`); timer channel `len`/`cap` must be 0 (go ≥ 1.23: `tm15`, `tc07`); `reflect.FuncOf`/`StructOf` method code pointers (`47_reflect_funcof_structof`, W9b) | 17 srctest + 5 typeparam + 5 corpus + 2 snapshot (v1 passes most) | one fix + regression program each, in `test/m1a/programs` or `test/m1r/programs` | 6–10 | P0 |
 | G5 | **`go test` through the launcher (M2)**: `test-regression`'s 7 packages | 7 packages | M2; then `test-regression` runs on the launcher unchanged (`cmd/graalgo` = launcher) | in M2 | P1 (blocks D4) |
 | G6 | **mutation oracle on the new path**: no mutant targets `graalgo.go` | – | ≥ 20 mutants over `graalgo.go.nodes`/`values`/`build` and the emitter, gated by the re-pointed `snapshot-check` + `test-m1a` (WP-MUT's first half) | 2–3 | P1 |
 | G7 | **syscall role table** (M4 scope): `getgroups` 115, `open` 2, `mmap` 9 (W8b), `kill` 62 (`sigchld.go`), `socket` 41 (`net`: 3 programs); `os/exec` spawn (`syscall.runtime_AfterFork`: 6 srctest + 1 corpus, GG-0064); `os` pipe hang (`08_pipe`) | 7 srctest + 9 corpus (3 ★) | W8b (M4) | in M4 | P2: accept as M4-deferred coverage (§5 decision 1) |
 | G8 | **GC-observable behavior** (`stackobj`, `stackobj3`, `maplinear` timing): diverge on v1 too | 3 srctest | stay reason-coded (`backend-specific`, `timing: true`) | 0 | – |
 | G9 | `GOMAXPROCS` default follows `-XX:ActiveProcessorCount` (`lc20_gomaxprocs`), unnormalized `log` timestamps (`testing/iotest`) | 2 corpus | harness artifacts of this measurement: the gate runs without the CPU cap / with a normalizer | 0.5 | P2 |
+
+### 3.1 G1–G3 closed (lane `m3-gaps-std`, 2026-11-25)
+
+Measured with §1's method (`test/m1r/run.sh` over the 486 importing
+programs; the srctest backend config over the 18 GOROOT/test files the gaps
+name), new path vs gc, before (master `fb7d6e56`) and after:
+
+| Corpus | Before | After |
+|---|--:|--:|
+| test/corpus importing programs | 376 / 486 | **442 / 486** |
+| G1 programs (link floor) | 0 / 57 | **48 / 57** |
+| G2 programs (corpus) | 0 / 17 | **16 / 17** |
+| G3 programs (corpus: `lc32`, `lc33`, `gc05`, `gc06`) | 0 / 4 | **4 / 4** |
+| GOROOT/test files of G2 + G3 (18) | 2 / 18 | **11 / 18** |
+
+What landed:
+
+- **Link floor (G1).** The gates build with `-tags=purego`, as the product
+  launcher does (ADR-0010 DV3; [toolexec.sh](../../test/lib/toolexec.sh)):
+  std crypto's pure-Go files, not its assembly. Intrinsics for the
+  remaining assembly and runtime-provided symbols: `math/big`'s vector
+  kernels, `hash/crc32`'s SSE 4.2 / CLMUL kernels (exact, unreached while no
+  CPU feature is reported; `CrcKernelTest`), `internal/chacha8rand.block`,
+  `crypto/internal/boring/sig`, gc's compiler intrinsics of
+  `crypto/internal/constanttime`, the FIPS hooks (`crypto/fips140` bypass,
+  the service indicator: per-goroutine `G` fields), the `fatal`s,
+  `runtime.memhash`/`memequal`, `vgetrandom` and the `getrandom` system call
+  (role table; the scanner learned `unsafe.SliceData` buffers).
+  `crypto/internal/fips140/subtle.xorBytes` is a `TEMPORARY (BUG-0058)`
+  replace: its purego body views `[]byte` as `[]uintptr`.
+- **Coroutines (G1, `iter.Pull`).** `runtime.newcoro`/`coroswitch` are the
+  facade's Go ([coro.go](../../stdlib/fork/runtime/coro.go)): a coroutine is
+  a goroutine blocked on an unbuffered channel, a switch hands off through it
+  (exactly one side runs); `iter` stays verbatim, so `next`/`stop`, panics
+  and `runtime.Goexit` propagate by upstream's own code
+  ([iter_pull.go](../../test/m1r/programs/iter_pull.go)).
+- **Runtime API (G2).** `ReadMemStats` maps the JVM's heap and collector
+  figures (documented on it, [mstats.go](../../stdlib/fork/runtime/mstats.go));
+  `internal/cpu` (and `x/sys/cpu`) probes model "no optional feature" with
+  the host's vendor and brand string; `runtime/debug` and `runtime/trace`
+  hooks, profiles (empty, BUG-0059), `Breakpoint` (SIGTRAP crash),
+  `LockOSThread`, `Pinner`, the legacy `fastrand`/`cheaprand` linknames,
+  `runtimeClearenv`; the link now stamps `runtime.defaultGOROOT`,
+  `buildVersion` and `modinfo` as cmd/link does (`runtime.GOROOT`,
+  `runtime.Version`, `debug.ReadBuildInfo`). Per program:
+  [runtime_facade.go](../../test/m1r/programs/runtime_facade.go),
+  [std_kernels.go](../../test/m1r/programs/std_kernels.go).
+- **Finalizers and cleanups (G3).**
+  [Finalizers.java](../../internal/backend/truffle/src/main/java/graalgo/go/runtime/Finalizers.java):
+  a weak reference per special; the finalizer gets its object rebuilt over
+  the object's own storage (contents, resurrection, one-shot as gc); one
+  finalizer and one cleanup runtime goroutine; `runtime.GC` dispatches what
+  its collection cleared and yields; `KeepAlive` is a reachability fence;
+  chained finalizers run one cycle apart, as gc's
+  ([finalizers.go](../../test/m1r/programs/finalizers.go); the leak probe
+  now also covers the finalizer watcher).
+
+Left on these programs (none of them a G1–G3 symbol): G7's sockets and
+`mmap` (5), gc-nondeterministic programs (6: `ecdh`, three `ecdsa`
+signatures, `gc01`'s tiny-allocated finalizer target, `gc07`'s racy
+reads), BUG-0059 (2), BUG-0060 (2), BUG-0061 (1), G8 (2) and one G9
+harness artifact. `lc09_goexit_main` races a new goroutine against main's
+deferred call (both orders are valid Go; 1 run in 8 differs from gc's).
 
 **Total before D6: G1–G4 + G6 = 17–29 agent-days**, parallel in 3 lanes
 (link floor + runtime surface; node bugs; finalizers + mutants). G5 is M2's

@@ -10,7 +10,15 @@ source against the facade `runtime`, [toolexec-design.md](toolexec-design.md)
 §5.4) nothing calls `internal/cpu.Initialize`, so `internal/cpu` reports no
 optional CPU feature and every feature-gated path of the standard library
 takes its portable branch. A program behaves as under gc with
-`GODEBUG=cpu.all=off`. The only observable difference found so far is the
+`GODEBUG=cpu.all=off`. The x86 probes themselves (`internal/cpu.cpuid`,
+`xgetbv`, `getGOAMD64level` and `golang.org/x/sys/cpu`'s, all assembly
+upstream) are intrinsics that model this feature set
+([CpuIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go/intrinsics/CpuIntrinsics.java)):
+every feature leaf and `XGETBV` read zero, GOAMD64 is v1, and only the
+identification leaves are the host's (vendor and brand string, from
+`/proc/cpuinfo`: `cpu.Name`, `testing`'s `cpu:` line). The feature-guarded
+assembly that packages still reference (the SSE 4.2 / CLMUL kernels of
+`hash/crc32`) has exact intrinsics, unreached while no feature is reported. The only observable difference found so far is the
 last bit of `math.Exp` (and what is built on it) on hosts with FMA, where
 upstream's amd64 assembly has a second path; the intrinsic ports the path
 without FMA. [test/m1r/run.sh](../../test/m1r/run.sh) therefore runs both
@@ -46,8 +54,6 @@ of [SyncIntrinsics.java](../../internal/backend/truffle/src/main/java/graalgo/go
   0 for timer channels and sends only when a receiver arrives. `Stop` and
   `Reset` behave as gc's (no stale value afterwards; an unreceived value
   counts as pending).
-- `runtime.GOROOT()` is `$GOROOT` when set and otherwise `""`; gc falls
-  back to the GOROOT recorded at link time.
 - `syscall.runtime_envs` reads `/proc/self/environ`: the JVM's environment,
   which is the program's as long as the launcher adds nothing.
 - System calls: only the numbers of
@@ -169,15 +175,41 @@ a semantic divergence: no program produces a wrong result, it fails fast.
 
 ## `os`, `reflect`, `fmt` and the runtime facade (`-toolexec` path; toolexec M1c/M1d)
 
-- **Finalizers and cleanups never run.** `runtime.SetFinalizer`,
-  `runtime.AddCleanup` and `Cleanup.Stop` do nothing: an `os.File` that is
-  never closed keeps its descriptor until the process exits. gc gives no
-  guarantee that a finalizer runs, so a program correct under gc is correct
-  here; one that relies on finalization for resource limits is not.
+- **Finalizers and cleanups** (`runtime.SetFinalizer`, `runtime.AddCleanup`,
+  [Finalizers.java](../../internal/backend/truffle/src/main/java/graalgo/go/runtime/Finalizers.java))
+  run when the JVM collector finds their object unreachable: on a runtime
+  goroutine, one at a time (finalizers and cleanups each have their own),
+  the finalizer receiving its object (contents intact, resurrectable, never
+  finalized twice); a panic in either is fatal. `runtime.GC` dispatches
+  every special its collection found before it returns and yields once, as
+  gc's does; after a collection nobody asked for they are dispatched within
+  100 ms. Differences: liveness is the JVM's — an interpreted frame keeps
+  a local variable's object until the variable is overwritten or the frame
+  returns, where gc's precise liveness ends it at the last use — and a
+  pointer into a tiny-allocated block never shares its block's fate (gc
+  combines small pointer-free objects, so some of their finalizers never
+  run; here each runs). `runtime.KeepAlive` is the JVM's reachability fence.
+- **`runtime.ReadMemStats`** reports the JVM's heap and collector figures
+  (the mapping is documented on `ReadMemStats` in
+  [mstats.go](../../stdlib/fork/runtime/mstats.go)): heap in use, committed
+  and maximum, non-heap memory, bytes allocated, collections, pause times,
+  `runtime.GC` calls. The JVM counts no objects: `Mallocs`, `Frees`,
+  `HeapObjects`, `Lookups` and `BySize` are 0, so `testing.AllocsPerRun`
+  reports 0.
+- **Profiles and the tracer:** `runtime.MemProfile`, `BlockProfile`,
+  `MutexProfile` and `ThreadCreateProfile` return no records,
+  `GoroutineProfile` records without stacks, `SetCPUProfileRate` has no
+  effect and `runtime.StartTrace` returns an error; `runtime/pprof` does
+  not link yet. The `runtime/debug` knobs (`SetGCPercent`,
+  `SetMemoryLimit`, `SetMaxStack`, `SetMaxThreads`, `SetTraceback`,
+  `SetCrashOutput`) record and report their settings but steer nothing
+  (the JVM's heap flags size the heap); `WriteHeapDump` writes nothing and
+  `debug.ReadBuildInfo` reports no build information.
+- **`runtime.LockOSThread`** has no effect: no Go-visible state is
+  per-thread (no cgo; system calls run where the executor puts them).
 - **System calls outside the role table are fatal errors**, never guesses
   ([table.txt](../../internal/toolexec/syscalls/table.txt)): sockets,
-  `writev`, `sendmsg`, `ioctl`, `getrandom`, the `fcntl` lock commands,
-  `mmap`. `os/exec` and `os.StartProcess` return `ENOSYS` (`function not
+  `writev`, `sendmsg`, `ioctl`, the `fcntl` lock commands, `mmap`. `os/exec` and `os.StartProcess` return `ENOSYS` (`function not
   implemented`) until the spawn helper of GG-0064.
 - **SIGPIPE:** a write to a broken stdout/stderr pipe ends the process with
   exit status 141, the status a shell reports for death by SIGPIPE; the
