@@ -1,27 +1,24 @@
-# Layer 3 — stdlib + scripts per-release gate (SPEC §5.3,
-# GG-0029/GG-0032): wave1/wave2/wave3 corpora differential vs stock gc.
+# Layer 3 — stdlib per-release gate (SPEC §5.3, GG-0029/GG-0032) on the
+# new path (m3-plan D3): `make stdlib-gate` runs every test/corpus program
+# that imports a package (the wave1/wave2/wave3 corpora, the topic and phase
+# dirs; 486 programs) through graalgo-tool on the node package against gc
+# (test/m1r/run.sh) and judges the result against the reviewed register
+# test/corpus/std-register.tsv (test/corpus/std_gate.py: an unlisted or
+# re-signed divergence is DRIFT, a listed program that matches gc is STALE).
+# v1's 76 wave run_differential.sh and the run_wave*.sh drivers were deleted.
 #
-# Cadence: weekly (the per-release gate — releases cut from a green gate)
-# plus manual dispatch. Hours-scale by design; the four-way triage per red
-# (graalgo bug / upstream change / backend-specific+reason-code /
-# nondeterminism-normalization) is recorded in the run's report.json.
+# Manual dispatch only (BUG-0033: the register's entries are the measured
+# divergences, not yet triaged into fixes; the schedule comes back with
+# that triage). ~10-15 min.
 name: stdlib-gate
 
-# DISABLED (schedule removed 2026-11-18, ci-green2 lane): red on every run
-# since inception (5/5) — BUG-0033. The weekly runs failed before running a
-# single program (the runners built the deleted phase-3 module: `make: ***
-# No rule to make target 'main'`); today's runners work, but the wave
-# corpora carry untriaged real divergences (e.g. wave1 errors/08_as:
-# `panic: clear: errP should be nil`). Re-enable the cron when the corpora
-# are triaged (fix or reason-coded exclusion per GG-0033). Manual dispatch
-# stays for that triage.
 on:
   workflow_dispatch:
 
 jobs:
   stdlib-gate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 360
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -43,19 +40,13 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: Layer 3 — stdlib gate (wave corpora differential)
-        env:
-          GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
-          JAVA_BIN: "${{ env.JAVA_HOME }}/bin/java"
-        run: |
-          mkdir -p "$GO_BIN_DIR"
-          ln -sf "$(which go)" "$GO_BIN_DIR/go"
-          ./tools/run_stdlib_gate.sh
+      - name: Layer 3 — stdlib gate (test/corpus programs with imports, new path vs gc)
+        run: make stdlib-gate STDLIB_GATE_REPORT="$RUNNER_TEMP/stdlib-gate.report"
 
       - name: Upload gate report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stdlib-gate-report
-          path: .out/stdlib-gate/layer3-*/
+          path: ${{ runner.temp }}/stdlib-gate.report
           if-no-files-found: warn

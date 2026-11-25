@@ -2,7 +2,9 @@
 # godebug-diff: differential tool for P2-M5 (WS E) EMULATED GODEBUG knobs.
 #
 # For each EMULATED knob, runs a probe program under stock gc (go run) and
-# under graalgo (SchedMain) with the same GODEBUG setting, then diffs the
+# under graalgo (the new path since m3-plan D3: the probe built through
+# graalgo-tool with the standard-library fork, test/lib/toolexec.sh, and
+# run on graalgo-bundle-run) with the same GODEBUG setting, then diffs the
 # observable behavior with a per-knob comparator:
 #
 #   schedtrace   both emit periodic SCHED lines on stderr (format differs:
@@ -17,22 +19,20 @@
 # Exit 0 iff every knob diffs as expected. Writes REPORT.md on success.
 set -u
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-BK="$ROOT/internal/backend"
-GO="${GO:-$HOME/tools/go/bin/go}"
-GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-JAVA="$GRAALVM_HOME/bin/java"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+ROOT="$(cd "$HERE/../.." && pwd)"
+# shellcheck source=../../test/lib/infra.sh
+. "$ROOT/test/lib/infra.sh"
+# shellcheck source=../../test/lib/toolexec.sh
+. "$ROOT/test/lib/toolexec.sh"
 CORPUS="$ROOT/test/corpus/phase2/godebug"
-mkdir -p "$ROOT/.tmp"
-WORK="$(mktemp -d "$ROOT/.tmp/godebug-diff.XXXXXX")"
+RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 KEEP="${1:-}"
-
-# Infrastructure preconditions: exit 3 (no verdict), never a knob FAIL.
-[ -x "$GO" ] || { echo "INFRA: gc toolchain not found: $GO" >&2; exit 3; }
-[ -x "$JAVA" ] || { echo "INFRA: java not found: $JAVA" >&2; exit 3; }
-# Same classpath as the truffle module's SCHED_RUN_CP.
-CP="$BK/truffle/out/classes:$BK/interop/out/classes:$(echo "$BK"/truffle/lib/*.jar | tr ' ' ':')"
-JAVA_FLAGS="--enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m"
+infra_setup_go
+GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+export GRAALVM_HOME
+infra_mktemp godebug-diff
+WORK="$TMP"
 
 pass=0
 fail=0
@@ -44,11 +44,13 @@ run_gc() { # $1=godebug $2=probe -> stdout/stderr/exit in $WORK/gc.{out,err,exit
     echo "$?" >"$WORK/gc.exit"
 }
 
-run_gr() { # $1=godebug $2=probe
-    local gd="$1" probe="$2"
-    GODEBUG="$gd" "$JAVA" $JAVA_FLAGS -cp "$CP" \
-        graalgo.sched.launcher.SchedMain --gmp=2 "$CORPUS/$probe" \
-        >"$WORK/gr.out" 2>"$WORK/gr.err"
+run_gr() { # $1=godebug $2=probe (built once through graalgo-tool)
+    local gd="$1" probe="$2" bin="$WORK/${2%.go}.gg"
+    if [ ! -x "$bin" ]; then
+        ( cd "$CORPUS" && toolexec_build_files "$bin" "$RUNNER" "$probe" ) >"$WORK/gr.build" 2>&1 \
+            || infra_die "graalgo-tool build of $probe failed: $(head -3 "$WORK/gr.build")"
+    fi
+    GODEBUG="$gd" GOMAXPROCS=2 TMPDIR="$WORK" "$bin" >"$WORK/gr.out" 2>"$WORK/gr.err"
     echo "$?" >"$WORK/gr.exit"
     if grep -qE 'ClassNotFoundException|NoClassDefFoundError|Could not find or load main class' "$WORK/gr.err"; then
         echo "INFRA: graalgo launcher could not load its classes:" >&2
@@ -74,10 +76,11 @@ check() { # $1=knob $2=ok(0/1) $3=detail
     fi
 }
 
-echo "== building phase2 =="
-make -C "$ROOT" build >/dev/null 2>&1 || { echo "INFRA: make build failed" >&2; exit 3; }
-[ -f "$BK/truffle/out/classes/graalgo/sched/launcher/SchedMain.class" ] \
-    || { echo "INFRA: SchedMain not built" >&2; exit 3; }
+echo "== building the backend and graalgo-tool =="
+make -C "$ROOT" build >/dev/null 2>&1 || infra_die "make build failed"
+[ -f "$ROOT/internal/backend/truffle/out/classes/graalgo/launcher/BundleMain.class" ] \
+    || infra_die "backend not built (BundleMain missing)"
+toolexec_setup
 
 # --- schedtrace ---
 # Strengthened comparator: requires >=3 lines with STRICTLY INCREASING
@@ -161,21 +164,17 @@ echo "== $pass passed, $fail failed =="
     echo "# godebug-diff report"
     echo ""
     echo "Generated: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    echo "Probes: $CORPUS (db02_panicnil.go, db03_alloc.go, db04_spin.go)"
-    echo "Backends: stock gc go1.27.1 ($GO run) vs graalgo SchedMain"
+    echo "Probes: test/corpus/phase2/godebug (db02_panicnil.go, db03_alloc.go, db04_spin.go)"
+    echo "Backends: stock gc go1.27.1 (go run) vs graalgo (graalgo-tool, graalgo-bundle-run)"
     echo ""
     echo '```'
     echo "$report"
     echo '```'
     echo ""
     echo "Result: $pass passed, $fail failed"
-} > REPORT.md
+} > "$HERE/REPORT.md"
 echo "wrote REPORT.md"
 
-if [ -z "$KEEP" ]; then
-    rm -rf "$WORK"
-else
-    echo "work dir kept: $WORK"
-fi
+[ -n "$KEEP" ] && { trap - EXIT; echo "work dir kept: $WORK"; }
 
 [ "$fail" = "0" ]

@@ -1,15 +1,16 @@
 # Layer 4 — fuzz soak (SPEC §5.3, GG-0037): generative
 # differential fuzzing + native testing.F differential fuzzing, overnight
-# per release.
+# per release, both on the new path (`go build -toolexec graalgo-tool`).
 #
 # Cadence: nightly (the overnight per-release soak) plus manual dispatch.
-# Each run: seeded program generation + differential harness batches
-# (run_soak.sh) and the native testing.F targets with differential replay
-# (fuzz/run_fuzz_native.sh). Minimized divergences become permanent
-# regressions per SPEC §5.4 (tools/fuzz-soak/findings/).
-#
-# The continuous adversarial track reserves the same interface:
-# run_soak.sh --seeds A:B runs one bounded batch.
+# 4a: the new path's program generator (test/fuzz/gen.py, derived from v1's
+# tools/fuzz-soak generator, deleted with its graalgo-sync-run harness at
+# m3-plan D3) in batches of 200 seeded programs vs gc (`make fuzz-newpath
+# FUZZ_CORPUS=0`) until the deadline, on a seed range disjoint from the
+# nightly fuzz-newpath job's. 4b: the native testing.F targets with
+# differential replay (test/differential/fuzz/run_fuzz_native.sh). A
+# divergence not in test/fuzz/known.txt fails the step; minimized
+# divergences become permanent regressions per SPEC §5.4 (test/fuzz/repro/).
 name: fuzz-soak
 # A dispatch's title carries its inputs: ci_status.sh lets only a dispatch
 # with the default inputs supersede a red scheduled run (a reduced-scope
@@ -57,24 +58,37 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: Layer 4a — generative soak (seeded programs, differential)
+      - name: Build the backend
+        run: make build
+
+      - name: Layer 4a — generative soak (seeded programs, new path vs gc)
         # Step budget: <= 4 h of batches + the last batch's overrun (the
         # deadline is checked between batches). A hung batch fails this
         # step instead of cancelling the whole job, so 4b and the report
-        # upload still run.
+        # upload still run. Exit 1 = a new divergence, 3 = infra.
         timeout-minutes: 285
         env:
-          GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
-          JAVA_BIN: "${{ env.JAVA_HOME }}/bin/java"
-          JOBS: "4"
           HOURS_IN: "${{ inputs.hours || '4' }}"
         run: |
-          mkdir -p "$GO_BIN_DIR"
-          ln -sf "$(which go)" "$GO_BIN_DIR/go"
-          HOURS="$(awk -v h="$HOURS_IN" 'BEGIN { if (h + 0 > 4 || h + 0 <= 0) h = 4; print h }')"
-          ./tools/fuzz-soak/run_soak.sh \
-            --hours "$HOURS" \
-            --out "$GITHUB_WORKSPACE/fuzz-soak-out"
+          out="$GITHUB_WORKSPACE/fuzz-soak-out"
+          mkdir -p "$out"
+          secs="$(awk -v h="$HOURS_IN" 'BEGIN { if (h + 0 > 4 || h + 0 <= 0) h = 4; printf "%d", h * 3600 }')"
+          deadline=$(( $(date +%s) + secs ))
+          # fuzz-newpath.yml seeds day*1000 + [0, n): this range never meets it.
+          base=$(( $(date +%s) / 86400 * 1000000 + 500000000000 ))
+          i=0 st=0
+          while [ "$(date +%s)" -lt "$deadline" ]; do
+            rc=0
+            make fuzz-newpath FUZZ_CORPUS=0 N=200 SEED=$(( base + i * 200 )) \
+              FUZZ_ARGS="--keep $out/fail --report $out/batch-$i.tsv" || rc=$?
+            if [ "$rc" -ne 0 ]; then
+              st=$rc
+              [ "$rc" -eq 1 ] || break
+            fi
+            i=$(( i + 1 ))
+          done
+          echo "4a: $i batches of 200 programs from seed $base"
+          exit "$st"
 
       - name: Layer 4b — native testing.F differential fuzzing
         # 8 targets x 120 s of fuzzing (~16 min) + the replay differential
@@ -85,7 +99,6 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 45
         run: |
-          make generate build
           ./test/differential/fuzz/run_fuzz_native.sh \
             --fuzztime 120 --max-per-target 40 \
             --out "$GITHUB_WORKSPACE/fuzz-native-out"

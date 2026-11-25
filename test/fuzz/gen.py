@@ -2,7 +2,7 @@
 """test/fuzz/gen.py — seeded generator of random Go programs for the
 differential fuzzer of the -toolexec path (test/fuzz/run.py).
 
-Derived from tools/fuzz-soak/gen/generator.py (the v1 path's generator),
+Derived from v1's tools/fuzz-soak generator (deleted at m3-plan D3),
 retargeted to what the new path supports today:
   - output through the builtin println only, so every program's
     observable output is its stderr (fmt links since toolexec M1d — the

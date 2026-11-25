@@ -1,15 +1,18 @@
 # godebug-diff report
 
-Generated: 2026-10-05T15:53:56Z
-Probes: [phases/phase2/corpus/godebug/](../../internal/backend/truffle/src/main/resources/graalgo/sched/godebug) (db02_panicnil.go, db03_alloc.go, db04_spin.go)
-Backends: stock gc go1.27.1 (/home/hatch/tools/go/bin/go run) vs graalgo SchedMain
+Generated: 2026-11-25T13:42:13Z
+Probes: test/corpus/phase2/godebug (db02_panicnil.go, db03_alloc.go, db04_spin.go)
+Backends: stock gc go1.27.1 (go run) vs graalgo (graalgo-tool, graalgo-bundle-run)
 
 ```
-PASS schedtrace: gc SCHED lines=22, graalgo SCHED lines=86 (increasing), stdout identical
-PASS scheddetail: SCHED-DETAIL lines=100, negative control clean
-PASS gctrace: gc cycle lines=19, graalgo cycle lines=3, stdout identical
+FAIL schedtrace: graalgo emitted <3 SCHED lines (0)
+FAIL scheddetail: no SCHED-DETAIL lines
+FAIL gctrace: graalgo emitted <2 gc cycle lines (0)
 PASS panicnil: stdout byte-identical: recovered: <nil> (<nil>)
 
 ```
 
-Result: 4 passed, 0 failed
+Result: 1 passed, 3 failed
+
+On the new path (m3-plan D3) the emulated scheduler/GC trace knobs (schedtrace, scheddetail,
+gctrace) are not implemented yet: WP-GODEBUG (docs/arch/RECOVERY.md). panicnil matches gc.

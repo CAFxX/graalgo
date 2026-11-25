@@ -85,7 +85,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.int
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror --add-exports java.base/jdk.internal.vm=ALL-UNNAMED
 
-.PHONY: all main smoke smoke-test clean check pin-smoke run run-sched pin-audit torture
+.PHONY: all main smoke-test clean check pin-smoke torture
 
 all: main
 
@@ -107,14 +107,6 @@ $(OUT_SMOKE)/.built: $(SRC_SMOKE) lib/SHA256SUMS.txt
 	mkdir -p $(OUT_SMOKE)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(CP)" -processorpath "$(CP)" -d $(OUT_SMOKE) $(SRC_SMOKE)
 	touch $(OUT_SMOKE)/.built
-
-# graalgo-run: frontend + Truffle AST execution for one Go file.
-run: main
-	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.launcher.Main $(ARGS)
-
-# --gmp=N file.go — scheduler entry point (SchedMain).
-run-sched: main
-	$(JAVA) $(JAVA_FLAGS) -cp "$(SCHED_RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
 # The module runners (graalgo.test.Runner, graalgo.sched.SchedTestRunner)
 # are class registries: the top-level `make test-java-fast` /
@@ -215,7 +207,7 @@ check: main $(OUT_TEST)/.built
 pin-smoke: main $(OUT_TEST)/.built
 	@echo "== pin-audit smoke (P2-M7, GG-0057) =="
 	@echo "-- runs the scheduler/runtime suite in a child JVM with jdk.VirtualThreadPinned"
-	@echo "-- enabled; FAILS on any unexpected pin. Full corpus: make pin-audit."
+	@echo "-- enabled; FAILS on any unexpected pin."
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m \
@@ -227,27 +219,10 @@ pin-smoke: main $(OUT_TEST)/.built
 	@# PinAudit prints last on a failed tests leg (2026-11-04: the CI failure
 	@# named no test because the tail showed only the verdict lines).
 
-# P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
-# suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
-# before milestone sign-off.
-P1_CORPUS ?= ../../../test/corpus/phase1
-P2_CORPUS ?= ../../../test/corpus/phase2
-pin-audit: main $(OUT_TEST)/.built
-	mkdir -p out/test-tmp
-	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m \
-	-Dpinaudit.test.cp="$(SCHED_TEST_CP)" \
-	-cp "$(SCHED_RUN_CP)" graalgo.sched.audit.PinAudit \
-	--corpus $(P1_CORPUS) --corpus $(P2_CORPUS) --tests --gmp 2 \
-	--out out/pinaudit-report.md
-
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
 # Takes ~10 min.
 torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
-
-smoke:
-	$(MAKE) run ARGS="$(P1_CORPUS)/hello.go"
 
 clean:
 	rm -rf out /tmp/smoke-classes /tmp/dsl-classes $(GOFRONTEND) $(GO_FRONTEND_DIR)/overlay.json

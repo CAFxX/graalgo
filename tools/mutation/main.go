@@ -1,33 +1,43 @@
-// Command mutation validates the differential oracle by mutating graalgo
-// itself (SPEC §5.7, GG-0034): deliberately break the lowering/runtime and
-// confirm the differential gate (`diffharness snapshot check` against gc's
-// snapshot) goes red. A gate that has never been seen failing is not
-// evidence. The mutants target v1, so the gate here is v1's: backends-p3.json
-// (graalgo-sync-run) with v1's register, corpus-exclusions-v1.yaml; the
-// per-push `make snapshot-check` runs the new path since m3-plan D1, and
-// m3-plan G6/D3 give it its own mutant set (then this v1 oracle goes).
+// Command mutation validates the differential oracle of the new path by
+// mutating graalgo itself (SPEC §5.7, GG-0034; m3-plan G6): deliberately
+// break the node package, the runtime, the scheduler, graalgo.syscall, the
+// -toolexec emitter or the standard-library fork and confirm the per-push
+// differential gates go red. A gate that has never been seen failing is not
+// evidence.
 //
-// Every mutant runs on a SCRATCH COPY of the repository (rsync, .git,
-// scratch dirs and the lane worktrees under .worktrees/ excluded) — the working tree is never modified. Per mutant:
+// Every mutant runs on a SCRATCH COPY of the repository (rsync; .git,
+// scratch dirs and the lane worktrees under .worktrees/ excluded): the
+// working tree is never modified. Per mutant:
 //
 //  1. apply the exact-string mutation (the 'old' text must occur exactly
-//     once in the file, else the mutant is ERROR: ambiguous);
-//  2. `make build` in the copy: a compile failure is STILLBORN (not scored);
-//  3. run the gate on the -slice programs; red => KILLED;
-//  4. a slice survivor is re-run against the FULL corpus (the whole
-//     per-push gate) before it is declared SURVIVED;
+//     once in the file, else the run stops before spending compute);
+//  2. rebuild: `make build` (the Java modules; it also recompiles the file
+//     the previous mutant restored), plus `go build ./...` for a mutant in
+//     internal/toolexec (the gates rebuild graalgo-tool and the stdlib/ fork
+//     overlay from source themselves); a compile failure is STILLBORN (not
+//     scored);
+//  3. run the mutant's `kill` programs, grouped per gate (snapshot-check
+//     corpus names, test/m1a, m1r, m1c, m1d, m1w13 programs): the same
+//     scripts and comparison the per-push gates run, narrowed to those
+//     programs; red => KILLED;
+//  4. a survivor of its own slice is re-run against every per-push
+//     differential gate in full before it is declared SURVIVED;
 //  5. restore the file.
 //
-// Gate exit codes: 0 green, 1 red, 3 infrastructure failure (=> ERROR, never
-// counted as a kill). The unmutated copy must be green first (baseline
-// control), otherwise every mutant would be trivially "killed".
+// Gate verdicts: exit 0 green; exit 1 WITH a divergence line (DRIFT/STALE
+// from the diffharness, "FAIL <program>" from the m1 runners) red; anything
+// else is an infrastructure failure (=> ERROR, never counted as a kill).
+// The unmutated copy must be green first on every gate slice the mutants
+// use (baseline control), and on the full gates before the first
+// confirmation, otherwise a mutant would be trivially "killed".
 //
 // Score = killed / (killed + survived). Exit status: 0 when every survivor
 // carries a survivorJustification in the mutants file, 1 on an unjustified
 // survivor, 3 on a red baseline or any ERROR.
 //
-// Resource discipline: one JVM at a time (-jobs 1), nice -n 19, JVM caps via
-// GRAALGO_JAVA_OPTS (default "-Xmx2g -XX:ActiveProcessorCount=4").
+// Resource discipline: nice -n 19, JVM caps via GRAALGO_JAVA_OPTS (default
+// "-Xmx2g -XX:ActiveProcessorCount=4"); -jobs is the snapshot gate's
+// program/JVM parallelism (1 on a shared host).
 package main
 
 import (
@@ -38,19 +48,21 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
 type Mutant struct {
-	ID            string `json:"id"`
-	Class         string `json:"class"`
-	File          string `json:"file"` // repo-relative
-	Old           string `json:"old"`
-	New           string `json:"new"`
-	Description   string `json:"description"`
-	Justification string `json:"survivorJustification,omitempty"`
+	ID            string   `json:"id"`
+	Class         string   `json:"class"`
+	File          string   `json:"file"` // repo-relative
+	Old           string   `json:"old"`
+	New           string   `json:"new"`
+	Description   string   `json:"description"`
+	Kill          []string `json:"kill"` // gate:program, e.g. m1a:test/m1a/programs/x.go, snapshot:57_defer_order
+	Justification string   `json:"survivorJustification,omitempty"`
 }
 
 type Result struct {
@@ -63,11 +75,14 @@ type Result struct {
 	DurationSec int64  `json:"durationSec"`
 }
 
+// gates are the per-push differential gates a kill spec may name, in the
+// order a slice runs them; "" programs = the whole gate.
+var gates = []string{"snapshot", "m1a", "m1r", "m1c", "m1d", "m1w13"}
+
 type config struct {
-	repo, work, snapshot, expected, slice, javaOpts string
-	only                                            map[string]bool
-	confirm                                         bool
-	jobs                                            int
+	repo, copyDir, work, javaOpts string
+	jobs                          int
+	fullBaseline                  string // "", "green" or the failure
 }
 
 func main() {
@@ -76,11 +91,9 @@ func main() {
 	flag.StringVar(&c.repo, "repo", ".", "repository root to copy")
 	flag.StringVar(&mutantsPath, "mutants", "tools/mutation/mutants.json", "mutant spec (relative to -repo)")
 	flag.StringVar(&c.work, "work", "", "scratch dir for the repo copy (default: a new temp dir)")
-	flag.StringVar(&c.slice, "slice", "", "comma-separated corpus programs for the fast first stage (default: full corpus only)")
-	flag.BoolVar(&c.confirm, "confirm", true, "re-run slice survivors against the full corpus")
 	flag.StringVar(&only, "only", "", "comma-separated mutant ids to run (default: all)")
 	flag.StringVar(&report, "report", "", "JSON report path (default: <work>/report.json)")
-	flag.IntVar(&c.jobs, "jobs", 1, "programs the gate runs at a time (1 on a shared host; CI's 4-vCPU runner: 4)")
+	flag.IntVar(&c.jobs, "jobs", 1, "programs the snapshot gate runs at a time (1 on a shared host; CI's 4-vCPU runner: 4)")
 	flag.StringVar(&c.javaOpts, "java-opts", "-Xmx2g -XX:ActiveProcessorCount=4", "GRAALGO_JAVA_OPTS for gate runs")
 	flag.Parse()
 
@@ -89,56 +102,44 @@ func main() {
 		fatal(3, err)
 	}
 	c.repo = repo
-	data, err := os.ReadFile(filepath.Join(repo, mutantsPath))
+	mutants, err := load(filepath.Join(repo, mutantsPath))
 	if err != nil {
 		fatal(3, err)
 	}
-	var spec struct {
-		Mutants []Mutant `json:"mutants"`
-	}
-	if err := json.Unmarshal(data, &spec); err != nil {
-		fatal(3, fmt.Errorf("parse %s: %w", mutantsPath, err))
-	}
 	if only != "" {
-		c.only = map[string]bool{}
+		want := map[string]bool{}
 		for _, id := range strings.Split(only, ",") {
-			c.only[strings.TrimSpace(id)] = true
+			want[strings.TrimSpace(id)] = true
 		}
+		var sel []Mutant
+		for _, m := range mutants {
+			if want[m.ID] {
+				sel = append(sel, m)
+			}
+		}
+		mutants = sel
 	}
 	if c.work == "" {
 		if c.work, err = os.MkdirTemp("", "graalgo-mutation-*"); err != nil {
 			fatal(3, err)
 		}
 	} else if err := os.MkdirAll(c.work, 0o755); err != nil {
-		// -work names a scratch dir that may not exist yet (rsync's
-		// working directory is c.work, so it must exist before the copy).
 		fatal(3, err)
 	}
 	if report == "" {
 		report = filepath.Join(c.work, "report.json")
 	}
-	copyDir := filepath.Join(c.work, "repo")
-	fmt.Printf("mutation: copying %s -> %s\n", repo, copyDir)
+	c.copyDir = filepath.Join(c.work, "repo")
+	fmt.Printf("mutation: copying %s -> %s\n", repo, c.copyDir)
 	if err := run(c.work, nil, "rsync", "-a", "--delete",
 		"--exclude=.git", "--exclude=.tmp/", "--exclude=/.worktrees/", "--exclude=test-results/", "--exclude=out/test-tmp/",
-		repo+"/", copyDir+"/"); err != nil {
+		repo+"/", c.copyDir+"/"); err != nil {
 		fatal(3, fmt.Errorf("rsync: %w", err))
 	}
-	c.snapshot = filepath.Join(copyDir, "test/snapshots/go1.27.1.json")
-	if snaps, _ := filepath.Glob(filepath.Join(copyDir, "test/snapshots/go*.json")); len(snaps) == 1 {
-		c.snapshot = snaps[0]
-	}
-	// The mutants target v1 (graalgo-sync-run, backends-p3.json) and so does
-	// this oracle, with v1's register, until m3-plan G6 gives the new path
-	// its own mutant set (snapshot-check itself is on the new path, D1).
-	c.expected = filepath.Join(copyDir, "test/differential/corpus-exclusions-v1.yaml")
 
 	// Validate every mutant applies exactly once BEFORE spending compute.
-	for _, m := range spec.Mutants {
-		if c.only != nil && !c.only[m.ID] {
-			continue
-		}
-		src, err := os.ReadFile(filepath.Join(copyDir, m.File))
+	for _, m := range mutants {
+		src, err := os.ReadFile(filepath.Join(c.copyDir, m.File))
 		if err != nil {
 			fatal(3, fmt.Errorf("%s: %w", m.ID, err))
 		}
@@ -147,58 +148,106 @@ func main() {
 		}
 	}
 
-	if err := build(copyDir); err != nil {
+	if err := run(c.copyDir, nil, "nice", "-n", "19", "make", "-s", "build"); err != nil {
 		fatal(3, fmt.Errorf("baseline build failed: %w", err))
 	}
-	dh := filepath.Join(c.work, "diffharness")
-	if err := run(filepath.Join(copyDir, "test/differential"), nil, goBin(), "build", "-o", dh, "./cmd/diffharness"); err != nil {
-		fatal(3, fmt.Errorf("build diffharness: %w", err))
+	fmt.Println("mutation: baseline control (the unmutated copy must be green on every slice)")
+	union := map[string][]string{}
+	for _, m := range mutants {
+		for g, progs := range slices(m.Kill) {
+			union[g] = append(union[g], progs...)
+		}
 	}
-	fmt.Println("mutation: baseline control (unmutated copy must be green)")
-	for _, stage := range c.stages() {
-		if v, detail := c.gate(copyDir, dh, stage); v != "green" {
-			fatal(3, fmt.Errorf("baseline %s gate not green (%s): %s", stageName(stage), v, detail))
+	for _, g := range gates {
+		if progs, ok := union[g]; ok {
+			if v, detail := c.gate(g, dedup(progs)); v != "green" {
+				fatal(3, fmt.Errorf("baseline %s slice not green (%s): %s", g, v, detail))
+			}
 		}
 	}
 	fmt.Println("mutation: baseline GREEN")
 
 	var results []Result
-	for _, m := range spec.Mutants {
-		if c.only != nil && !c.only[m.ID] {
-			continue
-		}
+	for _, m := range mutants {
 		start := time.Now()
-		r := c.runMutant(copyDir, dh, m)
+		r := c.runMutant(m)
 		r.DurationSec = int64(time.Since(start).Seconds())
 		results = append(results, r)
-		fmt.Printf("[%s] %-9s %s %s\n", m.ID, r.Verdict, m.Description, r.Detail)
+		fmt.Printf("[%s] %-9s %3ds %s %s\n", m.ID, r.Verdict, r.DurationSec, m.Description, r.Detail)
 		if err := writeReport(report, results); err != nil {
 			fatal(3, err)
 		}
 	}
-	os.Exit(summarize(results, spec.Mutants, report))
+	os.Exit(summarize(results, mutants, report))
 }
 
-func (c *config) stages() []string {
-	if c.slice == "" {
-		return []string{""}
+// load parses and validates the mutant spec: unique ids, a class, at least
+// one kill spec per mutant, each naming a known gate.
+func load(path string) ([]Mutant, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
 	}
-	if c.confirm {
-		return []string{c.slice, ""}
+	var spec struct {
+		Mutants []Mutant `json:"mutants"`
 	}
-	return []string{c.slice}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	seen := map[string]bool{}
+	for _, m := range spec.Mutants {
+		if m.ID == "" || seen[m.ID] {
+			return nil, fmt.Errorf("mutant id %q empty or duplicated", m.ID)
+		}
+		seen[m.ID] = true
+		if m.Class == "" || m.File == "" || m.Old == "" || m.Old == m.New {
+			return nil, fmt.Errorf("%s: class, file and a changing old/new are required", m.ID)
+		}
+		if len(m.Kill) == 0 {
+			return nil, fmt.Errorf("%s: no kill programs", m.ID)
+		}
+		for _, k := range m.Kill {
+			g, prog, ok := strings.Cut(k, ":")
+			if !ok || prog == "" || !known(g) {
+				return nil, fmt.Errorf("%s: bad kill spec %q (want <gate>:<program>, gate one of %v)", m.ID, k, gates)
+			}
+		}
+	}
+	return spec.Mutants, nil
 }
 
-func stageName(s string) string {
-	if s == "" {
-		return "full-corpus"
+func known(g string) bool {
+	for _, x := range gates {
+		if x == g {
+			return true
+		}
 	}
-	return "slice"
+	return false
 }
 
-func (c *config) runMutant(copyDir, dh string, m Mutant) Result {
+func slices(kill []string) map[string][]string {
+	out := map[string][]string{}
+	for _, k := range kill {
+		g, prog, _ := strings.Cut(k, ":")
+		out[g] = append(out[g], prog)
+	}
+	return out
+}
+
+func dedup(xs []string) []string {
+	sort.Strings(xs)
+	var out []string
+	for i, x := range xs {
+		if i == 0 || x != xs[i-1] {
+			out = append(out, x)
+		}
+	}
+	return out
+}
+
+func (c *config) runMutant(m Mutant) Result {
 	r := Result{ID: m.ID, Class: m.Class, Description: m.Description}
-	path := filepath.Join(copyDir, m.File)
+	path := filepath.Join(c.copyDir, m.File)
 	orig, err := os.ReadFile(path)
 	if err != nil {
 		r.Verdict, r.Detail = "ERROR", err.Error()
@@ -215,51 +264,115 @@ func (c *config) runMutant(copyDir, dh string, m Mutant) Result {
 			fatal(3, fmt.Errorf("restore %s: %w", m.File, err))
 		}
 	}()
-	if err := build(copyDir); err != nil {
+	if err := c.build(m.File); err != nil {
 		r.Verdict, r.Detail = "STILLBORN", "does not compile"
 		return r
 	}
-	stages := []string{""}
-	if c.slice != "" {
-		stages = []string{c.slice}
-		if c.confirm {
-			stages = append(stages, "")
+	sl := slices(m.Kill)
+	for _, g := range gates {
+		progs, ok := sl[g]
+		if !ok {
+			continue
 		}
-	}
-	for _, stage := range stages {
-		v, detail := c.gate(copyDir, dh, stage)
-		switch v {
-		case "red":
-			r.Verdict, r.Stage, r.Detail = "KILLED", stageName(stage), detail
-			return r
-		case "infra":
-			r.Verdict, r.Stage, r.Detail = "ERROR", stageName(stage), "gate infrastructure failure: "+detail
+		if v, detail := c.verdict(&r, "slice", g, progs); v != "green" {
+			r.Detail = detail
 			return r
 		}
 	}
-	r.Verdict, r.Detail = "SURVIVED", "gate green"
+	// Survived its slice: the whole per-push differential set decides.
+	if c.fullBaseline == "" {
+		c.fullBaseline = "green"
+		if err := os.WriteFile(path, orig, 0o644); err != nil {
+			fatal(3, err)
+		}
+		if err := c.build(m.File); err != nil {
+			fatal(3, fmt.Errorf("rebuild of the unmutated copy failed: %w", err))
+		}
+		for _, g := range gates {
+			if v, detail := c.gate(g, nil); v != "green" {
+				fatal(3, fmt.Errorf("baseline full %s gate not green (%s): %s", g, v, detail))
+			}
+		}
+		if err := os.WriteFile(path, []byte(mutated), 0o644); err != nil {
+			fatal(3, err)
+		}
+		if err := c.build(m.File); err != nil {
+			fatal(3, fmt.Errorf("rebuild of mutant %s failed: %w", m.ID, err))
+		}
+	}
+	for _, g := range gates {
+		if v, detail := c.verdict(&r, "full", g, nil); v != "green" {
+			r.Detail = detail
+			return r
+		}
+	}
+	r.Verdict, r.Detail = "SURVIVED", "every per-push differential gate green"
 	return r
 }
 
-// gate runs the differential gate against the copy; programs=="" is the
-// full corpus. Returns green/red/infra and the first failing lines.
-func (c *config) gate(copyDir, dh, programs string) (string, string) {
-	dhDir := filepath.Join(copyDir, "test/differential")
-	tmp := filepath.Join(dhDir, ".tmp")
-	os.MkdirAll(tmp, 0o755)
-	args := []string{"-n", "19", dh, "snapshot", "check",
-		"-config", "backends-p3.json", "-corpus", "corpus", "-backend", "graalgo",
-		"-snapshot", c.snapshot, "-expected", c.expected, "-jobs", strconv.Itoa(max(c.jobs, 1)), "-timeout", "120", "-fail-fast"}
-	if programs != "" {
-		args = append(args, "-programs", programs)
+// verdict runs one gate for a mutant and records KILLED or ERROR in r.
+func (c *config) verdict(r *Result, stage, g string, progs []string) (string, string) {
+	v, detail := c.gate(g, progs)
+	switch v {
+	case "red":
+		r.Verdict, r.Stage = "KILLED", stage+" "+g
+	case "infra":
+		r.Verdict, r.Stage = "ERROR", stage+" "+g
+		detail = "gate infrastructure failure: " + detail
 	}
-	cmd := exec.Command("nice", args...)
-	cmd.Dir = dhDir
-	cmd.Env = append(os.Environ(),
-		"GRAALGO_BACKEND_DIR="+filepath.Join(copyDir, "internal/backend"),
-		"TMPDIR="+tmp, "GOTMPDIR="+tmp,
+	return v, detail
+}
+
+// build brings the copy's build up to date with its sources: `make build`
+// always (a no-op when nothing changed, and it recompiles the Java file the
+// previous mutant restored: without it a Go mutant would run on the previous
+// Java mutant's classes), plus the compile check of internal/toolexec for a
+// mutant there. The gates build graalgo-tool, the stub and the stdlib/ fork
+// overlay from source on every run.
+func (c *config) build(file string) error {
+	if err := run(c.copyDir, nil, "nice", "-n", "19", "make", "-s", "build"); err != nil {
+		return err
+	}
+	if strings.HasPrefix(file, "internal/toolexec/") {
+		return run(filepath.Join(c.copyDir, "internal/toolexec"), nil, "nice", "-n", "19", goBin(), "build", "./...")
+	}
+	return nil
+}
+
+// gate runs one per-push differential gate on the copy, narrowed to progs
+// (nil: the whole gate). Returns green/red/infra and the first failing lines.
+func (c *config) gate(g string, progs []string) (string, string) {
+	tmp := filepath.Join(c.copyDir, ".tmp")
+	os.MkdirAll(tmp, 0o755)
+	env := append(os.Environ(),
+		"GO="+goBin(),
 		"GRAALGO_JAVA_OPTS="+c.javaOpts,
-		"GRAALGO_GOFRONTEND="+filepath.Join(copyDir, "internal/frontend/gofrontend"))
+		"GC_ORACLE_CACHE="+filepath.Join(c.work, "gc-oracle"),
+		"TMPDIR="+tmp, "GOTMPDIR="+tmp)
+	var cmd *exec.Cmd
+	if g == "snapshot" {
+		snap, err := snapshotFile(c.copyDir)
+		if err != nil {
+			return "infra", err.Error()
+		}
+		args := []string{"-n", "19", "bash", "newpath.sh", "snapshot", "check",
+			"-config", "backends-newpath.json", "-corpus", "corpus", "-backend", "graalgo",
+			"-snapshot", snap, "-expected", "corpus-exclusions.yaml",
+			"-jobs", strconv.Itoa(max(c.jobs, 1)), "-timeout", "120", "-fail-fast"}
+		if len(progs) > 0 {
+			args = append(args, "-programs", strings.Join(progs, ","))
+		}
+		cmd = exec.Command("nice", args...)
+		cmd.Dir = filepath.Join(c.copyDir, "test/differential")
+		env = append(env,
+			"GRAALGO_BACKEND_DIR="+filepath.Join(c.copyDir, "internal/backend"),
+			"DH_GO="+filepath.Dir(filepath.Dir(goBin())))
+	} else {
+		args := append([]string{"-n", "19", "test/" + g + "/run.sh"}, progs...)
+		cmd = exec.Command("nice", args...)
+		cmd.Dir = c.copyDir
+	}
+	cmd.Env = env
 	out, err := cmd.CombinedOutput()
 	var ee *exec.ExitError
 	switch {
@@ -268,18 +381,25 @@ func (c *config) gate(copyDir, dh, programs string) (string, string) {
 	case errors.As(err, &ee) && ee.ExitCode() == 1 && reportsDivergence(string(out)):
 		return "red", firstFailures(string(out))
 	default:
-		// Exit 1 without a DRIFT/STALE verdict line is a harness error
-		// (bad flags, corpus/snapshot inconsistency, ...), not a kill
-		// (global review G5).
+		// Exit 1 without a divergence line is a harness error (bad flags,
+		// corpus/snapshot inconsistency, ...), not a kill (global review G5).
 		return "infra", firstFailures(string(out)) + " " + err.Error()
 	}
+}
+
+func snapshotFile(copyDir string) (string, error) {
+	snaps, _ := filepath.Glob(filepath.Join(copyDir, "test/snapshots/go*.json"))
+	if len(snaps) != 1 {
+		return "", fmt.Errorf("want exactly one gc snapshot in test/snapshots, found %d", len(snaps))
+	}
+	return snaps[0], nil
 }
 
 // reportsDivergence reports whether the gate output carries a divergence
 // verdict: the only thing that may count as killing a mutant.
 func reportsDivergence(out string) bool {
 	for _, l := range strings.Split(out, "\n") {
-		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") {
+		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") || strings.HasPrefix(l, "FAIL ") {
 			return true
 		}
 	}
@@ -289,7 +409,8 @@ func reportsDivergence(out string) bool {
 func firstFailures(out string) string {
 	var keep []string
 	for _, l := range strings.Split(out, "\n") {
-		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") || strings.HasPrefix(l, "INFRA") || strings.HasPrefix(l, "RETRY") || strings.Contains(l, "error:") {
+		if strings.HasPrefix(l, "DRIFT") || strings.HasPrefix(l, "STALE") || strings.HasPrefix(l, "FAIL ") ||
+			strings.HasPrefix(l, "INFRA") || strings.HasPrefix(l, "RETRY") || strings.Contains(l, "error:") {
 			keep = append(keep, strings.Join(strings.Fields(l), " "))
 		}
 		if len(keep) == 3 {
@@ -301,10 +422,6 @@ func firstFailures(out string) string {
 		s = s[:400] + "…"
 	}
 	return s
-}
-
-func build(copyDir string) error {
-	return run(copyDir, nil, "nice", "-n", "19", "make", "-s", "build")
 }
 
 func run(dir string, env []string, name string, args ...string) error {
@@ -370,6 +487,9 @@ func summarize(results []Result, mutants []Mutant, report string) int {
 }
 
 func goBin() string {
+	if p := os.Getenv("GO"); p != "" {
+		return p
+	}
 	if p, err := exec.LookPath("go"); err == nil {
 		return p
 	}

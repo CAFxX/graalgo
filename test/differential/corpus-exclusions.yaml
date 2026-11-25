@@ -21,8 +21,9 @@
 #     58_float_minmax_signed_zero (BUG-0009) and 59_recover_named_results
 #     (BUG-0010) match gc on the new path (pruned); 27_panic_trace still
 #     diverges (re-pinned); 47_reflect_funcof_structof is new (BUG-0059).
-#     v1's register lives on as corpus-exclusions-v1.yaml for the v1
-#     mutation oracle (tools/mutation) until m3-plan G6/D3 retire it.
+#     v1's register lived on as corpus-exclusions-v1.yaml for the v1
+#     mutation oracle until m3-plan D3 deleted both (tools/mutation now
+#     plants new-path mutants against this register).
 version: 3
 exclusions:
 - file: 27_panic_trace

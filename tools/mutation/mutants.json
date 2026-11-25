@@ -1,133 +1,600 @@
 {
-  "comment": "Curated source mutants of graalgo's lowering/runtime (SPEC 5.7, GG-0034). Each 'old' must occur EXACTLY once in 'file' (the tool refuses ambiguous mutants). A mutant must be KILLED by the per-push differential gate (make snapshot-check); a survivor is either killed by a new corpus program or carries a 'survivorJustification'.",
-  "mutants": [
-    {"id": "M-ARITH-01", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "signed % lowered to Math.floorMod (sign of divisor instead of dividend)",
-     "old": "yield unsigned ? Long.remainderUnsigned(l, r) : l % r;",
-     "new": "yield unsigned ? Long.remainderUnsigned(l, r) : Math.floorMod(l, r);"},
-    {"id": "M-ARITH-02", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "signed / lowered to Math.floorDiv (rounds toward -inf)",
-     "old": "yield unsigned ? Long.divideUnsigned(l, r) : l / r;",
-     "new": "yield unsigned ? Long.divideUnsigned(l, r) : Math.floorDiv(l, r);"},
-    {"id": "M-ARITH-03", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "unsigned / computed as signed division",
-     "old": "yield unsigned ? Long.divideUnsigned(l, r) : l / r;",
-     "new": "yield l / r;"},
-    {"id": "M-ARITH-04", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "unsigned % computed as signed remainder",
-     "old": "yield unsigned ? Long.remainderUnsigned(l, r) : l % r;",
-     "new": "yield l % r;"},
-    {"id": "M-ARITH-05", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "integer + and - swapped",
-     "old": "            case ADD -> l + r;\n            case SUB -> l - r;\n            case MUL -> l * r;\n            case DIV -> {",
-     "new": "            case ADD -> l - r;\n            case SUB -> l + r;\n            case MUL -> l * r;\n            case DIV -> {"},
-    {"id": "M-ARITH-06", "class": "overflow", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "sub-64-bit integer results not truncated to the operand width (no wraparound)",
-     "old": "        return mask(raw, width);",
-     "new": "        return raw;"},
-    {"id": "M-ARITH-07", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "&^ lowered as &",
-     "old": "case AND_NOT -> l & ~r;",
-     "new": "case AND_NOT -> l & r;"},
-    {"id": "M-ARITH-08", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "^ lowered as |",
-     "old": "case XOR -> l ^ r;",
-     "new": "case XOR -> l | r;"},
-    {"id": "M-SHIFT-01", "class": "shift", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "<< by >= 64 uses Java count masking instead of yielding 0",
-     "old": "yield r >= 64 ? 0L : l << r;",
-     "new": "yield l << r;"},
-    {"id": "M-SHIFT-02", "class": "shift", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "signed >> by >= 64 yields 0 instead of sign fill",
-     "old": "yield unsigned ? 0L : (l < 0 ? -1L : 0L);",
-     "new": "yield 0L;"},
-    {"id": "M-SHIFT-03", "class": "shift", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "unsigned >> lowered as arithmetic (sign-extending) shift",
-     "old": "yield unsigned ? l >>> r : l >> r;",
-     "new": "yield l >> r;"},
-    {"id": "M-SHIFT-04", "class": "shift", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "negative shift count does not panic (<<)",
-     "old": "                if (r < 0) {\n                    Panic.throwPanic(GoErrors.negativeShift(), null, null, this);\n                }\n                yield r >= 64 ? 0L : l << r;",
-     "new": "                if (r < -1000000) {\n                    Panic.throwPanic(GoErrors.negativeShift(), null, null, this);\n                }\n                yield r >= 64 ? 0L : l << r;"},
-    {"id": "M-CMP-01", "class": "compare", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "unsigned integer comparison done signed",
-     "old": "yield operandKind.isUintKind() ? Long.compareUnsigned(l, r) : Long.compare(l, r);",
-     "new": "yield Long.compare(l, r);"},
-    {"id": "M-CMP-02", "class": "compare", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "integer/string < lowered as <=",
-     "old": "case LT -> cmp < 0;",
-     "new": "case LT -> cmp <= 0;"},
-    {"id": "M-CMP-03", "class": "compare", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "integer/string >= lowered as >",
-     "old": "case GE -> cmp >= 0;",
-     "new": "case GE -> cmp > 0;"},
-    {"id": "M-CMP-04", "class": "float", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "float == uses Double.compare total order (NaN==NaN, -0!=+0)",
-     "old": "case EQ -> l == r;",
-     "new": "case EQ -> Double.compare(l, r) == 0;"},
-    {"id": "M-CMP-05", "class": "logic", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "&& does not short-circuit",
-     "old": "case LAND -> left.executeBoolean(frame) && right.executeBoolean(frame);",
-     "new": "case LAND -> left.executeBoolean(frame) & right.executeBoolean(frame);"},
-    {"id": "M-FLOAT-01", "class": "float", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/BinaryOpNode.java",
-     "description": "float32 arithmetic not rounded to float32 when consumed as double",
-     "old": "        if (operandKind == GoKind.FLOAT32) {\n            return executeFloat(frame);",
-     "new": "        if (false) {\n            return executeFloat(frame);"},
-    {"id": "M-UNARY-01", "class": "overflow", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/UnaryOpNode.java",
-     "description": "unary op result (long carrier) not truncated to its width",
-     "old": "        return extend(mask(raw, kind().bits()), kind());",
-     "new": "        return raw;"},
-    {"id": "M-UNARY-02", "class": "arith", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/UnaryOpNode.java",
-     "description": "^x (long carrier) lowered as -x",
-     "old": "            case NOT -> ~x;\n            case POS -> x;\n            default -> throw new UnsupportedOperationException(\"not an integer unary op: \" + op);\n        };\n        return extend(",
-     "new": "            case NOT -> -x;\n            case POS -> x;\n            default -> throw new UnsupportedOperationException(\"not an integer unary op: \" + op);\n        };\n        return extend("},
-    {"id": "M-CONV-01", "class": "conversion", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/ConvertNode.java",
-     "description": "int8(x) (long carrier) does not sign-extend/truncate",
-     "old": "            case INT8 -> (long) (byte) bits;",
-     "new": "            case INT8 -> bits;"},
-    {"id": "M-CONV-02", "class": "conversion", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/ConvertNode.java",
-     "description": "int32(x) (long carrier) does not truncate",
-     "old": "            case INT32 -> (long) (int) bits;",
-     "new": "            case INT32 -> bits;"},
-    {"id": "M-CONV-03", "class": "conversion", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/ConvertNode.java",
-     "description": "uint16(x) (int carrier) not zero-extended",
-     "old": "            case UINT16 -> v & 0xFFFF;\n            default -> v;\n        };\n    }\n\n    private static long extendLong(",
-     "new": "            case UINT16 -> v;\n            default -> v;\n        };\n    }\n\n    private static long extendLong("},
-    {"id": "M-CONV-04", "class": "conversion", "file": "internal/backend/truffle/src/main/java/graalgo/values/GoConvert.java",
-     "description": "uint64 -> float32 converted as signed",
-     "old": "return Float.parseFloat(Long.toUnsignedString(v));",
-     "new": "return (float) v;"},
-    {"id": "M-BOUNDS-01", "class": "bounds", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/IndexNode.java",
-     "description": "index bounds check off by one (s[len(s)] admitted)",
-     "old": "boolean bad = signed ? (idx < 0 || idx >= len) : Long.compareUnsigned(idx, len) >= 0;",
-     "new": "boolean bad = signed ? (idx < 0 || idx > len) : Long.compareUnsigned(idx, len) > 0;"},
-    {"id": "M-BOUNDS-02", "class": "bounds", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/SliceExprNode.java",
-     "description": "slice bounds check admits limit+1",
-     "old": "boolean bad = b.signed ? (b.v < 0 || b.v > limit) : Long.compareUnsigned(b.v, limit) > 0;",
-     "new": "boolean bad = b.signed ? (b.v < 0 || b.v > limit + 1) : Long.compareUnsigned(b.v, limit + 1) > 0;"},
-    {"id": "M-INCDEC-01", "class": "overflow", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/IncDecNode.java",
-     "description": "x++/x-- on an int-carrier variable does not wrap at its width",
-     "old": "case Int -> frame.setInt(slot, extendInt(frame.getInt(slot) + (int) delta, kind));",
-     "new": "case Int -> frame.setInt(slot, frame.getInt(slot) + (int) delta);"},
-    {"id": "M-STR-01", "class": "string", "file": "internal/backend/truffle/src/main/java/graalgo/values/GoString.java",
-     "description": "string comparison on signed bytes (non-ASCII sorts before ASCII)",
-     "old": "            int a = bytes[i] & 0xFF;\n            int b = other.bytes[i] & 0xFF;",
-     "new": "            int a = bytes[i];\n            int b = other.bytes[i];"},
-    {"id": "M-STR-02", "class": "string", "file": "internal/backend/truffle/src/main/java/graalgo/frontend/RangeStringNode.java",
-     "description": "range over string: invalid leading byte yields the byte, not U+FFFD",
-     "old": "        if (c0 < 0xC2) {\n            return new int[]{RUNE_ERROR, 1};",
-     "new": "        if (c0 < 0xC2) {\n            return new int[]{c0, 1};"},
-    {"id": "M-MAP-01", "class": "map", "file": "internal/backend/truffle/src/main/java/graalgo/values/GoMap.java",
-     "description": "map delete does not decrement len",
-     "old": "            states[i] = TOMBSTONE;\n            size--;",
-     "new": "            states[i] = TOMBSTONE;"},
-    {"id": "M-MAP-02", "class": "map", "file": "internal/backend/truffle/src/main/java/graalgo/values/GoEquality.java",
-     "description": "boxed float equality makes NaN equal to NaN (NaN map keys collapse)",
-     "old": "return x == y && !Double.isNaN(x);",
-     "new": "return x == y || (Double.isNaN(x) && Double.isNaN(y));"},
-    {"id": "M-DEFER-01", "class": "defer", "file": "internal/backend/truffle/src/main/java/graalgo/runtime/DeferChain.java",
-     "description": "defers run FIFO instead of LIFO",
-     "old": "        chain.push(call);",
-     "new": "        chain.addLast(call);"}
-  ]
+ "comment": "The mutation set of the new path (SPEC 5.7, GG-0034; m3-plan G6): each mutant plants one realistic bug in the graalgo.go nodes/runtime, the scheduler, graalgo.syscall, the -toolexec emitter or the stdlib/ fork. 'old' must occur EXACTLY once in 'file' (check-repo verifies it per push). 'kill' names the per-push gate programs that must turn red (gate:program; gates: snapshot = a test/differential/corpus name, m1a/m1r/m1c/m1d/m1w13 = a program path of that gate); a mutant surviving them is re-run on every per-push differential gate in full. A survivor is either killed by a new program or carries a reviewed 'survivorJustification'. M1C-*/M1D-* were test/m1c and test/m1d's mutants.py lists.",
+ "mutants": [
+  {
+   "id": "M-BOUNDS-01",
+   "class": "slice bounds off-by-one",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/Mem.java",
+   "description": "SliceLoc.resolve (s[i] rvalue/lvalue) lets i == len(s) through: no 'index out of range [5] with length 5' panic; the element load runs past the slice (Java AIOOBE / backing-array garbage).",
+   "old": "            if (Long.compareUnsigned(i, s.len()) >= 0) {\n                outOfRange.enter();\n                throw Panics.index(this, i, s.len(), signed);\n            }\n            set(frame, s.prim()",
+   "new": "            if (Long.compareUnsigned(i, s.len()) > 0) {\n                outOfRange.enter();\n                throw Panics.index(this, i, s.len(), signed);\n            }\n            set(frame, s.prim()",
+   "kill": [
+    "snapshot:55_slice_bounds",
+    "m1a:test/m1a/programs/traceback_runtime_error.go"
+   ]
+  },
+  {
+   "id": "M-BOUNDS-02",
+   "class": "slice bounds off-by-one",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/Data.java",
+   "description": "Slice-to-array(-pointer) conversion accepts a slice one element short of N (no 'cannot convert slice with length 3 to array or pointer to array with length 4').",
+   "old": "if (len < n) {",
+   "new": "if (len + 1 < n) {",
+   "kill": [
+    "m1a:test/m1a/programs/slice_to_array.go"
+   ]
+  },
+  {
+   "id": "M-BOUNDS-03",
+   "class": "slice bounds off-by-one",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/Data.java",
+   "description": "Slice-of-slice s[lo:hi] / s[lo:hi:max] accepts hi == cap+1 (or max+1): no 'slice bounds out of range [:6] with capacity 5'; builds a slice with len > cap.",
+   "old": "            if (Long.compareUnsigned(m, sl.cap()) > 0 || Long.compareUnsigned(h, m) > 0\n",
+   "new": "            if (Long.compareUnsigned(m, sl.cap()) > 0 || Long.compareUnsigned(h, m + 1) > 0\n",
+   "kill": [
+    "snapshot:55_slice_bounds"
+   ]
+  },
+  {
+   "id": "M-OVERFLOW-01",
+   "class": "integer overflow / narrow truncation",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/Arith.java",
+   "description": "int32 wrap (NodeFactory.wrap for INT32 results and conversions) no longer truncates/sign-extends: int32 arithmetic and int32(x) conversions stop wrapping at 2^31.",
+   "old": "    public abstract static class W32 extends UnI64 {\n        @Specialization\n        static long op(long a) {\n            return (int) a;",
+   "new": "    public abstract static class W32 extends UnI64 {\n        @Specialization\n        static long op(long a) {\n            return a;",
+   "kill": [
+    "snapshot:51_int_conversions",
+    "snapshot:49_int_arith_edges"
+   ]
+  },
+  {
+   "id": "M-SELECT-01",
+   "class": "biased select case choice",
+   "file": "internal/backend/truffle/src/main/java/graalgo/runtime/SelectOp.java",
+   "description": "When several select cases are ready the lowest-index one always wins (gc picks uniformly at random).",
+   "old": "int chosen = ready.get(ThreadLocalRandom.current().nextInt(ready.size()));",
+   "new": "int chosen = ready.get(0);",
+   "kill": [
+    "m1r:test/m1r/programs/nondeterminism.go"
+   ]
+  },
+  {
+   "id": "M-WAKEUP-01",
+   "class": "lost wakeup (channel close)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/runtime/GoChan.java",
+   "description": "close(ch) dequeues plain receivers parked on ch and hands them (zero,false) but never unparks them: every goroutine blocked in <-ch / range ch at close time sleeps forever.",
+   "old": "                    rw.ok = false;\n                    sched.unpark(rw.handle);\n                    rit.remove();",
+   "new": "                    rw.ok = false;\n                    rit.remove();",
+   "kill": [
+    "m1r:test/m1r/programs/spawn_parked.go",
+    "m1a:test/m1a/programs/concurrency.go"
+   ]
+  },
+  {
+   "id": "M-MAPITER-01",
+   "class": "map iteration order not randomized",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/values/GoMap.java",
+   "description": "Every range over a map starts at entry 0: iteration order becomes deterministic insertion order (gc randomizes the start per range).",
+   "old": "start = m.used == 0 ? 0 : m.rangeStart();",
+   "new": "start = 0;",
+   "kill": [
+    "m1r:test/m1r/programs/nondeterminism.go"
+   ]
+  },
+  {
+   "id": "M-MAPITER-02",
+   "class": "map iteration yields an entry twice",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/values/GoMap.java",
+   "description": "After wrapping around, the iterator stops one entry late: the entry at the random start index is produced twice per range (Go: each entry at most once).",
+   "old": "} else if (pos >= start || pos >= m.used) {",
+   "new": "} else if (pos > start || pos >= m.used) {",
+   "kill": [
+    "snapshot:56_map_ops",
+    "m1a:test/m1a/programs/strings_runes.go"
+   ]
+  },
+  {
+   "id": "M-DEFER-01",
+   "class": "defer order (LIFO)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/Calls.java",
+   "description": "Open-coded defers run FIFO (first deferred first) instead of LIFO.",
+   "old": "for (int i = sites.length - 1; i >= 0; i--) {",
+   "new": "for (int i = 0; i < sites.length; i++) {",
+   "kill": [
+    "snapshot:57_defer_order",
+    "m1a:test/m1a/programs/defer_open.go"
+   ]
+  },
+  {
+   "id": "M-RECOVER-01",
+   "class": "recover eligibility",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/Calls.java",
+   "description": "recover() stops the panic from ANY function running while a deferred call unwinds, not only from the function called directly by the defer.",
+   "old": "if (p != null && !p.recovered && hasRecoverToken(frame.getArguments(), p)) {",
+   "new": "if (p != null && !p.recovered) {",
+   "kill": [
+    "snapshot:57_defer_order",
+    "m1a:test/m1a/programs/defer_open.go",
+    "m1a:test/m1a/programs/recover_wrappers.go"
+   ]
+  },
+  {
+   "id": "M-STRBYTES-01",
+   "class": "string <-> []byte copy aliasing",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/runtime/Strs.java",
+   "description": "[]byte(s) shares the string's byte array when the string spans it exactly (no copy): writes through the slice mutate the immutable string.",
+   "old": "return new Slice(new Flat(backing, Flat.NO_PRIMS, Flat.NO_REFS, s.toBytes()), 0, 0, 0, n, n);",
+   "new": "return new Slice(new Flat(backing, Flat.NO_PRIMS, Flat.NO_REFS, s.off == 0 && s.b.length == n ? s.b : s.toBytes()), 0, 0, 0, n, n);",
+   "kill": [
+    "snapshot:51_int_conversions",
+    "m1a:test/m1a/programs/strings_runes.go"
+   ]
+  },
+  {
+   "id": "M-UTF8-01",
+   "class": "invalid UTF-8 rune decoding",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/runtime/Strs.java",
+   "description": "An invalid UTF-8 byte decodes as RuneError of width 2 (swallowing the next byte) instead of width 1, in range-over-string and []rune(s).",
+   "old": "long err = (1L << 32) | RUNE_ERROR;",
+   "new": "long err = ((long) Math.min(n, 2) << 32) | RUNE_ERROR;",
+   "kill": [
+    "snapshot:51_int_conversions",
+    "m1a:test/m1a/programs/strings_runes.go"
+   ]
+  },
+  {
+   "id": "M-IFACEEQ-01",
+   "class": "interface equality ignores dynamic type",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/MapKeys.java",
+   "description": "Cached interface == compares only the data words, not the dynamic types: any(1) == any(int64(1)) and two typed nil pointers of different types compare equal.",
+   "old": "if (!(b instanceof Iface y) || y.type != cachedType) {",
+   "new": "if (!(b instanceof Iface y)) {",
+   "kill": [
+    "m1a:test/m1a/programs/ifaces.go",
+    "m1a:test/m1a/programs/typed_nil_iface.go"
+   ]
+  },
+  {
+   "id": "M-IFACEEQ-02",
+   "class": "interface equality: uncomparable panic swallowed",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/nodes/MapKeys.java",
+   "description": "Comparing two interfaces holding the same uncomparable dynamic type returns false instead of panicking 'runtime error: comparing uncomparable type main.F'.",
+   "old": "                return ops.eq(a.data, y.data);\n            } catch (Values.Uncomparable u) {\n                throw Values.atInterface(u, cachedType);",
+   "new": "                return ops.eq(a.data, y.data);\n            } catch (Values.Uncomparable u) {\n                return false;",
+   "kill": [
+    "m1a:test/m1a/programs/uncomparable.go"
+   ]
+  },
+  {
+   "id": "M-CHECKPTR-01",
+   "class": "checkptr alignment check",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/runtime/Unsafe.java",
+   "description": "checkptr's misaligned-pointer fatal fires for pointer-free pointee types too (gc checks alignment only when the element type has pointers).",
+   "old": "if (u.hasPointers() && off % u.gcAlign() != 0) {",
+   "new": "if (off % u.gcAlign() != 0) {",
+   "kill": [
+    "m1w13:test/m1w13/checkptr/misaligned.go"
+   ]
+  },
+  {
+   "id": "M-TIMER-01",
+   "class": "timer heap ordering",
+   "file": "internal/backend/truffle/src/main/java/graalgo/runtime/TimerHeap.java",
+   "description": "The timer heap becomes a max-heap: the latest deadline is waited for first and earlier timers fire late, in reverse order.",
+   "old": "int c = Long.compare(deadlineNanos, o.deadlineNanos);",
+   "new": "int c = Long.compare(o.deadlineNanos, deadlineNanos);",
+   "kill": [
+    "m1c:test/m1c/programs/time_timers.go",
+    "snapshot:15_select"
+   ]
+  },
+  {
+   "id": "M-EXIT-01",
+   "class": "exit status (os.Exit code)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/RuntimeIntrinsics.java",
+   "description": "syscall.Exit/os.Exit collapse every non-zero code to 1.",
+   "old": "sc.requestExit((int) code);",
+   "new": "sc.requestExit(code == 0 ? 0 : 1);",
+   "kill": [
+    "snapshot:28_exit_code",
+    "m1a:test/m1a/programs/goexit_exit.go"
+   ]
+  },
+  {
+   "id": "M-EXIT-02",
+   "class": "exit status (unrecovered panic)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/runtime/GoProcess.java",
+   "description": "An unrecovered panic (gc fatalpanic) exits with status 1 instead of 2; the report text is unchanged.",
+   "old": "        traceback(sb, stacks.of(top));\n        writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));\n        sched.requestExit(2);",
+   "new": "        traceback(sb, stacks.of(top));\n        writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));\n        sched.requestExit(1);",
+   "kill": [
+    "m1a:test/m1a/programs/goroutine_panic.go",
+    "m1a:test/m1a/programs/panic_print.go",
+    "m1a:test/m1a/programs/traceback_runtime_error.go"
+   ]
+  },
+  {
+   "id": "M-EXIT-03",
+   "class": "exit status (deadlock)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/sched/SchedulerCore.java",
+   "description": "'fatal error: all goroutines are asleep - deadlock!' exits with status 1 instead of 2.",
+   "old": "        System.err.print(sb);\n        System.err.flush();\n        requestExit(2);\n        return true;",
+   "new": "        System.err.print(sb);\n        System.err.flush();\n        requestExit(1);\n        return true;",
+   "kill": [
+    "m1a:test/m1a/programs/deadlock.go",
+    "m1c:test/m1c/programs/sync_deadlock_mutex.go",
+    "m1c:test/m1c/programs/sync_deadlock_self.go"
+   ]
+  },
+  {
+   "id": "M-SCHED-01",
+   "class": "deadlock detection ignores pending timers",
+   "file": "internal/backend/truffle/src/main/java/graalgo/sched/SchedulerCore.java",
+   "description": "the deadlock check ignores pending timers after main's runtime.Goexit: a program whose last goroutine sleeps on a timer dies with 'no goroutines (main called runtime.Goexit) - deadlock!'",
+   "old": "        if (timersPending || user.isEmpty() || user.size() != liveUser.get()) {",
+   "new": "        if (user.isEmpty() || user.size() != liveUser.get()) {",
+   "kill": [
+    "m1c:test/m1c/programs/goexit_timer.go",
+    "m1c:test/m1c/programs/time_timers.go",
+    "snapshot:15_select",
+    "snapshot:41_done_channel"
+   ]
+  },
+  {
+   "id": "M-SYSCALL-01",
+   "class": "lost wakeup (netpoll deadline)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Poller.java",
+   "description": "A read/write deadline that expires while a goroutine waits in pollWait marks the descriptor timed out but never unparks the waiter: Read with SetReadDeadline hangs instead of returning os.ErrDeadlineExceeded.",
+   "old": "            d.timer[dir] = -1;\n            d.deadline[dir] = -1;\n            wake(d, dir);",
+   "new": "            d.timer[dir] = -1;\n            d.deadline[dir] = -1;",
+   "kill": [
+    "m1d:test/m1d/programs/os_files.go"
+   ],
+   "survivorJustification": "equivalent until m3-plan G7 (BUG-0060, measured 2026-11-25): no per-push program can reach this poller path — pipe fds block in the executor's blocking syscall instead of waiting for readiness in the poller, and every fd deadline expires at once (relative/absolute mix-up), so the mutated wake is never needed. Retire with BUG-0060's fix: the G7 lane adds a pipe-deadline program to test/m1d that kills it."
+  },
+  {
+   "id": "M-EMIT-01",
+   "class": "emitter: loop-variable semantics (for)",
+   "file": "internal/toolexec/emit/body.go",
+   "description": "3-clause for loops in go1.22+ files get pre-1.22 semantics: one shared loop variable captured by every closure.",
+   "old": "if def, ok := st.Init.(*ir.DefineStmt); ok && fs.perIteration(s.Pos()) {",
+   "new": "if def, ok := st.Init.(*ir.DefineStmt); ok && !fs.perIteration(s.Pos()) {",
+   "kill": [
+    "m1a:test/m1a/programs/strings_runes.go"
+   ]
+  },
+  {
+   "id": "M-LOWER-03",
+   "class": "lowering: loop-variable semantics (range)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java",
+   "description": "for k, v := range loops store every iteration into one shared variable instead of a fresh one (pre-Go 1.22 semantics): closures and pointers taken in the body all see the last value. (Replaces an emitter mutant of the GIR Range.PerIter flag, which the node package never reads: equivalent.)",
+   "old": "        return storeTo(target, r.define() ? r.fresh() : null, v, null);",
+   "new": "        return storeTo(target, null, v, null);",
+   "kill": [
+    "m1a:test/m1a/programs/loopvar_range.go",
+    "m1c:test/m1c/programs/time_timers.go"
+   ]
+  },
+  {
+   "id": "M-EMIT-03",
+   "class": "emitter: constant folding precision",
+   "file": "internal/toolexec/emit/body.go",
+   "description": "Float constants are emitted in go/constant's short form (%.6g) instead of exactly: math.Pi becomes 3.14159, MaxFloat64 1.79769e+308.",
+   "old": "\t\treturn &ir.ConstValue{Kind: ir.ConstKindFloat, Text: v.ExactString()}",
+   "new": "\t\treturn &ir.ConstValue{Kind: ir.ConstKindFloat, Text: v.String()}",
+   "kill": [
+    "m1r:test/m1r/programs/math_sweep.go",
+    "snapshot:52_float_edges"
+   ]
+  },
+  {
+   "id": "M-LOWER-01",
+   "class": "lowering: evaluation order",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java",
+   "description": "Plain function calls are no longer hoisted ahead of the statement's plain operands (gc's order pass): operands are read strictly left to right around them.",
+   "old": "    private boolean early(Gir.Expr e) {\n        return switch (e) {\n            case Gir.Expr.Call x -> true;",
+   "new": "    private boolean early(Gir.Expr e) {\n        return switch (e) {\n            case Gir.Expr.Call x -> false;",
+   "kill": [
+    "m1a:test/m1a/programs/eval_order.go"
+   ]
+  },
+  {
+   "id": "M-LOWER-02",
+   "class": "lowering: wrong comparison op (unsigned)",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/build/NodeFactory.java",
+   "description": "uint64/uint/uintptr ordered comparisons are lowered to signed compares: values >= 2^63 compare as negative.",
+   "old": "            boolean uns = u64(u);",
+   "new": "            boolean uns = false;",
+   "kill": [
+    "snapshot:53_compare_ops"
+   ]
+  },
+  {
+   "id": "M-FACADE-01",
+   "class": "stdlib facade: type assertion error text",
+   "file": "stdlib/fork/runtime/error.go",
+   "description": "runtime.TypeAssertionError.Error swaps the concrete and asserted types in 'interface conversion: X is C, not A'.",
+   "old": "\t\tmsg := \"interface conversion: \" + inter + \" is \" + cs + \", not \" + as",
+   "new": "\t\tmsg := \"interface conversion: \" + inter + \" is \" + as + \", not \" + cs",
+   "kill": [
+    "m1r:test/m1r/programs/runtime_errors.go"
+   ]
+  },
+  {
+   "id": "M-FACADE-02",
+   "class": "stdlib facade: type assertion error text",
+   "file": "stdlib/fork/runtime/error.go",
+   "description": "Same-named types: the '(types from different scopes)' / '(types from different packages)' suffixes are swapped.",
+   "old": "\t\t\tif typePkgPath(e.concrete) != typePkgPath(e.asserted) {",
+   "new": "\t\t\tif typePkgPath(e.concrete) == typePkgPath(e.asserted) {",
+   "kill": [
+    "m1r:test/m1r/programs/runtime_errors.go"
+   ]
+  },
+  {
+   "id": "M-FACADE-03",
+   "class": "stdlib facade: runtime.Caller skip off-by-one",
+   "file": "stdlib/fork/runtime/extern.go",
+   "description": "runtime.Caller(skip) reports one frame too shallow (Caller(0) names runtime.Caller's caller's callee: itself / the wrong line).",
+   "old": "\tn := callers(skip+1, rpc[:])",
+   "new": "\tn := callers(skip, rpc[:])",
+   "kill": [
+    "m1r:test/m1r/programs/callers.go"
+   ]
+  },
+  {
+   "id": "M1C-sema-lost-wakeup",
+   "class": "lost-wakeup",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java",
+   "description": "sema lost wakeup",
+   "old": "        sched.unpark(w.g);\n        if (w.granted) {",
+   "new": "        if (w.granted) {",
+   "kill": [
+    "m1c:test/m1c/programs/sync_contention.go"
+   ]
+  },
+  {
+   "id": "M1C-sema-no-recheck",
+   "class": "lost-wakeup",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java",
+   "description": "sema no recheck",
+   "old": "            if (w.granted || canAcquire(node, addr)) {",
+   "new": "            if (true) {",
+   "kill": [
+    "m1c:test/m1c/programs/sync_contention.go"
+   ]
+  },
+  {
+   "id": "M1C-notify-wrong-ticket",
+   "class": "lost-wakeup",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java",
+   "description": "notify wrong ticket",
+   "old": "                    if (w.ticket == t) {",
+   "new": "                    if (!it.hasNext()) { // the last waiter, not ticket t",
+   "kill": [
+    "m1c:test/m1c/programs/sync_cond.go"
+   ]
+  },
+  {
+   "id": "M1C-fatal-is-panic",
+   "class": "exit-status",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java",
+   "description": "fatal is panic",
+   "old": "    static void internal_sync_fatal(Node node, Str s) {\n        throw GoProcess.get(node).fatal(s.toString());",
+   "new": "    static void internal_sync_fatal(Node node, Str s) {\n        throw graalgo.go.runtime.Panics.nilDeref(node);",
+   "kill": [
+    "m1c:test/m1c/programs/sync_unlock_unlocked.go"
+   ]
+  },
+  {
+   "id": "M1C-wait-reason",
+   "class": "exit-status",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/SyncIntrinsics.java",
+   "description": "wait reason",
+   "old": "        acquire(node, addr, lifo, \"sync.Mutex.Lock\");",
+   "new": "        acquire(node, addr, lifo, \"semacquire\");",
+   "kill": [
+    "m1c:test/m1c/programs/sync_deadlock_mutex.go"
+   ]
+  },
+  {
+   "id": "M1C-compare-signed",
+   "class": "string-bytes",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/BytealgIntrinsics.java",
+   "description": "compare signed",
+   "old": "return Integer.signum(Arrays.compareUnsigned(arr(x)",
+   "new": "return Integer.signum(Arrays.compare(arr(x)",
+   "kill": [
+    "m1c:test/m1c/programs/bytealg_kernels.go"
+   ]
+  },
+  {
+   "id": "M1C-compare-prefix-equal",
+   "class": "string-bytes",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/BytealgIntrinsics.java",
+   "description": "compare prefix equal",
+   "old": "        Slice x = (Slice) a, y = (Slice) b;\n        return Integer.signum(",
+   "new": "        Slice x = (Slice) a, y = (Slice) b;\n        if (x.len() == 0 || y.len() == 0) {\n            return 0;\n        }\n        return Integer.signum(",
+   "kill": [
+    "m1c:test/m1c/programs/bytealg_kernels.go"
+   ]
+  },
+  {
+   "id": "M1C-index-misses-last-position",
+   "class": "off-by-one",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/BytealgIntrinsics.java",
+   "description": "index misses last position",
+   "old": "for (int i = 0; i <= last; i++) {",
+   "new": "for (int i = 0; i < last; i++) {",
+   "kill": [
+    "m1c:test/m1c/programs/bytealg_kernels.go"
+   ]
+  },
+  {
+   "id": "M1C-indexbytestring-ignores-offset",
+   "class": "string-bytes",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/BytealgIntrinsics.java",
+   "description": "indexbytestring ignores offset",
+   "old": "return indexByte(s.b, s.off, s.len, (byte) c);",
+   "new": "return indexByte(s.b, 0, s.len, (byte) c);",
+   "kill": [
+    "m1c:test/m1c/programs/bytealg_kernels.go"
+   ]
+  },
+  {
+   "id": "M1C-makenozero-exact-cap",
+   "class": "slice-cap",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/BytealgIntrinsics.java",
+   "description": "makenozero exact cap",
+   "old": "int cap = n == 0 ? 0 : graalgo.runtime.Intrinsics.nextSliceCap((int) n, 0, 1, false);",
+   "new": "int cap = (int) n;",
+   "kill": [
+    "m1c:test/m1c/programs/bytealg_kernels.go"
+   ]
+  },
+  {
+   "id": "M1C-exec-skips-copy-back",
+   "class": "syscall",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Executor.java",
+   "description": "exec skips copy back",
+   "old": "            Unsafe.writeBytes(node, objs[i], offs[i], data[i], filled);\n",
+   "new": "",
+   "kill": [
+    "m1c:test/m1c/programs/syscall_raw.go"
+   ]
+  },
+  {
+   "id": "M1C-exec-read-fills-from-start-of-object",
+   "class": "syscall",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Executor.java",
+   "description": "exec read fills from start of object",
+   "old": "            Unsafe.writeBytes(node, objs[i], offs[i], data[i], filled);",
+   "new": "            Unsafe.writeBytes(node, objs[i], 0, data[i], filled);",
+   "kill": [
+    "m1c:test/m1c/programs/syscall_raw.go"
+   ]
+  },
+  {
+   "id": "M1C-exec-ignores-pointer-offset",
+   "class": "syscall",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Executor.java",
+   "description": "exec ignores pointer offset",
+   "old": "            long off = Unsafe.offset(p);",
+   "new": "            long off = 0;",
+   "kill": [
+    "m1c:test/m1c/programs/syscall_raw.go"
+   ]
+  },
+  {
+   "id": "M1C-exec-struct-not-copied-back",
+   "class": "syscall",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Executor.java",
+   "description": "exec struct not copied back",
+   "old": "if (segs[i] == null || r.kind == Role.K_VAL || r.kind == Role.K_CSTR || !r.out) {",
+   "new": "if (segs[i] == null || r.kind != Role.K_BYTES || !r.out) {",
+   "kill": [
+    "m1c:test/m1c/programs/syscall_rlimit.go"
+   ]
+  },
+  {
+   "id": "M1C-exec-struct-half-size",
+   "class": "syscall",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Executor.java",
+   "description": "exec struct half size",
+   "old": "long n = r.kind == Role.K_STRUCT ? r.size : a[r.lenArg];",
+   "new": "long n = r.kind == Role.K_STRUCT ? r.size / 2 : a[r.lenArg];",
+   "kill": [
+    "m1c:test/m1c/programs/syscall_rlimit.go"
+   ]
+  },
+  {
+   "id": "M1C-exec-loses-errno",
+   "class": "syscall",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Executor.java",
+   "description": "exec loses errno",
+   "old": "                return new Raw(-1, (int) ERRNO.get(state, 0L));",
+   "new": "                return new Raw(-1, 0);",
+   "kill": [
+    "m1c:test/m1c/programs/syscall_raw.go"
+   ]
+  },
+  {
+   "id": "M1D-iface-direct-struct-as-pointer",
+   "class": "iface",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/runtime/Unsafe.java",
+   "description": "iface direct struct as pointer",
+   "old": "            return directFlat(i.type) ? ((Flat) i.data).refs[0] : i.data;",
+   "new": "            return i.data;",
+   "kill": [
+    "m1d:test/m1d/programs/fmt_verbs.go"
+   ]
+  },
+  {
+   "id": "M1D-iface-header-words-raw",
+   "class": "iface",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/runtime/Unsafe.java",
+   "description": "iface header words raw",
+   "old": "                return new Iface(t, loadRef(n, obj, off, t));",
+   "new": "                return new RawIface(typ, data);",
+   "kill": [
+    "m1d:test/m1d/programs/reflect_probe.go"
+   ]
+  },
+  {
+   "id": "M1D-map-iter-elem-is-key",
+   "class": "map-iter",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/ReflectIntrinsics.java",
+   "description": "map iter elem is key",
+   "old": "        return new Object[] {it, key, elem};",
+   "new": "        return new Object[] {it, key, key};",
+   "kill": [
+    "m1d:test/m1d/programs/fmt_verbs.go"
+   ]
+  },
+  {
+   "id": "M1D-call-args-reversed",
+   "class": "reflect",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/ReflectIntrinsics.java",
+   "description": "call args reversed",
+   "old": "            out[lead + i] = pt.gcSize() == 0",
+   "new": "            out[lead + a.len() - 1 - i] = pt.gcSize() == 0",
+   "kill": [
+    "m1d:test/m1d/programs/reflect_probe.go"
+   ]
+  },
+  {
+   "id": "M1D-slicecopy-copies-nothing",
+   "class": "reflect",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/ReflectIntrinsics.java",
+   "description": "slicecopy copies nothing",
+   "old": "        int n = Math.min(d.len(), s.len());",
+   "new": "        int n = 0;",
+   "kill": [
+    "m1d:test/m1d/programs/reflect_probe.go"
+   ]
+  },
+  {
+   "id": "M1D-os-args-all-argv0",
+   "class": "os",
+   "file": "internal/backend/truffle/src/main/java/graalgo/go/intrinsics/OsIntrinsics.java",
+   "description": "os args all argv0",
+   "old": "new Str(argv[i].getBytes(StandardCharsets.UTF_8))",
+   "new": "new Str(argv[0].getBytes(StandardCharsets.UTF_8))",
+   "kill": [
+    "m1d:test/m1d/programs/os_files.go"
+   ]
+  },
+  {
+   "id": "M1D-poller-lost-read-wakeup",
+   "class": "lost-wakeup",
+   "file": "internal/backend/truffle/src/main/java/graalgo/syscall/Poller.java",
+   "description": "poller lost read wakeup",
+   "old": "                            d.ready[R] = true;\n                            wake(d, R);",
+   "new": "                            d.ready[R] = true;",
+   "kill": [
+    "m1d:test/m1d/programs/os_files.go"
+   ],
+   "survivorJustification": "equivalent until m3-plan G7 (BUG-0060, measured 2026-11-25): no per-push program can reach this poller path — pipe fds block in the executor's blocking syscall instead of waiting for readiness in the poller, and every fd deadline expires at once (relative/absolute mix-up), so the mutated wake is never needed. Retire with BUG-0060's fix: the G7 lane adds a pipe-deadline program to test/m1d that kills it."
+  }
+ ]
 }

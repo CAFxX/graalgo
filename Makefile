@@ -129,6 +129,11 @@
 #   `make bench-spawn-flat` — goroutine spawn cost flat in the live count
 #   (ADR-0018), a wall-clock check: weekly in ci.yml's full-suite job,
 #   never per-push (host load moves it).
+#   `make mutation` — the new path's mutation oracle (tools/mutation, m3-plan G6):
+#   each mutant of tools/mutation/mutants.json must turn the per-push
+#   differential gates red; nightly (mutation.yml). `make stdlib-gate` —
+#   the 486 test/corpus programs with imports vs gc against
+#   test/corpus/std-register.tsv; manual (stdlib-gate.yml, BUG-0033).
 #
 
 
@@ -224,7 +229,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-pin-smoke test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines bench-spawn-flat pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-pin-smoke test-ci test-jit bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines bench-spawn-flat pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation stdlib-gate fast-build fast-test test-imgcheck test-times quick
 
 all: generate build snapshot-check check test-pin-smoke test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
 
@@ -300,7 +305,7 @@ check-repo:
 	# ##[error] annotation through setup-go's problem matcher (the top
 	# annotation of a red run pointed at test_check_ratchets.py's planted
 	# tools/b.go). A self-test's output is shown only when it fails.
-	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py test/lib/test_*.py; do \
+	@set -e; for t in .github/scripts/test_*.py test/java/test_*.py test/lib/test_*.py test/corpus/test_*.py; do \
 	  if out=$$(python3 $$t 2>&1); then echo "== $$t: ok"; \
 	  else echo "== $$t: FAILED"; echo "$$out"; exit 1; fi; done
 	python3 .github/scripts/check_tracked_files.py
@@ -315,7 +320,10 @@ check-repo:
 	cd test/differential && PATH="$(dir $(GO)):$$PATH" $(GO) test -count=1 -run 'Register|IsPinned|LoadBugIDs|Parse' ./internal/harness/ && \
 	  PATH="$(dir $(GO)):$$PATH" $(GO) run ./cmd/diffharness registers -bugs ../../docs/dev/bugs.md \
 	  -unsigned ../../tools/stdlib-fork/exclusions.yaml \
-	  corpus-exclusions.yaml corpus-exclusions-v1.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
+	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
+	# the mutant set of the nightly mutation oracle stays applicable (anchors
+	# occur exactly once, kill programs exist), and the tool's own tests.
+	cd tools/mutation && PATH="$(dir $(GO)):$$PATH" $(GO) test .
 	python3 .github/scripts/check_markdown_links.py --skip-external
 	# the req CLI's own tests first (gate-of-the-gate, ~0.3 s, go-test cached;
 	# incl. its .worktrees skip), then the lint itself.
@@ -366,15 +374,16 @@ test-times:
 # The inner-loop tier (~3 min on a quiet host): never landing evidence —
 # `make pre-land` is. The static repo gates, the cheap module suites, and
 # slices of the differential gates: the edge-case snapshot slice
-# (MUTATION_SLICE, the slice the mutation gate trusts) and a few programs
+# (QUICK_SNAPSHOT: arithmetic, shifts, conversions, slices, maps, defers) and a few programs
 # of m1a/m1r/m1d across defers, interfaces, generics, goroutines, panics
 # and the real fmt.
 QUICK_M1A ?= test/m1a/programs/defer_chain.go test/m1a/programs/flat_values.go test/m1a/programs/generics.go test/m1a/programs/ifaces.go test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go test/m1a/programs/eval_order.go test/m1a/programs/panic_print.go
+QUICK_SNAPSHOT ?= 06_nested_defer,60_narrow_unary_widen,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,55_slice_bounds,56_map_ops,57_defer_order
 QUICK_M1R ?= test/m1r/programs/sort_slice.go test/m1r/programs/strconv_conv.go
 QUICK_M1D ?= test/m1d/programs/hello_fmt.go
 quick: generate build
 	$(MAKE) check-repo test-v2 test-gir
-	$(MAKE) snapshot-check SNAPSHOT_PROGRAMS=$(MUTATION_SLICE)
+	$(MAKE) snapshot-check SNAPSHOT_PROGRAMS=$(QUICK_SNAPSHOT)
 	$(MAKE) test-m1a M1A_PROGRAMS="$(QUICK_M1A)"
 	$(MAKE) test-m1r M1R_PROGRAMS="$(QUICK_M1R)"
 	$(MAKE) test-m1d M1D_PROGRAMS="$(QUICK_M1D)"
@@ -395,30 +404,22 @@ test-ci: build
 	$(MAKE) -C internal/backend/truffle smoke-test
 	$(MAKE) test-jit
 
-# JIT regression guard (~30 s): runs test/jit/peguard under graalgo with
-# synchronous, traced Truffle compilation and fails if any compilation
-# fails (e.g. a PermanentBailoutException from partial evaluation entering
-# JDK code), if a guarded hot function or an OSR loop is never compiled,
-# or if the output differs from gc's. See test/jit/run_pe_guard.sh.
+# JIT regression guard (~10 s): builds test/jit/peguard through graalgo-tool
+# and runs it on the new node package with synchronous, traced Truffle
+# compilation (default tiers + OSR, then CompileImmediately); fails if any
+# compilation fails (e.g. a PermanentBailoutException from partial
+# evaluation entering JDK code), if a guarded hot function or an OSR loop is
+# never compiled, or if the output differs from gc's; a planted graph-size
+# limit must fail compilations. See test/jit/run_pe_guard.sh.
 # Keep the JVM temp files off the shared /tmp tmpfs.
 test-jit: build
 	mkdir -p $(CURDIR)/test/jit/.tmp
 	TMPDIR="$(CURDIR)/test/jit/.tmp" test/jit/run_pe_guard.sh
 
-# Partial-evaluation gate over the benchmark set (minutes; truffle-design
-# §10.2 TR-0): every test/bench program runs with
-# engine.CompilationFailureAction=ExitVM and synchronous compilation; fails
-# on any failed compilation (bailout), a wrong output, or nothing compiled.
-# See test/jit/run_pe_check.sh. Not per-push (test-jit is the per-push guard).
-pe-check: build
-	mkdir -p $(CURDIR)/test/jit/.tmp
-	TMPDIR="$(CURDIR)/test/jit/.tmp" GO="$(GO)" test/jit/run_pe_check.sh $(PE_CHECK_PROGRAMS)
-PE_CHECK_PROGRAMS ?=
-
-# gc-vs-graalgo micro-benchmarks (minutes; not part of any gate): best-round
-# times and ratios, failing on output mismatch. See test/bench/run.sh.
-bench: build
-	test/bench/run.sh
+# gc-vs-graalgo benchmarks (not a gate): the benchmark suite, bench-suite
+# below (m3-plan D3: v1's test/bench/run.sh and its `pe-check` were deleted;
+# the partial-evaluation gate over the benchmark set is pe-check-m1a).
+bench: bench-suite
 
 # Regression tests for fixed PKGs ([test/regression/](test/regression/)):
 # each test/regression/<pkg>/ directory is a Go test package run through
@@ -626,8 +627,8 @@ M1C_PROGRAMS ?=
 # MakeFunc, run-time-made types) and the packages that stand on them
 # (encoding/json, regexp, text/template, bufio, flag, log, ...), through
 # graalgo-tool on the node package against gc. See test/m1d/run.sh;
-# test/m1d/mutants.sh plants bugs the gate must catch (not per-push: one
-# rebuild per mutant). M1D_PROGRAMS narrows the run.
+# the M1D-* mutants of tools/mutation/mutants.json plant bugs the gate must
+# catch (`make mutation`, nightly). M1D_PROGRAMS narrows the run.
 test-m1d: build
 	GO="$(GO)" test/m1d/run.sh $(M1D_PROGRAMS)
 M1D_PROGRAMS ?=
@@ -899,45 +900,52 @@ snapshot-check: build
 	  $(if $(SNAPSHOT_PROGRAMS),-programs $(SNAPSHOT_PROGRAMS)) \
 	  -jobs $(SNAPSHOT_JOBS) -timeout 120
 
-# Oracle validation by mutation (SPEC §5.7, GG-0034): tools/mutation
-# applies each curated mutant in tools/mutation/mutants.json to a scratch
-# copy of the tree, rebuilds, and requires the per-push differential gate
-# (diffharness snapshot check vs gc) to go red. Fast stage: MUTATION_SLICE
-# (the edge-case corpus); slice survivors are re-run on the full corpus.
-# Exit 1 = unjustified survivor, 3 = infra error / red baseline. Slow
-# (~1-2 h): nightly in .github/workflows/mutation.yml, not per-push.
-MUTATION_SLICE ?= 06_nested_defer,60_narrow_unary_widen,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,55_slice_bounds,56_map_ops,57_defer_order
+# Oracle validation by mutation of the new path (SPEC §5.7, GG-0034;
+# m3-plan G6): tools/mutation applies each curated mutant of
+# tools/mutation/mutants.json (node package, runtime, scheduler,
+# graalgo.syscall, the -toolexec emitter, the stdlib/ fork) to a scratch
+# copy of the tree, rebuilds, and requires the per-push differential gates
+# to go red on the mutant's own kill programs (snapshot-check corpus names,
+# test/m1a, m1r, m1c, m1d, m1w13 programs); a slice survivor is re-run on
+# every one of those gates in full. Exit 1 = unjustified survivor, 3 =
+# infra error / red baseline. Nightly in .github/workflows/mutation.yml, not
+# per-push (one rebuild per mutant); check-repo validates the set (anchors
+# apply exactly once, kill programs exist). MUTANTS=ID,... narrows the run.
 MUTATION_WORK ?=
-# Programs the gate runs at a time (1: shared host; mutation.yml's 4-vCPU
-# runner passes 4, as per-push snapshot-check runs there).
+# Programs/JVMs the snapshot gate runs at a time (1: shared host;
+# mutation.yml's 4-vCPU runner passes 4).
 MUTATION_JOBS ?= 1
-mutation: generate build
-	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) -jobs $(MUTATION_JOBS) \
+mutation: build
+	cd tools/mutation && GO="$(GO)" $(GO) run . -repo $(CURDIR) -jobs $(MUTATION_JOBS) \
 	  $(if $(MUTATION_WORK),-work $(MUTATION_WORK)) $(if $(MUTANTS),-only $(MUTANTS))
 
-# Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
-# Uses a persistent warm JVM: in-process compilation (~0.5s) and runs
-# without JVM startup (~4s for a Go program, ~1s for a Java test).
-# Target: edit -> result in a few seconds.
+# The standard-library corpus gate (SPEC §5.3 layer 3; m3-plan D3, which
+# deleted v1's wave runners; manual: .github/workflows/stdlib-gate.yml): every
+# test/corpus program that imports a package (486; the import-free ones run
+# per push in test-m1a) through test/m1r/run.sh against gc, judged by
+# test/corpus/std_gate.py against the reviewed register
+# test/corpus/std-register.tsv (DRIFT, STALE and malformed entries fail).
+# ~10 min on one job. STDLIB_GATE_REPORT is the per-program report.
+STDLIB_GATE_REPORT ?= $(CURDIR)/.tmp/stdlib-gate.report
+stdlib-gate: build
+	mkdir -p $(dir $(STDLIB_GATE_REPORT)) && : > $(STDLIB_GATE_REPORT)
+	st=0; M1R_REPORT="$(STDLIB_GATE_REPORT)" GO="$(GO)" test/m1r/run.sh \
+	  $$(python3 test/corpus/std_gate.py list) || st=$$?; \
+	  [ $$st -le 1 ] || exit $$st
+	python3 test/corpus/std_gate.py judge $(STDLIB_GATE_REPORT)
+
+# Fast Java debug cycle (see internal/backend/fast-cycle/fast-cycle).
+# Uses a persistent warm JVM: in-process compilation (~0.5s) and Java test
+# runs without JVM startup (~1s). (Its v1 `run`/`watch` of a Go file lost
+# their targets at m3-plan D3; a Go program runs through graalgo-tool.)
 #   make fast-build          incremental compile of changed files
-#   make fast-run PROG=foo.go   compile + run a Go program
 #   make fast-test TEST=com.foo.Bar [METHOD=testX]  compile + run Java test
-#   make fast-watch PROG=foo.go  rebuild + rerun on file change
-# (PROG, not GO: GO is the toolchain binary every other target uses.)
 fast-build:
 	internal/backend/fast-cycle/fast-cycle build
-
-fast-run:
-	@test -n "$(PROG)" || (echo "usage: make fast-run PROG=<file.go>"; exit 1)
-	internal/backend/fast-cycle/fast-cycle run "$(PROG)"
 
 fast-test:
 	@test -n "$(TEST)" || (echo "usage: make fast-test TEST=<class> [METHOD=<m>]"; exit 1)
 	internal/backend/fast-cycle/fast-cycle test "$(TEST)" $(METHOD)
-
-fast-watch:
-	@test -n "$(PROG)" || (echo "usage: make fast-watch PROG=<file.go>"; exit 1)
-	internal/backend/fast-cycle/fast-cycle watch "$(PROG)"
 
 clean:
 	$(MAKE) -C internal/backend/truffle clean

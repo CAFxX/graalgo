@@ -1,17 +1,18 @@
 # Oracle validation by mutation (SPEC §5.7, GG-0034): nightly.
 #
-# tools/mutation deliberately breaks graalgo's lowering/runtime (curated
-# mutants in tools/mutation/mutants.json: signed % -> floorMod, unsigned
-# division done signed, dropped width truncation, Java shift masking,
-# FIFO defers, ...) on a scratch copy of the tree and confirms the per-push
-# differential gate (`make snapshot-check`) goes red for each. A survivor
-# without a reviewed survivorJustification fails this job: the per-push
-# gate has a blind spot that needs a new corpus program.
+# tools/mutation deliberately breaks the new path (m3-plan G6: curated
+# mutants in tools/mutation/mutants.json over the graalgo.go nodes and
+# runtime, the scheduler, graalgo.syscall, the -toolexec emitter and the
+# stdlib/ fork: off-by-one bounds, lost wakeups, select bias, defer order,
+# recover eligibility, interface equality, checkptr, timer order, exit
+# status, ...) on a scratch copy of the tree and confirms the per-push
+# differential gates (snapshot-check, test-m1a/m1r/m1c/m1d/m1w13, narrowed
+# to each mutant's kill programs; a survivor re-runs them in full) go red
+# for each. A survivor without a reviewed survivorJustification fails this
+# job: the per-push gates have a blind spot that needs a new program.
 #
-# Too slow for per-push (one rebuild + a corpus slice per mutant, ~1-2 h).
-# Since m3-plan D1 the per-push snapshot-check runs the new path; the
-# mutants still target v1, so the tool gates them with v1's backend and
-# register (corpus-exclusions-v1.yaml) until G6/D3 bring new-path mutants.
+# Not per-push (one rebuild + a slice per mutant); per push, check-repo
+# validates the set (every anchor applies exactly once).
 name: mutation
 
 on:
@@ -26,7 +27,7 @@ on:
 jobs:
   mutation:
     runs-on: ubuntu-24.04
-    timeout-minutes: 300
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -48,13 +49,12 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: Build frontend + backend
-        run: make generate build
+      - name: Build the backend
+        run: make build
 
       - name: Mutation run (exit 1 = unjustified survivor, 3 = infra/red baseline)
-        # MUTATION_JOBS=4: the gate runs four programs at a time on the
-        # 4-vCPU runner (a surviving mutant runs its whole slice, then the
-        # full corpus; one at a time it took most of the job's 35-48 min)
+        # MUTATION_JOBS=4: the snapshot gate runs four programs at a time on
+        # the 4-vCPU runner (the m1 runners batch their programs in one JVM)
         run: make mutation MUTATION_WORK="$RUNNER_TEMP/mutation" MUTATION_JOBS=4
 
       - name: Upload mutation report
