@@ -26,8 +26,8 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   the `-toolexec` path), `pe-check-m1a`, `test-m1w13`, `test-imgcheck`,
   `test-m1r`, `test-m1c` and `test-m1d` (std from upstream's source vs gc:
   pointer model, descriptor images, leaf packages, `sync`/`time`/syscalls,
-  `os`/`reflect`/`fmt`), and `test-goroutine-modes` (the thread-per-goroutine
-  fallback; every other gate runs the default carrier mode, GG-0073); the
+  `os`/`reflect`/`fmt`), and `test-goroutine-modes` (the opt-in thread-per-goroutine
+  mode; every other gate runs the default carrier mode, GG-0074); the
   Makefile header is the exact list. CI
   then fails if `make all` left any modified **or untracked** file
   (`git diff --exit-code` + `git status --porcelain`).

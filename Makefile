@@ -90,9 +90,9 @@
 #               text/template and friends, the same way
 #               ([test/m1d/](test/m1d/))
 #     test-goroutine-modes
-#               the goroutine-mode matrix (~45 s; GG-0073: carrier mode is
+#               the goroutine-mode matrix (~45 s; GG-0074: carrier mode is
 #               the default): the scheduler suites and a few m1a/m1r/m1c
-#               goroutine programs in the thread-per-goroutine fallback,
+#               goroutine programs in the opt-in thread-per-goroutine mode,
 #               goroutine programs in carrier mode under -ea, and
 #               Context.close(true) of a running program in both modes
 #
@@ -536,7 +536,7 @@ bench-realistic: build
 
 # Goroutine scaling (not a gate; north-star.md §4.3, ADR-0018): the realistic
 # `goroutines` program at each GOR_N of GOR_NS, gc against graalgo in the
-# default carrier mode (the thread-per-goroutine fallback,
+# default carrier mode (the opt-in thread-per-goroutine mode,
 # -Dgraalgo.sched.goroutines=thread, is quadratic: 100,000 take minutes to
 # spawn). 1,000,000 goroutines need a ~5 GB heap: GOR_JAVA_OPTS sets -Xmx12g;
 # run it alone on a shared host (minutes per N).
@@ -751,9 +751,9 @@ test-java-fast: java-test-classes java-test-lists-check
 	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
 	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
 
-# The goroutine-mode matrix (GG-0073; per-push in `make all`). Carrier mode is
-# the default, so every other gate runs it; this target keeps the
-# thread-per-goroutine fallback honest and checks what only a mode switch or
+# The goroutine-mode matrix (GG-0074; per-push in `make all`). Carrier mode is
+# the default, so every other gate runs it; this target keeps the opt-in
+# thread-per-goroutine mode honest and checks what only a mode switch or
 # a carrier migration can break: (1) the scheduler suites and a few
 # goroutine-heavy m1a/m1r/m1c programs with -Dgraalgo.sched.goroutines=thread;
 # (2) goroutine programs in carrier mode under -ea, so Truffle's per-thread assertions

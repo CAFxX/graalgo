@@ -81,7 +81,7 @@ reboot), so they read lower than the same gates under the usual 10–20 load.
 | test-m1w13 | 15 | 28 | 13 | 20 | JVM per program |
 | test-imgcheck | 9 | 24 | 10 | 21 | 6 JVM runs |
 | pe-check-m1a | 9 | 15 | 13 -> 28 | 17 -> 50 | JIT compiles; master added pe_std.sh (std paths of the realistic programs) |
-| test-goroutine-modes | - | - | 25 | 42 | new on master (GG-0073): one JVM per scheduler suite/program; CDS + gc-oracle cache apply |
+| test-goroutine-modes | - | - | 25 | 42 | new on master (GG-0074): one JVM per scheduler suite/program; CDS + gc-oracle cache apply |
 | build | 8 | 39 | 36 | 48 | javac |
 | java-test-classes | 7 | 20 | 19 | 23 | javac |
 | **total** (all targets) | **2487** | **3848** | **1313** | **1926** | 41.5 -> 21.9 min; master's 11-24 gates (pe_std.sh, goroutine modes) add ~1 min wall |

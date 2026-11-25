@@ -62,7 +62,7 @@ import graalgo.values.GoStructDescriptor;
  * pattern): this is not a {@code GoStruct}, so assignment, argument
  * passing, and interface boxing carry the reference.
  *
- * <p>verifies: GG-0073 (time slice)
+ * <p>verifies: GG-0074 (time slice)
  */
 public class GoTimerT {
     private final GoTimer timer;

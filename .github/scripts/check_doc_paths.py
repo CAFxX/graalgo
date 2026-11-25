@@ -27,6 +27,15 @@ another lane); each names its owner and is removed when fixed there.
 
 Archived trees (history, not claims about today) are skipped: see ARCHIVED.
 
+Requirements too: the statement, rationale and verification_plan of every
+live requirement (requirements/*.yaml whose status is not superseded or
+retired: those are history) name test files and scripts as bare tokens
+("test/m1r/programs/x.go through make test-m1r"), so there every bare token
+that starts with a top-level repo directory is a candidate, judged the same
+way; the opt-out words apply per sentence. A locked requirement's text can
+only change through `req supersede`, so a moved test is fixed by reissuing
+the requirement.
+
 Usage: check_doc_paths.py [repo-root]
 """
 
@@ -51,6 +60,10 @@ ROOT_FILES = ("Makefile", "README.md", "AGENTS.md", "go.mod")
 OPT_OUT = re.compile(r"\(planned\)|\b(removed|deleted|renamed|moved|retired|superseded|was|were|formerly|old|landed|gitignored)\b",
                      re.IGNORECASE)
 TICK = re.compile(r"`([^`\n]+)`")
+BARE = re.compile(r"(?<![\w./`-])((?:%s)[A-Za-z0-9_.\-/]*)" % "|".join(re.escape(t) for t in TOP))
+REQ_FIELDS = ("statement", "rationale", "verification_plan")
+REQ_DEAD = ("superseded", "retired")
+SENTENCE = re.compile(r"(?<=[.;])\s+")
 FENCE = re.compile(r"^\s*(```|~~~)")
 PATHCHARS = re.compile(r"^[A-Za-z0-9_.\-/]+$")
 
@@ -123,13 +136,63 @@ def check_doc(root, rel, text):
     return errors
 
 
+def req_fields(text):
+    """{field: text} of a requirement YAML's top-level scalars (a minimal
+    reader: single-line scalars, optionally quoted, plus indented
+    continuation lines; no PyYAML dependency)."""
+    out, key = {}, None
+    for line in text.splitlines():
+        m = re.match(r"^([a-z_]+):\s?(.*)$", line)
+        if m:
+            key = m.group(1)
+            out[key] = m.group(2)
+        elif key and line.startswith(" ") and not line.lstrip().startswith("- "):
+            out[key] += " " + line.strip()
+        else:
+            key = None
+    for k, v in out.items():
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] == "'":
+            v = v[1:-1].replace("''", "'")
+        elif len(v) >= 2 and v[0] == v[-1] == '"':
+            v = v[1:-1]
+        out[k] = v
+    return out
+
+
+def check_requirement(root, rel, text):
+    f = req_fields(text)
+    if f.get("status", "") in REQ_DEAD:
+        return []
+    errors = []
+    for field in REQ_FIELDS:
+        for sentence in SENTENCE.split(f.get(field, "")):
+            if OPT_OUT.search(sentence):
+                continue
+            for m in BARE.finditer(sentence):
+                tok = m.group(1).rstrip(".,:;)")
+                clean = tok.rstrip("/")
+                if (root / clean).exists() or is_std(tok):
+                    continue
+                errors.append(f"{rel}: {field}: {tok} does not exist (reissue the requirement "
+                              f"with `req supersede`, or say \"(planned)\")")
+    return errors
+
+
+def requirement_files(root):
+    out = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "requirements/*.yaml"],
+                         check=True, capture_output=True).stdout.decode()
+    return [rel for rel in out.split("\0") if rel]
+
+
 def scan(root, docs=None):
     root = Path(root)
     errors = []
     for rel in (docs if docs is not None else live_docs(root)):
         p = root / rel
         if p.is_file():
-            errors += check_doc(root, rel, p.read_text(errors="replace"))
+            check = check_requirement if rel.endswith(".yaml") else check_doc
+            errors += check(root, rel, p.read_text(errors="replace"))
     return errors
 
 
@@ -139,6 +202,7 @@ def main(argv):
     GOROOT_SRC = gr / "src" if gr and (gr / "src").is_dir() else None
     root = Path(argv[1]) if len(argv) > 1 else Path(__file__).resolve().parents[2]
     errors = scan(root)
+    errors += scan(root, requirement_files(root))
     if errors:
         print("DOC-PATH GATE FAILED (backticked repo paths that do not exist):")
         for e in errors:

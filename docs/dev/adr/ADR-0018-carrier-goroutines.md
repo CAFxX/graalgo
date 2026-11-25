@@ -3,16 +3,20 @@
 **Date:** 2026-11-20
 **Status:** **accepted** 2026-11-23 as the goroutine model, by the
 coordinator under design authority delegated by the owner:
-[GG-0073](../../../requirements/GG-0073.yaml) supersedes `GG-0017` ("Each
+`GG-0073` supersedes `GG-0017` ("Each
 goroutine SHALL map 1:1 to a Java virtual thread") and makes carrier mode the default, one virtual
-thread per goroutine the fallback where `Continuation` is unavailable. The
+thread per goroutine the fallback where `Continuation` is unavailable.
+Reissued 2026-11-25 as GG-0074 (*Reissue* below): thread mode is an
+explicit opt-in only, carrier mode without `Continuation` fails loudly, a
+pinned park occupies its carrier while a spare compensates, and goroutines
+in native images are unsupported (planned). The
 default flipped 2026-11-24 (lane carrier-default; item 7). (History: accepted as an
 **opt-in mode** 2026-11-20, lane sched-spawn, which stopped at the
 requirement conflict; see *Requirement* below.)
 **Scope:** [SPEC.md](../../arch/SPEC.md) §3.5;
 [truffle-design.md](../../arch/truffle-design.md) §2.5–§2.6 (T3);
 [north-star.md](../../arch/north-star.md) §4.3 and §5.3;
-requirements GG-0073 (superseding `GG-0017`), GG-SCHED-0001–0003, GG-SCHED-0006, GG-WAKE-0001–0003
+requirements `GG-0073` (superseding `GG-0017`), GG-SCHED-0001–0003, GG-SCHED-0006, GG-WAKE-0001–0003
 (re-verified in carrier mode, unchanged).
 
 ## Context
@@ -94,8 +98,8 @@ Options weighed:
 7. **Default (since 2026-11-24; opt-in until then).** Carrier mode is the
    default of schedulers and contexts; `-Dgraalgo.sched.goroutines=thread`
    (schedulers and the context default) or the context option
-   `go.GoroutineThreads=thread` selects one virtual thread per goroutine, the
-   fallback. Every launcher passes `--add-exports
+   `go.GoroutineThreads=thread` selects one virtual thread per goroutine, an
+   explicit opt-in. Every launcher passes `--add-exports
    java.base/jdk.internal.vm=ALL-UNNAMED`; a JVM without it fails at
    scheduler creation with a clear error naming both remedies, rather than
    falling back to the quadratic mode unnoticed.
@@ -149,7 +153,7 @@ a scheduler token; …" (the rest of `GG-0017` unchanged).
 
 **Resolution (2026-11-23).** The owner delegated design authority to the
 coordinator, who accepted this ADR and superseded `GG-0017` with
-[GG-0073](../../../requirements/GG-0073.yaml) (locked the same day). Its
+`GG-0073` (locked the same day). Its
 text generalizes the proposal: a goroutine is a lightweight execution
 context unmounted when parked — by default a `Continuation` run by
 scheduler carriers, with spawn cost independent of the live count and
@@ -159,15 +163,31 @@ unavailable (native images until P-F, truffle-design §7.4). Every other
 `GG-0017` obligation carries over. Decision 7's "default stays one virtual
 thread" holds only until the default-flip lane lands.
 
+**Reissue (2026-11-25).** Global review round 4 found `GG-0073`'s text
+ahead of, or behind, what was built and intended: a parked goroutine was
+"unmounted from every OS thread", but a pinned park (a monitor or native
+frame, or the `ioEnter`/`ioExit` bracket around thread-confined native
+memory) blocks its carrier while a spare compensates; thread mode was "the
+fallback where `Continuation` is unavailable", but carrier mode without
+`Continuation` fails at scheduler creation (item 7) and thread mode is an
+explicit opt-in; native images were said to use that fallback, but nothing
+selects a mode for an image. The coordinator reissued it as
+[GG-0074](../../../requirements/GG-0074.yaml) with those three statements
+corrected (native-image goroutines: unsupported, planned under P-F) and
+the spawn-scaling check moved to the benchmark tier (`make
+bench-spawn-flat`, weekly); SPEC §3.5 no longer binds carrier mode to
+Loom's default carrier scheduler.
+
 ## Consequences
 
 - Spawning is independent of the live count and 10⁶ idle goroutines fit
-  in ~4 GB RSS; the thread-mode fallback is unchanged.
+  in ~4 GB RSS; the opt-in thread mode is unchanged.
 - `jdk.internal.vm.Continuation` is JDK-internal: every launcher and test
   JVM gains the `--add-exports` flag, and a JDK upgrade must re-run the
   carrier gates (`CarriersTest`, `make bench-spawn-flat`, and every
-  other gate, which run carrier mode). Native images
-  keep thread mode (truffle-design §7.4, amendment A1).
+  other gate, which run carrier mode). Native images select no goroutine
+  mode: unsupported until P-F verifies `Continuation` there
+  (truffle-design §7.4, amendment A1).
 - `Thread.currentThread()` in runtime code is a carrier, shared by many
   goroutines: per-goroutine state goes through the swapped holders (item 3);
   a host monitor held across a park pins the goroutine (it then blocks a

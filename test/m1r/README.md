@@ -13,14 +13,14 @@ std packages under test — the place for intrinsic and std-behavior fixes
 [preempt_spin.go](programs/preempt_spin.go)).
 
 **Goroutine mode:** every program runs in the default carrier mode
-(goroutines as continuations on carrier threads, GG-0073,
+(goroutines as continuations on carrier threads, GG-0074,
 [ADR-0018](../../docs/dev/adr/ADR-0018-carrier-goroutines.md)).
 [spawn_parked.go](programs/spawn_parked.go) keeps 20,000 goroutines parked at
 once (functional output only); that their creation does not slow down with the
 live count is a wall-clock property, checked in the benchmark tier by
 [spawn_flat.go](../bench/scaling/spawn_flat.go) (`make bench-spawn-flat`,
 weekly), never here. `make test-goroutine-modes` reruns a few programs in the
-thread-per-goroutine fallback. [cancel.sh](cancel.sh) builds [cancel/probe.go](cancel/probe.go)
+opt-in thread-per-goroutine mode. [cancel.sh](cancel.sh) builds [cancel/probe.go](cancel/probe.go)
 (goroutines parked and spinning) and cancels it with
 `Context.close(true)` in both modes: bounded, cancelled, no thread left.
 [tools.sh](tools.sh) runs Truffle tools on [tools/probe.go](tools/probe.go) in

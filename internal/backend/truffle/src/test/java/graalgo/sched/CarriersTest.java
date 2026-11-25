@@ -12,7 +12,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <p>The structural property behind O(1) spawn — no thread per goroutine — is asserted
  * directly (the carrier count stays at the pool target however many goroutines live); the
  * park/unpark permit protocol, the pinned-park fallback and blocking compensation each have a
- * test that fails when the mechanism is removed. Carrier mode is the default (GG-0073), so the
+ * test that fails when the mechanism is removed. Carrier mode is the default (GG-0074), so the
  * scheduler's own suites (LifecycleTest, ChannelTest, WakeupRaceStressTest) run in it; {@code
  * make test-goroutine-modes} reruns them in the thread-per-goroutine fallback.
  *
