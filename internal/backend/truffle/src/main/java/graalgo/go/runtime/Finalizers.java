@@ -375,15 +375,35 @@ public final class Finalizers {
     /** After collections nobody asked for: dispatch what they found, until the process exits. */
     private void watch() {
         synchronized (lock) {
-            while (!sched.isExiting()) {
-                drainLocked();
-                try {
+            try {
+                while (!sched.isExiting()) {
+                    drainLocked();
                     lock.wait(POLL_MILLIS);
-                } catch (InterruptedException e) {
-                    return;
                 }
+            } catch (InterruptedException e) {
+                // fall through: the process is going away
+            } finally {
+                releaseAllLocked();
             }
         }
+    }
+
+    /**
+     * The process exits (gc runs no finalizer then): every special is cleared and drops what it
+     * holds. A special the collector still finds (cleared but not yet enqueued) sits on the
+     * JVM's pending-reference list, a strong root; holding its closure there would keep the
+     * closed context's whole program alive (test/m1r/leak.sh). Lock held.
+     */
+    private void releaseAllLocked() {
+        for (Special s : live) {
+            s.clear();
+            s.release();
+        }
+        live.clear();
+        finalizers.clear();
+        cleanups.clear();
+        finq.q.clear();
+        cleanupq.q.clear();
     }
 
     /**
