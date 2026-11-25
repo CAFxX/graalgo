@@ -250,7 +250,7 @@
    "kill": [
     "m1d:test/m1d/programs/os_files.go"
    ],
-   "survivorJustification": "equivalent until m3-plan G7 (BUG-0060, measured 2026-11-25): no per-push program can reach this poller path — pipe fds block in the executor's blocking syscall instead of waiting for readiness in the poller, and every fd deadline expires at once (relative/absolute mix-up), so the mutated wake is never needed. Retire with BUG-0060's fix: the G7 lane adds a pipe-deadline program to test/m1d that kills it."
+   "survivorJustification": "equivalent until m3-plan G7 (BUG-0080, measured 2026-11-25): no per-push program can reach this poller path — pipe fds block in the executor's blocking syscall instead of waiting for readiness in the poller, and every fd deadline expires at once (relative/absolute mix-up), so the mutated wake is never needed. Retire with BUG-0080's fix: the G7 lane adds a pipe-deadline program to test/m1d that kills it."
   },
   {
    "id": "M-EMIT-01",
@@ -594,7 +594,7 @@
    "kill": [
     "m1d:test/m1d/programs/os_files.go"
    ],
-   "survivorJustification": "equivalent until m3-plan G7 (BUG-0060, measured 2026-11-25): no per-push program can reach this poller path — pipe fds block in the executor's blocking syscall instead of waiting for readiness in the poller, and every fd deadline expires at once (relative/absolute mix-up), so the mutated wake is never needed. Retire with BUG-0060's fix: the G7 lane adds a pipe-deadline program to test/m1d that kills it."
+   "survivorJustification": "equivalent until m3-plan G7 (BUG-0080, measured 2026-11-25): no per-push program can reach this poller path — pipe fds block in the executor's blocking syscall instead of waiting for readiness in the poller, and every fd deadline expires at once (relative/absolute mix-up), so the mutated wake is never needed. Retire with BUG-0080's fix: the G7 lane adds a pipe-deadline program to test/m1d that kills it."
   }
  ]
 }
