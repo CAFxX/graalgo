@@ -339,6 +339,11 @@ func (w *world) role(info *types.Info, fd *ast.FuncDecl, e ast.Expr) (string, st
 			}
 		}
 	}
+	if sd, ok := x.(*ast.CallExpr); ok && len(sd.Args) == 1 && isBuiltin(info, sd.Fun, "SliceData") { // unsafe.SliceData(v)
+		if st, ok := info.Types[sd.Args[0]].Type.Underlying().(*types.Slice); ok {
+			return "buf:" + typeName(st.Elem()), types.ExprString(ast.Unparen(sd.Args[0]))
+		}
+	}
 	pt, ok := info.Types[x].Type.Underlying().(*types.Pointer)
 	if !ok {
 		return "ptr:?", ""
@@ -350,6 +355,21 @@ func (w *world) role(info *types.Info, fd *ast.FuncDecl, e ast.Expr) (string, st
 		return "cstr", "" // *byte from BytePtrFromString: NUL-terminated
 	}
 	return "ptr:" + typeName(pt.Elem()), ""
+}
+
+// isBuiltin reports whether fun names the builtin (unsafe.SliceData, ...).
+func isBuiltin(info *types.Info, fun ast.Expr, name string) bool {
+	var id *ast.Ident
+	switch f := ast.Unparen(fun).(type) {
+	case *ast.SelectorExpr:
+		id = f.Sel
+	case *ast.Ident:
+		id = f
+	default:
+		return false
+	}
+	b, ok := info.Uses[id].(*types.Builtin)
+	return ok && b.Name() == name
 }
 
 func typeName(t types.Type) string {

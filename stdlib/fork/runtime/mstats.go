@@ -295,4 +295,46 @@ type MemStats struct {
 // call to ReadMemStats. This is in contrast with a heap profile,
 // which is a snapshot as of the most recently completed garbage
 // collection cycle.
-func ReadMemStats(m *MemStats)
+//
+// graalgo: the JVM heap is the Go heap (ADR-0002) and the figures are the
+// JVM's (readMemStats documents each source): HeapAlloc/Alloc = heap in use,
+// HeapSys = heap committed, HeapInuse = in use, HeapIdle = committed - in
+// use, OtherSys = non-heap committed (code cache, metaspace), Sys = HeapSys +
+// OtherSys (the other *Sys fields are 0: goroutine stacks, spans and GC
+// metadata are inside the JVM's figures), TotalAlloc = bytes allocated by all
+// threads, NextGC = the heap maximum, NumGC/PauseTotalNs/LastGC and the last
+// PauseNs/PauseEnd slot = the stop-the-world collectors' counts and times,
+// NumForcedGC = runtime.GC calls, GCCPUFraction = collector time over CPU
+// time since start. The JVM counts no objects: Mallocs, Frees, HeapObjects,
+// Lookups and BySize are 0 (docs/arch/limitations.md).
+func ReadMemStats(m *MemStats) {
+	var w [10]uint64
+	cpu := readMemStats(&w)
+	*m = MemStats{}
+	m.HeapAlloc = w[0]
+	m.Alloc = w[0]
+	m.TotalAlloc = w[1]
+	m.HeapSys = w[2]
+	m.HeapInuse = min(w[0], w[2])
+	m.HeapIdle = w[2] - m.HeapInuse
+	m.OtherSys = w[3]
+	m.Sys = m.HeapSys + m.OtherSys
+	m.NextGC = w[4]
+	m.LastGC = w[5]
+	m.PauseTotalNs = w[6]
+	m.NumGC = uint32(w[7])
+	m.NumForcedGC = uint32(w[8])
+	if m.NumGC > 0 {
+		i := (m.NumGC + 255) % 256
+		m.PauseNs[i] = w[9]
+		m.PauseEnd[i] = w[5]
+	}
+	m.GCCPUFraction = cpu
+	m.EnableGC = true
+}
+
+// readMemStats fills w with the JVM's figures and returns the collector's
+// CPU fraction (an intrinsic; the order is RuntimeIntrinsics.runtime_readMemStats's).
+//
+//go:noescape
+func readMemStats(w *[10]uint64) float64

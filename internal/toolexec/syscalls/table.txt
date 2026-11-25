@@ -54,7 +54,7 @@
 #        pointer-free type ([2]syscall.Timespec).
 #        Not in the table yet (each fails loudly when reached): pointers
 #        to values that hold pointers (writev's []Iovec, sendmsg's Msghdr),
-#        the socket family, ioctl, getrandom.
+#        the socket family, ioctl.
 
 0   read       rd     val bytes(3,out,result) val
 1   write      wr     val bytes(3,in) val
@@ -105,6 +105,7 @@
 292 dup3       -      val val val
 293 pipe2      -      struct([2]syscall._C_int,8,out) val
 302 prlimit64  -      val val struct(syscall.Rlimit,16,in) struct(syscall.Rlimit,16,out)
+318 getrandom  -      bytes(2,out,result) val val
 439 faccessat2 -      val cstr val val
 452 fchmodat2  -      val cstr val val
 

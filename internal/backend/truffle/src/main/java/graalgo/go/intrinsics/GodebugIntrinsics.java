@@ -68,6 +68,18 @@ final class GodebugIntrinsics {
         }
     }
 
+    /**
+     * {@code syscall.runtimeClearenv(env map[string]int)}: every variable is gone; gc forgets a
+     * GODEBUG setting that was among them and notifies {@code internal/godebug}.
+     */
+    @TruffleBoundary
+    static void syscall_runtimeClearenv(Node node, Object env) {
+        if (env instanceof graalgo.go.values.GoMap m && m.find(GODEBUG) >= 0) {
+            GoProcess.get(node).godebugChanged("");
+            notify(node, Str.EMPTY);
+        }
+    }
+
     /** {@code syscall.runtimeUnsetenv(k)}. */
     @TruffleBoundary
     static void syscall_runtimeUnsetenv(Node node, Str k) {

@@ -4,9 +4,8 @@
 
 // Package runtime is graalgo's facade of the Go runtime
 // (docs/arch/toolexec-design.md D8, §5.6): it replaces upstream's package
-// in the GOROOT graalgo ships. It declares what code outside the runtime
-// family names — the 35 identifiers the standard library uses, measured
-// over all of std — and nothing else. Declarations and documentation are
+// in the GOROOT graalgo ships. It declares upstream's exported API (the
+// identifiers code outside the runtime family names) and nothing else. Declarations and documentation are
 // upstream's. A function without a body is an intrinsic that the graalgo
 // linker resolves by symbol name against the intrinsic registry
 // (internal/toolexec/intrinsics/registry.txt); a reachable one without an
@@ -16,7 +15,11 @@
 // start) are nodes of the backend and never appear here, and neither do the
 // functions upstream's runtime provides to other packages by //go:linkname:
 // those packages declare them, and the linker resolves the declarations
-// against the same registry.
+// against the same registry — except where upstream's body is plain Go over
+// the facade's own functions, which the facade then pushes by //go:linkname
+// as upstream does: coroutines for iter (coro.go), the legacy random
+// generators (rand.go), the runtime/debug knobs (debug.go) and the
+// runtime/trace hooks (trace.go).
 //
 // The exported error types, TypeAssertionError and PanicNilError, are
 // upstream's Go source (error.go), which the backend's panics instantiate;
