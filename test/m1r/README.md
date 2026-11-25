@@ -24,7 +24,8 @@ leaves it out. [cancel.sh](cancel.sh) builds [cancel/probe.go](cancel/probe.go)
 [tools.sh](tools.sh) runs Truffle tools on [tools/probe.go](tools/probe.go) in
 both modes (`graalgo.launcher.ToolsProbe`: a statement/root
 `ExecutionListener` sees `main.fib`'s exact calls and statements at their
-lines, a `CPUSampler` sample shows Go names and `main.go` sections; ADR-0020).
+lines, a collecting `CPUSampler` records Go names and `main.go` sections —
+carrier mode only, BUG-0050; ADR-0020).
 
 **Not here:** `sync`/`time`/syscall programs ([test/m1c/](../m1c/README.md)),
 import-free language programs ([test/m1a/](../m1a/README.md)).

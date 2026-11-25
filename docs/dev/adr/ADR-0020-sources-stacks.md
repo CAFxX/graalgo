@@ -90,7 +90,7 @@ attributes the call to).
 
 - `--cpusampler`, `--cputracer`, `--coverage` and polyglot
   `ExecutionListener`s show Go names and file:line
-  ([test/m1r/tools.sh](../../../test/m1r/tools.sh), both goroutine modes);
+  ([test/m1r/tools.sh](../../../test/m1r/tools.sh), listener in both goroutine modes, sampler in carrier mode — BUG-0050);
   an uninstrumented tree is unchanged (one extra `Body` node per function).
 - Not yet gc's (open, [traceback-normalization.md](../../arch/traceback-normalization.md)
   rules C2/T5): the boundary runtime frames (`runtime.main`,

@@ -3,9 +3,9 @@
 # playbook §12): builds tools/probe.go through graalgo-tool and runs
 # graalgo.launcher.ToolsProbe on it (its Javadoc lists the checks: a
 # statement/root ExecutionListener counts main.fib's calls and statements at
-# their lines, a CPUSampler sample shows Go names and main.go sections).
-# Run per goroutine mode by `make test-m1r` (carrier) and
-# `make test-goroutine-modes` (thread).
+# their lines, a collecting CPUSampler records Go names and main.go
+# sections — carrier mode only, BUG-0050). Run by `make
+# test-goroutine-modes` in both modes.
 #
 # Usage: test/m1r/tools.sh [MODES]   (default "carrier")
 # Env:   as test/m1r/run.sh. Exit: the infra.sh contract.

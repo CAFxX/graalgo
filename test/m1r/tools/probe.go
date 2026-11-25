@@ -22,10 +22,11 @@ func main() {
 		fmt.Println(fib(10))
 		return
 	}
+	// About a second of fib in a goroutine, under a collecting sampler.
 	done := make(chan int)
 	go func() {
 		s := 0
-		for i := 0; i < 400; i++ {
+		for i := 0; i < 1000; i++ {
 			s += fib(22)
 		}
 		done <- s

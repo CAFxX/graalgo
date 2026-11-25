@@ -347,9 +347,9 @@ directory's README repeats its status.
     as Truffle hard exits; both goroutine modes, ADR-0019; run by `make
     test-goroutine-modes`); [tools.sh](../test/m1r/tools.sh) builds
     [tools/probe.go](../test/m1r/tools/probe.go) and runs Truffle tools on it
-    (an `ExecutionListener` on statements and roots, a `CPUSampler` sample:
-    Go names and file:line; both goroutine modes, ADR-0020; also run by `make
-    test-goroutine-modes`).
+    (an `ExecutionListener` on statements and roots in both goroutine modes,
+    a collecting `CPUSampler` in carrier mode: Go names and file:line;
+    ADR-0020, BUG-0050; run by `make test-goroutine-modes`).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r
