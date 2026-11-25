@@ -47,7 +47,17 @@ burn:
 \t@echo burned
 bad:
 \t@echo about to fail; exit 7
+waits-for-light:
+\t@for i in $$(seq 40); do [ -f light.started ] && break; sleep 0.05; done; test -f light.started
+check-links-external:
+\t@touch light.started; sleep 0.2; echo light done
 """
+
+
+# gates.py with an empty LIGHT set (the planted control of the light-gate test)
+NO_LIGHT = ("import sys, runpy; path = sys.argv[1]; "
+            "g = runpy.run_path(path, run_name='gates_no_light'); g['LIGHT'].clear(); "
+            "sys.exit(g['main'](sys.argv[2:]))")
 
 
 # Inherited variables that change what gates.py or the inner make do.
@@ -207,6 +217,22 @@ class GatesTest(unittest.TestCase):
         for changed in (["docs/a.md", "Makefile"], ["test/m1a/README.md"], ["stdlib/x/README.md"],
                         [".github/workflows/ci.yml"], [], None):
             self.assertEqual(gates.tier_targets(changed, full), full, changed)
+
+    def test_light_gate_runs_beside_the_others(self):
+        # -j 1, the heavy gate listed first: it can only pass if the LIGHT
+        # gate (check-links-external) runs at the same time
+        self.assertIn("check-links-external", gates.LIGHT)
+        rc, out = self.run_gates("-j", "1", "--no-setup", "waits-for-light", "check-links-external")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("PASS check-links-external", out)
+        # planted: without the exemption the same run serializes and fails
+        os.remove(os.path.join(self.d, "light.started"))
+        p = subprocess.run([sys.executable, "-c", NO_LIGHT, GATES, "run", "--dir", self.d,
+                            "--logdir", self.d, "-j", "1", "--no-setup",
+                            "waits-for-light", "check-links-external"],
+                           capture_output=True, text=True, env=hermetic_env())
+        self.assertEqual(p.returncode, 1, p.stdout + p.stderr)
+        self.assertIn("FAIL waits-for-light", p.stdout)
 
     def test_shards_partition(self):
         # LPT: longest first, each to the lightest shard; a gate the

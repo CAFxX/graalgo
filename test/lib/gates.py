@@ -74,6 +74,10 @@ DEFAULT_BASELINE = os.path.join(ROOT, "test", "duration-baseline.json")
 # concurrently: the truffle module's JVM tests (test-pin-smoke, `check`'s
 # module gates, the smoke tests, the fast Java classes) use truffle/out/test-tmp.
 SERIAL_GROUPS = [{"check", "test-pin-smoke", "test-ci", "test-java-fast"}]
+# Gates that are network-bound with ~0 CPU time (check-links-external: 21 s
+# wall, 0.5 CPU s): they run beside the -j N others without taking a job
+# slot, so a local -j 1 pre-land does not wait on the network.
+LIGHT = {"check-links-external"}
 # The weight of a gate the baseline has no wall time for (a new gate).
 SHARD_DEFAULT_WALL = 30.0
 
@@ -269,8 +273,15 @@ def cmd_run(a):
         while pending or running:
             running = {t: th for t, th in running.items() if th.is_alive()}
             stop = failed and not a.keep_going
-            while len(running) < a.jobs and not stop:
-                nxt = next((t for t in pending if not conflicts(t, running)), None)
+            # a LIGHT gate (network-bound, ~0 CPU) never waits for a job
+            # slot and never takes one: one at a time, beside the others
+            while not stop:
+                nxt = next((t for t in pending if t in LIGHT and not LIGHT & set(running)), None)
+                if nxt is None:
+                    heavy = [t for t in running if t not in LIGHT]
+                    if len(heavy) >= a.jobs:
+                        break
+                    nxt = next((t for t in pending if t not in LIGHT and not conflicts(t, running)), None)
                 if nxt is None:
                     break
                 pending.remove(nxt)
