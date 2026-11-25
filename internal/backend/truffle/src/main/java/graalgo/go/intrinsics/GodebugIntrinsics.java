@@ -20,12 +20,12 @@ final class GodebugIntrinsics {
 
     private static final Str GODEBUG = Str.of("GODEBUG");
 
+    /** gc {@code godebugNotify}: {@code update(godebugDefault, env)}. */
     private static void notify(Node node, Str env) {
-        Closure update = GoProcess.get(node).godebugUpdate;
+        GoProcess process = GoProcess.get(node);
+        Closure update = process.godebugUpdate;
         if (update != null) {
-            // update(def, env): no //go:debug or go.mod default is recorded at link time yet
-            // (docs/arch/limitations.md), so the default setting is empty.
-            update.target().call(node, update.env(), Str.EMPTY, env);
+            update.target().call(node, update.env(), Str.of(process.godebugDefault), env);
         }
     }
 
@@ -63,6 +63,7 @@ final class GodebugIntrinsics {
     @TruffleBoundary
     static void syscall_runtimeSetenv(Node node, Str k, Str v) {
         if (k.equals(GODEBUG)) {
+            GoProcess.get(node).godebugChanged(v.toString());
             notify(node, v);
         }
     }
@@ -71,6 +72,7 @@ final class GodebugIntrinsics {
     @TruffleBoundary
     static void syscall_runtimeUnsetenv(Node node, Str k) {
         if (k.equals(GODEBUG)) {
+            GoProcess.get(node).godebugChanged("");
             notify(node, Str.EMPTY);
         }
     }

@@ -1,5 +1,5 @@
 // carrier_migration: goroutines park and resume — in carrier mode possibly on
-// another carrier thread (GG-0073) — while inside calls the runtime made from
+// another carrier thread (GG-0074) — while inside calls the runtime made from
 // Java (reflect.Value.Call, a time.AfterFunc callback, a sort.Slice less
 // function, sync.Once), inside deep recursion and inside deferred calls; then
 // they panic, and the panic crosses those calls to a recover. The output is

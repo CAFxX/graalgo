@@ -322,7 +322,7 @@ public final class NodeConventions {
     /**
      * G1-calltarget: {@code CallTarget.call(Object...)} sets the calling thread's
      * EncapsulatingNodeReference on entry and restores it on exit. A goroutine that parks inside
-     * the call can resume on another carrier (carrier mode, GG-0073), which then restores the
+     * the call can resume on another carrier (carrier mode, GG-0074), which then restores the
      * first carrier's reference: a Truffle assertion under -ea, a cross-thread race without.
      */
     private void checkCallTargetCall(Info i, MethodModel m) {

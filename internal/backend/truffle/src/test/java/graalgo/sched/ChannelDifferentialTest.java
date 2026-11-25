@@ -11,7 +11,7 @@ import graalgo.runtime.GoChan;
 import graalgo.runtime.PanicException;
 
 /**
- * P2-M2 channel differential tests (WS B; GG-0073 chan slice).
+ * P2-M2 channel differential tests (WS B; GG-0074 chan slice).
  *
  * <p>Each test is a mechanical Java translation of the Go program in
  * {@code phases/phase2/corpus/channels/<name>.go} (translation
@@ -37,7 +37,7 @@ import graalgo.runtime.PanicException;
  * exporter lowering lands (parent dependency), the same programs run
  * through {@code graalgo-run} and must produce identical output.
  *
- * <p>verifies: GG-0073 (differential slice)
+ * <p>verifies: GG-0074 (differential slice)
  */
 public final class ChannelDifferentialTest {
 

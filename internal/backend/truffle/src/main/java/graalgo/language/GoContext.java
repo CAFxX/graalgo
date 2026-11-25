@@ -55,7 +55,7 @@ public final class GoContext {
         this.language = language;
         this.env = env;
         this.truffleContext = env.getContext();
-        // Unset: carrier mode (GG-0073), or -Dgraalgo.sched.goroutines=thread (the fallback).
+        // Unset: carrier mode (GG-0074), or -Dgraalgo.sched.goroutines=thread (the opt-in thread mode).
         String threads = env.getOptions().hasBeenSet(GoLanguage.GoroutineThreads)
                 ? env.getOptions().get(GoLanguage.GoroutineThreads)
                 : SchedulerCore.carrierModeDefault() ? "carrier" : "virtual";
@@ -284,7 +284,8 @@ public final class GoContext {
             SchedulerCore sched = newScheduler(gmp);
             scheduler = sched;
             graalgo.go.runtime.GoProcess p =
-                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types);
+                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types,
+                            program.godebugDefault());
             process = p;
             SchedulerCore prev = SchedulerCore.install(sched);
             sched.start();

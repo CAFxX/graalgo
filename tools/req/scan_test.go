@@ -150,6 +150,22 @@ func TestScan_MarkdownCodeExempt(t *testing.T) {
 	}
 }
 
+// Regression: stripping a fenced block once dropped its newlines, so every
+// reference after it was reported lines too early, and supersede/retire
+// edited (or deleted) the wrong lines.
+func TestScan_MarkdownLineNumbersSurviveFences(t *testing.T) {
+	_, c := scanCtx(t, map[string]string{
+		"doc.md": "# Doc\n\n```go\n// GG-9999\nx := 1\n```\n\nGG-0001 is on line 8.\n",
+	})
+	refs, _, err := scanAll(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 || refs[0].ID != "GG-0001" || refs[0].Line != 8 {
+		t.Fatalf("want GG-0001 at doc.md:8, got %+v", refs)
+	}
+}
+
 func TestScan_MarkdownSuffixCaseInsensitive(t *testing.T) {
 	_, c := scanCtx(t, map[string]string{
 		"README.MD": "```\nGG-9999\n```\n",

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test/m1r/cancel.sh — embedder cancellation, hard exit and thread-local
 # actions of a running program in each goroutine mode (playbook §10;
-# WP-TR-AUDIT-3; GG-0073), run by `make test-goroutine-modes`: builds
+# WP-TR-AUDIT-3; GG-0074), run by `make test-goroutine-modes`: builds
 # cancel/probe.go through graalgo-tool and runs graalgo.launcher.CancelProbe
 # on it (its Javadoc lists the cases: close(true) within 1 s with goroutines
 # blocked everywhere, including read(2) on a pipe and on stdin; os.Exit and

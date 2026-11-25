@@ -5,8 +5,9 @@
 # on the new node package (graalgo.go) via internal/backend/graalgo-bundle-run,
 # against the same program built and run by gc. Compared per program: stdout
 # (bytes), stderr (normalized by test/corpus/lifecycle/normalize.py: goroutine
-# ids, frame lines and hex addresses — stack-trace fidelity is not this gate's
-# subject), and the exit status.
+# ids, frame lines and hex addresses; a program with a `// m1a:traceback` line
+# keeps its frames' names and file:line, normalized by tbnorm.py), and the exit
+# status.
 #
 # Programs: every test/corpus/**/*.go without an import (the M1a set of
 # docs/arch/toolexec-design.md §8), made observable by transform.py, the
@@ -16,6 +17,10 @@
 # the multi-package modules under test/m1a/multipkg/ (one directory = one module;
 # its root package is main), and the programs of the reference GIR interpreter
 # (internal/toolexec/girinterp/testdata/progs).
+#
+# A program (a module: its main.go) whose first lines hold
+#     //m1a:ldflags <flags>
+# is built with -ldflags=<flags> on both legs (multipkg/xflags: link -X).
 #
 # Usage: test/m1a/run.sh [-v] [PROGRAM.go | MODULE_DIR]...
 #   -v   print the diff of every failing program
@@ -93,7 +98,7 @@ run_leg() { # <exe> <stdout> <stderr> -> exit status
     return "$status"
 }
 
-gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg; }
+gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg "${bflags[@]}"; }
 
 n=0
 for prog in "${programs[@]}"; do
@@ -113,19 +118,27 @@ for prog in "${programs[@]}"; do
         exit "$USAGE_EXIT"
     fi
     reason=""
+    hdr="$src"
+    [ -d "$src" ] && hdr="$src/main.go"
+    ldflags=$(head -20 "$hdr" | sed -n 's|^//m1a:ldflags \(.*\)$|\1|p' | head -1)
+    bflags=()
+    [ -n "$ldflags" ] && bflags=("-ldflags=$ldflags")
     # The gc leg, replayed from test/lib/gcoracle.sh's cache when unchanged.
-    gc_oracle "$w" "$w/mod" gc_live m1a "$TIMEOUT"
+    gc_oracle "$w" "$w/mod" gc_live m1a "$TIMEOUT" "${bflags[@]}"
     gc_status=$(cat "$w/gc.status")
     if [ "$gc_status" = build ]; then
         reason="gc rejects the program (corpus bug)"
-    elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
+    elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" "${bflags[@]}" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(head -1 "$w/gg.build")"
     else
         gg_status=0
         TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
-        python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
-        grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"
+        norm="$NORMALIZE"
+        # A program with a `// m1a:traceback` line compares its traceback frames too.
+        if [ -f "$src" ] && grep -q '^// m1a:traceback$' "$src"; then norm="$HERE/tbnorm.py"; fi
+        python3 "$norm" < "$w/gc.err" > "$w/gc.nerr"
+        grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$norm" > "$w/gg.nerr"
         if [ "$gc_status" -ne "$gg_status" ]; then
             reason="exit status $gg_status, gc $gc_status"
         elif ! cmp -s "$w/gc.out" "$w/gg.out"; then

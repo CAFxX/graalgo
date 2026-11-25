@@ -8,7 +8,6 @@ import graalgo.language.GoLanguage;
 import graalgo.runtime.GoErrorValue;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.GoErrors.BoundsCode;
-import graalgo.runtime.PanicNilError;
 
 /**
  * Factories for run-time panics (truffle-design §11 B5): every method is a boundary and is
@@ -99,22 +98,30 @@ public final class Panics {
         }
     }
 
-    /** Failed {@code x.(T)}: {@code dyn} null for a nil interface. */
+    /**
+     * Failed {@code x.(T)} with {@code x} of static interface type {@code iface}: {@code dyn}
+     * null for a nil interface. gc's values (runtime/iface.go): to a concrete type
+     * {@code &TypeAssertionError{iface, dyn, T, ""}}; to an interface type
+     * {@code &TypeAssertionError{nil, dyn, T, missing}}.
+     */
     @TruffleBoundary
     public static GoPanic typeAssert(Node n, GoType iface, GoType dyn, GoType target) {
-        String ifaceStr = iface.isNamed() ? iface.str() : iface.u().imethods.length == 0 ? "interface {}" : "interface";
+        RuntimeTypes rt = GoLanguage.get(n).runtimeTypes();
         if (target.isInterface()) {
             String missing = dyn == null ? null : dyn.missingMethod(target);
-            return of(n, GoErrors.interfaceConversionMissing(dyn == null ? null : dyn.str(), target.str(), missing));
+            return new GoPanic(n, rt.typeAssertionError(null, dyn, target, missing == null ? "" : missing));
         }
-        return of(n, GoErrors.interfaceConversion(ifaceStr, dyn == null ? "nil" : dyn.str(), target.str()));
+        return new GoPanic(n, rt.typeAssertionError(iface, dyn, target, ""));
     }
 
-    /** {@code panic(v)} for an {@code any} value (null: {@code panic(nil)}). */
+    /**
+     * {@code panic(v)} for an {@code any} value (null: {@code panic(nil)}, which raises a
+     * {@code *runtime.PanicNilError} unless {@code GODEBUG} sets {@code panicnil=1}).
+     */
     @TruffleBoundary
     public static GoPanic user(Node n, Object any) {
-        if (any == null) {
-            return of(n, PanicNilError.INSTANCE);
+        if (any == null && GoProcess.get(n).panicNil() != 1) {
+            return new GoPanic(n, GoLanguage.get(n).runtimeTypes().panicNilError());
         }
         return new GoPanic(n, any);
     }

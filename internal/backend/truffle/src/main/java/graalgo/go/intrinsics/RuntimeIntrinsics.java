@@ -2,10 +2,17 @@ package graalgo.go.intrinsics;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.Panics;
+import graalgo.go.runtime.Stacks;
+import graalgo.go.types.Descriptors;
+import graalgo.go.types.GoType;
+import graalgo.go.values.Slice;
 import graalgo.go.values.Str;
 import graalgo.runtime.GoErrors;
 import graalgo.sched.SchedulerCore;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Intrinsics of the facade {@code runtime} package ({@code stdlib/fork/runtime}); registered in
@@ -74,26 +81,81 @@ final class RuntimeIntrinsics {
     }
 
     /**
-     * {@code runtime.Caller}: the node package records no call positions yet, so no frame can
-     * be attributed — {@code ok == false}, which is gc's answer when it cannot recover the
-     * information (docs/arch/limitations.md).
+     * {@code runtime.callers}: the return pcs of the calling goroutine's Go frames after
+     * {@code skip} of them, into {@code pcbuf} (WP-TR-AUDIT-6, BUG-0047; {@link Stacks}).
      */
-    static Object runtime_Caller(Node node, long skip) {
-        return new Object[] {0L, Str.EMPTY, 0L, false};
+    @TruffleBoundary
+    static long runtime_callers(Node node, long skip, Object pcbuf) {
+        Slice buf = (Slice) pcbuf;
+        if (buf.len() == 0) {
+            return 0;
+        }
+        List<Stacks.Frame> frames = GoProcess.get(node).stacks.current((int) Math.max(0, Math.min(skip, Integer.MAX_VALUE)),
+                buf.len());
+        long[] prims = buf.base().prims;
+        for (int i = 0; i < frames.size(); i++) {
+            prims[buf.prim() + i] = frames.get(i).pc() + 1;
+        }
+        return frames.size();
     }
 
-    /** {@code runtime.FuncForPC}: nil, gc's answer for a pc inside no known function. */
-    static Object runtime_FuncForPC(Node node, long pc) {
-        return null;
+    /** {@code runtime.funcInfo}: the name and entry pc of the function containing {@code pc}. */
+    @TruffleBoundary
+    static Object runtime_funcInfo(Node node, long pc) {
+        Stacks.Fn f = GoProcess.get(node).stacks.fnAt(GoProcess.get(node), pc);
+        return f == null ? new Object[] {Str.EMPTY, 0L} : new Object[] {Str.of(f.name()), f.entry()};
     }
 
-    /** {@code (*runtime.Func).Name}: upstream returns "" for a nil receiver, the only one there is. */
-    static Str runtime___Func__Name(Node node, Object f) {
-        return Str.EMPTY;
+    /** {@code runtime.pcFileLine}: the file and line of {@code pc}. */
+    @TruffleBoundary
+    static Object runtime_pcFileLine(Node node, long pc) {
+        GoProcess p = GoProcess.get(node);
+        Stacks.Frame f = p.stacks.frameAt(p, pc);
+        return f == null ? new Object[] {Str.EMPTY, 0L} : new Object[] {Str.of(f.file()), (long) f.line()};
+    }
+
+    /**
+     * {@code runtime.Stack}: the calling goroutine's traceback, truncated to {@code buf}. With
+     * {@code all}, gc appends every other goroutine's; their stacks are not walkable from here,
+     * so only the caller's is reported.
+     */
+    @TruffleBoundary
+    static long runtime_Stack(Node node, Object buf, boolean all) {
+        Slice s = (Slice) buf;
+        byte[] text = GoProcess.get(node).currentStack().getBytes(StandardCharsets.UTF_8);
+        int n = Math.min(text.length, s.len());
+        if (n > 0) {
+            System.arraycopy(text, 0, s.base().bytes, s.byt(), n);
+        }
+        return n;
     }
 
     static long runtime_nanotime(Node node) {
         return System.nanoTime();
+    }
+
+    /** {@code runtime.typeString(t)}: upstream's {@code toRType(t).string()}. */
+    @TruffleBoundary
+    static Str runtime_typeString(Node node, Object t) {
+        return Str.of(descriptorType(node, t).str());
+    }
+
+    /**
+     * {@code runtime.typePkgPath(t)}: upstream's {@code toRType(t).pkgpath()} for the types a
+     * failed assertion compares: a defined type's package path, "" for any other type.
+     */
+    @TruffleBoundary
+    static Str runtime_typePkgPath(Node node, Object t) {
+        GoType g = descriptorType(node, t);
+        return g.isNamed() && g.pkg != null ? Str.of(g.pkg) : Str.EMPTY;
+    }
+
+    private static GoType descriptorType(Node node, Object t) {
+        GoType g = Descriptors.typeOf(t);
+        if (g == null) {
+            throw Panics.fatal(node, "type descriptor not built by the runtime");
+        }
+        return g;
     }
 
     /**

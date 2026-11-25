@@ -153,10 +153,19 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   methods only (gc also sets it when its linker kept the pointer type). The
   first word of a non-empty interface header reads as the dynamic type's
   descriptor, not as an itab. All of this is W9b's (package `reflect`).
-- **`runtime.Caller` reports `ok == false`, `runtime.FuncForPC` nil**: the
-  node package records no call positions yet. `internal/reflectlite` uses
-  them only for the method name in its `ValueError` panics, which therefore
-  read `unknown method`.
+- **Call stacks are Truffle frames** (ADR-0020): `runtime.Caller`, `Callers`,
+  `CallersFrames`, `FuncForPC`, `runtime.Stack` and fatal tracebacks report
+  gc's function names and file:line for Go frames, but not yet gc's boundary
+  runtime frames (`runtime.main`, `runtime.goexit` at the bottom of
+  `Callers`; the `panic(...)` frame and the panic site's frames under a
+  deferred call run by a panic), and a deferred call run at a normal return
+  sees its deferring frame at the function's declaration line, where gc
+  reports the closing brace or `return`. Standard-library file names keep
+  gc's object-file form `$GOROOT/src/...`; `runtime.Stack(buf, true)`
+  reports only the calling goroutine; tracebacks print no argument words
+  (`f(...)`) and no `created by` line. A literal nested in a literal is
+  named `outer.funcN.funcM` — gc's name when its compiler inlined the outer
+  literal (an immediately called one); otherwise gc says `outer.funcN.M`.
 
 ## `os`, `reflect`, `fmt` and the runtime facade (`-toolexec` path; toolexec M1c/M1d)
 
@@ -165,9 +174,6 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   never closed keeps its descriptor until the process exits. gc gives no
   guarantee that a finalizer runs, so a program correct under gc is correct
   here; one that relies on finalization for resource limits is not.
-- **`runtime.Callers` reports no frames** (BUG-0047), like `runtime.Caller`:
-  reflect panics that name the calling method say `unknown method`, and
-  `log`'s `Lshortfile` prints `???:0`.
 - **System calls outside the role table are fatal errors**, never guesses
   ([table.txt](../../internal/toolexec/syscalls/table.txt)): sockets,
   `writev`, `sendmsg`, `ioctl`, `getrandom`, the `fcntl` lock commands,
@@ -178,9 +184,16 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   process does not die of the signal.
 - **`reflect.StructOf` types have no promoted methods**; upstream supports
   them only for some embedded-field shapes and panics for the rest.
-- **GODEBUG defaults** from `//go:debug` lines and `go.mod` are not recorded
-  at link time: `internal/godebug` sees the environment's setting only.
-  `runtime/metrics` has no `/godebug/non-default-behavior` samples.
+- **GODEBUG:** the runtime's own settings are `panicnil` only (the default
+  from `//go:debug` lines and `go.mod`, which cmd/go passes as
+  `-X runtime.godebugDefault`, then the environment, re-read when the program
+  changes `GODEBUG`); `internal/godebug` sees the same default and
+  environment. `runtime/metrics` has no `/godebug/non-default-behavior`
+  samples.
+- **`-X` and `//go:linkname`:** the link matches a `-X` setting against a
+  package's variables by their declared names; a string variable that
+  `//go:linkname` gives another symbol name is matched by its declared
+  name, where cmd/link matches the symbol name.
 - **Blocking I/O cost:** a `read`/`write` whose descriptor is not ready
   (an empty pipe, a full one, a terminal waiting for input) is handed to a
   thread outside the scheduler; ready descriptors — regular files always —

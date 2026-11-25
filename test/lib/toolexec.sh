@@ -10,7 +10,7 @@
 #                    TOOLEXEC_OVERLAY. Last, jvm_cds_setup
 #                    (test/lib/jvmcds.sh): the runner's JVMs map a
 #                    class-data-sharing archive of the truffle classes.
-#   toolexec_build <out> <runner>
+#   toolexec_build <out> <runner> [build flags...]
 #                    `go build` of the package in the current directory
 #                    through graalgo-tool with the fork applied; the linked
 #                    program runs on <runner>.
@@ -42,5 +42,5 @@ toolexec_setup() {
 
 toolexec_build() {
     GRAALGO_STUB="$TOOLEXEC_STUB" GRAALGO_RUNNER="$2" \
-        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" -o "$1" .
+        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" "${@:3}" -o "$1" .
 }

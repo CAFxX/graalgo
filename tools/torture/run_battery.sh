@@ -10,7 +10,7 @@
 # loadable) — never reported as a leg failure.
 # Needs: make -C internal/backend/truffle out/test-classes/.built (and make build)
 # Env: TORTURE_JAVA_OPTS — extra JVM flags for every leg (e.g.
-# -Dgraalgo.sched.goroutines=thread for the thread-per-goroutine fallback;
+# -Dgraalgo.sched.goroutines=thread for the opt-in thread-per-goroutine mode;
 # carrier mode, ADR-0018, is the default).
 set -u
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"

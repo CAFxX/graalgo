@@ -11,6 +11,11 @@
 # The continuous adversarial track reserves the same interface:
 # run_soak.sh --seeds A:B runs one bounded batch.
 name: fuzz-soak
+# A dispatch's title carries its inputs: ci_status.sh lets only a dispatch
+# with the default inputs supersede a red scheduled run (a reduced-scope
+# dispatch proves nothing about the full run); other events keep the
+# default title.
+run-name: "${{ github.event_name == 'workflow_dispatch' && format('fuzz-soak dispatch inputs: hours={0}', inputs.hours) || '' }}"
 
 on:
   schedule:

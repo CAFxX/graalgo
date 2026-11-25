@@ -205,7 +205,7 @@ public final class JfrEventsTest {
 
         // JDK mapping: in the thread-per-goroutine fallback jdk.VirtualThreadStart
         // fires for our vthreads and correlates via the thread name; carrier mode
-        // (the default, GG-0073) runs no virtual threads, so it must fire none.
+        // (the default, GG-0074) runs no virtual threads, so it must fire none.
         List<RecordedEvent> vtStarts = byName.getOrDefault("jdk.VirtualThreadStart", List.of());
         if (sched.carrierMode()) {
             assertTrue(vtStarts.isEmpty(), "carrier mode started " + vtStarts.size()

@@ -325,8 +325,8 @@ func runGIR(p program, hook emitHook) (result, error) {
 
 var (
 	hexRE     = regexp.MustCompile(`0x[0-9a-fA-F]+`)
-	funcNumRE = regexp.MustCompile(`\.func\d+((\.\d+)*)`)
-	nestNumRE = regexp.MustCompile(`\.\d+`)
+	funcNumRE = regexp.MustCompile(`\.func\d+(?:\.(?:func)?\d+)*`)
+	nestNumRE = regexp.MustCompile(`\.(?:func)?\d+`)
 	// A gc throw prints the system-level header
 	// "goroutine N gp=0x... m=... mp=0x... [reason]:" (as
 	// test/corpus/lifecycle/normalize.py, both forms map to "goroutine N [").
@@ -366,9 +366,10 @@ func normalize(stderr string) string {
 		if j := strings.LastIndex(fn, "("); j > 0 {
 			fn = fn[:j]
 		}
-		if m := funcNumRE.FindStringSubmatchIndex(fn); m != nil {
-			fn = fn[:m[0]] + ".func" + nestNumRE.ReplaceAllString(fn[m[2]:m[3]], ".N") + fn[m[1]:]
-		}
+		// gc names a literal nested in a literal outer.funcN.M, or
+		// outer.funcN.funcM when the outer literal was inlined into its
+		// function (the literal is then cloned there): both mask alike.
+		fn = funcNumRE.ReplaceAllStringFunc(fn, func(m string) string { return nestNumRE.ReplaceAllString(m, ".N") })
 		b.WriteString(fn + " " + filepath.Base(file) + "\n")
 	}
 	return b.String()

@@ -591,6 +591,12 @@ func planFileEdits(c *workCtx, ds []disposition, oldID, newID string) ([]pending
 			if idx < 0 || idx >= len(lines) {
 				return nil, fmt.Errorf("%s:%d: line out of range (file changed during supersede?)", d.ref.File, d.ref.Line)
 			}
+			if (d.action == 'u' || d.action == 'd') && !strings.Contains(lines[idx], oldID) {
+				// Never edit a line the scan did not point at: the file and
+				// the scan disagree (it changed, or a line number drifted).
+				return nil, fmt.Errorf("%s:%d: line does not mention %s (the file changed since the scan, or a wrong line number); nothing written",
+					d.ref.File, d.ref.Line, oldID)
+			}
 			switch d.action {
 			case 'u':
 				lines[idx] = strings.ReplaceAll(lines[idx], oldID, newID)

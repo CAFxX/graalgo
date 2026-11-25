@@ -5,6 +5,7 @@ import com.oracle.truffle.api.frame.FrameSlotKind;
 import graalgo.go.nodes.N.Expr;
 import graalgo.go.nodes.N.Jump;
 import graalgo.go.nodes.N.Stmt;
+import graalgo.go.runtime.Positions;
 
 /**
  * The entry poll of a Go function (GG-SCHED-0001): present exactly when the body can call Go
@@ -24,7 +25,7 @@ public final class EntryPollTest {
     }
 
     private static Calls.FuncRoot root(Stmt body, Expr result) {
-        return new Calls.FuncRoot(null, FD, "f", new Stmt[0], body, result);
+        return new Calls.FuncRoot(null, FD, new Positions("f", false, () -> null), new Stmt[0], body, result);
     }
 
     private static Stmt assign() {

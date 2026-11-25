@@ -47,7 +47,7 @@
 # signature). The version and a content hash travel in every linked
 # bundle; the runtime refuses a bundle linked against another registry.
 
-version 1
+version 2
 
 # --- runtime (facade, stdlib/fork/runtime) -------------------------------
 intrinsic runtime.Gosched      RuntimeIntrinsics func()
@@ -58,6 +58,9 @@ intrinsic runtime.NumGoroutine RuntimeIntrinsics func() int
 intrinsic runtime.nanotime     RuntimeIntrinsics func() int64
 intrinsic runtime.Goexit       RuntimeIntrinsics func()
 intrinsic runtime.runtimeError RuntimeIntrinsics func(int) error
+# The descriptor queries of (*TypeAssertionError).Error (stdlib/fork/runtime/error.go).
+intrinsic runtime.typeString   RuntimeIntrinsics func(*internal/abi.Type) string
+intrinsic runtime.typePkgPath  RuntimeIntrinsics func(*internal/abi.Type) string
 
 # --- syscall: provided by the runtime through //go:linkname (upstream
 # runtime/runtime.go syscall_Exit) -------------------------------------------
@@ -171,13 +174,14 @@ intrinsic internal/reflectlite.maplen         ReflectliteIntrinsics func(unsafe.
 replace internal/reflectlite.Swapper ReflectliteIntrinsics func(interface {}) func(int, int) # TEMPORARY (BUG-0037)
 replace internal/reflectlite.pkgPath ReflectliteIntrinsics func(internal/abi.Name) string    # TEMPORARY (BUG-0037)
 
-# --- runtime (facade), reached by internal/reflectlite's panic messages
-# (methodName). The node package records no call positions yet, so Caller
-# reports ok == false and FuncForPC nil, as gc does for a pc it cannot
-# attribute (docs/arch/limitations.md); (*Func).Name is upstream's "" for nil.
-intrinsic runtime.Caller       RuntimeIntrinsics func(int) (uintptr, string, int, bool)
-intrinsic runtime.FuncForPC    RuntimeIntrinsics func(uintptr) *runtime.Func
-method    runtime.(*Func).Name RuntimeIntrinsics func() string
+# --- runtime (facade): call stacks from Truffle frames (WP-TR-AUDIT-6,
+# BUG-0047). The facade's Caller, Callers, CallersFrames and FuncForPC are Go
+# over these: callers walks the goroutine's Go frames, funcInfo and
+# pcFileLine decode the pcs it reports (graalgo/go/runtime/Stacks.java).
+intrinsic runtime.callers    RuntimeIntrinsics func(int, []uintptr) int
+intrinsic runtime.funcInfo   RuntimeIntrinsics func(uintptr) (string, uintptr)
+intrinsic runtime.pcFileLine RuntimeIntrinsics func(uintptr) (string, int)
+intrinsic runtime.Stack      RuntimeIntrinsics func([]uint8, bool) int
 
 # ============================================================================
 # M1c lane (wt/m1c): sync semaphores and notify lists, internal/bytealg,

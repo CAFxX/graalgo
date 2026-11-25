@@ -13,6 +13,8 @@ import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.instrumentation.StandardTags;
+import com.oracle.truffle.api.instrumentation.Tag;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.ExplodeLoop;
 import com.oracle.truffle.api.nodes.IndirectCallNode;
@@ -20,6 +22,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.NodeUtil;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.profiles.BranchProfile;
+import com.oracle.truffle.api.source.SourceSection;
 import graalgo.go.nodes.N.Expr;
 import graalgo.go.nodes.N.GoNode;
 import graalgo.go.nodes.N.Jump;
@@ -29,6 +32,7 @@ import graalgo.go.runtime.G;
 import graalgo.go.runtime.GoPanic;
 import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.Panics;
+import graalgo.go.runtime.Positions;
 import graalgo.go.runtime.Receivers;
 import graalgo.go.types.GoType;
 import graalgo.go.types.Itab;
@@ -66,21 +70,26 @@ public final class Calls {
      * passes through the entry of a function that does call (gc's analogue: a leaf function
      * has no stack-bound check in its prologue).
      */
-    public static class FuncRoot extends RootNode {
-        private final String name;
+    public static class FuncRoot extends RootNode implements Positions.Root {
+        private final Positions positions;
         @Children private final Stmt[] prologue;
         @Child private Stmt body;
         @Child private Expr result;
         private final boolean poll;
 
-        public FuncRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
-                Expr result) {
+        public FuncRoot(GoLanguage language, FrameDescriptor descriptor, Positions positions, Stmt[] prologue,
+                Stmt body, Expr result) {
             super(language, descriptor);
-            this.name = name;
+            this.positions = positions;
             this.prologue = prologue;
-            this.body = body;
+            this.body = new Body(body);
             this.result = result;
             this.poll = calls(body) || calls(result) || callsAny(prologue);
+        }
+
+        @Override
+        public final Positions positions() {
+            return positions;
         }
 
         /**
@@ -109,6 +118,18 @@ public final class Calls {
         }
 
         @CompilationFinal private boolean readOnlyReceiver;
+
+        @CompilationFinal private int exitPos;
+
+        /** Set by the factory: the position of the function's final {@code return} (its exit). */
+        public final void setExitPos(int pos) {
+            this.exitPos = pos;
+        }
+
+        @Override
+        public final int exitPos() {
+            return exitPos;
+        }
 
         /** Set by the factory: the body never writes or escapes its struct/array value receiver. */
         public final void setReadOnlyReceiver(boolean v) {
@@ -175,6 +196,53 @@ public final class Calls {
         }
 
         final void runBody(VirtualFrame frame) {
+            body.executeVoid(frame);
+        }
+
+        final Object result(VirtualFrame frame) {
+            return result == null ? null : result.executeGeneric(frame);
+        }
+
+        @Override
+        public final String getName() {
+            return positions.function;
+        }
+
+        @Override
+        public final String getQualifiedName() {
+            return positions.function;
+        }
+
+        /** The function's declaration line (tools; the root of a stack trace element). */
+        @Override
+        public final SourceSection getSourceSection() {
+            return positions.section(0);
+        }
+
+        @Override
+        public final boolean isInternal() {
+            return positions.wrapper;
+        }
+
+        @Override
+        public final String toString() {
+            return positions.function;
+        }
+    }
+
+    /**
+     * A function's body: the {@code return} target, and the node a tool sees as the function
+     * ({@code RootTag}, {@code RootBodyTag}; its section is the declaration's).
+     */
+    public static final class Body extends Stmt {
+        @Child private Stmt body;
+
+        Body(Stmt body) {
+            this.body = body;
+        }
+
+        @Override
+        public void executeVoid(VirtualFrame frame) {
             try {
                 body.executeVoid(frame);
             } catch (Jump j) {
@@ -184,18 +252,19 @@ public final class Calls {
             }
         }
 
-        final Object result(VirtualFrame frame) {
-            return result == null ? null : result.executeGeneric(frame);
+        @Override
+        public boolean isInstrumentable() {
+            return getSourceSection() != null;
         }
 
         @Override
-        public String getName() {
-            return name;
+        public boolean hasTag(Class<? extends Tag> tag) {
+            return tag == StandardTags.RootTag.class || tag == StandardTags.RootBodyTag.class;
         }
 
         @Override
-        public String toString() {
-            return name;
+        public SourceSection getSourceSection() {
+            return getRootNode() instanceof FuncRoot f ? f.getSourceSection() : null;
         }
     }
 
@@ -203,9 +272,9 @@ public final class Calls {
     abstract static class DeferringRoot extends FuncRoot {
         final BranchProfile panicked = BranchProfile.create();
 
-        DeferringRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
-                Expr result) {
-            super(language, descriptor, name, prologue, body, result);
+        DeferringRoot(GoLanguage language, FrameDescriptor descriptor, Positions positions, Stmt[] prologue,
+                Stmt body, Expr result) {
+            super(language, descriptor, positions, prologue, body, result);
         }
 
         /**
@@ -299,9 +368,9 @@ public final class Calls {
     public static final class DeferRoot extends DeferringRoot {
         @Child private Dispatch site = CallsFactory.DispatchNodeGen.create();
 
-        public DeferRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
-                Expr result) {
-            super(language, descriptor, name, prologue, body, result);
+        public DeferRoot(GoLanguage language, FrameDescriptor descriptor, Positions positions, Stmt[] prologue,
+                Stmt body, Expr result) {
+            super(language, descriptor, positions, prologue, body, result);
         }
 
         @Override
@@ -352,9 +421,9 @@ public final class Calls {
         @CompilerDirectives.CompilationFinal(dimensions = 1) private final int[] argsSlots;
         @Children private final Dispatch[] sites;
 
-        public OpenDeferRoot(GoLanguage language, FrameDescriptor descriptor, String name, Stmt[] prologue, Stmt body,
-                Expr result, int bitsSlot, int[] targetSlots, int[] argsSlots) {
-            super(language, descriptor, name, prologue, body, result);
+        public OpenDeferRoot(GoLanguage language, FrameDescriptor descriptor, Positions positions, Stmt[] prologue,
+                Stmt body, Expr result, int bitsSlot, int[] targetSlots, int[] argsSlots) {
+            super(language, descriptor, positions, prologue, body, result);
             this.bitsSlot = bitsSlot;
             this.targetSlots = targetSlots;
             this.argsSlots = argsSlots;
@@ -441,7 +510,7 @@ public final class Calls {
     static final boolean FORCE_SPLIT = Boolean.getBoolean("graalgo.go.forceSplit");
 
     /** A call of a statically known function or method: a direct call, target built lazily. */
-    public static final class Call extends Ref {
+    public static final class Call extends N.CallRef {
         private final Supplier<RootCallTarget> target;
         @Children private final Expr[] args;
         @Child private DirectCallNode call;
@@ -499,7 +568,7 @@ public final class Calls {
     }
 
     /** A call of a func value. */
-    public static final class CallClosure extends Ref {
+    public static final class CallClosure extends N.CallRef {
         @Child private Expr fn;
         @Children private final Expr[] args;
         @Child private Dispatch dispatch = CallsFactory.DispatchNodeGen.create();
@@ -603,7 +672,7 @@ public final class Calls {
     }
 
     /** {@code recv.M(args)} on an interface value. */
-    public static final class IfaceCall extends Ref {
+    public static final class IfaceCall extends N.CallRef {
         @Child private Expr recv;
         @Children private final Expr[] args;
         @Child private IfaceDispatch dispatch;

@@ -505,9 +505,20 @@ export data are ignored.
 - `//go:embed`: `-embedcfg` maps patterns to files; the IR pass copies file
   contents into `DATA` and emits initializers for the `string`, `[]byte`
   and `embed.FS` variables.
-- `link -X pkg.name=value`: recorded in the manifest and applied before the
-  package's initializers, with gc's rule that only string variables with no
-  or constant initializer are settable.
+- `link -X pkg.name=value` (BUG-0048): the link step parses the settings as
+  cmd/link does (`internal/toolexec/link` `ParseX`: the first `=` ends the
+  symbol, the last `.` before it splits package path and name, a repeated
+  symbol's last value wins) and rewrites the package's `init·vars`
+  (`ApplyX`, creating it if the package has none): an assignment of the
+  value comes first, as gc's static data does, and the variable's own
+  initializer is dropped when gc initializes it statically — no or a
+  constant initializer, or one gc's static-init pass evaluates (an inlined
+  call), which the link reads from the package's gc object (`StaticData`:
+  the symbol has data). A dynamic initializer stays and overwrites the
+  value, as under gc. A setting naming a variable that is not of the
+  predeclared type `string` fails the link with cmd/link's diagnostic;
+  one naming no variable is ignored. The bundle keeps the raw settings for
+  the runtime's own `runtime.godebugDefault`.
 - The main module's build info reaches the program the stock way: `cmd/go`
   generates `_gomod_.go` for the main package, which is ordinary source.
 
@@ -1682,8 +1693,8 @@ role-table entries.
   blocks `compress/gzip`), `os/signal` 1, `testing` 3 (`internal/cpu` 1,
   `syscall` 2), `math/big` 6 (assembly), `crypto/sha256` 24 (fips140
   assembly and indicators). `net`, `net/url`, `os/exec`, `archive/tar`
-  and `math/rand` link. Not started: BUG-0046 (the runtime's error types as
-  facade source), the fuzzer's generator on `fmt`.
+  and `math/rand` link. BUG-0046 (the runtime's error types as facade
+  source) fixed 2026-11-25. Not started: the fuzzer's generator on `fmt`.
 
 ## 14. Amendments (2026-11-18)
 

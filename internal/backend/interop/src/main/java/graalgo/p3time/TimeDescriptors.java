@@ -25,7 +25,7 @@ import graalgo.values.GoStructDescriptor;
  * later factory-built Time value then shares this instance, and vice
  * versa.
  *
- * <p>verifies: GG-0073 (time slice)
+ * <p>verifies: GG-0074 (time slice)
  */
 public final class TimeDescriptors {
     private TimeDescriptors() {}

@@ -43,6 +43,8 @@ public final class GoProcess {
     public final TypeTable types;
     /** The {@code uintptr} handle table of this process (GG-0062). */
     public final Handles handles = new Handles();
+    /** The pc table and stack walks of this process (runtime.Callers, tracebacks). */
+    public final Stacks stacks = new Stacks();
     /**
      * The runtime state of this process's timers ({@code time.newTimer}), keyed weakly by the
      * {@code *Timer} object (graalgo.go.intrinsics.TimeIntrinsics owns the values). Per process,
@@ -64,11 +66,28 @@ public final class GoProcess {
     /** {@code internal/godebug}'s update hook ({@code setUpdate}): called with the GODEBUG setting when it changes. */
     public volatile graalgo.go.values.Closure godebugUpdate;
 
-    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
+    /** The link's {@code -X runtime.godebugDefault}: the program's default GODEBUG settings. */
+    public final String godebugDefault;
+    /** gc's {@code debug.panicnil}: 1 makes {@code panic(nil)} panic with a nil value. */
+    private volatile int panicNil;
+
+    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types, String godebugDefault) {
         this.globals = globals;
         this.sched = sched;
         this.err = err;
         this.types = types;
+        this.godebugDefault = godebugDefault;
+        this.panicNil = Godebug.startup("panicnil", godebugDefault, System.getenv("GODEBUG"));
+    }
+
+    public int panicNil() {
+        return panicNil;
+    }
+
+    /** gc {@code reparsedebugvars}: the GODEBUG environment variable changed to {@code env}. */
+    @TruffleBoundary
+    public void godebugChanged(String env) {
+        panicNil = Godebug.reparse("panicnil", godebugDefault, env, panicNil);
     }
 
     @TruffleBoundary
@@ -113,8 +132,10 @@ public final class GoProcess {
      */
     @TruffleBoundary
     public Fatal fatal(String text) {
-        writeErr(("fatal error: " + text + "\n\ngoroutine " + sched.currentGoroutine().id + " [running]:\n")
-                .getBytes(StandardCharsets.UTF_8));
+        StringBuilder sb = new StringBuilder("fatal error: ").append(text).append("\n\ngoroutine ")
+                .append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.current(0, MAX_FRAMES + 1));
+        writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));
         sched.requestExit(2);
         return new Fatal();
     }
@@ -142,8 +163,33 @@ public final class GoProcess {
             }
         }
         sb.append("\ngoroutine ").append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.of(top));
         writeErr(sb.toString().getBytes(StandardCharsets.UTF_8));
         sched.requestExit(2);
+    }
+
+    /** {@code runtime.Stack}'s text: the calling goroutine's header and frames, gc's format. */
+    @TruffleBoundary
+    public String currentStack() {
+        StringBuilder sb = new StringBuilder("goroutine ").append(sched.currentGoroutine().id).append(" [running]:\n");
+        traceback(sb, stacks.current(0, MAX_FRAMES + 1));
+        return sb.toString();
+    }
+
+    /** gc's traceback frame limit ({@code tracebackInnerFrames + tracebackOuterFrames}). */
+    static final int MAX_FRAMES = 100;
+
+    /**
+     * The frames of a goroutine's traceback, gc's format (WP-TR-AUDIT-6): at most
+     * {@link #MAX_FRAMES}, then gc's elision line.
+     */
+    private static void traceback(StringBuilder sb, List<Stacks.Frame> frames) {
+        if (frames.size() > MAX_FRAMES) {
+            Stacks.render(sb, frames.subList(0, MAX_FRAMES));
+            sb.append("...additional frames elided...\n");
+        } else {
+            Stacks.render(sb, frames);
+        }
     }
 
     /**
@@ -208,6 +254,9 @@ public final class GoProcess {
      * address of its data word, which the test normalizer masks.
      */
     private String renderValue(Object value) {
+        if (value == null) {
+            return "nil"; // panic(nil) under GODEBUG=panicnil=1
+        }
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e) {
             return indent(e.errorString());
@@ -251,6 +300,9 @@ public final class GoProcess {
      * any other value as {@code type <dynamic type>}.
      */
     private static String throwValueText(Object value) {
+        if (value == null) {
+            return "nil";
+        }
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e && e.typeName() != null) {
             return "type " + e.typeName();
