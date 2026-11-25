@@ -120,6 +120,7 @@ func (h *home) ran(tool string) bool {
 // The launcher's identity: go env shows graalgo's injection, go version
 // carries graalgo's version, purego is in effect.
 func TestLauncherIdentity(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	out, err := h.graalgo(nil, "env", "GOROOT", "GOFLAGS", "CGO_ENABLED", "GOTOOLCHAIN")
 	if err != nil {
@@ -142,6 +143,7 @@ func TestLauncherIdentity(t *testing.T) {
 // graalgo build/run go through graalgo-tool; go run's exit status and the
 // program's arguments pass through the stub and the runner.
 func TestLauncherBuildAndRun(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	exe := filepath.Join(t.TempDir(), "skel")
 	if out, err := h.graalgo(nil, "build", "-o", exe, "."); err != nil {
@@ -171,6 +173,7 @@ func TestLauncherBuildAndRun(t *testing.T) {
 // same "<tool> <args>" argv as under stock go), and graalgo-tool still
 // produces the graalgo build.
 func TestLauncherChainsUserToolexec(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	userLog := filepath.Join(t.TempDir(), "user.log")
 	wrapper := filepath.Join(t.TempDir(), "my wrapper")
@@ -206,6 +209,7 @@ func TestLauncherChainsUserToolexec(t *testing.T) {
 // compile and the link step must still work, and the IR pass must see the
 // expanded command line.
 func TestResponseFiles(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	long := strings.Repeat("x", 31<<10)
 	exe := filepath.Join(t.TempDir(), "skel")
@@ -233,6 +237,7 @@ func TestResponseFiles(t *testing.T) {
 // -race, -cover and fuzzing fail loudly instead of building a binary that
 // would pass vacuously (design §2.5, §2.6).
 func TestUnsupportedInstrumentationFailsLoudly(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	h.write("lib/lib_test.go", "package lib\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n\nfunc FuzzA(f *testing.F) { f.Fuzz(func(t *testing.T, b []byte) {}) }\n")
 	out, err := h.graalgo(nil, "test", "-cover", "./lib")
@@ -262,6 +267,7 @@ func TestUnsupportedInstrumentationFailsLoudly(t *testing.T) {
 
 // vet, asm, cgo and preprofile pass through to the stock tools.
 func TestPassThroughTools(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	out, err := h.graalgo(nil, "vet", "./...")
 	if err != nil || !h.ran("vet") {
@@ -304,6 +310,7 @@ func TestPassThroughTools(t *testing.T) {
 // graalgo's suffix, it changes when graalgo-tool changes (so its cache
 // entries are invalidated), and a tool of another release is refused.
 func TestVersionProbeIdentity(t *testing.T) {
+	t.Parallel()
 	h := installHome(t)
 	tool := filepath.Join(h.dir, "libexec/compile")
 	goroot := filepath.Join(h.dir, "goroot")

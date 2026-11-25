@@ -503,8 +503,11 @@ test-v2:
 TOOLEXEC_TMP := $(CURDIR)/internal/toolexec/.tmp
 test-toolexec:
 	mkdir -p $(TOOLEXEC_TMP) && \
+# graalgo-tool's end-to-end tests (each its own GOCACHE, module and tool
+# binaries) run 4 at a time (t.Parallel; -parallel caps it at the CI
+# runner's vCPUs): the package was the gate's critical path, 30 -> 15 s.
 	cd internal/toolexec && PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) vet ./... && \
-	PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) test ./...
+	PATH="$(dir $(GO)):$$PATH" TMPDIR="$(TOOLEXEC_TMP)" GOTMPDIR="$(TOOLEXEC_TMP)" $(GO) test -parallel 4 ./...
 
 # GIR Java decoder (W2): [internal/backend/gir](internal/backend/gir),
 # JDK-only, generated from internal/toolexec/ir/schema.txt. Decodes,

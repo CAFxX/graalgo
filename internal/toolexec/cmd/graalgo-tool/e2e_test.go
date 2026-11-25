@@ -165,6 +165,7 @@ func (e *env) toolRuns() []string {
 }
 
 func TestBuildThroughToolexec(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	exe := filepath.Join(t.TempDir(), "skel")
 	if out, err := e.build(exe); err != nil {
@@ -238,6 +239,7 @@ func TestBuildThroughToolexec(t *testing.T) {
 // GG-0028: a second build with a warm cache runs no tool at all, and the
 // graalgo cache entries are disjoint from gc's in the same GOCACHE.
 func TestCacheBehavior(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	dir := t.TempDir()
 	exe := filepath.Join(dir, "skel")
@@ -313,6 +315,7 @@ func TestCacheBehavior(t *testing.T) {
 
 // Compile errors are gc's own, byte for byte, with gc's exit path.
 func TestCompileErrorIsStock(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	bad := "package lib\n\nfunc Answer() int {\n\treturn \"no\"\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(bad), 0o644); err != nil {
@@ -335,6 +338,7 @@ func TestCompileErrorIsStock(t *testing.T) {
 // //go:embed reaches the IR: the -embedcfg cmd/go passes is read and the
 // file contents land in DATA behind a Data initializer.
 func TestEmbedThroughToolexec(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	src := "package lib\n\nimport _ \"embed\"\n\n//go:embed data.txt\nvar data string\n\nfunc Answer() int {\n\treturn len(data)\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
@@ -369,6 +373,7 @@ func TestEmbedThroughToolexec(t *testing.T) {
 // a legal program for gc) must fail the build with a message naming the
 // package, never produce a binary or a cached archive that fails later.
 func TestUnsupportedConstructFailsLoudly(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	src := "package lib\n\nfunc Answer() int {\n\tx := 1\n\treturn " + strings.Repeat("x+", 1100) + "x\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
@@ -390,6 +395,7 @@ func TestUnsupportedConstructFailsLoudly(t *testing.T) {
 // Coordinator review (c): the IR is emitted for the build's target, not
 // the host: GOARCH=386 gives 4-byte layout and a 386 GIR header.
 func TestCrossTargetIR(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	src := "package lib\n\nimport \"unsafe\"\n\nconst W = unsafe.Sizeof(uintptr(0))\n\nfunc Answer() int {\n\treturn int(W)\n}\n"
 	if err := os.WriteFile(filepath.Join(e.moduleDir, "lib", "lib.go"), []byte(src), 0o644); err != nil {
@@ -426,6 +432,7 @@ func TestCrossTargetIR(t *testing.T) {
 // package's real gc object, and fails on a non-string variable with
 // cmd/link's diagnostic.
 func TestLinkCarriesXAndModinfo(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	e.write("lib/lib.go", `package lib
 
@@ -498,6 +505,7 @@ func Answer() int { return len(Version + Commit + Built) + N }
 // link tool's -V=full identity, so cmd/go does not reuse a link output
 // produced under another GRAALGO_RUNNER / GRAALGO_RACE.
 func TestLinkIdentityCoversEnv(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	gotooldir, err := goCmd(t, ".", nil, "env", "GOTOOLDIR")
 	if err != nil {
@@ -525,6 +533,7 @@ func TestLinkIdentityCoversEnv(t *testing.T) {
 // Coordinator review (g): a tool killed by a signal is mirrored (W1 exited
 // 255), and every -d flag is checked for the libfuzzer refusal.
 func TestSignalAndRepeatedFlags(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	cmd := exec.Command(e.tool, "/bin/sh", "-c", "kill -TERM $$")
 	err := cmd.Run()
@@ -550,6 +559,7 @@ func TestSignalAndRepeatedFlags(t *testing.T) {
 // The foreign build is simulated with -X main.builtBy: only one toolchain is
 // installed.
 func TestRefusesForeignBuild(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds graalgo-tool")
 	}
