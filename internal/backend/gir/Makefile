@@ -1,6 +1,6 @@
 # GIR decoder module (docs/arch/toolexec-design.md §3.2, work package W2):
 # the Java side of the GIR container, generated from
-# internal/toolexec/ir/schema.txt (Gir.java, GirCodec.java) plus the
+# internal/toolexec/ir/schema.txt (Gir.java, GirCodec.java, GirLocals.java) plus the
 # hand-written primitives. Depends on the JDK only; the loader/node factory
 # that consumes it (W4) comes later.
 #

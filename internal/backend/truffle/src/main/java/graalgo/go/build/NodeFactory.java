@@ -4,6 +4,7 @@ import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import graalgo.gir.Gir;
+import graalgo.gir.GirLocals;
 import graalgo.go.loader.FunctionUnit;
 import graalgo.go.loader.PackageUnit;
 import graalgo.go.loader.TypeEnv;
@@ -39,11 +40,13 @@ import java.math.BigInteger;
 import java.math.MathContext;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Consumer;
+import java.util.function.IntConsumer;
 import java.util.function.Supplier;
 
 /**
@@ -136,6 +139,14 @@ public final class NodeFactory {
     private final ArrayDeque<Target> targets = new ArrayDeque<>();
     private int pendingLabel = -1;
     private final Jump[] gotoJumps;
+    /**
+     * The next {@link #block} is a GIR {@code Block} statement, which need not be a scope (a
+     * {@code var ( ... )} group, a switch header's init and tag temporary): no clearing inside
+     * it; its locals are cleared by the enclosing list ({@link #deadAfter}).
+     */
+    private boolean notScope;
+    /** The body has a {@code goto}: no dead-slot clearing ({@link #deadAfter}). */
+    private final boolean hasGoto;
     private boolean hasDefer;
     /** Defers are open-coded: each site has a bit and two slots (function, arguments). */
     private boolean openDefers;
@@ -154,6 +165,11 @@ public final class NodeFactory {
      * puts every deferring function on the chain, to show the choice is unobservable.
      */
     private static final boolean FORCE_DEFER_CHAIN = Boolean.getBoolean("graalgo.go.forceDeferChain");
+    /**
+     * {@code graalgo.go.keepDeadSlots}: no dead-slot clearing ({@link #deadAfter}), to measure
+     * what it costs and to show it is unobservable.
+     */
+    private static final boolean KEEP_DEAD_SLOTS = Boolean.getBoolean("graalgo.go.keepDeadSlots");
     private boolean inThunk;
     /** Nesting depth of range-over-func bodies being built (their defers and recover differ). */
     private int rangeFuncDepth;
@@ -193,7 +209,7 @@ public final class NodeFactory {
             GoType t = ltypes[i];
             boolean escapes = (l.flags() & (8 | 16)) != 0;
             boxed[i] = escapes && t.carrier() != GoType.C_FLAT;
-            slots[i] = fdb.addSlot(boxed[i] ? FrameSlotKind.Object : kind(t), pkg.str(l.name()), null);
+            slots[i] = fdb.addSlot(FrameSlotKind.Static, pkg.str(l.name()), null);
         }
         this.gotoJumps = new Jump[body.labels().length];
         int[] defers = new int[1];
@@ -212,10 +228,11 @@ public final class NodeFactory {
                 walk(r.body(), inner -> repeatable[0] |= inner instanceof Gir.Stmt.Defer);
             }
         });
+        this.hasGoto = Arrays.stream(gotoJumps).anyMatch(j -> j != null);
         // gc's rule: open-code only when no defer statement can execute twice.
         this.openDefers = hasDefer && !repeatable[0] && defers[0] <= MAX_OPEN_DEFERS && !FORCE_DEFER_CHAIN;
         if (openDefers) {
-            deferBits = fdb.addSlot(FrameSlotKind.Int, null, null);
+            deferBits = fdb.addSlot(FrameSlotKind.Static, null, null);
         }
     }
 
@@ -382,7 +399,7 @@ public final class NodeFactory {
     private Calls.FuncRoot buildRoot(int captures) {
         List<Stmt> pro = new ArrayList<>();
         for (int i = 0; i < captures; i++) {
-            pro.add(new N.WriteRef(slots[i], new Calls.EnvRead(i)));
+            pro.add(new N.WriteRef(slots[i], new Calls.EnvRead(i, captures)));
         }
         int k = 1;
         if (body.recv() >= 0) {
@@ -571,23 +588,23 @@ public final class NodeFactory {
 
     private Mem.Aux aux() {
         if (aux == null) {
-            aux = new Mem.Aux(fdb.addSlot(FrameSlotKind.Int, null, null), fdb.addSlot(FrameSlotKind.Int, null, null),
-                    fdb.addSlot(FrameSlotKind.Int, null, null), fdb.addSlot(FrameSlotKind.Object, null, null),
-                    fdb.addSlot(FrameSlotKind.Long, null, null));
+            aux = new Mem.Aux(fdb.addSlot(FrameSlotKind.Static, null, null), fdb.addSlot(FrameSlotKind.Static, null, null),
+                    fdb.addSlot(FrameSlotKind.Static, null, null), fdb.addSlot(FrameSlotKind.Static, null, null),
+                    fdb.addSlot(FrameSlotKind.Static, null, null));
         }
         return aux;
     }
 
     private int temp(GoType t) {
-        return fdb.addSlot(kind(t), null, null);
+        return fdb.addSlot(FrameSlotKind.Static, null, null);
     }
 
     private int tempObject() {
-        return fdb.addSlot(FrameSlotKind.Object, null, null);
+        return fdb.addSlot(FrameSlotKind.Static, null, null);
     }
 
     private int tempLong() {
-        return fdb.addSlot(FrameSlotKind.Long, null, null);
+        return fdb.addSlot(FrameSlotKind.Static, null, null);
     }
 
     private static Stmt writeSlot(int slot, GoType t, Expr v) {
@@ -2104,20 +2121,16 @@ public final class NodeFactory {
                 .getCallTarget();
     }
 
-    private static FrameDescriptor envDescriptor(int n) {
-        return graalgo.go.values.Env.layout(n);
-    }
-
     private Expr methodValue(Gir.Expr.MethodVal mv) {
         FunctionUnit.Instance mi = methodInstance(mv.method(), mv.recvType(), mv.targs());
         GoType ft = ty(mv.type()).u();
         GoType recvT = ty(mv.recv());
-        Expr recv = new Calls.EnvRead(0);
+        Expr recv = new Calls.EnvRead(0, 1);
         if (recvT.carrier() == GoType.C_FLAT) {
             recv = new Mem.Copy(recv);
         }
         RootCallTarget t = thunk("fm", new Calls.Call(mi, withRecv(recv, argNodes(1, ft.params.length)), true));
-        return new Calls.Bind1(t, envDescriptor(1), value(mv.recv()), false);
+        return new Calls.Bind1(t, value(mv.recv()), false);
     }
 
     private Expr ifaceMethodValue(Gir.Expr.IfaceMethodVal mv) {
@@ -2127,13 +2140,13 @@ public final class NodeFactory {
         Expr[] a = argNodes(1, ft.params.length);
         if (rt.isInterface()) {
             RootCallTarget t = thunk("fm",
-                    new Calls.IfaceCall(new Calls.EnvRead(0), rt, methodIndex(rt, key), a, true));
-            return new Calls.Bind1(t, envDescriptor(1), expr(mv.recv()), true);
+                    new Calls.IfaceCall(new Calls.EnvRead(0, 1), rt, methodIndex(rt, key), a, true));
+            return new Calls.Bind1(t, expr(mv.recv()), true);
         }
         Method m = methodOf(rt, key);
         RootCallTarget t = thunk("fm",
-                new Calls.Call(m::target, withRecv(new Calls.Adapt(m, new Calls.EnvRead(0)), a), true));
-        return new Calls.Bind1(t, envDescriptor(1), value(mv.recv()), false);
+                new Calls.Call(m::target, withRecv(new Calls.Adapt(m, new Calls.EnvRead(0, 1)), a), true));
+        return new Calls.Bind1(t, value(mv.recv()), false);
     }
 
     private Expr methodExpr(Gir.Expr.MethodExpr me) {
@@ -2201,7 +2214,7 @@ public final class NodeFactory {
                 return built;
             }
         };
-        return new Calls.MakeClosure(target, envDescriptor(caps.length), capSlots);
+        return new Calls.MakeClosure(target, capSlots);
     }
 
     private Expr tupleConvert(Gir.Expr.TupleConvert tc) {
@@ -2499,6 +2512,8 @@ public final class NodeFactory {
     // ---------------------------------------------------------------- statements
 
     private Stmt block(Gir.Stmt[] ss) {
+        boolean scope = !notScope;
+        notScope = false;
         boolean labels = false;
         for (Gir.Stmt s : ss) {
             if (s instanceof Gir.Stmt.Labeled l && gotoJumps[l.label()] != null) {
@@ -2507,10 +2522,21 @@ public final class NodeFactory {
         }
         Stmt[] out = new Stmt[ss.length];
         if (!labels) {
-            for (int i = 0; i < ss.length; i++) {
-                out[i] = stmt(ss[i]);
+            int[][] dead = !scope || hasGoto || KEEP_DEAD_SLOTS ? null : deadAfter(ss);
+            if (dead == null) {
+                for (int i = 0; i < ss.length; i++) {
+                    out[i] = stmt(ss[i]);
+                }
+                return out.length == 1 ? out[0] : new Ctl.Block(out);
             }
-            return out.length == 1 ? out[0] : new Ctl.Block(out);
+            List<Stmt> withClears = new ArrayList<>(ss.length + 2);
+            for (int i = 0; i < ss.length; i++) {
+                withClears.add(stmt(ss[i]));
+                if (dead[i] != null) {
+                    withClears.add(new N.ClearRefs(dead[i]));
+                }
+            }
+            return seq(withClears);
         }
         List<Jump> jumps = new ArrayList<>();
         List<Integer> at = new ArrayList<>();
@@ -2526,6 +2552,142 @@ public final class NodeFactory {
             targetsOf[i] = at.get(i);
         }
         return new Ctl.GotoBlock(out, jumps.toArray(new Jump[0]), targetsOf);
+    }
+
+    /**
+     * Dead-slot clearing (truffle-design §4.4, truffle-audit F-8.2): the reference slots of the
+     * locals that die after each statement of a list, or null when there are none. gc's
+     * liveness maps let a dead pointer go; a frame slot would keep its object alive as long as
+     * the frame lives (a server's main loop, a parked goroutine). Two cases, both by Go's
+     * lexical scoping, which confines every reference to a local to its scope:
+     *
+     * <ul>
+     *   <li>a local declared by statement {@code j} of this list itself ({@code :=},
+     *       {@code var}, a {@code var ( ... )} group, {@link #declGroup}) is dead after the
+     *       last statement of the list that references it;
+     *   <li>a local declared inside statement {@code j} (an {@code if}/{@code for}/
+     *       {@code switch} header, a nested block, a case clause) is dead after {@code j}.
+     * </ul>
+     *
+     * <p>A later reference that re-executes (a loop) re-declares the local first, and every
+     * declaration writes its slot. A captured or address-taken local's slot holds its box:
+     * closures and pointers keep the box, the slot is only this frame's path to it. Not applied
+     * to a body with {@code goto}: a backward jump can re-enter a statement after its local's
+     * last use. Parameters, results and the factory's temporaries are not cleared. References
+     * come from the generated {@link GirLocals} visitor, so no reference kind is missed.
+     */
+    private int[][] deadAfter(Gir.Stmt[] ss) {
+        int[][] dead = null;
+        int[][] refs = new int[ss.length][];
+        for (int j = 0; j < ss.length; j++) {
+            Gir.Stmt s = ss[j];
+            while (s instanceof Gir.Stmt.Labeled l) {
+                s = l.stmt();
+            }
+            int[] direct = switch (s) {
+                case Gir.Stmt.Define d -> d.fresh();
+                case Gir.Stmt.Var v -> v.locals();
+                case Gir.Stmt.Block g when declGroup(g.stmts()) ->
+                    Arrays.stream(g.stmts()).flatMapToInt(v -> Arrays.stream(((Gir.Stmt.Var) v).locals())).toArray();
+                default -> NO_LOCALS;
+            };
+            for (int x : direct) {
+                if (isRefLocal(x)) {
+                    int k = j;
+                    for (int i = ss.length - 1; i > j; i--) {
+                        if (refs[i] == null) {
+                            refs[i] = localsOf(ss[i]);
+                        }
+                        if (Arrays.binarySearch(refs[i], x) >= 0) {
+                            k = i;
+                            break;
+                        }
+                    }
+                    dead = addDead(dead, ss.length, k, slots[x]);
+                }
+            }
+            if (direct == NO_LOCALS) {
+                int[][][] d = {dead};
+                final int at = j;
+                declaredInside(s, x -> {
+                    if (isRefLocal(x)) {
+                        d[0] = addDead(d[0], ss.length, at, slots[x]);
+                    }
+                });
+                dead = d[0];
+            }
+        }
+        return dead;
+    }
+
+    private static final int[] NO_LOCALS = new int[0];
+
+    /**
+     * A {@code var ( ... )} group: the emitter lowers it to a block of {@code Var} statements
+     * that is not a scope — its locals belong to the enclosing list.
+     */
+    private static boolean declGroup(Gir.Stmt[] ss) {
+        return ss.length > 0 && Arrays.stream(ss).allMatch(x -> x instanceof Gir.Stmt.Var);
+    }
+
+    private static int[][] addDead(int[][] dead, int n, int at, int slot) {
+        if (dead == null) {
+            dead = new int[n][];
+        }
+        int[] cur = dead[at];
+        if (cur == null) {
+            dead[at] = new int[] {slot};
+        } else if (Arrays.stream(cur).noneMatch(c -> c == slot)) {
+            int[] grown = Arrays.copyOf(cur, cur.length + 1);
+            grown[cur.length] = slot;
+            dead[at] = grown;
+        }
+        return dead;
+    }
+
+    /** The sorted distinct locals a statement references (declarations and captures included). */
+    private static int[] localsOf(Gir.Stmt s) {
+        int[][] buf = {new int[8]};
+        int[] n = {0};
+        GirLocals.visit(s, x -> {
+            if (n[0] == buf[0].length) {
+                buf[0] = Arrays.copyOf(buf[0], n[0] * 2);
+            }
+            buf[0][n[0]++] = x;
+        });
+        return Arrays.stream(buf[0], 0, n[0]).sorted().distinct().toArray();
+    }
+
+    /** Every local declared inside {@code s} (headers, nested blocks, clauses, select cases). */
+    private static void declaredInside(Gir.Stmt s, IntConsumer f) {
+        walk(s, x -> {
+            switch (x) {
+                case Gir.Stmt.Define d -> Arrays.stream(d.fresh()).forEach(f);
+                case Gir.Stmt.Var v -> Arrays.stream(v.locals()).forEach(f);
+                case Gir.Stmt.Range r -> Arrays.stream(r.fresh()).forEach(f);
+                case Gir.Stmt.TypeSwitch t -> {
+                    for (Gir.TypeClause c : t.clauses()) {
+                        if (c.local() >= 0) {
+                            f.accept(c.local());
+                        }
+                    }
+                }
+                case Gir.Stmt.Select sel -> {
+                    for (Gir.CommClause c : sel.clauses()) {
+                        if (c.comm() != null) {
+                            declaredInside(c.comm(), f);
+                        }
+                    }
+                }
+                default -> {
+                }
+            }
+        });
+    }
+
+    /** The local's slot holds a reference (a box, or a reference-carrier value). */
+    private boolean isRefLocal(int local) {
+        return boxed[local] || kind(ltypes[local]) == FrameSlotKind.Object;
     }
 
     private Stmt seq(List<Stmt> ss) {
@@ -2642,10 +2804,12 @@ public final class NodeFactory {
             case Gir.Stmt.Block b: {
                 int label = takeLabel();
                 if (label < 0) {
+                    notScope = true;
                     return block(b.stmts());
                 }
                 Target t = new Target(label, false);
                 targets.push(t);
+                notScope = true;
                 Stmt inner = block(b.stmts());
                 targets.pop();
                 return t.brk == null ? inner : new Ctl.BreakTarget(inner, t.brk);
@@ -3075,7 +3239,7 @@ public final class NodeFactory {
         targets.push(target);
         Gir.CommClause[] cs = sel.clauses();
         int valueSlot = tempObject();
-        int okSlot = fdb.addSlot(FrameSlotKind.Boolean, null, null);
+        int okSlot = fdb.addSlot(FrameSlotKind.Static, null, null);
         int indexSlot = tempLong();
         List<Expr> chans = new ArrayList<>();
         List<Expr> sends = new ArrayList<>();

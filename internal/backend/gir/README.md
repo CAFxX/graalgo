@@ -1,7 +1,8 @@
 # internal/backend/gir — Java GIR codec (status: **new**)
 
-JDK-only decoder/encoder of GIR (package `graalgo.gir`). `Gir.java` and
-`GirCodec.java` are **generated** from
+JDK-only decoder/encoder of GIR (package `graalgo.gir`). `Gir.java`,
+`GirCodec.java` and `GirLocals.java` (every local reference in a subtree,
+for the backend's dead-slot analysis) are **generated** from
 [internal/toolexec/ir/schema.txt](../../toolexec/ir/schema.txt) by `make
 generate` — never edit them by hand. The sources are also compiled into the
 truffle module, where the bundle loader (`graalgo.go.loader`) uses them.

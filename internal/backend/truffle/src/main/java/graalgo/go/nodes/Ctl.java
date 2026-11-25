@@ -10,6 +10,7 @@ import com.oracle.truffle.api.nodes.LoopNode;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.NodeUtil;
 import com.oracle.truffle.api.nodes.RepeatingNode;
+import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.profiles.CountingConditionProfile;
 import graalgo.go.nodes.N.Bool;
 import graalgo.go.nodes.N.I64;
@@ -25,6 +26,16 @@ import graalgo.safepoint.Safepoint;
  */
 public final class Ctl {
     private Ctl() {}
+
+    /**
+     * Reports {@code n} loop iterations the enclosing loop node did not count (a compiled strip,
+     * a backward {@code goto}), while a higher tier is to come (PB §8, truffle-audit F-6.4).
+     */
+    static void reportIterations(Node loop, int n) {
+        if (CompilerDirectives.hasNextTier()) {
+            LoopNode.reportLoopCount(loop, n);
+        }
+    }
 
     public static final class Block extends Stmt {
         @Children private final Stmt[] stmts;
@@ -168,6 +179,16 @@ public final class Ctl {
          * {@link #STRIP_MAX}: what an iteration runs beyond its own nodes is inner loops and
          * calls, and those poll themselves (back-edges, strip ends, function entries).
          */
+        /**
+         * The loop's name in compilation traces: an OSR compilation is named after its
+         * repeating node ({@code main.f<OSR>}), not {@code Ctl.Repeat@hash}.
+         */
+        @Override
+        public String toString() {
+            RootNode root = getRootNode();
+            return root == null ? "loop" : root.getName();
+        }
+
         private static int stripLength(Stmt body, Stmt post) {
             int nodes = NodeUtil.countNodes(body) + (post == null ? 0 : NodeUtil.countNodes(post));
             int n = Math.min(STRIP_MAX, STRIP_NODES / Math.max(1, nodes));
@@ -193,7 +214,7 @@ public final class Ctl {
          * The interpreter keeps a poll per iteration, so OSR still counts every iteration.
          */
         private boolean strip(VirtualFrame frame) {
-            long i = frame.getLong(idx);
+            long i = frame.getLongStatic(idx);
             long n = limit.executeLong(frame);
             if (!profile.profile(i < n)) {
                 return false;
@@ -202,7 +223,7 @@ public final class Ctl {
             long end = Long.compareUnsigned(n - i, strip) > 0 ? i + strip : n;
             // The test at the head (not a do-while): the compiler recognizes only that shape as
             // a counted loop.
-            while (profile.profile(frame.getLong(idx) < end)) {
+            while (profile.profile(frame.getLongStatic(idx) < end)) {
                 try {
                     body.executeVoid(frame);
                 } catch (Jump j) {
@@ -212,6 +233,10 @@ public final class Ctl {
                 }
                 post.executeVoid(frame);
             }
+            // The loop node counts this strip as one iteration; tier-2 of the callers and OSR
+            // follow the loop count, so report the rest (truffle-audit F-6.4). A strip left by
+            // break, return or panic is not reported: it ends the loop anyway.
+            reportIterations(this, (int) (end - i) - 1);
             Safepoint.poll(this);
             return true;
         }
@@ -226,7 +251,7 @@ public final class Ctl {
         private boolean once(VirtualFrame frame) {
             boolean go;
             if (limit != null) {
-                go = frame.getLong(idx) < limit.executeLong(frame);
+                go = frame.getLongStatic(idx) < limit.executeLong(frame);
             } else {
                 go = cond == null || cond.executeBoolean(frame);
             }
@@ -284,6 +309,11 @@ public final class Ctl {
                     Safepoint.poll(this);
                     for (int i = 0; i < labels.length; i++) {
                         if (labels[i] == j) {
+                            if (targets[i] <= pc) {
+                                // A backward goto is a loop's back-edge: count it like one, so
+                                // a goto loop's function reaches compilation (F-6.4).
+                                reportIterations(this, 1);
+                            }
                             pc = targets[i];
                             continue dispatch;
                         }

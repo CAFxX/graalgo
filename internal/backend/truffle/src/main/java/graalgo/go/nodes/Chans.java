@@ -143,7 +143,7 @@ public final class Chans {
                 GoProcess.get(this).blockForever("chan receive (nil chan)");
             }
             GoChan.RecvResult r = recv(c);
-            frame.setObject(slot, r.value());
+            frame.setObjectStatic(slot, r.value());
             return r.ok();
         }
     }
@@ -232,8 +232,8 @@ public final class Chans {
             } catch (PanicException e) {
                 throw convert(this, e);
             }
-            frame.setObject(valueSlot, result[1]);
-            frame.setBoolean(okSlot, (boolean) result[2]);
+            frame.setObjectStatic(valueSlot, result[1]);
+            frame.setBooleanStatic(okSlot, (boolean) result[2]);
             return (int) result[0];
         }
 

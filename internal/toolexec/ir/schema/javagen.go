@@ -327,6 +327,139 @@ func (s *Schema) javaWrite(p func(string, ...any), t *Type, x string, ind int) {
 	}
 }
 
+// localsReach reports, per record and union name, whether a value of it can
+// hold a `local` reference outside a nested scope record.
+func (s *Schema) localsReach() map[string]bool {
+	reach := map[string]bool{}
+	var typeReaches func(t *Type) bool
+	typeReaches = func(t *Type) bool {
+		switch t.Kind {
+		case Ref, OptRef:
+			return t.Name == "local"
+		case RecordT, OptRecord:
+			if r := s.Record(t.Name); r != nil && r.Scope {
+				return false
+			}
+			return reach[t.Name]
+		case UnionT, OptUnion:
+			return reach[t.Name]
+		case List:
+			return typeReaches(t.Elem)
+		}
+		return false
+	}
+	fieldsReach := func(fs []*Field) bool {
+		for _, f := range fs {
+			if typeReaches(f.Type) {
+				return true
+			}
+		}
+		return false
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, r := range s.Records {
+			if !reach[r.Name] && !r.Scope && fieldsReach(r.Fields) {
+				reach[r.Name], changed = true, true
+			}
+		}
+		for _, u := range s.Unions {
+			if reach[u.Name] {
+				continue
+			}
+			for _, m := range u.Members {
+				if fieldsReach(m.Fields) {
+					reach[u.Name], changed = true, true
+					break
+				}
+			}
+		}
+	}
+	return reach
+}
+
+// GenerateJavaLocals returns GirLocals.java: for every record and union that
+// can hold a `local` reference, a visitor reporting each such reference
+// (Expr.Local, declarations, captures, ...) in a subtree. A scope record
+// (a function literal's body) is not entered: its locals index another
+// table; the literal's captures are the enclosing scope's references.
+// Generated, so a schema change cannot leave a reference kind unvisited.
+func (s *Schema) GenerateJavaLocals() []byte {
+	reach := s.localsReach()
+	var b strings.Builder
+	out := &b
+	p := func(format string, a ...any) { fmt.Fprintf(out, format, a...) }
+	// capture runs emit with output redirected and returns what it wrote.
+	capture := func(emit func()) string {
+		var tmp strings.Builder
+		saved := out
+		out = &tmp
+		emit()
+		out = saved
+		return tmp.String()
+	}
+	p(javaHeader)
+	p("import java.util.function.IntConsumer;\n\n")
+	p("/** Every {@code local} reference in a GIR subtree, nested scopes excluded (schema.txt). */\n")
+	p("public final class GirLocals {\n    private GirLocals() {}\n")
+	var field func(t *Type, x string, ind int)
+	field = func(t *Type, x string, ind int) {
+		tab := strings.Repeat("    ", ind)
+		switch t.Kind {
+		case Ref:
+			if t.Name == "local" {
+				p("%sf.accept(%s);\n", tab, x)
+			}
+		case OptRef:
+			if t.Name == "local" {
+				p("%sif (%s >= 0) {\n%s    f.accept(%s);\n%s}\n", tab, x, tab, x, tab)
+			}
+		case RecordT, UnionT:
+			if reach[t.Name] {
+				p("%svisit(%s, f);\n", tab, x)
+			}
+		case OptRecord, OptUnion:
+			if reach[t.Name] {
+				p("%sif (%s != null) {\n%s    visit(%s, f);\n%s}\n", tab, x, tab, x, tab)
+			}
+		case List:
+			javaLoopVar++
+			v := fmt.Sprintf("e%d", javaLoopVar)
+			inner := capture(func() { field(t.Elem, v, ind+1) })
+			if inner != "" {
+				p("%sfor (%s %s : %s) {\n%s%s}\n", tab, s.javaType(t.Elem), v, x, inner, tab)
+			}
+		}
+	}
+	for _, r := range s.Records {
+		if !reach[r.Name] {
+			continue
+		}
+		p("\n    public static void visit(Gir.%s x, IntConsumer f) {\n", r.Name)
+		for _, fl := range r.Fields {
+			field(fl.Type, "x."+javaField(fl.Name)+"()", 2)
+		}
+		p("    }\n")
+	}
+	for _, u := range s.Unions {
+		if !reach[u.Name] {
+			continue
+		}
+		p("\n    public static void visit(Gir.%s x, IntConsumer f) {\n        switch (x) {\n", u.Name)
+		for _, m := range u.Members {
+			body := capture(func() {
+				for _, fl := range m.Fields {
+					field(fl.Type, "m."+javaField(fl.Name)+"()", 4)
+				}
+			})
+			p("            case Gir.%s.%s m -> {\n%s            }\n", u.Name, m.Name, body)
+		}
+		p("        }\n    }\n")
+	}
+	p("}\n")
+	return []byte(b.String())
+}
+
 // Outputs returns every generated file, keyed by its path relative to the
 // ir directory.
 func Outputs(irDir string) (map[string][]byte, error) {
@@ -345,9 +478,10 @@ func Outputs(irDir string) (map[string][]byte, error) {
 	javaLoopVar = 0
 	javaDir := filepath.Join("..", "..", "backend", "gir", "src", "main", "java", "graalgo", "gir")
 	return map[string][]byte{
-		"gir_gen.go":                            goSrc,
-		filepath.Join(javaDir, "Gir.java"):      s.GenerateJavaNodes(),
-		filepath.Join(javaDir, "GirCodec.java"): s.GenerateJavaCodec(),
+		"gir_gen.go":                             goSrc,
+		filepath.Join(javaDir, "Gir.java"):       s.GenerateJavaNodes(),
+		filepath.Join(javaDir, "GirCodec.java"):  s.GenerateJavaCodec(),
+		filepath.Join(javaDir, "GirLocals.java"): s.GenerateJavaLocals(),
 	}, nil
 }
 

@@ -1,8 +1,6 @@
 package graalgo.go.intrinsics;
 
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
-import com.oracle.truffle.api.frame.FrameDescriptor;
-import com.oracle.truffle.api.frame.MaterializedFrame;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
@@ -112,7 +110,7 @@ final class ReflectliteIntrinsics {
     // ---------------------------------------------------------------- BUG-0037 (temporary)
 
     private static final String SLICE_RANGE = "reflect: slice index out of range";
-    private static final FrameDescriptor SWAP_ENV = Env.layout(3);
+    private static final int SWAP_ENV = 3;
 
     /**
      * TEMPORARY (BUG-0037): {@code Swapper(slice any) func(i, j int)}. Upstream's body swaps
@@ -137,7 +135,7 @@ final class ReflectliteIntrinsics {
         // Upstream's fast paths index a Go slice: a bad index is the runtime's index panic.
         boolean fast = elem.hasPointers() ? size == 8 || elem.u().kind == GoType.STRING
                 : size == 1 || size == 2 || size == 4 || size == 8;
-        MaterializedFrame env = Env.create(SWAP_ENV);
+        Object[] env = Env.create(SWAP_ENV);
         Env.set(env, 0, s);
         Env.set(env, 1, elem);
         Env.set(env, 2, s.len() <= 1 ? (Object) Integer.valueOf(s.len()) : fast ? Boolean.TRUE : Boolean.FALSE);
@@ -168,7 +166,7 @@ final class ReflectliteIntrinsics {
         @Override
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
-            swap((Slice) Env.get(a[0], 0), (GoType) Env.get(a[0], 1), Env.get(a[0], 2), (long) a[1], (long) a[2]);
+            swap((Slice) Env.get(a[0], 0, SWAP_ENV), (GoType) Env.get(a[0], 1, SWAP_ENV), Env.get(a[0], 2, SWAP_ENV), (long) a[1], (long) a[2]);
             return null;
         }
 

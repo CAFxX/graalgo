@@ -217,7 +217,8 @@ directory's README repeats its status.
       shrink-only `allowlist.txt`; [truffle-design.md §16](arch/truffle-design.md)).
     - [gir/](../internal/backend/gir/) — the Java GIR decoder/encoder
       (JDK-only, own [Makefile](../internal/backend/gir/Makefile));
-      `Gir.java`/`GirCodec.java` are generated from
+      `Gir.java`/`GirCodec.java`/`GirLocals.java` (the visitor of every
+      local reference in a subtree) are generated from
       [schema.txt](../internal/toolexec/ir/schema.txt). Tested by
       `make test-gir`. Its sources are also compiled into the truffle
       module, whose bundle loader (`graalgo.go.loader`) consumes them.
