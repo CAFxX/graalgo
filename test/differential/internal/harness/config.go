@@ -61,6 +61,17 @@ type Backend struct {
 	// frontend and the JVM (graalgo-sync-run --check), a matching program
 	// costs one JVM instead of two.
 	LazyBuild bool `json:"lazyBuild,omitempty"`
+	// BatchRun runs the built programs of a check in one long-lived process
+	// each (batch.go: RunBatch) instead of one process per program: the
+	// command template, with {MANIFEST} and {RESULTS}, of a launcher that
+	// speaks test/lib/batchrun.sh's protocol (graalgo-bundle-run --batch).
+	// Needs Run == ["{BIN}"] and BatchIsolatedFrom.
+	BatchRun []string `json:"batchRun,omitempty"`
+	// BatchIsolatedFrom names the file (relative to the config's directory)
+	// that defines BATCH_ISOLATED_RE, the pattern of sources that must run
+	// in their own process (test/lib/batchrun.sh: one definition).
+	BatchIsolatedFrom string `json:"batchIsolatedFrom,omitempty"`
+	batchIsolated     *regexp.Regexp
 }
 
 // NoiseSets are the named stderr-noise filter sets a backend may opt into.
@@ -168,6 +179,16 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		if len(b.Run) == 0 {
 			return nil, fmt.Errorf("backend %q has empty run template", b.Name)
+		}
+		if len(b.BatchRun) > 0 {
+			if len(b.Run) != 1 || b.Run[0] != "{BIN}" || b.BatchIsolatedFrom == "" {
+				return nil, fmt.Errorf("backend %q: batchRun needs run [\"{BIN}\"] and batchIsolatedFrom", b.Name)
+			}
+			re, err := LoadBatchIsolated(filepath.Join(filepath.Dir(path), b.BatchIsolatedFrom))
+			if err != nil {
+				return nil, fmt.Errorf("backend %q: %w", b.Name, err)
+			}
+			b.batchIsolated = re
 		}
 		for _, set := range b.NoiseSets {
 			if _, ok := NoiseSets[set]; !ok {

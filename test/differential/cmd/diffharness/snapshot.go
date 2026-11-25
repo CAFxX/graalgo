@@ -29,7 +29,11 @@
 //	                corrupted frontend export) on every retry, or the
 //	                REFERENCE (gc) timed out even on its 2x-timeout
 //	                retry (host speed, never a graalgo behavior)            -> fail, exit 3
-//	    A backend with "lazyBuild" (graalgo) runs each program without its
+//	    A backend with "batchRun" (the new path's graalgo) builds every
+//	    program, then runs the built ones in at most -jobs batch JVMs, a
+//	    fresh context each (harness.RunBatch; GRAALGO_BATCH=off: one
+//	    process each); verdicts as for per-process runs.
+//	    A backend with "lazyBuild" (v1's graalgo) runs each program without its
 //	    build step first and re-runs only a diverging one with build+run
 //	    (whose outcome is the verdict); diverging without the build step
 //	    but matching with it counts against -retry-budget (a flake).
@@ -166,7 +170,7 @@ type snapshotFlags struct {
 
 func baseSnapshotFlags(fs *flag.FlagSet, mode string) *snapshotFlags {
 	sf := &snapshotFlags{}
-	fs.StringVar(&sf.config, "config", "backends.json", "backend config JSON")
+	fs.StringVar(&sf.config, "config", "backends-newpath.json", "backend config JSON")
 	fs.StringVar(&sf.corpus, "corpus", "corpus", "corpus directory")
 	fs.IntVar(&sf.jobs, "jobs", 1, "parallel program runs")
 	fs.IntVar(&sf.timeout, "timeout", 0, "per-program timeout seconds (0 = config default)")
@@ -200,6 +204,12 @@ func scrubEnvPaths(s, corpusRoot string) string {
 		s = strings.ReplaceAll(s, corpusRoot, "{CORPUS}")
 	}
 	s = reGraalgoRun.ReplaceAllString(s, "{GRAALGO_RUN}")
+	// A traceback through the standard library names the reference
+	// toolchain's GOROOT (graalgo's too: the fork keeps upstream's file
+	// names), which differs between the dev host and CI.
+	if g := os.Getenv("DH_GO"); len(g) > 1 {
+		s = strings.ReplaceAll(s, strings.TrimRight(g, "/")+"/", "{GOROOT}/")
+	}
 	return s
 }
 
@@ -507,7 +517,12 @@ func cmdSnapshotCheck(args []string) error {
 		first = harness.RunSkippingBuild
 	}
 	var outs []harness.Outcome
-	if !sf.failFast {
+	switch {
+	case sf.failFast:
+	case b.Batched():
+		// built programs in one JVM each batch (fresh context per program)
+		outs = harness.RunBatch(cfg, b, live, workRoot, sf.jobs, os.Stdout)
+	default:
 		outs = runAll(cfg, b, live, workRoot, sf.jobs, first)
 	}
 	for i, p := range live {

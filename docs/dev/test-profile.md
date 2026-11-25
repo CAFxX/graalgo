@@ -8,6 +8,47 @@ times are ratcheted against the baseline of the environment (local:
 SLOWER warning above 1.2x; CI: failure above 2x + 30 s; see "Baselines per
 environment" below).
 
+## m3-plan D1 (2026-11-25): snapshot-check on the new path, batched
+
+`make snapshot-check` ran every snapshot-corpus program on v1's
+`graalgo-sync-run` (one JVM per program, gofrontend and a 113 MB JSON
+export each). It now builds each program through `go build -toolexec
+graalgo-tool` with the stdlib fork (exactly the file gc's leg builds) and
+runs the built programs in one JVM, a fresh context each: the diffharness
+speaks batchrun.sh's protocol itself (`batchRun` in
+[backends-newpath.json](../../test/differential/backends-newpath.json),
+`test/differential/internal/harness/batch.go`), with the same rules — `BATCH_ISOLATED_RE`
+sources and every program a dead batch left run in their own process.
+`GRAALGO_BATCH=off` gives one JVM per program. The gc leg is as before
+(`-verify-ref gc-a`: gc re-run live, compared with the committed
+snapshot).
+
+Equivalence: the full corpus both ways gives the same 61 verdicts (59
+MATCH, 2 EXPECTED with the same pinned signatures). Planted: a changed
+expected output (DRIFT), a listed program that matches (STALE), an entry
+without its signature (UNPINNED) and an unlisted divergence (DRIFT) fail
+the gate in one 4-program run; the batch driver's own tests
+(`batch_test.go`: per-process equivalence, a killed batch JVM -> the rest
+rerun in their own processes, isolation, timeouts) run in
+`test-diffharness` (1.3 s).
+
+Dev host (`nice -n 19`, `SNAPSHOT_JOBS=1`, `-Xmx2g
+-XX:ActiveProcessorCount=4`, load 6–10; wall / CPU s, incl. the gc
+verify leg):
+
+| snapshot-check | wall | CPU |
+|---|---:|---:|
+| v1 (baseline) | 433 | 659 |
+| new path, one JVM per program (`GRAALGO_BATCH=off`) | 52 | 104 |
+| new path, batched (`make snapshot-check`) | 23 | 28 |
+
+CI (4 vCPU, `SNAPSHOT_JOBS=4`: up to 4 batch JVMs) is estimated from the
+dev-host ratio of the v1 numbers (875 / 659 CPU): ~40 CPU s and ~20–30 s
+wall instead of 875 / 260; the CI baseline carries a conservative estimate
+(cpu 80, wall 40; cold 150 / 80) until the first green run re-records it,
+and the shards rebalance on it (`gates.py shards 4`): snapshot-check is
+no longer the floor.
+
 ## Round 3 (2026-11-25): the m1* gates' graalgo legs in one JVM
 
 The m1* gates started one JVM per program (~0.4 s wall, ~0.9 s CPU of JVM
@@ -50,8 +91,8 @@ still fails m1r/run.sh; [test_batchrun.py](../../test/lib/test_batchrun.py)
 
 Also: graalgo-tool's end-to-end tests (each with its own GOCACHE, module
 and binaries) run `t.Parallel`, `go test -parallel 4`. Not taken:
-slicing snapshot-check across CI shards (m3-plan D1 moves it to the new
-path, 433 -> 57 s).
+slicing snapshot-check across CI shards (m3-plan D1 moved it to the new
+path: 433 -> 23 s, above).
 
 Dev host (`nice -n 19`, warm gc-oracle cache, load 6–12; wall / CPU s):
 

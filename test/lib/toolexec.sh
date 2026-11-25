@@ -14,6 +14,10 @@
 #                    `go build` of the package in the current directory
 #                    through graalgo-tool with the fork applied; the linked
 #                    program runs on <runner>.
+#   toolexec_build_files <out> <runner> <file.go>...
+#                    the same for the named files (a command-line-arguments
+#                    package: what `go build file.go` builds for gc, so
+#                    file paths in tracebacks are the sources' own).
 #
 # A build through graalgo-tool without the fork fails at link: the upstream
 # runtime's assembly has no intrinsics (design §5.3).
@@ -43,4 +47,9 @@ toolexec_setup() {
 toolexec_build() {
     GRAALGO_STUB="$TOOLEXEC_STUB" GRAALGO_RUNNER="$2" \
         "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" "${@:3}" -o "$1" .
+}
+
+toolexec_build_files() {
+    GRAALGO_STUB="$TOOLEXEC_STUB" GRAALGO_RUNNER="$2" \
+        "$GO" build -overlay "$TOOLEXEC_OVERLAY" -toolexec "$TOOLEXEC_TOOL" -o "$1" "${@:3}"
 }

@@ -315,7 +315,7 @@ check-repo:
 	cd test/differential && PATH="$(dir $(GO)):$$PATH" $(GO) test -count=1 -run 'Register|IsPinned|LoadBugIDs|Parse' ./internal/harness/ && \
 	  PATH="$(dir $(GO)):$$PATH" $(GO) run ./cmd/diffharness registers -bugs ../../docs/dev/bugs.md \
 	  -unsigned ../../tools/stdlib-fork/exclusions.yaml \
-	  corpus-exclusions.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
+	  corpus-exclusions.yaml corpus-exclusions-v1.yaml srctest-exclusions.yaml typeparam-exclusions.yaml
 	python3 .github/scripts/check_markdown_links.py --skip-external
 	# the req CLI's own tests first (gate-of-the-gate, ~0.3 s, go-test cached;
 	# incl. its .worktrees skip), then the lint itself.
@@ -848,7 +848,10 @@ test-java-timing: java-test-classes
 # commit the result. It never needs graalgo.
 #
 # `make snapshot-check` (per-push, via `make all`) runs every corpus program
-# under the product launcher (P3SyncMain, backends-p3.json) and compares
+# on the new path (m3-plan D1: backends-newpath.json through
+# test/differential/newpath.sh — each program built by `go build -toolexec
+# graalgo-tool` with the stdlib fork, the built programs run in one JVM, a
+# fresh context each; GRAALGO_BATCH=off: one JVM per program) and compares
 # with the gc snapshot. Expected divergences are explicit, reviewed entries
 # with a SPEC §5.6 reason code in
 # [test/differential/corpus-exclusions.yaml](test/differential/corpus-exclusions.yaml);
@@ -861,9 +864,9 @@ SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 # /tmp may be a small shared tmpfs: keep go build temps and harness scratch
 # dirs on the persistent disk. $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
-# One JVM per job (~1.2GB RSS, ~7-13s per trivial program). Sized to the
-# machine, capped at 4 (CI runners have 4 vCPUs). The per-run timeout is
-# 120s: contended runs measure ~42s on a 2-CPU box. Shared hosts: run with
+# SNAPSHOT_JOBS: programs built at a time, and batch JVMs (each runs a
+# slice of the corpus). Sized to the machine, capped at 4 (CI runners have
+# 4 vCPUs). The per-run timeout is 120s. Shared hosts: run with
 # SNAPSHOT_JOBS=1 GRAALGO_JAVA_OPTS="-Xmx2g -XX:ActiveProcessorCount=4".
 SNAPSHOT_JOBS ?= $(shell n=$$(nproc 2>/dev/null || echo 4); [ $$n -gt 4 ] && echo 4 || echo $$n)
 SNAPSHOT_PROGRAMS ?=
@@ -881,16 +884,16 @@ snapshot:
 	$(snapshot_guard)
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) \
 	  $(GO) run ./cmd/diffharness snapshot record \
-	  -config backends-p3.json -corpus corpus -backend gc-a \
+	  -config backends-newpath.json -corpus corpus -backend gc-a \
 	  -corpus-label test/differential/corpus \
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -toolchain $(SNAPSHOT_TOOLCHAIN) -runs 3 -jobs $(SNAPSHOT_JOBS) -timeout 120
 
 snapshot-check: build
 	$(snapshot_guard)
-	mkdir -p $(SNAPSHOT_TMP) && eval "$$(bash test/lib/jvmcds.sh sync-env)" && cd $(DH) && $(SNAPSHOT_ENV) \
-	  $(GO) run ./cmd/diffharness snapshot check \
-	  -config backends-p3.json -corpus corpus -backend graalgo \
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && $(SNAPSHOT_ENV) GO="$(GO)" \
+	  bash newpath.sh snapshot check \
+	  -config backends-newpath.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -expected corpus-exclusions.yaml -verify-ref gc-a \
 	  $(if $(SNAPSHOT_PROGRAMS),-programs $(SNAPSHOT_PROGRAMS)) \

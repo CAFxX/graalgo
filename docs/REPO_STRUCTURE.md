@@ -33,7 +33,7 @@ directory's README repeats its status.
 | new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/), [test/bench/realistic/](../test/bench/realistic/README.md) |
 | shared | the runtime packages of [internal/backend/truffle/](../internal/backend/truffle/README.md) (`sched`, `runtime`, `safepoint`, `jfr`, `language`), [test/corpus/](../test/corpus/README.md), [test/lib/](../test/lib/), [test/java/](../test/java/), [test/snapshots/](../test/snapshots/README.md), [tools/req/](../tools/req/README.md), [tools/torture/](../tools/torture/), [requirements/](../requirements/), [.github/](../.github/) |
 | v1 | [cmd/graalgo/](../cmd/graalgo/README.md) (becomes the launcher), [internal/frontend/](../internal/frontend/README.md), [internal/driver/](../internal/driver/), [internal/vet/](../internal/vet/README.md), [internal/backend/interop/](../internal/backend/interop/README.md), `graalgo.{frontend,values,sched.launcher}` + `launcher.Main` in truffle, [graalgo-run](../internal/backend/graalgo-run), [graalgo-sync-run](../internal/backend/graalgo-sync-run), [tools/gate1/](../tools/gate1/README.md) |
-| v1-driven | [test/differential/](../test/differential/README.md) (`snapshot-check`), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
+| v1-driven | [test/differential/](../test/differential/README.md) (conformance/typeparam/mutation; `snapshot-check` runs the new path since m3-plan D1), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
 | history | [docs/archive/](archive/) (`phases/`, `reviews/`, `spikes/`, `research/`, `spec/`, FEASIBILITY, PHASES, frontend-v1/v2); [research/](../research/); [test/spikes/](../test/spikes/) |
 
 ## Directory tree
@@ -308,6 +308,13 @@ directory's README repeats its status.
       were deleted, m3-plan D0).
   - [differential/](../test/differential/) — the differential harness: run
     each corpus program under graalgo and under `gc`, byte-compare outputs.
+    `make snapshot-check` runs the new path
+    ([backends-newpath.json](../test/differential/backends-newpath.json):
+    [newpath.sh](../test/differential/newpath.sh) sets up graalgo-tool and
+    the fork, [newpath_build.sh](../test/differential/newpath_build.sh)
+    builds each program, the built ones run batched in one JVM); v1's
+    register [corpus-exclusions-v1.yaml](../test/differential/corpus-exclusions-v1.yaml)
+    serves only the v1 mutation oracle until m3-plan G6/D3.
     Moved here from `tools/diffharness/` (2026-10-13). Reviewed,
     reason-coded expected divergences (SPEC §5.6):
     [corpus-exclusions.yaml](../test/differential/corpus-exclusions.yaml)

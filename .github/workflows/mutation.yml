@@ -8,8 +8,10 @@
 # without a reviewed survivorJustification fails this job: the per-push
 # gate has a blind spot that needs a new corpus program.
 #
-# Too slow for per-push (one rebuild + a corpus slice per mutant, ~1-2 h);
-# the per-push gate it validates is `make all` -> snapshot-check.
+# Too slow for per-push (one rebuild + a corpus slice per mutant, ~1-2 h).
+# Since m3-plan D1 the per-push snapshot-check runs the new path; the
+# mutants still target v1, so the tool gates them with v1's backend and
+# register (corpus-exclusions-v1.yaml) until G6/D3 bring new-path mutants.
 name: mutation
 
 on:

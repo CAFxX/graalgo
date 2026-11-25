@@ -27,26 +27,9 @@ if [ -n "${DH_GO:-}" ]; then
 fi
 export GOTOOLCHAIN=local
 
-# graalgo backend (interop product launcher): GRAALGO_BACKEND_DIR points at the
-# internal/backend tree holding the graalgo-sync-run launcher wrapper
-# (P3SyncMain). Defaults to this repo's internal/backend so a plain ./run.sh
-# works from a clean checkout; override to point at another tree. The
-# product launcher (not the truffle graalgo-run) is the smoke backend so the
-# full corpus — including the channel/goroutine programs — runs without
-# exclusions.
-if [ -z "${GRAALGO_BACKEND_DIR:-}" ]; then
-  export GRAALGO_BACKEND_DIR="$PWD/../../internal/backend"
-fi
-# The P3SyncMain backend needs truffle+interop classes built.
-if [ ! -x "$GRAALGO_BACKEND_DIR/graalgo-sync-run" ]; then
-  echo "run.sh: $GRAALGO_BACKEND_DIR/graalgo-sync-run missing/not executable" >&2
-  exit 2
-fi
-if [ ! -d "$GRAALGO_BACKEND_DIR/interop/out/classes" ]; then
-  echo "run.sh: interop classes not built; run 'make build' at the repo root first" >&2
-  exit 2
-fi
-
+# Only gc runs here (gc-a vs gc-b: the comparator's self-test); graalgo is
+# never built or run, so nothing of the backend is a precondition (m3-plan
+# D1 dropped the old graalgo-sync-run/interop checks).
 OUTDIR="${OUTDIR:-./.tmp/test-results}"
 mkdir -p "$OUTDIR"
 
@@ -68,7 +51,7 @@ echo "== [3/4] unit tests =="
 go test -count=1 ./internal/... 2>&1 | tee "$OUTDIR/unit-tests.log"
 # (go test exits non-zero on failure; set -e stops here)
 
-# DH_TIMEOUT: per-program timeout override (seconds). The backends-p3.json
+# DH_TIMEOUT: per-program timeout override (seconds). The backends-newpath.json
 # default (30s) suits the VM; slower CI runners need more headroom.
 TIMEOUT_ARGS=()
 if [ -n "${DH_TIMEOUT:-}" ]; then
@@ -86,7 +69,7 @@ fi
 echo "== [4/4] comparator self-test: green run + rerun control + corpus-mutation red-green (gc-vs-gc) =="
 rm -rf "$OUTDIR/mutants" && mkdir -p "$OUTDIR/mutants"
 go run ./cmd/diffharness validate \
-  -config backends-p3.json -corpus corpus -backends gc-a,gc-b \
+  -config backends-newpath.json -corpus corpus -backends gc-a,gc-b \
   "${TIMEOUT_ARGS[@]}" -jobs "${DH_JOBS:-1}" \
   -mutations mutations.txt -workdir "$OUTDIR/mutants" \
   -out "$OUTDIR/validate.json" 2>&1 | tee "$OUTDIR/validate.log"
@@ -95,7 +78,7 @@ echo "== checksums (measurement honesty: harness sources archived with logs) =="
 {
   echo "# sha256 of harness sources at validation time: $(date -u +%FT%TZ)"
   find . -name '*.go' -not -path './testdata/_broken/*' -not -path './.tmp/*' | sort | xargs sha256sum
-  sha256sum backends.json backends-p3.json mutations.txt run.sh
+  sha256sum backends.json backends-p3.json backends-newpath.json mutations.txt run.sh newpath.sh newpath_build.sh
 } | tee "$OUTDIR/checksums.txt"
 
 echo

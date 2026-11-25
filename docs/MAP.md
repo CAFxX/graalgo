@@ -28,7 +28,7 @@ and is **deleted at the M3 cutover** — never build on it.
 | change the scheduler | [graalgo/sched/](../internal/backend/truffle/src/main/java/graalgo/sched/) (shared with v1) + the new path's adapter [graalgo/go/runtime/](../internal/backend/truffle/src/main/java/graalgo/go/runtime/) (`G`); [graalgo/safepoint/](../internal/backend/truffle/src/main/java/graalgo/safepoint/) | `make test-java-fast`, [tools/torture/](../tools/torture/), `make test-m1c` |
 | change the launcher / tool protocol | [internal/toolexec/cmd/](../internal/toolexec/cmd/) (`graalgo-launcher`, `graalgo-tool`, `graalgo-stub`, each with a README), runner [graalgo-bundle-run](../internal/backend/graalgo-bundle-run) | `make test-toolexec` |
 | add a differential program | new path: [test/m1a/programs/](../test/m1a/programs/) (no imports), [test/m1r/programs/](../test/m1r/programs/) (std), [test/m1c/programs/](../test/m1c/programs/) (sync/time/syscalls), [test/m1w13/programs/](../test/m1w13/programs/) (`unsafe`); a fuzz reproducer → [test/fuzz/repro/](../test/fuzz/repro/) | the dir's `run.sh` / make target |
-| add a v1-era corpus program | [test/corpus/](../test/corpus/README.md) + [test/differential/](../test/differential/README.md) (gc snapshot in [test/snapshots/](../test/snapshots/)) | `make snapshot-check SNAPSHOT_PROGRAMS=…` |
+| add a snapshot-corpus program | [test/differential/corpus/](../test/differential/corpus/README.md) (gc snapshot in [test/snapshots/](../test/snapshots/): `make snapshot`; runs on the new path) | `make snapshot-check SNAPSHOT_PROGRAMS=…` |
 | run the gates | [Makefile](../Makefile) header; `make quick` (inner loop, minutes, not evidence), `make check-repo` (docs-only, no JVM), `make check`, `make all` (per-push), `make pre-land` (before a lane reports done: `all` + external links + harness self-test + drift, timed); [AGENTS.md](../AGENTS.md) §2 | — |
 | see / cut what the gates cost | [test-profile.md](dev/test-profile.md) (profile, top costs, levers); `make test-times` (per-gate wall + CPU vs [test/duration-baseline.json](../test/duration-baseline.json)) | `make test-times` |
 | benchmark | [test/bench/](../test/bench/README.md), [performance.md](arch/performance.md), [north-star.md](arch/north-star.md) | `make bench-suite`, `make bench-realistic`, `make bench-m1a` |
@@ -89,7 +89,7 @@ the measured readiness, gaps and ordered deletion steps: [m3-plan.md](arch/m3-pl
   [bridge-inventory.md](arch/bridge-inventory.md) (the frozen list)
 
 Still **v1-driven** today but not in §9.1 (they must be re-pointed at M3,
-see ADR-0017): `make snapshot-check` / [test/differential/](../test/differential/README.md),
+see ADR-0017): [test/differential/](../test/differential/README.md)'s conformance, typeparam and mutation oracles (`make snapshot-check` runs the new path since m3-plan D1),
 [test/regression/](../test/regression/), [test/e2e/](../test/e2e/),
 [test/jit/](../test/jit/),
 `make bench` ([test/bench/run.sh](../test/bench/run.sh)),
