@@ -35,6 +35,12 @@ red comparing a cold CI run with the warm dev-host numbers. So:
   `gate-times` artifact of a green run (`gh run download <id> -n
   gate-times`) and record it into `duration-baseline-ci.json`. Re-record
   only for a reviewed, intended cost change, and say so in the commit.
+  The baselines are forward-only: a target whose `cpu`/`cpu_cold` number
+  is new or rose more than 25% (+1 s) since the git base needs a
+  `reason` entry for that target added in the same change (`record
+  --reason TEXT` writes it for exactly those targets);
+  [check_ratchets.py](../../.github/scripts/check_ratchets.py) (`make
+  check-repo`) fails otherwise.
   The CI file's cold sections hold, per gate, the higher of the first two
   green runs (09acff6b, push and dispatch; both missed the cache, so
   every gate of `pre-land`'s list and the setup targets has a cold
