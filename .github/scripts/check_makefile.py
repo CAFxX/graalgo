@@ -23,7 +23,7 @@ CMD_TARGET = re.compile(r"^[a-z][a-z0-9-]*$")
 RULE = re.compile(r"^([^\s#=:][^=:]*?)\s*:(?![=:])\s*(.*)$")
 MARKER = re.compile(r"^(//|#) Code generated .*DO NOT EDIT")
 # Vendored upstream / archived trees whose generated files are not ours.
-NOT_OURS = ("internal/frontend/go/", "docs/arch/spikes/")
+NOT_OURS = ("internal/frontend/go/", "docs/archive/spikes/")
 
 
 def logical_lines(text):

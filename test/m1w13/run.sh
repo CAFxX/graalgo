@@ -24,7 +24,7 @@
 #               accept the program, or it belongs in checkptr/.
 #
 # Compared per program: stdout (bytes), stderr (normalized by
-# test/corpus/lifecycle/normalize.py) and the exit status.
+# test/lib/normalize.py) and the exit status.
 #
 # Usage: test/m1w13/run.sh [-v] [PROGRAM.go]...   (a path under programs/,
 #        checkptr/ or restricted/; without arguments: everything)
@@ -58,7 +58,7 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 command -v python3 >/dev/null || infra_die "python3 not found"
 infra_mktemp m1w13
 TIMEOUT="${M1W13_TIMEOUT:-120}"
-NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
+NORMALIZE="$ROOT/test/lib/normalize.py"
 toolexec_setup
 export GODEBUG=cpu.all=off
 

@@ -4,7 +4,7 @@
 # through graalgo-tool (-toolexec: shadow compile, GIR, bundle link) and run
 # on the new node package (graalgo.go) via internal/backend/graalgo-bundle-run,
 # against the same program built and run by gc. Compared per program: stdout
-# (bytes), stderr (normalized by test/corpus/lifecycle/normalize.py: goroutine
+# (bytes), stderr (normalized by test/lib/normalize.py: goroutine
 # ids, frame lines and hex addresses; a program with a `// m1a:traceback` line
 # keeps its frames' names and file:line, normalized by tbnorm.py), and the exit
 # status.
@@ -54,7 +54,7 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 command -v python3 >/dev/null || infra_die "python3 not found"
 infra_mktemp m1a
 TIMEOUT="${M1A_TIMEOUT:-60}"
-NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
+NORMALIZE="$ROOT/test/lib/normalize.py"
 
 # The toolexec tools, built by the tracked gc toolchain, and the
 # standard-library fork they build against (test/lib/toolexec.sh).

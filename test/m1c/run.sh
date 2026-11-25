@@ -8,7 +8,7 @@
 # internal/backend/graalgo-bundle-run, against the same program built and run
 # by gc. Conventions as test/m1r/run.sh: upstream's Go bodies or the registry's
 # intrinsics, nothing reimplemented; stdout compared byte for byte, stderr
-# after test/corpus/lifecycle/normalize.py (goroutine ids, frame lines, hex
+# after test/lib/normalize.py (goroutine ids, frame lines, hex
 # addresses: the fatal and deadlock headers with gc's wait reasons are
 # compared), and the exit status; both legs with GODEBUG=cpu.all=off.
 #
@@ -70,7 +70,7 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 command -v python3 >/dev/null || infra_die "python3 not found"
 infra_mktemp m1c
 TIMEOUT="${M1C_TIMEOUT:-120}"
-NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
+NORMALIZE="$ROOT/test/lib/normalize.py"
 toolexec_setup
 export GODEBUG=cpu.all=off
 # shellcheck source=../lib/gcoracle.sh

@@ -43,5 +43,5 @@ implementations live here since the T0.D module merge, 2026-11-18):
 `GoroutineState`, etc. — the frozen `throwPanic`/`recover` interface that
 WS G's `PanicNode` wires to.
 
-See [docs/freeze-stub.md](../../../../../../../../docs/spec/freeze-stub.md) (freeze v2; v2 delta: ADR-0008 `elemDesc` on
+See [docs/freeze-stub.md](../../../../../../../../docs/archive/spec/freeze-stub.md) (freeze v2; v2 delta: ADR-0008 `elemDesc` on
 `makeslice`/`growslice`) for the full 58-function catalog.

@@ -33,7 +33,7 @@
 - [x] Truffle jars pinned (7 jars, [lib/SHA256SUMS.txt](../../../../internal/backend/truffle/lib/SHA256SUMS.txt); see [lib/LIB.md](../../../../internal/backend/truffle/lib/LIB.md))
 - [x] Toolchain smoke: truffle runtime executes (SMOKE OK), DSL processor generates + dispatches (DSL OK)
 - [x] Truffle jars downloaded + checksummed ([lib/SHA256SUMS.txt](../../../../internal/backend/truffle/lib/SHA256SUMS.txt))
-- [ ] SPEC extract ([spec-extract.md](../../../spec/spec-extract.md)) — agent running
+- [ ] SPEC extract ([spec-extract.md](../../spec/spec-extract.md)) — agent running
 - [ ] Requirement phase map ([req-phase-map.md](req-phase-map.md)) — agent running
 - [x] [PLAN.md](PLAN.md) r3 (fixpoint: structure r1 → self-review r2 → content r3 with D4 revision from corpus measurement)
 - [x] GG activation policy corrected (2026-10-03): 31 IDs flipped active then REVERTED to locked —
@@ -424,7 +424,7 @@ IEEE bits, correctly rounded by go/constant). Golden
 
 **Safepoint seam (deliverable 3, D8).** `graalgo.safepoint.poll()`
 (no-op in Phase 1), called at `GoRootNode` function entry; signature
-frozen in [docs/freeze-stub.md](../../../spec/freeze-stub.md) (new).
+frozen in [docs/freeze-stub.md](../../spec/freeze-stub.md) (new).
 
 **Polymorphism probes (deliverable 4, WS D).** `InterfaceDispatchProbes`:
 itab-identity histogram counters behind a flag, hooks only.
@@ -481,7 +481,7 @@ shift-double-add sequence; uint64→float32 correctly rounded (0 mismatches
   `convert` node kind, `basiclit` `sbytes`/`f32bits`/`f64bits` fields, the
   constant-folding normalization, universe-const ident handling. All
   additive-only per §8's versioning rule — still `"frontend": "v1"`.
-- New doc: [docs/freeze-stub.md](../../../spec/freeze-stub.md) (frozen `graalgo.safepoint.poll()`
+- New doc: [docs/freeze-stub.md](../../spec/freeze-stub.md) (frozen `graalgo.safepoint.poll()`
   signature + call sites).
 - `src/main/java/graalgo/nodes/README.md` (deleted 2026-11-18: the package stayed empty): reserved for WS E/F
   control-flow nodes; expression nodes stay in `graalgo.frontend`.
@@ -631,7 +631,7 @@ Errorf) with **verb-conformance matrix** ([corpus/fmt/matrix.tsv](../../reviews/
 all match gc 1.27.1). Address erasure to `0x0` (documented, nondeterministic
 under gc anyway).
 
-**Freeze v1** ([docs/freeze-stub.md](../../../spec/freeze-stub.md)): 58 functions + 11 nodes, each marked
+**Freeze v1** ([docs/freeze-stub.md](../../spec/freeze-stub.md)): 58 functions + 11 nodes, each marked
 REAL/STUB/D4. `FreezeSignatureTest` verifies 37 signatures via reflection.
 
 **Corpus** ([corpus/builtins/](../../reviews/phase1-m5-loopcap/snapshot/corpus/builtins), 15 programs): append growth/aliasing, copy
@@ -1549,7 +1549,7 @@ proof). Done-gate 2 met.
 - Dispatch sites to measure: method calls (exact-receiver, `SelectorNode`),
   `FuncValueCallNode`, generic instantiation sites (M6).
 
-**Plan:** A. inventory public API (javap + go doc) → [INTERFACE_FREEZE.md](../../../spec/INTERFACE_FREEZE.md) with
+**Plan:** A. inventory public API (javap + go doc) → [INTERFACE_FREEZE.md](../../spec/INTERFACE_FREEZE.md) with
 FROZEN/INTERNAL marks + signature-snapshot test. B. wire probes into dispatch
 sites, add `--dump-polymorphism`, measure over diffharness + soak corpora,
 report histogram. C. ≥2 independent reviews. D. suite + make check green, sign-off
@@ -1561,7 +1561,7 @@ only when all gate conditions hold.
   per call site; receiver type key at `methodref` sites), `Main` gained
   `--dump-polymorphism[=path]` (WS L). Smoke-tested: method site monomorphic
   (1 target/1 recv), func-var site inside `apply` correctly bimorphic (2 targets).
-- Freeze doc drafted: [INTERFACE_FREEZE.md](../../../spec/INTERFACE_FREEZE.md) (both components, FROZEN/INTERNAL,
+- Freeze doc drafted: [INTERFACE_FREEZE.md](../../spec/INTERFACE_FREEZE.md) (both components, FROZEN/INTERNAL,
   builtin registry, machine checks).
 - `FreezeSignatureTest` extended: +NodeFactory entry points, node protocol,
   GoCalls/Runtime, probe APIs, values ctors (instance/static distinguished).
@@ -1713,7 +1713,7 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
       exit 2 (51e281e; regression
       MainTest.testDeepRecursionReportsCleanStackOverflow).
   Report: [hidden_files/m10_selfattack/REPORT.md](../../spikes/01-asmcgo/REPORT.md). Known limit documented
-  in [docs/limitations.md](../../limitations.md) (Phase-4 re-test trigger).
+  in [docs/limitations.md](../../../arch/limitations.md) (Phase-4 re-test trigger).
 - Reviews dispatched: 2 independent reviewers (code + methodology),
   snapshot 51e281e. Reports -> reviews/phase1-m10/ (pending).
 
@@ -1740,7 +1740,7 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
 - P0-B: deep Go recursion → raw JVM NoClassDefFoundError cascade.
   Fix: catch SOE + unwrap profiler cascade → clean `stack overflow`,
   exit 2. Regression: MainTest.testDeepRecursionReportsCleanStackOverflow.
-  Commit 51e281e. Limit documented: [docs/limitations.md](../../limitations.md) (15k ok, 20k+ exit 2).
+  Commit 51e281e. Limit documented: [docs/limitations.md](../../../arch/limitations.md) (15k ok, 20k+ exit 2).
 - Others (defer storm, hostile fmt, defer/panic, typeparams): gc-identical.
 - Report: [hidden_files/m10_selfattack/REPORT.md](../../spikes/01-asmcgo/REPORT.md).
 

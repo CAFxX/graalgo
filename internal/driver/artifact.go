@@ -40,7 +40,7 @@ type Artifact struct {
 // Unlike `go build`, which produces a native binary via AOT compilation,
 // graalgo's backend is a Truffle JIT on the JVM. A true native binary
 // requires GraalVM native-image with Truffle runtime compilation
-// (Phase 5 work; see docs/arch/research/T6-optimization-inventory.md).
+// (Phase 5 work; see docs/archive/research/T6-optimization-inventory.md).
 // Until then, the artifact is a launcher binary that skips the frontend
 // re-run by embedding its output — a proper executable, not a bash
 // wrapper around unpacked sources.

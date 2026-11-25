@@ -16,7 +16,7 @@
 # reflectlite.Swapper and pkgPath), each tied to an open bug.
 #
 # Compared per program: stdout (bytes), stderr (normalized by
-# test/corpus/lifecycle/normalize.py: goroutine ids, frame lines, hex
+# test/lib/normalize.py: goroutine ids, frame lines, hex
 # addresses) and the exit status. Programs report with println.
 #
 # Both legs run with GODEBUG=cpu.all=off: under graalgo, internal/cpu reports
@@ -60,7 +60,7 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 command -v python3 >/dev/null || infra_die "python3 not found"
 infra_mktemp m1r
 TIMEOUT="${M1R_TIMEOUT:-120}"
-NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
+NORMALIZE="$ROOT/test/lib/normalize.py"
 toolexec_setup
 export GODEBUG=cpu.all=off
 

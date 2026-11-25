@@ -20,7 +20,7 @@ for src in lc*.go; do
         cat "$TMP/out"
         echo
         echo "-- stderr (normalized) --"
-        ./normalize.py < "$TMP/err"
+        ../../lib/normalize.py < "$TMP/err"
         echo "-- exit $rc --"
     } > "$base.expected"
     echo "$base: exit $rc"

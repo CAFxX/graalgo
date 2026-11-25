@@ -41,10 +41,7 @@ The cap-1 leg (`testMutexCapOne`) is the same program as `sy01` run with
 
 ```bash
 ./regen.sh               # regenerate .expected/.panic.gc from gc 1.27.1
-./run_differential.sh    # gc binary vs graalgo-sync-run: stdout bytes,
-                         # exit codes, first stderr line (panic programs)
 ```
 
-The differential runner filters the known JVM `Unsafe` warnings on
-stderr (harness noise, cf. `p3frontend/DESIGN.md` §7) and compares the
-first remaining stderr line for panic programs.
+The v1 differential runner was deleted (m3-plan D0); its import-free programs
+run on the new path in `make test-m1a`.

@@ -2,7 +2,7 @@
 
 Frontend service (WS B, PLAN.md D1): `gofrontend` (Go; vendored `go/*`
 verbatim — see [internal/frontend/](../../../../../../../../internal/frontend/)) type-checks one single-file package
-and emits `frontend/v1` JSON (wire spec: \[docs/arch/frontend-v1.md\](../../../../../../../../docs/arch/frontend-v1.md)).
+and emits `frontend/v1` JSON (wire spec: \[docs/archive/frontend-v1.md\](../../../../../../../../docs/archive/frontend-v1.md)).
 This package parses that JSON and builds Truffle nodes.
 
 ## Contents
@@ -150,7 +150,7 @@ are differential-green on the arithmetic corpus, verified then by
 `ArithmeticCorpusTest` + `ValuesTest` (historical annotation; superseded
 since). The D8
 `Safepoint.poll()` seam is in place at function entries (no-op in
-Phase 1; signature frozen in `docs/spec/freeze-stub.md`).
+Phase 1; signature frozen in `docs/archive/spec/freeze-stub.md`).
 
 **`GG-0019` active** (2026-10-04, M5; superseded via `GG-0067` by
 GG-0070/GG-0071): defer/panic/recover/Goexit are differential-green on the

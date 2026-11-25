@@ -185,7 +185,7 @@ The binary JFR recordings under `logs/jfr/` were removed from the repo 2026-11-1
 (debris gate: per-tree log-size cap in `check_tracked_files.py`), from
 `scratch/diag/`. They remain in history:
 `git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
---name-only 228dd7ab docs/arch/spikes/02-loom` lists them). To regenerate,
+--name-only 228dd7ab docs/archive/spikes/02-loom` lists them). To regenerate,
 re-run the commands this report describes on the pinned toolchains (docs/dev/ENV.md); every log
 this report cites is kept.
 

@@ -295,7 +295,7 @@ The compiled `src/toolexec-log/toolexec-log` binary and the two 4.7 MB `logs/{st
 (debris gate: per-tree log-size cap in `check_tracked_files.py`), from
 `logs/stock/`, `logs/trial/`, `logs/wraplogs/`, `logs/wrapped/`. They remain in history:
 `git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
---name-only 228dd7ab docs/arch/spikes/05-cmdgo` lists them). To regenerate,
+--name-only 228dd7ab docs/archive/spikes/05-cmdgo` lists them). To regenerate,
 re-run `run_matrix.sh` in this directory on the pinned toolchains (docs/dev/ENV.md); every log
 this report cites is kept.
 

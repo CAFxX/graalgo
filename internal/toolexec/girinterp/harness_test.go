@@ -329,7 +329,7 @@ var (
 	nestNumRE = regexp.MustCompile(`\.(?:func)?\d+`)
 	// A gc throw prints the system-level header
 	// "goroutine N gp=0x... m=... mp=0x... [reason]:" (as
-	// test/corpus/lifecycle/normalize.py, both forms map to "goroutine N [").
+	// test/lib/normalize.py, both forms map to "goroutine N [").
 	goroutRE   = regexp.MustCompile(`(?m)^goroutine \d+(?: gp=\S+ m=\S+(?: mp=\S+)?)? \[`)
 	gorootPath = runtime.GOROOT()
 )

@@ -1,8 +1,9 @@
 # ADR-0017 — Repository layout after the M3 cutover, and a staged migration
 
 **Date:** 2026-11-20
-**Status:** **PROPOSED** — for the owner's decision; nothing here is
-accepted and no path has moved. Lane `docs-map` (`wt/docs/map`).
+**Status:** **PROPOSED** (lane `docs-map`, `wt/docs/map`); stage 1
+accepted by the coordinator and done 2026-11-25 (m3-plan D0); the later
+stages are still for the owner's decision.
 **Scope:** every top-level and second-level directory;
 [REPO_STRUCTURE.md](../../REPO_STRUCTURE.md), [MAP.md](../../MAP.md),
 [toolexec-design.md](../../arch/toolexec-design.md) §9.1 (M3 delete
@@ -41,7 +42,7 @@ The owner: "it's always difficult to know where things are". Measured on
    (`test-jit`, `pe-check`); [test/bench/run.sh](../../../test/bench/run.sh);
    [test/lib/infra.sh](../../../test/lib/infra.sh); the
    `run_differential.sh` of the topic and wave corpora;
-   [test/e2e/](../../../test/e2e/README.md); [tools/fuzz/](../../../tools/fuzz/),
+   [test/e2e/](../../../test/e2e/README.md); `tools/fuzz` (deleted in stage 1),
    [tools/fuzz-soak/](../../../tools/fuzz-soak/), [tools/mutation/](../../../tools/mutation/),
    [tools/godebug-diff/](../../../tools/godebug-diff/),
    [tools/run_stdlib_gate.sh](../../../tools/run_stdlib_gate.sh);
@@ -110,7 +111,7 @@ churn, low value; reconsider only after M3 if `graalgo.go` reads oddly.
 | Stage | When | What | Breaks (must be fixed in the same commit) | Verify |
 |---|---|---|---|---|
 | 0 | **done now** (this lane) | [MAP.md](../../MAP.md), README with status per directory, status labels in REPO_STRUCTURE | nothing | `make check-repo` |
-| 1 | **now, in a quiet window** (it edits SPEC.md, toolexec-design.md, REPO_STRUCTURE.md, which active lanes edit) | `git mv` the archive docs into `docs/archive/` (planned); `test/corpus/lifecycle/normalize.py` → `test/lib/` | links in live docs (SPEC, toolexec-design, abi-spike, ADR-0003/0011/0013, freeze-stub); `ARCHIVED` in [check_doc_paths.py](../../../.github/scripts/check_doc_paths.py); `HISTORICAL` in [check_gg_ids.py](../../../.github/scripts/check_gg_ids.py); normalize.py's 6 callers (test/m1a,m1r,m1c,m1w13 `run.sh`, test/fuzz/setup.sh, girinterp `harness_test.go`) | `make check-repo`; `make test-m1a test-m1r`; `git diff -M --stat` = pure renames + path edits |
+| 1 | **done** 2026-11-25 (m3-plan D0; accepted by the coordinator) | `git mv` the archive docs (`phases/`, `reviews/`, `spikes/`, `research/`, FEASIBILITY, PHASES, frontend-v1/v2, and `docs/spec`, now moved) into [docs/archive/](../../archive/); the lifecycle corpus's `normalize.py` → [test/lib/](../../../test/lib/normalize.py) (moved) | links in live docs (SPEC, toolexec-design, abi-spike, ADR-0003/0011/0013, freeze-stub); `ARCHIVED` in [check_doc_paths.py](../../../.github/scripts/check_doc_paths.py); `HISTORICAL` in [check_gg_ids.py](../../../.github/scripts/check_gg_ids.py); normalize.py's 6 callers (test/m1a,m1r,m1c,m1w13 `run.sh`, test/fuzz/setup.sh, girinterp `harness_test.go`) | `make check-repo`; `make test-m1a test-m1r`; `git diff -M --stat` = pure renames + path edits |
 | 2 | **at M3 (W11)** | §9.1 deletions **plus** the item-5 gaps above (re-point or delete each); `cmd/graalgo` ← the launcher | Makefile targets `gen-synth`, `test-v2`, `test-p3frontend`, `gate1*`, `graalgo`, `test-ci`/`test-jit`, `bench`, `fast-run`, `snapshot-check` (backend config); workflows `fuzz-soak.yml`, `stdlib-gate.yml`, `mutation.yml`, `conformance.yml` (path filters); allowlists and budgets of §9.1 | `make all` green; the M3 gate of toolexec-design §8 |
 | 3a | right after M3 | `internal/toolexec` → `compiler/` + `cmd/` | ~40 code files name `internal/toolexec` (Makefile, `test/lib/toolexec.sh`, every `test/*/run.sh`, `go generate` output paths, [check_layering.py](../../../.github/scripts/check_layering.py), `conformance.yml`), the module path `graalgo-toolexec` | `make all`; `git status` clean after it |
 | 3b | after 3a | `internal/backend/{truffle,gir}` + `graalgo-bundle-run` → `runtime/` | ~22 code files (Makefile, the stub's runner lookup, `intrinsics/gen` and `syscalls/gen` output paths, `check_offheap`/`check_duplicate_fqn`/layering scripts, `large_files_allowlist.txt`, `ratchet_budget.json` keys, pinned-jar checksum gate) | `make all`; ratchet budgets unchanged after `--update` |

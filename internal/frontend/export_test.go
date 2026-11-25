@@ -17,7 +17,7 @@ import (
 // TestGolden: every non-bad_ testdata program exports byte-identical JSON to
 // its checked-in golden file. The goldens pin the frontend/v1 wire format;
 // any intentional format change must regenerate them explicitly
-// (UPDATE_GOLDEN=1) and update docs/arch/frontend-v1.md in the same change.
+// (UPDATE_GOLDEN=1) and update docs/archive/frontend-v1.md in the same change.
 //
 // A golden whose uncompressed export exceeds the GitHub API blob size limit
 // (10MB) is stored gzip-compressed as <base>.json.gz instead of <base>.json

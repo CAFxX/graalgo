@@ -101,7 +101,7 @@ local generic type (`main.T?1`: `issue54456.go`, `nested.go`).
 | `mutation.yml` (32 mutants: 27 in `graalgo/frontend`, 4 in `graalgo/values`, 1 runtime; gate = v1 snapshot-check) | nightly | the oracle can fail | nothing: no new-path mutant set | **gap G6**: new-path mutant set against the re-pointed snapshot-check + `test-m1a` (WP-MUT) (D3) |
 | `fuzz-soak.yml` 4a (`tools/fuzz-soak`, `graalgo-sync-run`) | nightly | template-fuzzer differential | `fuzz-newpath.yml` (nightly) and fuzz-soak 4b, both new path | delete 4a and `tools/fuzz-soak/harness` (D3); keep the generator only if 4b uses it |
 | `stdlib-gate.yml` (334 wave programs via 76 `run_differential.sh`) | manual (BUG-0033) | std package behavior | §2.1 row 4: 379/486 on the new path | replace the wave runners by one new-path runner over the wave programs (the method of §1) with a reason-coded register (D3); BUG-0033 becomes that triage |
-| test/corpus topic `run_differential.sh` (9 scripts), `tools/fuzz` | no caller | – | – | delete now (dead, D0) |
+| test/corpus topic `run_differential.sh` (9 scripts), `tools/fuzz` | no caller | – | – | **deleted** (D0, done) |
 | `test/e2e` (module mode, `graalgo-sync-run`) | manual | module-mode build/run | `test-toolexec` multi-package and launcher tests | re-point to the launcher (D4) |
 | `make bench`, `fast-run`, truffle `run`/`run-sched`/`smoke`/`pin-audit` | manual | v1 benchmarks, warm-JVM loop | `make bench-suite`, `bench-realistic`, `bench-m1a` | delete the v1 targets; `bench` = `bench-suite` (D3) |
 | `tools/godebug-diff` (`SchedMain`) | manual | GODEBUG parity | WP-GODEBUG (new path, W5) | re-point to bundles with WP-UPG1, or delete (D3) |
@@ -140,7 +140,7 @@ baselined gate costs of [test/duration-baseline.json](../../test/duration-baseli
 
 | Step | What | Depends on | Per-push saving (dev wall / CPU; CI CPU) | Weekly / nightly saving |
 |---|---|---|---|---|
-| **D0** | **ADR-0017 stage 1** (accepted): `git mv` the archive docs to `docs/archive/` (planned), `test/corpus/lifecycle/normalize.py` → `test/lib/`; plus the proven-dead files of §6 | quiet window | 0 | 0 |
+| **D0** ✅ | **ADR-0017 stage 1** (accepted; **done** 2026-11-25, lane `m3-d0d1`): the archive docs `git mv`'d to [docs/archive/](../archive/) (601 renames; links and the archive skips of `check_doc_paths`/`check_gg_ids`/`check_ratchets`/`check_makefile` re-pointed), the lifecycle corpus's `normalize.py` → [test/lib/](../../test/lib/normalize.py) (6 callers); the proven-dead files of §6 deleted (`tools/fuzz`, the 9 topic `run_differential.sh`, the frontend probe) | quiet window | 0 | 0 |
 | **D1** | **snapshot-check on the new path**: `test/differential/backends-newpath.json` (planned) — the backend of §1 — becomes the `snapshot-check` config; `corpus-exclusions.yaml` re-triaged to the 2 measured divergences (G4 ids); `test-diffharness` drops its `graalgo-sync-run` precondition; the diffharness default `-config` stops naming `backends.json`; `jvmcds.sh sync-env` leaves the recipe | — | **−376 s / −547 s; CI −725 s est.** (433 → 57 wall, 659 → 112 CPU measured) | mutation.yml's per-mutant gate gets ~6× cheaper once G6 lands |
 | **D2** | **conformance and typeparam on the new path**: `run_conformance.sh` uses the new backend, `srctest-exclusions.yaml` re-triaged from §2.1 (39 stale entries deleted, 32 new reason-coded entries citing G1–G4/G7 ids); `TypeparamDifferentialTest` replaced by a `make test-typeparam` (planned) over `diffharness typeparam run` in the weekly job; `typeparam-exclusions.yaml` re-triaged | D1 | 0 (path-filtered job: conformance 234 s wall at 1 job on the new path) | weekly: TypeparamDifferentialTest's share of the 437 s v1 classes |
 | **D3** | **re-point or delete the v1-driven tools**: `test-jit`'s `peguard` → `pe-check-m1a`; `make bench` → `bench-suite`; delete `fast-run`/truffle `run`/`run-sched`/`smoke`/`pin-audit`, fuzz-soak 4a + `tools/fuzz-soak/harness`, the 76 wave `run_differential.sh` + `run_wave*.sh`; `stdlib-gate.yml` → one new-path runner over the wave programs with a register (BUG-0033); `tools/godebug-diff` → bundles or delete; new-path mutant set (G6) in `tools/mutation` | D1 (G6 for mutation) | test-ci ~−15 s CPU est. | fuzz-soak 4a (4 h nightly runner) gone |
@@ -172,13 +172,13 @@ replacement typeparam run costs (162 s wall at 1 job, measured).
    now and `test-regression` is deleted at D6. Proposed: wait (G5 is M2's
    own gate).
 
-## 6. Trivially dead files (proven unused; delete in D0)
+## 6. Trivially dead files (proven unused; deleted in D0)
 
 | Path | Evidence |
 |---|---|
-| [tools/fuzz/](../../tools/fuzz/) | no Makefile target, workflow or script calls it; the only reference outside it is a `.gitignore` line |
+| `tools/fuzz` (deleted) | no Makefile target, workflow or script calls it; the only reference outside it is a `.gitignore` line (removed with it) |
 | the 9 topic `run_differential.sh` of [test/corpus/](../../test/corpus/) (`atomic`, `fastrand`, `iface`, `lifecycle`, `map`, `slice`, `sync`, `timectx`, `traceback`) | `git grep run_differential.sh` outside test/corpus matches only docs; the `.go` programs stay (`test-m1a` reads them) |
-| `internal/frontend/tools/probe/main.go` | zero references outside docs |
+| `internal/frontend/tools/probe/main.go` (deleted) | zero references outside docs |
 
 `tools/stdlib-linkdiff` and `tools/stdlib-vendor` have no caller either, but
 WP-UPG1 may reuse them (ADR-0017): kept until that lane decides.

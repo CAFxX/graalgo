@@ -487,7 +487,7 @@ provenance record); the old draft's terminal-only post-fix numbers
 (debris gate: per-tree log-size cap in `check_tracked_files.py`), from
 `logs/`, `logs-prefix-20261003/`. They remain in history:
 `git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
---name-only 228dd7ab docs/arch/spikes/02b-userspace-scheduler` lists them). To regenerate,
+--name-only 228dd7ab docs/archive/spikes/02b-userspace-scheduler` lists them). To regenerate,
 re-run `build.sh` + `run.sh` in this directory on the pinned toolchains (docs/dev/ENV.md); every log
 this report cites is kept.
 

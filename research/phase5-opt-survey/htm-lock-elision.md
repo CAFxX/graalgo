@@ -3,12 +3,12 @@
 **Status:** exploration, 2026-11-20 (lane docs-tm). Owner request: "explore whether,
 on microarchitectures that efficiently support transactional memory, we can
 automatically elide locks everywhere (or in most places) and replace them with
-transactional memory execution." Backlog item: [PHASES.md](../../docs/arch/PHASES.md)
+transactional memory execution." Backlog item: [PHASES.md](../../docs/archive/PHASES.md)
 §7 ("Hardware transactional lock elision"); SPEC §2.6 `[PROPOSAL]` paragraph; work
 package WP-TMELIDE in [RECOVERY.md](../../docs/arch/RECOVERY.md). Earlier survey
 context: [SURVEY.md](SURVEY.md) ATTEMPTED item 2 (TSX, with the owner note of
 2026-10-06 that TSX-enabled targets are fair game) and
-[T6-optimization-inventory.md](../../docs/arch/research/T6-optimization-inventory.md) §4
+[T6-optimization-inventory.md](../../docs/archive/research/T6-optimization-inventory.md) §4
 (escape-analysis lock elision, a different technique: removing a lock on a
 non-escaping object, expected ~0).
 

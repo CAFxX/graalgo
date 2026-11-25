@@ -5,7 +5,7 @@
 
 graalgo is organized by **function**, not by research phase. New code never
 gets a phase name; the remaining phase-named paths are legacy: the archived
-[docs/arch/phases/](arch/phases/) records, the frozen
+[docs/archive/phases/](archive/phases/) records, the frozen
 [test/corpus/phase1/](../test/corpus/phase1/) and
 [test/corpus/phase2/](../test/corpus/phase2/) corpora, and the v1
 `p3*` Java packages and [p3frontend/](../internal/frontend/p3frontend/)
@@ -33,8 +33,8 @@ directory's README repeats its status.
 | new | [internal/toolexec/](../internal/toolexec/README.md), [internal/backend/gir/](../internal/backend/gir/README.md), `graalgo.go.*` + `graalgo.syscall` in [internal/backend/truffle/](../internal/backend/truffle/README.md), [graalgo-bundle-run](../internal/backend/graalgo-bundle-run), [stdlib/](../stdlib/README.md), [test/m1a/](../test/m1a/README.md), [test/m1r/](../test/m1r/README.md), [test/m1c/](../test/m1c/README.md), [test/m1w13/](../test/m1w13/README.md), [test/imgcheck/](../test/imgcheck/), [test/fuzz/](../test/fuzz/README.md), [test/bench/suite/](../test/bench/suite/), [test/bench/realistic/](../test/bench/realistic/README.md) |
 | shared | the runtime packages of [internal/backend/truffle/](../internal/backend/truffle/README.md) (`sched`, `runtime`, `safepoint`, `jfr`, `language`), [test/corpus/](../test/corpus/README.md), [test/lib/](../test/lib/), [test/java/](../test/java/), [test/snapshots/](../test/snapshots/README.md), [tools/req/](../tools/req/README.md), [tools/torture/](../tools/torture/), [requirements/](../requirements/), [.github/](../.github/) |
 | v1 | [cmd/graalgo/](../cmd/graalgo/README.md) (becomes the launcher), [internal/frontend/](../internal/frontend/README.md), [internal/driver/](../internal/driver/), [internal/vet/](../internal/vet/README.md), [internal/backend/interop/](../internal/backend/interop/README.md), `graalgo.{frontend,values,sched.launcher}` + `launcher.Main` in truffle, [graalgo-run](../internal/backend/graalgo-run), [graalgo-sync-run](../internal/backend/graalgo-sync-run), [tools/gate1/](../tools/gate1/README.md) |
-| v1-driven | [test/differential/](../test/differential/README.md) (`snapshot-check`), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz`, `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
-| history | [docs/arch/](arch/) `phases/`, `reviews/`, `spikes/`, `research/`, FEASIBILITY, PHASES, frontend-v1/v2; [docs/spec/](spec/); [research/](../research/); [test/spikes/](../test/spikes/) |
+| v1-driven | [test/differential/](../test/differential/README.md) (`snapshot-check`), [test/regression/](../test/regression/), [test/e2e/](../test/e2e/README.md), [test/jit/](../test/jit/), `make bench`, [tools/](../tools/README.md) `fuzz-soak`, `mutation`, `godebug-diff`, `run_stdlib_gate.sh`, `make fast-run` |
+| history | [docs/archive/](archive/) (`phases/`, `reviews/`, `spikes/`, `research/`, `spec/`, FEASIBILITY, PHASES, frontend-v1/v2); [research/](../research/); [test/spikes/](../test/spikes/) |
 
 ## Directory tree
 
@@ -134,11 +134,11 @@ directory's README repeats its status.
     - [javatest/](../internal/frontend/javatest/) — `NodeFactoryTest.java`
       plus `golden_*`/`bad*` fixtures (Java wire-format tests living under
       the Go module dir).
-    - [tools/](../internal/frontend/tools/) — `probe/` and
+    - [tools/](../internal/frontend/tools/) —
       `validate_frontend_v1.py` (wire-format validation).
     - [v2/](../internal/frontend/v2/) — separate module (own `go.mod`): the
       frontend v2 prototype, superseded by the toolexec GIR path
-      ([frontend-v2.md](arch/frontend-v2.md) is historical) (parser → checker → emitter stages plus the
+      ([frontend-v2.md](archive/frontend-v2.md) is historical) (parser → checker → emitter stages plus the
       Go→Java binary interface in
       [encode/](../internal/frontend/v2/encode/), decoded by
       [BinaryDecoder.java](../internal/backend/truffle/src/main/java/graalgo/frontend/v2/BinaryDecoder.java)
@@ -146,7 +146,7 @@ directory's README repeats its status.
       `TestEncodeIntContract`/`TestEncodeGoldenDoc` on the Go side and
       `BinaryDecoderTest` on the Java side; `make test-v2` runs its suite).
   - The IR is the `frontend/v1` JSON wire format: specified in
-    [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
+    [docs/archive/frontend-v1.md](archive/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by
     [internal/frontend/tools/validate_frontend_v1.py](../internal/frontend/tools/validate_frontend_v1.py)),
     consumed by `graalgo.frontend.NodeFactory` in the backend. There is no
@@ -303,8 +303,9 @@ directory's README repeats its status.
     - [lifecycle/](../test/corpus/lifecycle/) — program lifecycle and
       panic model vs gc (exit on main return, fatal goroutine panics,
       deadlock detection, panic chains, runtime error values, GOMAXPROCS,
-      slot-releasing pipe reads); runner
-      [run_differential.sh](../test/corpus/lifecycle/run_differential.sh).
+      slot-releasing pipe reads); its import-free programs run in
+      `make test-m1a` (the topic corpora's v1 `run_differential.sh` runners
+      were deleted, m3-plan D0).
   - [differential/](../test/differential/) — the differential harness: run
     each corpus program under graalgo and under `gc`, byte-compare outputs.
     Moved here from `tools/diffharness/` (2026-10-13). Reviewed,
@@ -329,6 +330,9 @@ directory's README repeats its status.
     path; [gcoracle.sh](../test/lib/gcoracle.sh) replays their gc leg from
     a content-addressed cache; [jvmcds.sh](../test/lib/jvmcds.sh) gives
     their runner JVMs a class-data-sharing archive;
+    [normalize.py](../test/lib/normalize.py) is their stderr normalizer
+    (goroutine ids, frame lines, addresses; moved from the lifecycle corpus
+    by ADR-0017 stage 1);
     [batchrun.sh](../test/lib/batchrun.sh) runs their graalgo legs in one
     JVM, a fresh context per program (`graalgo-bundle-run --batch`,
     `graalgo.launcher.BundleBatchMain`; a program that kills the JVM and
@@ -521,9 +525,10 @@ directory's README repeats its status.
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
   - [MAP.md](../docs/MAP.md) — the task-oriented entry point (task →
     place, data flow, legacy list, naming).
-  - [arch/](../docs/arch/) — architecture documentation, consolidated from
-    the research-era [SPEC.md](arch/SPEC.md), [PHASES.md](arch/PHASES.md), and
-    [FEASIBILITY.md](arch/FEASIBILITY.md).
+  - [arch/](../docs/arch/) — current architecture documentation:
+    [SPEC.md](arch/SPEC.md) (authoritative), consolidated from the
+    research-era [PHASES.md](archive/PHASES.md) and
+    [FEASIBILITY.md](archive/FEASIBILITY.md).
     [RECOVERY.md](arch/RECOVERY.md) is the 2026-11-17 recovery plan;
     [abi-spike.md](arch/abi-spike.md) reports the two de-risking prototypes
     of that design (verbatim reflect on descriptor views; the syscall table);
@@ -536,8 +541,14 @@ directory's README repeats its status.
     register cited by exclusions and quarantines ([bugs.md](dev/bugs.md)),
     and architecture decision records (ADRs; research-era ones moved here from
     [docs/dev/adr/](../docs/dev/adr/)).
-  - [spec/](../docs/spec/) — language conformance notes (the research-era
-    [spec/](spec/) content, curated).
+  - [archive/](../docs/archive/) — history, not claims about today
+    (ADR-0017 stage 1; skipped by the doc-path and GG-id gates):
+    [phases/](archive/phases/), [reviews/](archive/reviews/),
+    [spikes/](archive/spikes/), [research/](archive/research/),
+    [spec/](archive/spec/) (the research-era conformance notes, interface
+    freeze and spec extract), [FEASIBILITY.md](archive/FEASIBILITY.md),
+    [PHASES.md](archive/PHASES.md), [frontend-v1.md](archive/frontend-v1.md),
+    [frontend-v2.md](archive/frontend-v2.md).
 - [tools/](../tools/) — developer tooling (not the product):
   [stdlib-fork/](../tools/stdlib-fork/),
   [stdlib-vendor/](../tools/stdlib-vendor/) (vendors a pinned GOROOT/src
@@ -552,8 +563,7 @@ directory's README repeats its status.
   [gha/](../tools/fuzz-soak/gha/) GitHub Actions fan-out recipe,
   [findings/](../tools/fuzz-soak/findings/) recorded findings,
   [run_soak.sh](../tools/fuzz-soak/run_soak.sh) entry point used by
-  [fuzz-soak.yml](../.github/workflows/fuzz-soak.yml)) and
-  [fuzz/](../tools/fuzz/) (fuzzing),
+  [fuzz-soak.yml](../.github/workflows/fuzz-soak.yml)),
   [torture/](../tools/torture/) (scheduler torture),
   [godebug-diff/](../tools/godebug-diff/),
   [mutation/](../tools/mutation/) (mutates graalgo on a scratch copy and
@@ -569,12 +579,12 @@ directory's README repeats its status.
 - [research/](../research/) — active research tracks:
   [phase5-opt-survey/](../research/phase5-opt-survey/) (Phase-5 work).
   Finished studies are archived under
-  [docs/arch/research/](arch/research/).
+  [docs/archive/research/](archive/research/).
 
 > Migration complete (2026-10-14): the `phases/` directories have been
 > removed from the tracked tree. All active code, docs, and tooling now
 > live in the new layout. Historical phase documents are archived under
-> [docs/arch/phases/](arch/phases/). Gitignored local build debris (e.g.
+> [docs/archive/phases/](archive/phases/). Gitignored local build debris (e.g.
 > stale `phases/*/out/` on a developer's disk) is not part of the repo and
 > is safe to delete.
 
@@ -605,11 +615,11 @@ new locations.
 | `modprobe/` | [test/e2e/](../test/e2e/) (landed 2026-10-14; harness, uuid cases, bug log) |
 | `SPEC.md`, `PHASES.md`, `FEASIBILITY.md` | [docs/arch/](../docs/arch/) (one consolidated arch doc) |
 | `adr/` | [docs/dev/adr/](../docs/dev/adr/) (landed 2026-10-14) |
-| `spikes/` | [docs/arch/spikes/](../docs/arch/spikes/) (landed 2026-10-14; cited by the archived phase docs) |
-| `reviews/` | [docs/arch/reviews/](../docs/arch/reviews/) (landed 2026-10-14; cited by the archived phase docs) |
-| `research/` study tracks (`T1`–`T8`, OUTLINEs) | [docs/arch/research/](../docs/arch/research/) (landed 2026-10-14); `research/phase5-opt-survey/` stays — active Phase-5 work |
+| `spikes/` | [docs/archive/spikes/](archive/spikes/) (landed 2026-10-14; cited by the archived phase docs) |
+| `reviews/` | [docs/archive/reviews/](archive/reviews/) (landed 2026-10-14; cited by the archived phase docs) |
+| `research/` study tracks (`T1`–`T8`, OUTLINEs) | [docs/archive/research/](archive/research/) (landed 2026-10-14); `research/phase5-opt-survey/` stays — active Phase-5 work |
 | `requirements/` | still at root — live registry, `tools/req/` walks up to find it; move deferred |
-| `spec/` | removed 2026-10-14 — was outline drafts and rework scratch, not curated spec content (which lives in [docs/spec/](../docs/spec/)) |
+| `spec/` | removed 2026-10-14 — was outline drafts and rework scratch, not curated spec content (which lives in [docs/archive/spec/](archive/spec/)) |
 | `hidden_files/` | removed — evidence lives in commit messages |
 | `phases/*/out/`, `*.err`, compiled binaries | removed — build artifacts, covered by [.gitignore](../.gitignore) |
 | `phases/` (all) | **removed 2026-10-14** — migration complete, zero tracked files remain |

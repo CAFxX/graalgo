@@ -97,7 +97,7 @@ final class RtMemStats {
      *       max-seen accumulator is deliberately <em>not</em> used: it
      *       would still not be allocation volume while looking more
      *       trustworthy. (Documented user-facing in
-     *       docs/arch/phases/phase2/DIVERGENCES.md, DIV-M4-11; the pinned
+     *       docs/archive/phases/phase2/DIVERGENCES.md, DIV-M4-11; the pinned
      *       semantics are asserted by
      *       {@code RtMemStatsTest.testTotalAllocIsLiveHeapUsed}.)
      *   <li>{@code Lookups}/{@code Mallocs}/{@code Frees}: pinned at 0 —

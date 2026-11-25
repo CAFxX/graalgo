@@ -9,7 +9,7 @@ unless its path matches an entry of the allowlist
 `#` and the reason; a line without a reason is rejected).
 
 It also caps run-log debris per tree: the tracked log files
-(LOG_SUFFIXES) under any 3-component directory (e.g. docs/arch/spikes)
+(LOG_SUFFIXES) under any 3-component directory (e.g. docs/archive/spikes)
 may total at most TREE_LOG_CAP (1.5 MiB) — 298 spike logs (19.8 MB) had
 accumulated one small file at a time under the per-file limit. Logs a
 report cites stay; the rest live in history and in commit messages.

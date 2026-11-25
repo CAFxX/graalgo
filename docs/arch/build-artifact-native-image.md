@@ -20,7 +20,7 @@ compilation embedded, so guest (Go) code still JIT-compiles at run time
 with speculation and deoptimization.
 
 The T6 optimization inventory
-([docs/arch/research/T6-optimization-inventory.md](research/T6-optimization-inventory.md))
+([docs/archive/research/T6-optimization-inventory.md](../archive/research/T6-optimization-inventory.md))
 documents that this is real and shipping:
 
 - Truffle runtime compilation inside a Native Image is demonstrated (Protos
@@ -60,7 +60,7 @@ documents that this is real and shipping:
    - Isolates are native-image-only. In pure-JIT mode the fallback is
      polyglot `Context`s in one shared heap (weaker isolation).
    - See [docs/arch/SPEC.md](SPEC.md) §583 and
-     [docs/arch/research/T7-jvm-integration.md](research/T7-jvm-integration.md).
+     [docs/archive/research/T7-jvm-integration.md](../archive/research/T7-jvm-integration.md).
 
 ### Non-goals for the launcher binary
 
@@ -77,10 +77,10 @@ not grow into a poor man's native-image:
 
 ## References
 
-- [T6 optimization inventory](research/T6-optimization-inventory.md) —
+- [T6 optimization inventory](../archive/research/T6-optimization-inventory.md) —
   hybrid mode existence proof, build-time costs.
-- [T7 JVM integration](research/T7-jvm-integration.md) — isolates,
+- [T7 JVM integration](../archive/research/T7-jvm-integration.md) — isolates,
   native-access, JFR in native-image mode.
 - [SPEC.md](SPEC.md) §583, §637, §990 — isolates native-image-only,
   reflection scanning, closure decision.
-- [FEASIBILITY.md](FEASIBILITY.md) §187, §404 — isolate containment modes.
+- [FEASIBILITY.md](../archive/FEASIBILITY.md) §187, §404 — isolate containment modes.

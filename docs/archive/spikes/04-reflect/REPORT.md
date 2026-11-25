@@ -208,7 +208,7 @@ that actually churned is TD-R (module/type-offset resolution) — ranked Tier 1.
 (debris gate: per-tree log-size cap in `check_tracked_files.py`), from
 `logs/`. They remain in history:
 `git show 228dd7ab:<path>` (the last commit that has them; `git ls-tree -r
---name-only 228dd7ab docs/arch/spikes/04-reflect` lists them). To regenerate,
+--name-only 228dd7ab docs/archive/spikes/04-reflect` lists them). To regenerate,
 re-run the commands this report describes on the pinned toolchains (docs/dev/ENV.md); every log
 this report cites is kept.
 

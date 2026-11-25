@@ -4,7 +4,7 @@
 |---|---|---|
 | [req/](req/README.md) | shared | requirements CLI over [requirements/](../requirements/); `req lint` runs in `make check` |
 | [mutation/](mutation/) | v1-driven | mutates graalgo, requires the snapshot gate to go red (`make mutation`, nightly) |
-| [fuzz/](fuzz/), [fuzz-soak/](fuzz-soak/) | v1-driven | program-generator fuzzing via `graalgo-sync-run` (nightly soak); the new path's fuzzer is [test/fuzz/](../test/fuzz/README.md) |
+| [fuzz-soak/](fuzz-soak/) | v1-driven | program-generator fuzzing via `graalgo-sync-run` (nightly soak; v1's `tools/fuzz` was deleted, m3-plan D0); the new path's fuzzer is [test/fuzz/](../test/fuzz/README.md) |
 | [torture/](torture/) | shared | scheduler torture battery |
 | [godebug-diff/](godebug-diff/) | v1-driven | emulated GODEBUG knobs vs gc (runs v1 `SchedMain`) |
 | [stdlib-fork/](stdlib-fork/) | v1-era data | Phase-3 std inventories (asm, linkname, coupled packages), vendor manifest, `exclusions.yaml` (checked by `make check`); the new path's fork is [stdlib/](../stdlib/README.md) |

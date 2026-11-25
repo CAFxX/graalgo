@@ -1,7 +1,7 @@
 # frontend/v2 — proper parser → AST pipeline
 
 > **HISTORICAL — superseded (2026-11-18).** This design is replaced by the
-> per-package `-toolexec` path of [toolexec-design.md](toolexec-design.md):
+> per-package `-toolexec` path of [toolexec-design.md](../arch/toolexec-design.md):
 > D11 (v1 and its node classes are deleted at one M3 cutover) and D12 (a new
 > idiomatic Truffle node package fed by the GIR typed IR, not by a direct
 > Go→Java API). The [internal/frontend/v2/](../../internal/frontend/v2/)

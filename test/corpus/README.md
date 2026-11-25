@@ -13,8 +13,8 @@ Frozen in spirit: new-path programs go to `test/m1*/programs/`.
   [map/](map/), [slice/](slice/), [sync/](sync/), [timectx/](timectx/),
   [traceback/](traceback/)
 - [lifecycle/](lifecycle/README.md) — exit, fatal panics, deadlock detection
-  vs gc (v1 runner); its [normalize.py](lifecycle/normalize.py) is the stderr
-  normalizer **every new-path gate uses**
+  vs gc; the stderr normalizer it introduced, every new-path gate's, is now
+  [test/lib/normalize.py](../lib/normalize.py)
 
 **Not here:** the snapshot corpus of `make snapshot-check`
 ([test/differential/corpus/](../differential/corpus/README.md)); gc's

@@ -27,12 +27,10 @@ lane T0.A and SPEC §3.5 ([docs/arch/SPEC.md](../../../docs/arch/SPEC.md)).
 ## Files and comparison
 
 - [regen.sh](regen.sh) records `<prog>.expected` from gc: stdout, the
-  stderr normalized by [normalize.py](normalize.py), and the exit code.
-- [run_differential.sh](run_differential.sh) runs each program under
-  `internal/backend/graalgo-sync-run` (override with `GRAALGO_SYNC_RUN`)
-  with `GOMAXPROCS=1` and stdin at `/dev/null`, one JVM at a time, and
-  compares against `.expected`. A hang fails via the per-program timeout
-  (`DH_TIMEOUT`, default 120 s).
+  stderr normalized by [normalize.py](../../lib/normalize.py), and the exit code.
+- The import-free programs run on the new path in `make test-m1a` (gc vs graalgo,
+  `GOMAXPROCS=1`, stdin at `/dev/null`); the v1 runner that compared them
+  with `.expected` was deleted (m3-plan D0).
 
 The normalization keeps what the lifecycle owns — fatal/panic message
 lines, the panic chain, and `goroutine N [reason]:` headers (also in the

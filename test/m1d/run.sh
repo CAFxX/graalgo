@@ -14,7 +14,7 @@
 # system calls go through the role table (internal/toolexec/syscalls/table.txt).
 #
 # Compared per program: stdout (bytes), stderr (normalized by
-# test/corpus/lifecycle/normalize.py) and the exit status. Both executables
+# test/lib/normalize.py) and the exit status. Both executables
 # are named `prog` and run as `./prog` from their own directory, so os.Args[0]
 # is compared too (BUG-0029).
 #
@@ -58,7 +58,7 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 command -v python3 >/dev/null || infra_die "python3 not found"
 infra_mktemp m1d
 TIMEOUT="${M1D_TIMEOUT:-120}"
-NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
+NORMALIZE="$ROOT/test/lib/normalize.py"
 toolexec_setup
 export GODEBUG=cpu.all=off
 

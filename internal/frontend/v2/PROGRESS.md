@@ -1,11 +1,11 @@
 # frontend/v2 — progress tracker
 
-Long-lived parallel track. See [docs/arch/frontend-v2.md](../../../docs/arch/frontend-v2.md)
+Long-lived parallel track. See [docs/archive/frontend-v2.md](../../../docs/archive/frontend-v2.md)
 for the design.
 
 ## 2026-10-15 — Bootstrap
 
-- [x] Design doc written (`docs/arch/frontend-v2.md`)
+- [x] Design doc written (`docs/archive/frontend-v2.md`)
 - [x] Module skeleton (`internal/frontend/v2/go.mod`)
 - [x] Stage 1 (parser): `go/parser` wrapper, parses files to `*ast.Package`
 - [x] Stage 2 (checker): `go/types` wrapper, real importer (no synthetics)

@@ -84,16 +84,16 @@ the measured readiness, gaps and ordered deletion steps: [m3-plan.md](arch/m3-pl
 - launchers [graalgo-run](../internal/backend/graalgo-run) and
   [graalgo-sync-run](../internal/backend/graalgo-sync-run);
   [tools/gate1/](../tools/gate1/)
-- docs of the v1 format: [frontend-v1.md](arch/frontend-v1.md),
-  [frontend-v2.md](arch/frontend-v2.md) (historical),
+- docs of the v1 format: [frontend-v1.md](archive/frontend-v1.md),
+  [frontend-v2.md](archive/frontend-v2.md) (historical),
   [bridge-inventory.md](arch/bridge-inventory.md) (the frozen list)
 
 Still **v1-driven** today but not in §9.1 (they must be re-pointed at M3,
 see ADR-0017): `make snapshot-check` / [test/differential/](../test/differential/README.md),
 [test/regression/](../test/regression/), [test/e2e/](../test/e2e/),
-[test/jit/](../test/jit/), [test/corpus/lifecycle/](../test/corpus/lifecycle/),
+[test/jit/](../test/jit/),
 `make bench` ([test/bench/run.sh](../test/bench/run.sh)),
-[tools/fuzz/](../tools/fuzz/), [tools/fuzz-soak/](../tools/fuzz-soak/),
+[tools/fuzz-soak/](../tools/fuzz-soak/),
 [tools/mutation/](../tools/mutation/), [tools/godebug-diff/](../tools/godebug-diff/),
 [tools/run_stdlib_gate.sh](../tools/run_stdlib_gate.sh), `make fast-run`.
 
@@ -142,10 +142,11 @@ packages, test matrix), [abi-spike.md](arch/abi-spike.md),
 [tstring-bytecode-study.md](arch/tstring-bytecode-study.md) (WP-TR-AUDIT-12:
 TruffleString and Bytecode DSL go/no-go, ADR-0021/0022 proposed),
 [m3-plan.md](arch/m3-plan.md) (M3 readiness and deletion steps), [dev/](dev/).
-History (read for context only): [FEASIBILITY.md](arch/FEASIBILITY.md),
-[PHASES.md](arch/PHASES.md), [phases/](arch/phases/), [reviews/](arch/reviews/),
-[spikes/](arch/spikes/), [research/](arch/research/), [docs/spec/](spec/),
-[frontend-v1.md](arch/frontend-v1.md), [frontend-v2.md](arch/frontend-v2.md),
+History (read for context only), all under [docs/archive/](archive/)
+(ADR-0017 stage 1): [FEASIBILITY.md](archive/FEASIBILITY.md),
+[PHASES.md](archive/PHASES.md), [phases/](archive/phases/), [reviews/](archive/reviews/),
+[spikes/](archive/spikes/), [research/](archive/research/), [spec/](archive/spec/),
+[frontend-v1.md](archive/frontend-v1.md), [frontend-v2.md](archive/frontend-v2.md);
 [build-artifact-native-image.md](arch/build-artifact-native-image.md),
 [non-scalar-specialization-audit.md](arch/non-scalar-specialization-audit.md),
 [research/](../research/) (Phase-5 survey).

@@ -12,7 +12,7 @@ loader mechanism (`phases/phase3/src/p3frontend/asm.go`, hooked into
 (netpoller deletion); GG-0023 (Linux-first); ADR-0004 (intrinsic surface,
 linkname registry); P3-M4 intrinsic audit
 (`phases/phase3/hidden_files/m4/intrinsic-audit.md`); research T4
-([T4-stdlib-reuse.md](../../arch/research/T4-stdlib-reuse.md) §"What unchanged really requires").
+([T4-stdlib-reuse.md](../../archive/research/T4-stdlib-reuse.md) §"What unchanged really requires").
 
 ## Context
 

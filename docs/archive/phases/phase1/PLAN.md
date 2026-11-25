@@ -5,7 +5,7 @@
 the historical record of what was planned; the checkpoint is the record of
 what was delivered.
 **Normative:** SPEC.md (ACCEPTED 2026-10-03), ADR-0001, PHASES.md §3. 70 GG IDs locked.
-**Extracts:** [spec-extract.md](../../../spec/spec-extract.md) (54 items), [req-phase-map.md](req-phase-map.md) (31 Phase-1 IDs).
+**Extracts:** [spec-extract.md](../../spec/spec-extract.md) (54 items), [req-phase-map.md](req-phase-map.md) (31 Phase-1 IDs).
 
 ## 1. Objective and scope
 
