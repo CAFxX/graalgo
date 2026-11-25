@@ -46,6 +46,19 @@ public final class GoProcess {
     /** The pc table and stack walks of this process (runtime.Callers, tracebacks). */
     public final Stacks stacks = new Stacks();
     /**
+     * The runtime state of this process's timers ({@code time.newTimer}), keyed weakly by the
+     * {@code *Timer} object (graalgo.go.intrinsics.TimeIntrinsics owns the values). Per process,
+     * never static: a static map's values (which reach the process) kept a closed context's whole
+     * program alive until the map's next use (BUG-0052).
+     */
+    public final java.util.Map<graalgo.go.values.Flat, Object> timers =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+    /**
+     * {@code sync}'s semaphore table (gc's {@code semtable}; graalgo.go.intrinsics.SyncIntrinsics
+     * owns it), created on first use under this object's lock.
+     */
+    public volatile Object semtable;
+    /**
      * {@code sync}'s pool cleanup ({@code runtime_registerPoolCleanup}), run by {@code runtime.GC}
      * as gc runs it at the start of every collection; null until {@code sync} initializes.
      */
@@ -53,11 +66,28 @@ public final class GoProcess {
     /** {@code internal/godebug}'s update hook ({@code setUpdate}): called with the GODEBUG setting when it changes. */
     public volatile graalgo.go.values.Closure godebugUpdate;
 
-    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
+    /** The link's {@code -X runtime.godebugDefault}: the program's default GODEBUG settings. */
+    public final String godebugDefault;
+    /** gc's {@code debug.panicnil}: 1 makes {@code panic(nil)} panic with a nil value. */
+    private volatile int panicNil;
+
+    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types, String godebugDefault) {
         this.globals = globals;
         this.sched = sched;
         this.err = err;
         this.types = types;
+        this.godebugDefault = godebugDefault;
+        this.panicNil = Godebug.startup("panicnil", godebugDefault, System.getenv("GODEBUG"));
+    }
+
+    public int panicNil() {
+        return panicNil;
+    }
+
+    /** gc {@code reparsedebugvars}: the GODEBUG environment variable changed to {@code env}. */
+    @TruffleBoundary
+    public void godebugChanged(String env) {
+        panicNil = Godebug.reparse("panicnil", godebugDefault, env, panicNil);
     }
 
     @TruffleBoundary
@@ -224,6 +254,9 @@ public final class GoProcess {
      * address of its data word, which the test normalizer masks.
      */
     private String renderValue(Object value) {
+        if (value == null) {
+            return "nil"; // panic(nil) under GODEBUG=panicnil=1
+        }
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e) {
             return indent(e.errorString());
@@ -267,6 +300,9 @@ public final class GoProcess {
      * any other value as {@code type <dynamic type>}.
      */
     private static String throwValueText(Object value) {
+        if (value == null) {
+            return "nil";
+        }
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e && e.typeName() != null) {
             return "type " + e.typeName();

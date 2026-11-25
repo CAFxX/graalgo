@@ -44,9 +44,13 @@ var (
 
 // stripMarkdownCode removes fenced code blocks and inline code spans.
 // IDs inside them are illustrative (docs examples), not normative, and are
-// therefore exempt from lint rule (a).
+// therefore exempt from lint rule (a). A fenced block is replaced by its
+// newlines, so every reported line number still names the file's real line
+// (supersede/retire edit the file at those lines).
 func stripMarkdownCode(s string) string {
-	s = fenceRe.ReplaceAllString(s, "")
+	s = fenceRe.ReplaceAllStringFunc(s, func(block string) string {
+		return strings.Repeat("\n", strings.Count(block, "\n"))
+	})
 	s = inlineRe.ReplaceAllString(s, "")
 	return s
 }

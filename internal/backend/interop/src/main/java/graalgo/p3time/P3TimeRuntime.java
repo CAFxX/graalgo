@@ -29,7 +29,7 @@ import graalgo.sched.SchedulerCore;
  * must never observe "registered but not yet spawned" (that would shut
  * down a timer whose Go owner is still alive and about to use it).
  *
- * <p>verifies: GG-0073 (time slice)
+ * <p>verifies: GG-0074 (time slice)
  */
 public final class P3TimeRuntime {
     private P3TimeRuntime() {}

@@ -6,7 +6,7 @@ and ratchet their cost against test/duration-baseline.json.
                  [--ratchet off|warn|fail] [--cache warm|cold]
                  [--format auto|plain|github] [--shard I/N] [TARGET...]
     gates.py shards N [--baseline FILE] [--cache warm|cold] [TARGET...]
-    gates.py record RUN_JSON... [--baseline FILE]
+    gates.py record RUN_JSON... [--baseline FILE] [--reason TEXT]
 
 `run` with no TARGET runs the prerequisites of the Makefile's `all:` rule
 (the per-push set, so the two cannot drift apart); a TARGET named `all`
@@ -37,6 +37,17 @@ back to "cpu_cold" (a cold number is never lower than the warm one, so the
 fallback can only be lax, never a false failure); a cold run compares only
 with "cpu_cold" — a target with no cold number is NEW, never failed.
 `record` files a run under the section of the run's --cache.
+
+Forward-only baseline. A re-record could otherwise launder a regression
+(record the slower run, and the ratchet compares with the slower number).
+So a target whose "cpu"/"cpu_cold" number is NEW, or rose more than
+RISE_RATIO (25%) + RISE_SLACK (1 s: sub-second targets jitter) over the
+committed one ("cpu" falls back to "cpu_cold" like the ratchet), needs a
+`reason` entry for that target ("reason": {target: text}) added or changed
+in the same change: check_ratchets.py (make check-repo) compares each
+baseline file with the git base and fails otherwise (`unreasoned_rises`).
+`record --reason TEXT` writes TEXT for exactly the targets that need one
+(and lists them); without it, record lists them and check-repo will fail.
 
 --format: `github` wraps each gate's output in ::group:: (GitHub Actions
 log folding), `plain` in `== target` lines; `auto` (default) picks github
@@ -69,6 +80,8 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 SETUP = ["generate", "build", "graalgo", "java-test-classes"]
 WARN_RATIO, WARN_SLACK = 1.2, 5.0
 FAIL_SLACK = 30.0
+RISE_RATIO, RISE_SLACK = 1.25, 1.0
+RATCHETED = ("cpu", "cpu_cold")
 DEFAULT_BASELINE = os.path.join(ROOT, "test", "duration-baseline.json")
 # Gates that share a scratch directory with fixed file names never run
 # concurrently: the truffle module's JVM tests (test-pin-smoke, `check`'s
@@ -353,14 +366,34 @@ def report(results, base, mode, fail_ratio, skipped):
     return bad
 
 
+def unreasoned_rises(was, now):
+    """[(section, target, old, new)] of baseline `now` (a parsed baseline
+    file) whose cpu/cpu_cold number is new or rose past RISE_RATIO x old +
+    RISE_SLACK against baseline `was`, without a reason that `now` added or
+    changed (module docstring: forward-only baseline)."""
+    out = []
+    reasons, old_reasons = now.get("reason", {}), was.get("reason", {})
+    for sec in RATCHETED:
+        for t, v in sorted(now.get(sec, {}).items()):
+            old = was.get(sec, {}).get(t)
+            if old is None and sec == "cpu":
+                old = was.get("cpu_cold", {}).get(t)
+            if old is not None and v <= old * RISE_RATIO + RISE_SLACK:
+                continue
+            if reasons.get(t) and reasons[t] != old_reasons.get(t):
+                continue
+            out.append((sec, t, old, v))
+    return out
+
+
 def cmd_record(a):
-    old = {}
+    prev = {}
     if os.path.exists(a.baseline):
         with open(a.baseline) as f:
-            old = json.load(f)
+            prev = json.load(f)
     # several runs (CI's shards, each also running the SETUP targets):
     # the max per target and section, so a normal run does not flap
-    new = {}
+    got = {}
     for path in a.run_json:
         with open(path) as f:
             run = json.load(f)
@@ -369,16 +402,26 @@ def cmd_record(a):
             if r["rc"] != 0:
                 continue
             for kind in ("cpu", "wall"):
-                sec = new.setdefault(section(cache, kind), {})
+                sec = got.setdefault(section(cache, kind), {})
                 sec[t] = max(sec.get(t, r[kind]), r[kind])
-    for sec, vals in new.items():
-        old.setdefault(sec, {}).update(vals)
-    cpu = {t for sec, vals in new.items() if sec.startswith("cpu") for t in vals}
+    new = json.loads(json.dumps(prev))
+    for sec, vals in got.items():
+        new.setdefault(sec, {}).update(vals)
+    cpu = {t for sec, vals in got.items() if sec.startswith("cpu") for t in vals}
+    rises = unreasoned_rises(prev, new)
+    if rises and a.reason:
+        new.setdefault("reason", {}).update({t: a.reason for _, t, _, _ in rises})
     with open(a.baseline, "w") as f:
-        json.dump(old, f, indent=1, sort_keys=True)
+        json.dump(new, f, indent=1, sort_keys=True)
         f.write("\n")
     print("gates: recorded %d targets (%s) from %d run(s) into %s"
-          % (len(cpu), " ".join(sorted(new)) or "-", len(a.run_json), a.baseline))
+          % (len(cpu), " ".join(sorted(got)) or "-", len(a.run_json), a.baseline))
+    for sec, t, o, v in rises:
+        print("gates: %s %s: %s -> %.1f s %s" % (sec, t, "NEW" if o is None else "%.1f" % o, v,
+                                                "(reason recorded)" if a.reason else "NEEDS A REASON"))
+    if rises and not a.reason:
+        print("gates: a new or >25%% higher baseline needs a reason (re-run with --reason TEXT); "
+              "make check-repo fails without one")
     return 0
 
 
@@ -418,6 +461,8 @@ def main(argv=None):
     rec = sub.add_parser("record")
     rec.add_argument("run_json", nargs="+")
     rec.add_argument("--baseline", default=DEFAULT_BASELINE)
+    rec.add_argument("--reason", help="why a new or >25%% higher number is intended "
+                     "(written for exactly the targets that need one)")
     a = ap.parse_args(argv)
     if a.cmd == "run":
         if a.jobs < 1:

@@ -5,6 +5,8 @@ import com.oracle.truffle.api.nodes.Node;
 import graalgo.go.runtime.GoProcess;
 import graalgo.go.runtime.Panics;
 import graalgo.go.runtime.Stacks;
+import graalgo.go.types.Descriptors;
+import graalgo.go.types.GoType;
 import graalgo.go.values.Slice;
 import graalgo.go.values.Str;
 import graalgo.runtime.GoErrors;
@@ -130,6 +132,30 @@ final class RuntimeIntrinsics {
 
     static long runtime_nanotime(Node node) {
         return System.nanoTime();
+    }
+
+    /** {@code runtime.typeString(t)}: upstream's {@code toRType(t).string()}. */
+    @TruffleBoundary
+    static Str runtime_typeString(Node node, Object t) {
+        return Str.of(descriptorType(node, t).str());
+    }
+
+    /**
+     * {@code runtime.typePkgPath(t)}: upstream's {@code toRType(t).pkgpath()} for the types a
+     * failed assertion compares: a defined type's package path, "" for any other type.
+     */
+    @TruffleBoundary
+    static Str runtime_typePkgPath(Node node, Object t) {
+        GoType g = descriptorType(node, t);
+        return g.isNamed() && g.pkg != null ? Str.of(g.pkg) : Str.EMPTY;
+    }
+
+    private static GoType descriptorType(Node node, Object t) {
+        GoType g = Descriptors.typeOf(t);
+        if (g == null) {
+            throw Panics.fatal(node, "type descriptor not built by the runtime");
+        }
+        return g;
     }
 
     /**

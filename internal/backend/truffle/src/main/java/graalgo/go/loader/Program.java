@@ -63,6 +63,15 @@ public final class Program {
         this.types = runtime.table;
     }
 
+    private static final String GODEBUG_DEFAULT = "runtime.godebugDefault=";
+
+    private String godebugDefault = "";
+
+    /** The link's {@code -X runtime.godebugDefault} ("" when cmd/go set none). */
+    public String godebugDefault() {
+        return godebugDefault;
+    }
+
     /** Decodes a bundle; function bodies stay undecoded. */
     public static Program load(GoLanguage language, byte[] bundle) {
         Program p = new Program(language);
@@ -77,10 +86,14 @@ public final class Program {
         }
         bytes(bundle, pos);
         String mainPath = new String(bytes(bundle, pos), StandardCharsets.UTF_8);
-        // link -X settings and the main module's build info: carried by the bundle, applied
-        // by a later work package (toolexec-design §3.6).
+        // link -X settings: the link applied them to the packages' initializers (toolexec-design
+        // §3.6); the runtime reads its own, runtime.godebugDefault, which the facade does not
+        // declare as a variable. The last setting wins, as in cmd/link.
         for (long nx = uvarint(bundle, pos); nx > 0; nx--) {
-            bytes(bundle, pos);
+            String x = string(bundle, pos);
+            if (x.startsWith(GODEBUG_DEFAULT)) {
+                p.godebugDefault = x.substring(GODEBUG_DEFAULT.length());
+            }
         }
         bytes(bundle, pos);
         long registryVersion = uvarint(bundle, pos);
@@ -120,6 +133,10 @@ public final class Program {
             throw new IllegalArgumentException("bundle has no main package " + mainPath);
         }
         p.computeInitOrder(units);
+        PackageUnit rt = p.byPath.get("runtime");
+        if (rt != null) {
+            p.runtime.attachRuntime(rt::namedType);
+        }
         PackageUnit abi = p.byPath.get("internal/abi");
         if (abi != null) {
             // The program can read type descriptors: its internal/abi defines their layout.

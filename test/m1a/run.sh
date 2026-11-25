@@ -18,6 +18,10 @@
 # its root package is main), and the programs of the reference GIR interpreter
 # (internal/toolexec/girinterp/testdata/progs).
 #
+# A program (a module: its main.go) whose first lines hold
+#     //m1a:ldflags <flags>
+# is built with -ldflags=<flags> on both legs (multipkg/xflags: link -X).
+#
 # Usage: test/m1a/run.sh [-v] [PROGRAM.go | MODULE_DIR]...
 #   -v   print the diff of every failing program
 # Env:   GO, GRAALVM_HOME, GRAALGO_TMP (see test/lib/infra.sh),
@@ -94,7 +98,7 @@ run_leg() { # <exe> <stdout> <stderr> -> exit status
     return "$status"
 }
 
-gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg; }
+gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg "${bflags[@]}"; }
 
 n=0
 for prog in "${programs[@]}"; do
@@ -114,12 +118,17 @@ for prog in "${programs[@]}"; do
         exit "$USAGE_EXIT"
     fi
     reason=""
+    hdr="$src"
+    [ -d "$src" ] && hdr="$src/main.go"
+    ldflags=$(head -20 "$hdr" | sed -n 's|^//m1a:ldflags \(.*\)$|\1|p' | head -1)
+    bflags=()
+    [ -n "$ldflags" ] && bflags=("-ldflags=$ldflags")
     # The gc leg, replayed from test/lib/gcoracle.sh's cache when unchanged.
-    gc_oracle "$w" "$w/mod" gc_live m1a "$TIMEOUT"
+    gc_oracle "$w" "$w/mod" gc_live m1a "$TIMEOUT" "${bflags[@]}"
     gc_status=$(cat "$w/gc.status")
     if [ "$gc_status" = build ]; then
         reason="gc rejects the program (corpus bug)"
-    elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
+    elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" "${bflags[@]}" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(head -1 "$w/gg.build")"
     else
         gg_status=0

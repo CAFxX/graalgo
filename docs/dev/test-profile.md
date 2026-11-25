@@ -101,6 +101,12 @@ red comparing a cold CI run with the warm dev-host numbers. So:
   `gate-times` artifact of a green run (`gh run download <id> -n
   gate-times`) and record it into `duration-baseline-ci.json`. Re-record
   only for a reviewed, intended cost change, and say so in the commit.
+  The baselines are forward-only: a target whose `cpu`/`cpu_cold` number
+  is new or rose more than 25% (+1 s) since the git base needs a
+  `reason` entry for that target added in the same change (`record
+  --reason TEXT` writes it for exactly those targets);
+  [check_ratchets.py](../../.github/scripts/check_ratchets.py) (`make
+  check-repo`) fails otherwise.
   The CI file's cold sections hold, per gate, the higher of the first two
   green runs (09acff6b, push and dispatch; both missed the cache, so
   every gate of `pre-land`'s list and the setup targets has a cold
@@ -141,7 +147,7 @@ reboot), so they read lower than the same gates under the usual 10–20 load.
 | test-m1w13 | 15 | 28 | 13 | 20 | JVM per program |
 | test-imgcheck | 9 | 24 | 10 | 21 | 6 JVM runs |
 | pe-check-m1a | 9 | 15 | 13 -> 28 | 17 -> 50 | JIT compiles; master added pe_std.sh (std paths of the realistic programs) |
-| test-goroutine-modes | - | - | 25 | 42 | new on master (GG-0073): one JVM per scheduler suite/program; CDS + gc-oracle cache apply |
+| test-goroutine-modes | - | - | 25 | 42 | new on master (GG-0074): one JVM per scheduler suite/program; CDS + gc-oracle cache apply |
 | build | 8 | 39 | 36 | 48 | javac |
 | java-test-classes | 7 | 20 | 19 | 23 | javac |
 | **total** (all targets) | **2487** | **3848** | **1313** | **1926** | 41.5 -> 21.9 min; master's 11-24 gates (pe_std.sh, goroutine modes) add ~1 min wall |

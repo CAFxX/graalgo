@@ -13,6 +13,8 @@ import java.util.function.Supplier;
  * written out in another package intern to one descriptor.
  */
 public final class TypeTable {
+    /** The next {@link GoType#ifaceId} of this table (guarded by the table's lock: itself). */
+    int ifaceIds;
     private static final GoType[] NONE = new GoType[0];
     private static final String[] BASIC_NAMES = {null, "bool", "int", "int8", "int16", "int32", "int64", "uint",
             "uint8", "uint16", "uint32", "uint64", "uintptr", "float32", "float64", "complex64", "complex128",

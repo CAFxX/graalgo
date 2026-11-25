@@ -3,7 +3,8 @@
 budget must fail (including the new path's `new Unsupported(` and
 `.unsupportedf(` stubs), a paid-down count must fail until the budget is
 lowered, --update must refuse to raise a budget, and a budget raised above
-the git base's must fail.
+the git base's must fail; a duration baseline (test/duration-baseline*.json)
+re-recorded new or >25% higher without a new `reason` must fail.
 
 Run: python3 .github/scripts/test_check_ratchets.py
 """
@@ -152,6 +153,32 @@ class Gate(unittest.TestCase):
     def test_update_refuses_raise(self):
         d = repo({"tools/a.py": f"# {TODO} {TODO}\n"}, {"placeholder": {"tools/a.py": 1}})
         self.assertEqual(g.main(["x", "--update", str(d)]), 1)
+
+    def test_duration_baseline_rise_needs_reason(self):
+        rel = "test/duration-baseline-ci.json"
+        d = repo({rel: json.dumps({"cpu": {"a": 10.0}, "cpu_cold": {"a": 20.0}})},
+                 {"placeholder": {}})
+        commit(d, "base")
+        subprocess.run(["git", "-C", str(d), "checkout", "-q", "-b", "lane"], check=True)
+        p = d / rel
+        p.write_text(json.dumps({"cpu": {"a": 12.0}, "cpu_cold": {"a": 21.0}}))
+        self.assertEqual(g.main(["x", str(d)]), 0)  # within 25%: no reason needed
+        # Planted: a laundering re-record (+50%), and a new target.
+        for planted in ({"cpu": {"a": 15.0}, "cpu_cold": {"a": 20.0}},
+                        {"cpu": {"a": 10.0, "b": 3.0}, "cpu_cold": {"a": 20.0}},
+                        {"cpu": {"a": 10.0}, "cpu_cold": {"a": 31.0}}):
+            p.write_text(json.dumps(planted))
+            self.assertEqual(g.main(["x", str(d)]), 1, planted)
+            p.write_text(json.dumps(dict(planted, reason={"a": "intended", "b": "new gate"})))
+            self.assertEqual(g.main(["x", str(d)]), 0, planted)
+        # A reason already at the base does not cover a new rise.
+        p.write_text(json.dumps({"cpu": {"a": 15.0}, "cpu_cold": {"a": 20.0}, "reason": {"a": "r1"}}))
+        commit(d, "rise with reason")
+        subprocess.run(["git", "-C", str(d), "checkout", "-q", "master"], check=True)
+        subprocess.run(["git", "-C", str(d), "merge", "-q", "--ff-only", "lane"], check=True)
+        subprocess.run(["git", "-C", str(d), "checkout", "-q", "-b", "lane2"], check=True)
+        p.write_text(json.dumps({"cpu": {"a": 25.0}, "cpu_cold": {"a": 20.0}, "reason": {"a": "r1"}}))
+        self.assertEqual(g.main(["x", str(d)]), 1)
 
 
 if __name__ == "__main__":

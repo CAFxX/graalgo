@@ -1,6 +1,6 @@
 # graalgo — Phase-0 Specification
 
-**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md); open-coded defers and the re-issue of the 2026-11-18 requirements, [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)) · **Requirements:** 83 records — `requirements/GG-0001`–`GG-0071`, `GG-SCHED-0001`–`0006`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0019/0055 and `GG-SCHED-0004` superseded by `GG-0066`/0061/0062/0063/`GG-0067`/`GG-0065` and `GG-SCHED-0005`; those four 2026-11-18 records were in turn superseded by GG-0069, GG-0070 + GG-0071, GG-0068 and GG-SCHED-0006, which the owner signed off and **locked on 2026-11-18** after an independent (Fable) review (text marked `[DECIDED]` below); later re-issues: `GG-0061` superseded by GG-0072 (owner, 2026-11-19), `GG-0017` superseded by GG-0073 (coordinator under delegated design authority, 2026-11-23, [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md))
+**Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Amended:** 2026-11-18 (recovery amendments, [ADR-0009](../dev/adr/ADR-0009-recovery-spec-amendments.md); spec reconciliation, [ADR-0011](../dev/adr/ADR-0011-spec-reconciliation.md); open-coded defers and the re-issue of the 2026-11-18 requirements, [ADR-0012](../dev/adr/ADR-0012-open-coded-defers.md)) · **Requirements:** 83 records — `requirements/GG-0001`–`GG-0071`, `GG-SCHED-0001`–`0006`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`; `GG-0012`/0015/0016/0018/0019/0055 and `GG-SCHED-0004` superseded by `GG-0066`/0061/0062/0063/`GG-0067`/`GG-0065` and `GG-SCHED-0005`; those four 2026-11-18 records were in turn superseded by GG-0069, GG-0070 + GG-0071, GG-0068 and GG-SCHED-0006, which the owner signed off and **locked on 2026-11-18** after an independent (Fable) review (text marked `[DECIDED]` below); later re-issues: `GG-0061` superseded by GG-0072 (owner, 2026-11-19), `GG-0017` superseded by `GG-0073` (coordinator under delegated design authority, 2026-11-23, [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md)), `GG-0073` reissued as GG-0074 (coordinator, 2026-11-25, global review round 4: pinned parks occupy a carrier and a spare compensates, thread mode is an explicit opt-in, carrier mode without `Continuation` fails loudly, native-image goroutines unsupported (planned); §3.5 no longer requires Loom's default carrier scheduler in carrier mode)
 **Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed ·
@@ -390,17 +390,23 @@ Evidence: [abi-spike.md](abi-spike.md) §1 (verbatim reflect on byte-exact
 descriptor images: 607/607 answers identical to gc). **Falsifier:** a std or
 corpus program that gc runs without checkptr errors but that traps here.
 
-### 3.5 Concurrency runtime (GG-0073, GG-0063, GG-0070, GG-0071; GG-SCHED-0001–0003, GG-SCHED-0006, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
+### 3.5 Concurrency runtime (GG-0074, GG-0063, GG-0070, GG-0071; GG-SCHED-0001–0003, GG-SCHED-0006, GG-WAKE-0001–0003, GG-FAIR-0001–0003)
 
-**Goroutine = continuation + scheduler token** `[DECIDED]` (GG-0073, which
-superseded `GG-0017` on 2026-11-23; see "Goroutines as continuations on
-carrier threads" below). A goroutine is an execution context that is
-unmounted from every OS thread while parked: by default a
-`jdk.internal.vm.Continuation` run by the scheduler's carrier threads; as the
-fallback where `Continuation` is unavailable, one virtual thread per
-goroutine, `go f(args)` ≡ `Thread.ofVirtual().start(...)` (JEP 444
-`[VERIFIED]`), selected with `-Dgraalgo.sched.goroutines=thread` /
-`go.GoroutineThreads=thread`. Where the text below says "vthread",
+**Goroutine = continuation + scheduler token** `[DECIDED]` (GG-0074, which
+reissued `GG-0073` on 2026-11-25; `GG-0073` superseded `GG-0017` on
+2026-11-23; see "Goroutines as continuations on carrier threads" below). A
+goroutine is a lightweight execution context. By default (carrier mode) it
+is a `jdk.internal.vm.Continuation` run by the scheduler's own carrier pool,
+unmounted from every carrier while parked — except a park that cannot yield
+because the goroutine is pinned (a monitor or native frame on its stack, or
+the `ioEnter`/`ioExit` bracket, which keeps thread-confined native memory on
+its carrier): such a park occupies its carrier while a spare carrier
+compensates. One virtual thread per goroutine, `go f(args)` ≡
+`Thread.ofVirtual().start(...)` (JEP 444 `[VERIFIED]`), is thread mode: an
+explicit opt-in (`-Dgraalgo.sched.goroutines=thread` /
+`go.GoroutineThreads=thread`), never chosen automatically — carrier mode on
+a JVM without `Continuation` (no `jdk.internal.vm` export) fails at
+scheduler creation. Where the text below says "vthread",
 read "the goroutine's continuation" in carrier mode. Goroutine-local state
 (defer chain, panic context) lives in a per-goroutine `G` object, which the
 runtime reaches through the context's thread-local slot (`M`), never through
@@ -408,11 +414,12 @@ the identity of the carrying thread (amended 2026-11-18, ADR-0011; was
 "virtual-thread-scoped holders"; [truffle-design.md](truffle-design.md) T3,
 §2.5–§2.6: goroutine threads are created through the polyglot thread builder
 and may be recycled; in carrier mode the carrier swaps `M`'s goroutine on
-every mount). Whether a fallback-mode thread is a *virtual* thread in the
-native-image modes is the `[OPEN]` item "Goroutines in native-image modes"
-below (truffle-design amendment A1). Loom never
-preempts, and its `ForkJoinPool` is demoted to an **untrusted thread pool** — no
-scheduling discipline is assumed from it. Spike 2 (1:1 vthreads *yielding* back
+every mount). Goroutines in a native image are unsupported (planned): the
+`[OPEN]` item "Goroutines in native-image modes" below (truffle-design
+amendment A1). Loom never
+preempts, and its `ForkJoinPool` (thread mode's executor) is demoted to an
+**untrusted thread pool** — no scheduling discipline is assumed from it, nor
+from carrier mode's pool. Spike 2 (1:1 vthreads *yielding* back
 to the FJP) was **KILLED**: the preemption torture gave 0 latency samples vs
 200,000 for stock Go — systematic starvation the yields could not close
 `[VERIFIED]` (scoped: JDK 25.0.4, 2-vCPU VM, OFF / POLL-10ms / POLL-1ms-watchdog /
@@ -440,14 +447,20 @@ The mechanism difference that matters: scheduling discipline moved to user
 space. On quantum expiry a vthread parks **indefinitely** via
 `LockSupport.park()` and offers its scheduler token to the token queue. The
 parked vthread unmounts and its carrier returns to the pool; it is held by the
-*scheduler's* queue. Each resume submits at most one continuation to the FJP,
-with at most `cap` outstanding — so the FJP is never asked to choose fairly
-among queued continuations, only to eventually run each submitted one
+*scheduler's* queue. Each resume submits at most one continuation to the
+executor — in carrier mode the scheduler's own carrier pool (one FIFO run
+queue of continuations on platform polyglot threads, `graalgo.sched.Carriers`),
+in thread mode Loom's default `ForkJoinPool` carrier scheduler — with at most
+`cap` outstanding, so the executor is never asked to choose fairly among
+queued continuations, only to eventually run each submitted one
 `[DECIDED]`. The safety comes from the bound, which production must preserve:
 effective cap = `min(GOMAXPROCS, carrier parallelism)` `[DECIDED]` (see the
-pinning assumption below). graalgo requires the default Loom carrier
-scheduler; custom `jdk.virtualThreadScheduler` settings are unsupported
-(documented restriction) `[DECIDED]`.
+pinning assumption below). Carrier mode does not use Loom's scheduler: its
+pool keeps carrier-parallelism carriers able to run goroutines, starting a
+spare for each carrier blocked by a pinned park or a blocking host call
+(GG-0074). Thread mode requires the default Loom carrier scheduler; custom
+`jdk.virtualThreadScheduler` settings are unsupported (documented
+restriction) `[DECIDED]`.
 
 **Quantum-based preemption.** `Safepoint.poll()` at loop back-edges and function
 entries in the Truffle AST (mirroring gc's own preemption checks); on quantum
@@ -583,15 +596,21 @@ in-flight slot while blocked) and is woken via `wakeFifo`; deadlines live on the
 runtime timer heap. Blocking syscalls outside the poller release the slot around
 the downcall (`ioEnter`/`ioExit`). Evidence: [abi-spike.md](abi-spike.md) §2.5.
 
-**Goroutines in native-image modes** `[OPEN]` (2026-11-18): a polyglot context
-in a native image runs Truffle "virtual" threads on platform threads, so modes
-(b)/(c) may have goroutine = OS thread (truffle-design amendment A1). Not amended
-until measured: gating work item **P-F** ([truffle-design.md](truffle-design.md)
-§13.2: minimal language image with 10⁴ goroutine threads on the pinned
-`native-image`). Re-test trigger: each GraalVM pin bump.
+**Goroutines in native-image modes** `[OPEN]` (2026-11-18; restated
+2026-11-25): goroutines in a native image are **unsupported (planned)**.
+Nothing selects a goroutine mode for an image: carrier mode needs
+`jdk.internal.vm.Continuation` and its `--add-exports`, unverified in an
+image, and thread mode there would run Truffle "virtual" threads on
+platform threads, so modes (b)/(c) may have goroutine = OS thread
+(truffle-design amendment A1). Not amended until measured: gating work item
+**P-F** ([truffle-design.md](truffle-design.md) §13.2: minimal language
+image with 10⁴ carrier-mode goroutines and 10⁴ goroutine threads on the
+pinned `native-image`), before the AOT and hybrid modes ship. Re-test
+trigger: each GraalVM pin bump.
 
 **Goroutines as continuations on carrier threads** `[DECIDED]` (2026-11-23,
-GG-0073, locked by the coordinator under delegated design authority;
+`GG-0073`, locked by the coordinator under delegated design authority;
+reissued as GG-0074 on 2026-11-25 to match the implemented design;
 [ADR-0018](../dev/adr/ADR-0018-carrier-goroutines.md); was `[OPEN]`
 2026-11-20): on the pinned Truffle, creating a polyglot thread walks every
 registered thread (`TruffleThreadBuilder.build()` →
@@ -603,21 +622,25 @@ runs each goroutine as a `jdk.internal.vm.Continuation` on a few platform
 polyglot carrier threads, with the token discipline, preemption and in-flight
 cap above unchanged: spawn 1.0–1.5 s at 10⁵ and 11.5 s at 10⁶, flat in the
 live count, ~2.3 KB heap per parked goroutine (gc ~2.75 KB) `[VERIFIED]`
-(scoped: ADR-0018's runs on a shared, loaded host, JDK 25, Truffle 25.0.4). GG-0073 makes it the default mode and keeps
-one virtual thread per goroutine only as a documented fallback where
-`Continuation` is unavailable. **Status:** carrier mode is the default
-(2026-11-24): every gate runs it, `CarriersTest` and the m1r program
-`spawn_flat.go` check its mechanisms and spawn scaling, and `make
-test-goroutine-modes` keeps the fallback (`-Dgraalgo.sched.goroutines=thread` /
-`go.GoroutineThreads=thread`) gated. A JVM without the `jdk.internal.vm`
-export fails at scheduler creation instead of falling back unnoticed.
-**Known limitation** (part of the
-`[OPEN]` native-image item above): whether
-`jdk.internal.vm.Continuation` (and the `--add-exports
+(scoped: ADR-0018's runs on a shared, loaded host, JDK 25, Truffle 25.0.4).
+GG-0074 makes it the default mode; one virtual thread per goroutine (thread
+mode) is only an explicit opt-in, never an automatic fallback: a JVM without
+the `jdk.internal.vm` export fails at scheduler creation instead of falling
+back unnoticed to the quadratic mode. A pinned park (a monitor or native
+frame, or the `ioEnter`/`ioExit` bracket) does not unmount: it occupies its
+carrier, and the pool starts a spare so runnable goroutines keep their
+carriers. **Status:** carrier mode is the default (2026-11-24): every gate
+runs it; `CarriersTest` (pinned-park and blocking-call compensation, no
+thread per parked goroutine) and the m1r program `spawn_parked.go` check its
+mechanisms per push, `make bench-spawn-flat` (weekly; a wall-clock ratio)
+its spawn scaling; `make test-goroutine-modes` keeps the opt-in thread mode
+(`-Dgraalgo.sched.goroutines=thread` / `go.GoroutineThreads=thread`) gated.
+**Known limitation** (part of the `[OPEN]` native-image item above):
+whether `jdk.internal.vm.Continuation` (and the `--add-exports
 java.base/jdk.internal.vm=ALL-UNNAMED` it needs) works in a native image is
-unverified; images use the fallback mode — and so the goroutine = OS thread
-question of the item above — until P-F verifies it, before the AOT and hybrid
-modes ship (GG-0006, GG-0049, GG-0050 unchanged).
+unverified, and no mode is selected for images: goroutines in a native
+image are unsupported (planned) until P-F verifies it, before the AOT and
+hybrid modes ship (GG-0006, GG-0049, GG-0050 unchanged).
 
 **Channels** = Java objects (lock, circular buffer over a typed array, two
 wait-queues of scheduler-parked virtual threads); **select** ports
@@ -689,7 +712,7 @@ slot-releasing path (`GG-SCHED-0004`)"; the registry's `superseded_by`
 chain resolves it to GG-SCHED-0006, and its wording is otherwise consistent
 with this section; `GG-0017` and GG-0048 were revised to
 remove FJP-scheduler assumptions (spike 2b §6.2), and `GG-0017` was later
-superseded by GG-0073 (carrier-mode goroutines, ADR-0018; the GG-SCHED and
+superseded by `GG-0073`, then GG-0074 (carrier-mode goroutines, ADR-0018; the GG-SCHED and
 GG-WAKE records keep `GG-0017` as their registry parent, and their "vthread"
 reads as the goroutine's continuation in carrier mode). §3.5 states the decided architecture
 those IDs encode.
@@ -1441,7 +1464,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0014 | One Truffle AST | §3.3 |
 | `GG-0015` | Java-object value model — superseded by `GG-0061`, then GG-0072 | — |
 | `GG-0016` | unsafe.Pointer v1 semantics — superseded by GG-0062 | — |
-| `GG-0017` | Goroutines on virtual threads with user-space scheduler — superseded by GG-0073 | — |
+| `GG-0017` | Goroutines on virtual threads with user-space scheduler — superseded by `GG-0073`, then GG-0074 | — |
 | `GG-0018` | Netpoller deletion — superseded by GG-0063 | — |
 | `GG-0019` | Panic/defer/Goexit model (explicit per-goroutine chain) — superseded by `GG-0067`, then GG-0070 + GG-0071 | — |
 | GG-0020 | Intrinsic surface | §3.6 |
@@ -1497,7 +1520,8 @@ configuration, with a re-test trigger. Phase-0 entries:
 | GG-0070 | Panic/defer/recover/Goexit semantics and caller frames exactly as gc (locked 2026-11-18) | §3.5; [traceback-normalization.md](traceback-normalization.md) |
 | GG-0071 | Defer mechanism: open-coded up to a fixed limit, per-goroutine chain otherwise (locked 2026-11-18) | §3.5 |
 | GG-0072 | Flat Java-object value model with a byte region (locked 2026-11-19; supersedes `GG-0061`) | §3.4 |
-| GG-0073 | Goroutines as continuations on scheduler carriers, with a user-space scheduler (locked 2026-11-23; supersedes `GG-0017`) | §3.5 |
+| `GG-0073` | Goroutines as continuations on scheduler carriers — superseded by GG-0074 (reissued 2026-11-25: pinned parks, opt-in thread mode, native images) | — |
+| GG-0074 | Goroutines as continuations on scheduler carriers, with a user-space scheduler (locked 2026-11-25; reissues `GG-0073`, locked 2026-11-23, which superseded `GG-0017`) | §3.5 |
 | GG-SCHED-0001 | Quantum park on Safepoint.poll expiry | §3.5 |
 | GG-SCHED-0002 | Drainer admission discipline | §3.5 |
 | GG-SCHED-0003 | In-flight cap equals GOMAXPROCS | §3.5 |

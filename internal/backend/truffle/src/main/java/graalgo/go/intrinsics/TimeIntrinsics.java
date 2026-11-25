@@ -12,9 +12,6 @@ import graalgo.runtime.ChanOps;
 import graalgo.runtime.TimerHeap;
 import graalgo.sched.SchedulerCore;
 import java.time.Instant;
-import java.util.Collections;
-import java.util.Map;
-import java.util.WeakHashMap;
 
 /**
  * The runtime side of package {@code time} (upstream {@code runtime/time.go}): the clocks, sleep,
@@ -108,8 +105,6 @@ final class TimeIntrinsics {
         }
     }
 
-    private static final Map<Flat, State> STATES = Collections.synchronizedMap(new WeakHashMap<>());
-
     /** Arms the heap entry for {@code s.when} (lock held). */
     private static void arm(State s) {
         final long seq = s.seq;
@@ -141,8 +136,15 @@ final class TimeIntrinsics {
             }
             if (s.chan != null) {
                 // Chan timers send under the lock (gc's sendLock): stop/reset either precede the
-                // send and drain nothing, or follow it and drain the value.
-                call(s, seq, delta);
+                // send and drain nothing, or follow it and drain the value. The send (sendTime's
+                // non-blocking select) runs with preemption off, as under gc's runtime lock: a
+                // quantum park here would freeze the goroutine holding this monitor (BUG-0054).
+                s.sched.disablePreemption();
+                try {
+                    call(s, seq, delta);
+                } finally {
+                    s.sched.enablePreemption();
+                }
                 return;
             }
         }
@@ -191,7 +193,7 @@ final class TimeIntrinsics {
         // initTimer: the field after C (gc offset 8).
         Unsafe.storeScalar(node, t, 8, process.types.basic(GoType.BOOL), 1);
         State s = new State(process, SchedulerCore.current(), (Closure) f, arg, cp);
-        STATES.put(t, s);
+        process.timers.put(t, s);
         synchronized (s) {
             s.when = when;
             s.period = period;
@@ -206,8 +208,7 @@ final class TimeIntrinsics {
         if (t == null) {
             throw graalgo.go.runtime.Panics.nilDeref(node);
         }
-        State s = STATES.get(Unsafe.referent(t));
-        if (s == null) {
+        if (!(GoProcess.get(node).timers.get(Unsafe.referent(t)) instanceof State s)) {
             throw new IllegalStateException("time: a Timer that newTimer did not make");
         }
         return s;

@@ -31,7 +31,9 @@
 #                               the job fits GitHub's 360-min limit)
 # The full differential suite (`make test`, 30+ min) is excluded from
 # per-push CI by design — it runs in local verification and the weekly
-# full-suite job. This is documented, not skipped.
+# full-suite job, as does `make bench-spawn-flat` (a wall-clock check:
+# goroutine spawn cost flat in the live count). This is documented, not
+# skipped.
 name: ci
 
 on:
@@ -250,6 +252,13 @@ jobs:
           make test 2>&1 | tee "$FULL_SUITE_LOGS/make-test.log" || rc=$?
           echo "$rc" > "$FULL_SUITE_LOGS/make-test.rc"
           exit "$rc"
+
+      - name: make bench-spawn-flat (goroutine spawn cost flat in the live count)
+        # ADR-0018's O(1)-spawn signal: a wall-clock ratio, so weekly here,
+        # never per push (Makefile). Runs even when `make test` failed.
+        if: success() || failure()
+        timeout-minutes: 10
+        run: make bench-spawn-flat
 
       - name: Summary (make's exit status, peak memory, per-class timings)
         # Also copies the java-slow logs into the logs dir so the artifact is

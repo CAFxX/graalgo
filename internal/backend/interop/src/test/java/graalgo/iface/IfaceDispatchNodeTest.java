@@ -29,7 +29,7 @@ import graalgo.values.InterfaceDispatchProbes;
  * (stubbed table, identity-compare replaced by equals, missing panic,
  * missing probe record) and passes against the real one.
  * verifies: GG-0014
- * verifies: GG-0073 (iface slice)
+ * verifies: GG-0074 (iface slice)
  */
 public final class IfaceDispatchNodeTest {
 

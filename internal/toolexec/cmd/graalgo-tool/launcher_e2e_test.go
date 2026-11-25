@@ -151,8 +151,8 @@ func TestLauncherBuildAndRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The two user packages, the facade runtime and its two imports.
-	if b.Main != "example.com/skel" || len(b.Packages) != 5 {
+	// The two user packages, the facade runtime and its three imports.
+	if b.Main != "example.com/skel" || len(b.Packages) != 6 {
 		t.Errorf("bundle main=%q packages=%d", b.Main, len(b.Packages))
 	}
 	out, err := h.graalgo(nil, "run", ".", "x", "-toolexec=y")

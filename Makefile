@@ -97,10 +97,10 @@
 #               text/template and friends, the same way
 #               ([test/m1d/](test/m1d/))
 #     test-goroutine-modes
-#               the goroutine-mode matrix (~45 s; GG-0073: carrier mode is
+#               the goroutine-mode matrix (~45 s; GG-0074: carrier mode is
 #               the default): a few m1a/m1r/m1c goroutine programs in the
-#               thread-per-goroutine fallback (the scheduler suites run in
-#               it in test-pin-smoke),
+#               opt-in thread-per-goroutine mode (the scheduler suites run
+#               in it in test-pin-smoke),
 #               goroutine programs in carrier mode under -ea, and
 #               Context.close(true) of a running program in both modes
 #
@@ -126,6 +126,9 @@
 #   ([test/fuzz/](test/fuzz/)): the hand-written adversarial corpus plus N
 #   generated programs from SEED, each vs live gc (~1 s a program); nightly
 #   (fuzz-newpath.yml), never per-push.
+#   `make bench-spawn-flat` — goroutine spawn cost flat in the live count
+#   (ADR-0018), a wall-clock check: weekly in ci.yml's full-suite job,
+#   never per-push (host load moves it).
 #
 
 
@@ -221,7 +224,7 @@ GENERATED_EXTERNAL := internal/frontend/p3frontend/zz_asm_inventory_gen.go \
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-pin-smoke test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
+.PHONY: all generate gen-synth build graalgo check check-repo vet-spikes test-pin-smoke test-ci test-jit pe-check bench test-java-fast test-java-slow test-java-timing java-test-classes java-test-lists-check test-regression test-p3frontend test-v2 test-toolexec test-gir test-m1a bench-m1a bench-suite bench-realistic bench-goroutines bench-spawn-flat pe-report pe-check-m1a test-m1r test-m1c test-m1d test-goroutine-modes test-m1w13 fuzz-newpath check-links-external test-diffharness pre-land goroot gate1-pilot gate1 test clean snapshot snapshot-check mutation fast-build fast-run fast-test fast-watch test-imgcheck test-times quick
 
 all: generate build snapshot-check check test-pin-smoke test-v2 test-toolexec test-gir test-p3frontend test-ci test-java-fast test-regression test-m1a pe-check-m1a test-m1w13 test-imgcheck test-m1r test-m1c test-m1d test-goroutine-modes
 
@@ -426,6 +429,13 @@ bench: build
 # in-test watchdog is possible (timers do not fire under graalgo, PKG-048),
 # so a reintroduced hang is killed here and fails the gate instead of
 # hanging CI. Post-fix the suite passes in ~75s.
+# A directory's optional `jvm.opts` file adds JVM flags after the caller's
+# GRAALGO_JAVA_OPTS (so it can raise a heap cap): tls-wrap-hang's test binary
+# (crypto/tls and its dependencies) is a ~300 MB v1 JSON wire document, held
+# several times over while the v1 runner builds its AST (~1.5 GB live at the
+# peak), so the 2 GB cap of AGENTS.md §7 and CI's full-suite job is an OOM
+# there. v1-only (the new path loads a binary GIR bundle), deleted at M3:
+# BUG-0053.
 REGRESSION_TEST_DIRS := $(wildcard test/regression/*/)
 REGRESSION_TMP := $(CURDIR)/test/regression/.tmp
 test-regression: generate build graalgo
@@ -433,7 +443,9 @@ test-regression: generate build graalgo
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	eval "$$(bash test/lib/jvmcds.sh sync-env)"; \
-	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
+	for d in $(REGRESSION_TEST_DIRS); do \
+	  GRAALGO_JAVA_OPTS="$${GRAALGO_JAVA_OPTS:-} $$(cat $${d}jvm.opts 2>/dev/null)" timeout 600 ./graalgo test ./$$d || exit 1; \
+	done
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the
@@ -552,7 +564,7 @@ bench-realistic: build
 
 # Goroutine scaling (not a gate; north-star.md §4.3, ADR-0018): the realistic
 # `goroutines` program at each GOR_N of GOR_NS, gc against graalgo in the
-# default carrier mode (the thread-per-goroutine fallback,
+# default carrier mode (the opt-in thread-per-goroutine mode,
 # -Dgraalgo.sched.goroutines=thread, is quadratic: 100,000 take minutes to
 # spawn). 1,000,000 goroutines need a ~5 GB heap: GOR_JAVA_OPTS sets -Xmx12g;
 # run it alone on a shared host (minutes per N).
@@ -563,6 +575,19 @@ bench-goroutines: build
 	  GOR_N=$$n GRAALGO_JAVA_OPTS="$(GOR_JAVA_OPTS)" GO="$(GO)" test/bench/suite.sh \
 	    --dir test/bench/realistic --gc-env GOMAXPROCS=4 --reps 1 $(BENCH_ARGS) goroutines || exit 1; \
 	done
+
+# Spawn-scaling check (benchmark tier; weekly in ci.yml's full-suite job,
+# never per-push: a wall-clock assertion follows host speed and load):
+# test/bench/scaling/spawn_flat.go times batches of 1,000 spawns with 1,000
+# vs 19,000 goroutines alive and prints "spawn flat" when the late batches
+# stay within 3x the early ones (or under 50 ms) — gc's output, which
+# test/m1r/run.sh compares with graalgo's in the default carrier mode. The
+# O(1)-spawn regression signal of ADR-0018 (the thread-per-goroutine path
+# grows ~5x at 20,000); per push, CarriersTest guards the mechanism (no
+# polyglot thread per goroutine) and test/m1r/programs/spawn_parked.go the
+# workload.
+bench-spawn-flat: build
+	GO="$(GO)" test/m1r/run.sh test/bench/scaling/spawn_flat.go
 
 # The compilation report of the realistic programs (~1.5 min; nightly as
 # .github/workflows/compile-health.yml with --max-churn): failed, deoptimized
@@ -716,7 +741,10 @@ JAVA_TEST_OPTS ?=
 # live set grows ~130 MB per run (measured: 6.4 GB after 50, G1 evacuation
 # failures at 4 GB, "internal error building AST: Java heap space"): it gets
 # its own cap, above CI's global JAVA_TEST_OPTS one (a cap only: the JVM uses
-# what it needs). The retention itself is a product leak, not a test bug.
+# what it needs). The retention is v1's launcher by design (BUG-0051): P3SyncMain
+# never closes its context, so each run's carriers, drainer and timer threads
+# stay alive and hold the whole run; v1 is deleted at M3, and the new path's
+# context lifecycle is gated by test/m1r/leak.sh (BUG-0052).
 JT_INTEROP_SLOW_OPTS ?= -Xmx8g
 # run_java_tests <module> <classpath> <classes> <extra JVM flags>; the extra
 # flags come AFTER JAVA_TEST_OPTS so a call can override a global heap cap.
@@ -754,19 +782,19 @@ test-java-fast: java-test-classes java-test-lists-check
 	$(call run_java_tests,truffle,$(JT_RUNTIME_CP),$(JAVA_FAST_RUNTIME),)
 	$(call run_java_tests,interop,$(JT_INTEROP_CP),$(JAVA_FAST_INTEROP),)
 
-# The goroutine-mode matrix (GG-0073; per-push in `make all`). Carrier mode is
-# the default, so every other gate runs it; this target keeps the
-# thread-per-goroutine fallback honest and checks what only a mode switch or
+# The goroutine-mode matrix (GG-0074; per-push in `make all`). Carrier mode is
+# the default, so every other gate runs it; this target keeps the opt-in
+# thread-per-goroutine mode honest and checks what only a mode switch or
 # a carrier migration can break: (1) a few goroutine-heavy m1a/m1r/m1c
-# programs with -Dgraalgo.sched.goroutines=thread (spawn_flat.go is left out:
-# it fails there by design) — the scheduler suites run in thread mode in
-# test-pin-smoke: every class SchedTestRunner registers, a superset of the
-# four this target ran too until 2026-11-25 (LifecycleTest, ChannelTest,
-# WakeupRaceStressTest, JfrEventsTest), the same JVM mode; (2) goroutine
-# programs in carrier mode under -ea, so Truffle's per-thread assertions
+# programs with -Dgraalgo.sched.goroutines=thread — the scheduler suites run
+# in thread mode in test-pin-smoke: every class SchedTestRunner registers, a
+# superset of the four this target ran too until 2026-11-25 (LifecycleTest,
+# ChannelTest, WakeupRaceStressTest, JfrEventsTest), the same JVM mode;
+# (2) goroutine programs in carrier mode under -ea, so Truffle's per-thread assertions
 # (EncapsulatingNodeReference) see goroutines migrate between carriers;
 # (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
-# and leak-free, in both modes.
+# and leak-free, in both modes; (4) test/m1r/leak.sh: successive contexts in
+# one JVM leave no thread and no live heap behind (BUG-0052), in both modes.
 THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go test/m1a/programs/traceback_goroutine.go
 THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go test/m1r/programs/callers.go
 THREAD_MODE_M1C := test/m1c/programs/sync_contention.go test/m1c/programs/time_timers.go
@@ -778,6 +806,7 @@ test-goroutine-modes: build java-test-classes
 	GRAALGO_JAVA_OPTS="$(GRAALGO_JAVA_OPTS) -ea" GO="$(GO)" test/m1r/run.sh test/m1r/programs/carrier_migration.go $(THREAD_MODE_M1A)
 	GO="$(GO)" test/m1r/cancel.sh
 	GO="$(GO)" test/m1r/tools.sh carrier,thread
+	GO="$(GO)" test/m1r/leak.sh
 
 # Each module's run is logged (exit status ignored: a JVM crash or INFRA
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then

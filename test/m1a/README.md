@@ -23,7 +23,9 @@ stderr and exit status.
   hot with zero failed compilations, plus a generated planted violation
 
 **Add a test:** a self-contained `package main` in [programs/](programs/)
-(no imports; report with `println`). **Not here:** std programs
+(no imports; report with `println`). A program (a module: its `main.go`)
+whose first lines hold `//m1a:ldflags <flags>` is built with
+`-ldflags=<flags>` on both legs ([multipkg/xflags/](multipkg/xflags/)). **Not here:** std programs
 ([test/m1r/](../m1r/README.md)), `unsafe` ([test/m1w13/](../m1w13/README.md)).
 
 **Run:** `make test-m1a` (~2.5 min) or `make test-m1a M1A_PROGRAMS="test/m1a/programs/x.go"`.

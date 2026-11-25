@@ -301,6 +301,28 @@ class GatesTest(unittest.TestCase):
             self.assertEqual(gates.main(["record", rj, "--baseline", base]), 0)
         b = jload(base)
         self.assertEqual((b["cpu"], b["cpu_cold"], b["wall_cold"]), ({"a": 2, "c": 5}, {"a": 7}, {"a": 9}))
+        self.assertNotIn("reason", b)  # rises listed, none written without --reason
+        # --reason is written for exactly the targets that need one: new (d)
+        # or > 25% + 1 s higher (c: 5 -> 9); a within-noise change (a) gets none
+        jdump(rj, {"targets": {"a": {"rc": 0, "wall": 3, "cpu": 2.5}, "c": {"rc": 0, "wall": 9, "cpu": 9},
+                               "d": {"rc": 0, "wall": 1, "cpu": 1}}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(gates.main(["record", rj, "--baseline", base, "--reason", "why"]), 0)
+        self.assertEqual(jload(base)["reason"], {"c": "why", "d": "why"})
+        self.assertIn("cpu c: 5.0 -> 9.0 s (reason recorded)", out.getvalue())
+
+    def test_unreasoned_rises(self):
+        was = {"cpu": {"a": 10, "b": 0.2}, "cpu_cold": {"c": 20}, "reason": {"r": "old"}}
+        ok = {"cpu": {"a": 13.5, "b": 1.1, "c": 18}, "cpu_cold": {"c": 26}}
+        self.assertEqual(gates.unreasoned_rises(was, ok), [])  # within 25% + 1 s; cpu c vs cold c
+        bad = {"cpu": {"a": 13.6, "n": 1, "r": 3}, "cpu_cold": {"c": 26.1},
+               "reason": {"r": "old"}}  # an unchanged base reason does not cover a new rise
+        self.assertEqual(gates.unreasoned_rises(was, bad),
+                         [("cpu", "a", 10, 13.6), ("cpu", "n", None, 1), ("cpu", "r", None, 3),
+                          ("cpu_cold", "c", 20, 26.1)])
+        bad["reason"] = {"a": "x", "n": "y", "r": "new", "c": "z"}
+        self.assertEqual(gates.unreasoned_rises(was, bad), [])
 
 
 if __name__ == "__main__":

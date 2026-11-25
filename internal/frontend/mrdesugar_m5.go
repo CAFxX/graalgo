@@ -4070,7 +4070,7 @@ func packageHoistTemp(pn *Node) (ginit, error) {
 // exactly gc's statement-position semantics. Only the concrete
 // helper-call plans (mrM7, mrXmlToken) reach here — the M5 kinds keep
 // their pinned statement-position fail-fast (TestMultiResultFailFastKept,
-// GG-0073), mrDeadline is unreachable defense-in-depth, and mrIfaceMethod
+// GG-0074), mrDeadline is unreachable defense-in-depth, and mrIfaceMethod
 // is handled by the D1 path (exportIfaceMethodCall) before this
 // interception.
 func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, plan *mrPlan) (*Node, error) {

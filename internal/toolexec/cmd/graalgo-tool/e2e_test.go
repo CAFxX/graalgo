@@ -196,7 +196,7 @@ func TestBuildThroughToolexec(t *testing.T) {
 			}
 		}
 	}
-	if got := strings.Join(paths, ","); got != "example.com/skel,example.com/skel/lib,internal/goarch,internal/goos,runtime" {
+	if got := strings.Join(paths, ","); got != "example.com/skel,example.com/skel/lib,internal/abi,internal/goarch,internal/goos,runtime" {
 		t.Errorf("bundle packages = %s", got)
 	}
 	if r := b.Resolution; r.RegistryVersion != uint64(intrinsics.Registry.Version) || r.RegistryHash == "" {
@@ -420,16 +420,67 @@ func TestCrossTargetIR(t *testing.T) {
 }
 
 // Coordinator review (d): link -X settings (the user's and cmd/go's) and
-// the module build info reach the bundle instead of being dropped.
+// the module build info reach the bundle instead of being dropped; the
+// link applies the settings to the packages' variable initializers
+// (BUG-0048), reading gc's verdict on a non-constant initializer from the
+// package's real gc object, and fails on a non-string variable with
+// cmd/link's diagnostic.
 func TestLinkCarriesXAndModinfo(t *testing.T) {
 	e := setup(t)
+	e.write("lib/lib.go", `package lib
+
+var Version = "dev"
+var Commit = id("c0") // gc: an inlined call, static data
+var Built = dyn()     // gc: initializer code
+var N int
+
+func id(s string) string { return s }
+
+//go:noinline
+func dyn() string { return "b0" }
+
+func Answer() int { return len(Version + Commit + Built) + N }
+`)
 	exe := filepath.Join(t.TempDir(), "skel")
-	if out, err := e.build(exe, "-ldflags=-X=example.com/skel/lib.Version=v1.2"); err != nil {
+	if out, err := e.build(exe, "-ldflags=-X=example.com/skel/lib.Version=v1.2 -X example.com/skel/lib.Commit=abc -X example.com/skel/lib.Built=now"); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	b, err := bundle.ReadFile(exe)
 	if err != nil {
 		t.Fatal(err)
+	}
+	seen := false
+	for _, p := range b.Packages {
+		if p.ImportPath != "example.com/skel/lib" {
+			continue
+		}
+		seen = true
+		f, err := ir.DecodeValidate(p.IR)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, st := range f.Bodies[f.Init.VarInit].Body {
+			a := st.(*ir.AssignStmt)
+			rhs := "code"
+			if c, ok := a.Rhs[0].(*ir.ConstExpr); ok {
+				rhs = c.Value.Text
+			}
+			got = append(got, f.Objects[a.Lhs[0].(*ir.GlobalExpr).Obj].Name+"="+rhs)
+		}
+		// Settings first (static data); Version's constant and Commit's
+		// static initializer are gone, Built's initializer code stays.
+		want := "Built=now Commit=abc Version=v1.2 Built=code"
+		if strings.Join(got, " ") != want {
+			t.Errorf("lib's init·vars = %q, want %q", strings.Join(got, " "), want)
+		}
+	}
+	if !seen {
+		t.Error("bundle lacks example.com/skel/lib")
+	}
+	out, err := e.build(filepath.Join(t.TempDir(), "bad"), "-ldflags=-X example.com/skel/lib.N=1")
+	if want := "example.com/skel/lib.N: cannot set with -X: not a var of type string (type:int)"; err == nil || !strings.Contains(out, want) {
+		t.Errorf("-X on an int: err %v, output %q; want a failed build saying %q", err, out, want)
 	}
 	found := false
 	for _, x := range b.X {

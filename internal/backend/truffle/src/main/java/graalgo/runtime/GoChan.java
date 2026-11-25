@@ -13,7 +13,7 @@ import graalgo.jfr.JfrEvents;
 import graalgo.jfr.ParkReason;
 
 /**
- * Go channel implementation (P2-M2, WS B; GG-0073 chan slice).
+ * Go channel implementation (P2-M2, WS B; GG-0074 chan slice).
  *
  * <p>Adapted from Go's {@code runtime/chan.go} to scheduler-aware park:
  * every blocking operation parks the goroutine via

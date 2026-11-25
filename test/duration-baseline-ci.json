@@ -26,6 +26,9 @@
   "test-toolexec": 169.3,
   "test-v2": 2.2
  },
+ "reason": {
+  "test-pin-smoke": "2026-11-25 test-speed2: split out of check (same command); check's 09acff6b cold number split by the dev host's measured shares until a sharded run is recorded"
+ },
  "wall": {},
  "wall_cold": {
   "build": 7.1,

@@ -9,11 +9,11 @@ import graalgo.runtime.GoChan;
 import graalgo.runtime.PanicException;
 
 /**
- * P2-M2 channel + select tests (WS B; GG-0073 chan slice).
+ * P2-M2 channel + select tests (WS B; GG-0074 chan slice).
  *
  * <p>Red-green discipline: every test fails against a broken channel
  * implementation (stubbed ops, missing wakeups, carrier-blocking park)
- * and passes against the real one. Tests marked "verifies: GG-0073"
+ * and passes against the real one. Tests marked "verifies: GG-0074"
  * activate the GG ID per the plan's activation policy.
  */
 public final class ChannelTest {
@@ -87,7 +87,7 @@ public final class ChannelTest {
 
     /**
      * Unbuffered ping-pong: sender blocks until receiver arrives; values
-     * transfer exactly. verifies: GG-0073
+     * transfer exactly. verifies: GG-0074
      */
     public void testUnbufferedSendRecv() throws Exception {
         AtomicReference<Object> got = new AtomicReference<>();
@@ -103,7 +103,7 @@ public final class ChannelTest {
 
     /**
      * Buffered FIFO order: two sends without a receiver, then two recvs.
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testBufferedFifo() throws Exception {
         AtomicReference<Object> r1 = new AtomicReference<>();
@@ -123,7 +123,7 @@ public final class ChannelTest {
 
     /**
      * Sender blocks when the buffer is full; a recv unblocks it and the
-     * buffered values keep FIFO order. verifies: GG-0073
+     * buffered values keep FIFO order. verifies: GG-0074
      */
     public void testBufferedBlocksWhenFull() throws Exception {
         AtomicBoolean thirdSent = new AtomicBoolean();
@@ -153,7 +153,7 @@ public final class ChannelTest {
      * sender parked on an unbuffered send must release its in-flight
      * slot so a peer goroutine still runs. A raw Java block here would
      * deadlock the test (carrier pinned, cap=1).
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testBlockedSendDoesNotPinCarrier() throws Exception {
         AtomicBoolean peerRan = new AtomicBoolean();
@@ -181,7 +181,7 @@ public final class ChannelTest {
 
     /**
      * close() wakes a parked receiver with (zero, ok=false).
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testCloseWakesReceiver() throws Exception {
         AtomicReference<GoChan.RecvResult> rr = new AtomicReference<>();
@@ -197,7 +197,7 @@ public final class ChannelTest {
 
     /**
      * close() wakes a parked sender; the sender panics with
-     * "send on closed channel" (Go semantics). verifies: GG-0073
+     * "send on closed channel" (Go semantics). verifies: GG-0074
      */
     public void testCloseWakesSenderToPanic() throws Exception {
         AtomicReference<Object> panicVal = new AtomicReference<>();
@@ -220,7 +220,7 @@ public final class ChannelTest {
     }
 
     /**
-     * Direct send on a closed channel panics. verifies: GG-0073
+     * Direct send on a closed channel panics. verifies: GG-0074
      */
     public void testSendOnClosedPanics() throws Exception {
         AtomicReference<Object> panicVal = new AtomicReference<>();
@@ -240,7 +240,7 @@ public final class ChannelTest {
     }
 
     /**
-     * Closing twice panics ("close of closed channel"). verifies: GG-0073
+     * Closing twice panics ("close of closed channel"). verifies: GG-0074
      */
     public void testCloseOfClosedPanics() throws Exception {
         AtomicReference<Object> panicVal = new AtomicReference<>();
@@ -261,7 +261,7 @@ public final class ChannelTest {
 
     /**
      * Recv on a closed channel drains the buffer, then returns
-     * (zero, false) forever. verifies: GG-0073
+     * (zero, false) forever. verifies: GG-0074
      */
     public void testRecvOnClosedDrainsThenZero() throws Exception {
         AtomicReference<GoChan.RecvResult> r1 = new AtomicReference<>();
@@ -291,7 +291,7 @@ public final class ChannelTest {
     }
 
     /**
-     * len/cap: buffered count and capacity. verifies: GG-0073
+     * len/cap: buffered count and capacity. verifies: GG-0074
      */
     public void testLenCap() throws Exception {
         withScheduler(2, () -> {
@@ -312,7 +312,7 @@ public final class ChannelTest {
 
     /**
      * Select over two recv cases picks the ready one and delivers its
-     * value. verifies: GG-0073
+     * value. verifies: GG-0074
      */
     public void testSelectRecvChoosesReady() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -339,7 +339,7 @@ public final class ChannelTest {
 
     /**
      * Select with default: no case ready → default (chan==null) wins.
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testSelectDefault() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -354,7 +354,7 @@ public final class ChannelTest {
     }
 
     /**
-     * Default does not preempt a ready case. verifies: GG-0073
+     * Default does not preempt a ready case. verifies: GG-0074
      */
     public void testSelectDefaultLosesToReady() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -371,7 +371,7 @@ public final class ChannelTest {
 
     /**
      * Select blocks until a case becomes ready (scheduler-aware park).
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testSelectBlocksUntilReady() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -399,7 +399,7 @@ public final class ChannelTest {
 
     /**
      * Select fairness: two always-ready recv cases; over many iterations
-     * neither starves (Go's uniform random choice). verifies: GG-0073
+     * neither starves (Go's uniform random choice). verifies: GG-0074
      */
     public void testSelectFairness() throws Exception {
         int[] counts = new int[2];
@@ -433,7 +433,7 @@ public final class ChannelTest {
 
     /**
      * Select send case completes via direct handoff to a parked
-     * receiver. verifies: GG-0073
+     * receiver. verifies: GG-0074
      */
     public void testSelectSendHandoff() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -454,7 +454,7 @@ public final class ChannelTest {
 
     /**
      * Select blocked on recv wakes when the channel closes, observing
-     * (zero, ok=false). verifies: GG-0073
+     * (zero, ok=false). verifies: GG-0074
      */
     public void testSelectWakesOnClose() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -480,7 +480,7 @@ public final class ChannelTest {
 
     /**
      * Select over two channels, one closed while parked: the close wins
-     * with (zero, false). verifies: GG-0073
+     * with (zero, false). verifies: GG-0074
      */
     public void testSelectCloseWhileParked() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -508,7 +508,7 @@ public final class ChannelTest {
      * Poison (send on closed) panics BEFORE default is considered, even
      * when a default case is present (gc parity, verified against
      * go1.27.1: `select { case closedCh <- v: default: }` panics).
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testSelectPoisonBeforeDefault() throws Exception {
         AtomicReference<Object> panicVal = new AtomicReference<>();
@@ -533,7 +533,7 @@ public final class ChannelTest {
 
     /**
      * Poison is ignored when another case is ready (gc parity: ready
-     * wins, no panic). verifies: GG-0073
+     * wins, no panic). verifies: GG-0074
      */
     public void testSelectPoisonIgnoredWhenReady() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -558,7 +558,7 @@ public final class ChannelTest {
 
     /**
      * Select with only a send-on-closed case and no default panics.
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testSelectSendOnClosedPanics() throws Exception {
         AtomicReference<Object> panicVal = new AtomicReference<>();
@@ -587,7 +587,7 @@ public final class ChannelTest {
      * unpark (lost claim → spurious wakeup). Hamer close(A) vs send(B)
      * while a select blocks on A+B; after the select, a recv on an
      * untouched channel must block (not return spuriously).
-     * verifies: GG-0073
+     * verifies: GG-0074
      */
     public void testSelectRacyCompleteNoStaleWakeup() throws Exception {
         for (int iter = 0; iter < 30; iter++) {
@@ -663,7 +663,7 @@ public final class ChannelTest {
 
     /**
      * Same channel in two select cases: exactly one case wins and the
-     * value is delivered exactly once. verifies: GG-0073
+     * value is delivered exactly once. verifies: GG-0074
      */
     public void testSelectSameChannelTwice() throws Exception {
         AtomicInteger idx = new AtomicInteger(-1);
@@ -689,7 +689,7 @@ public final class ChannelTest {
 
     /**
      * Close broadcasts to multiple parked receivers: all observe
-     * (zero, false). verifies: GG-0073
+     * (zero, false). verifies: GG-0074
      */
     public void testCloseWakesMultipleReceivers() throws Exception {
         int n = 5;
@@ -718,7 +718,7 @@ public final class ChannelTest {
     /**
      * Ping-pong stress: many goroutines × many round trips on one
      * unbuffered channel; every value must arrive exactly once (wakeup
-     * accounting under contention). verifies: GG-0073
+     * accounting under contention). verifies: GG-0074
      */
     public void testPingPongStress() throws Exception {
         int goroutines = 20;

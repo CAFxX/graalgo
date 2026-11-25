@@ -22,7 +22,7 @@ import graalgo.runtime.ChanOps;
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerStmtKind} hook — no Phase-1/Phase-2 change.
  *
- * <p>verifies: GG-0073 (chan slice)
+ * <p>verifies: GG-0074 (chan slice)
  */
 public final class ChanSendNode extends GoStmtNode {
 

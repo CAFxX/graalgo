@@ -18,8 +18,10 @@
 // those packages declare them, and the linker resolves the declarations
 // against the same registry.
 //
-// Not yet kept from upstream as Go source: the error types of error.go
-// (the backend still defines the values it panics with).
+// The exported error types, TypeAssertionError and PanicNilError, are
+// upstream's Go source (error.go), which the backend's panics instantiate;
+// the unexported ones (errorString, plainError, boundsError) are still the
+// backend's own types.
 package runtime
 
 import (

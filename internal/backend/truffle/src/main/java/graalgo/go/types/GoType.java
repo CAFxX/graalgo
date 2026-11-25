@@ -121,9 +121,14 @@ public final class GoType {
      */
     private Object[] itabsById = NO_ITABS;
     private static final Object[] NO_ITABS = new Object[0];
-    /** This interface type's index into the {@link #itabsById} of dynamic types; -1: none yet. */
+    /**
+     * This interface type's index into the {@link #itabsById} of dynamic types; -1: none yet.
+     * Dense per type table ({@link TypeTable#ifaceIds}): a process-wide counter grew every later
+     * context's id-indexed itab arrays with the number of contexts before it (BUG-0052).
+     */
     private volatile int ifaceId = -1;
-    private static final java.util.concurrent.atomic.AtomicInteger IFACE_IDS = new java.util.concurrent.atomic.AtomicInteger();
+    /** {@link #coincidesMemo}, created on first use. */
+    private volatile PairMemo coincidesMemo;
     /** Display string override for package-name qualification; see {@link #str()}. */
     String pkgName;
     /** The descriptor image of this type, once built ({@link Descriptors}); null before. */
@@ -135,9 +140,9 @@ public final class GoType {
     boolean imageLayout;
 
     /** One lock for every lazy resolution in a type table (the table itself). */
-    private final Object lock;
+    private final TypeTable lock;
 
-    GoType(Object lock, String key, int kind, String pkg, String name, GoType[] targs, GoType elem, GoType mapKey, long len,
+    GoType(TypeTable lock, String key, int kind, String pkg, String name, GoType[] targs, GoType elem, GoType mapKey, long len,
             int dir, Field[] fields, GoType[] params, GoType[] results, boolean variadic, IMethod[] imethods) {
         this.lock = lock;
         this.key = key;
@@ -831,15 +836,76 @@ public final class GoType {
     public int ifaceId() {
         int id = ifaceId;
         if (id < 0) {
-            synchronized (IFACE_IDS) {
+            synchronized (lock) {
                 id = ifaceId;
                 if (id < 0) {
-                    id = IFACE_IDS.getAndIncrement();
+                    id = lock.ifaceIds++;
                     ifaceId = id;
                 }
             }
         }
         return id;
+    }
+
+    /**
+     * The memo of {@code graalgo.go.runtime.Unsafe}'s leaf-coincidence answers for objects of
+     * this layout type, keyed by (offset, pointee type). It lives and dies with the type, hence
+     * with the context whose program declares it: a process-wide memo kept every closed
+     * context's type table, and through it its program, alive (BUG-0052).
+     */
+    public PairMemo coincidesMemo() {
+        PairMemo m = coincidesMemo;
+        if (m == null) {
+            synchronized (lock) {
+                m = coincidesMemo;
+                if (m == null) {
+                    m = new PairMemo();
+                    coincidesMemo = m;
+                }
+            }
+        }
+        return m;
+    }
+
+    /**
+     * A thread-safe memo of a boolean answer per (offset, type): a direct-mapped front by
+     * identity (no key allocation, hash or equals on a hit; a racy read sees a whole entry or
+     * null), backed by a map.
+     */
+    public static final class PairMemo {
+        private record Seen(long off, GoType other, boolean answer) {}
+
+        private record Key(long off, GoType other) {}
+
+        private static final int FRONT = 16;
+        private final Seen[] front = new Seen[FRONT];
+        private final ConcurrentHashMap<Key, Boolean> all = new ConcurrentHashMap<>();
+
+        PairMemo() {}
+
+        private static int slot(long off, GoType other) {
+            return (other.idHash ^ (int) off * 0x2545F491) >>> (32 - Integer.numberOfTrailingZeros(FRONT));
+        }
+
+        /** 1 (true), 0 (false), or -1 when not memoized yet. */
+        public int get(long off, GoType other) {
+            int slot = slot(off, other);
+            Seen s = front[slot];
+            if (s != null && s.other == other && s.off == off) {
+                return s.answer ? 1 : 0;
+            }
+            Boolean b = all.get(new Key(off, other));
+            if (b == null) {
+                return -1;
+            }
+            front[slot] = new Seen(off, other, b);
+            return b ? 1 : 0;
+        }
+
+        public void put(long off, GoType other, boolean answer) {
+            all.put(new Key(off, other), answer);
+            front[slot(off, other)] = new Seen(off, other, answer);
+        }
     }
 
     /**

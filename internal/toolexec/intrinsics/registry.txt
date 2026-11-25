@@ -58,6 +58,9 @@ intrinsic runtime.NumGoroutine RuntimeIntrinsics func() int
 intrinsic runtime.nanotime     RuntimeIntrinsics func() int64
 intrinsic runtime.Goexit       RuntimeIntrinsics func()
 intrinsic runtime.runtimeError RuntimeIntrinsics func(int) error
+# The descriptor queries of (*TypeAssertionError).Error (stdlib/fork/runtime/error.go).
+intrinsic runtime.typeString   RuntimeIntrinsics func(*internal/abi.Type) string
+intrinsic runtime.typePkgPath  RuntimeIntrinsics func(*internal/abi.Type) string
 
 # --- syscall: provided by the runtime through //go:linkname (upstream
 # runtime/runtime.go syscall_Exit) -------------------------------------------

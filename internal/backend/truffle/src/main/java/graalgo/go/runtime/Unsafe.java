@@ -13,7 +13,6 @@ import graalgo.go.values.RawIface;
 import graalgo.go.values.Slice;
 import graalgo.go.values.Str;
 import graalgo.go.values.View;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * The pointer model of SPEC §3.4 / GG-0062 over the flat values (ADR-0015): everything that
@@ -122,20 +121,6 @@ public final class Unsafe {
 
     // ---------------------------------------------------------------- checked conversion
 
-    private record Key(GoType referent, long off, GoType pointee) {}
-
-    private static final ConcurrentHashMap<Key, Boolean> COINCIDES = new ConcurrentHashMap<>();
-
-    /** One answer of {@link #coincides}, immutable (a racy read sees a whole entry or null). */
-    private record Seen(GoType referent, long off, GoType pointee, boolean coincides) {}
-
-    /**
-     * A direct-mapped front of {@link #COINCIDES} by identity: the map's lookup (a key record,
-     * its hash and equals) was a twentieth of a template render, the conversion behind every
-     * {@code reflect} access.
-     */
-    private static final Seen[] RECENT = new Seen[1024];
-
     /**
      * {@code (*U)(p)} for an {@code unsafe.Pointer} {@code p} (ADR-0015 decision 1): the typed
      * pointer to the location when {@code U}'s leaves are the referent's leaves from there on,
@@ -207,18 +192,14 @@ public final class Unsafe {
         if (lt.kind == GoType.BACKING && lt.elem.gcSize() > 0) {
             cls = off % lt.elem.gcSize(); // a backing store's layout repeats per element
         }
-        int slot = (lt.idHash ^ (u.idHash >>> 7) ^ (int) cls * 0x2545F491) >>> 22;
-        Seen s = RECENT[slot];
-        if (s != null && s.referent == lt && s.pointee == u && s.off == cls) {
-            return s.coincides;
+        // Memoized on the layout type (a per-context object), never in a static (BUG-0052).
+        GoType.PairMemo memo = lt.coincidesMemo();
+        int known = memo.get(cls, u);
+        if (known >= 0) {
+            return known == 1;
         }
-        Key key = new Key(lt, cls, u);
-        Boolean hit = COINCIDES.get(key);
-        if (hit == null) {
-            hit = coincidesUncached(lt, cls, u);
-            COINCIDES.put(key, hit);
-        }
-        RECENT[slot] = new Seen(lt, cls, u, hit);
+        boolean hit = coincidesUncached(lt, cls, u);
+        memo.put(cls, u, hit);
         return hit;
     }
 
