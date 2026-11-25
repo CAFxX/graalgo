@@ -4,8 +4,9 @@ and ratchet their cost against test/duration-baseline.json.
 
     gates.py run [-j N] [-k] [--json FILE] [--baseline FILE]
                  [--ratchet off|warn|fail] [--cache warm|cold]
-                 [--format auto|plain|github] [TARGET...]
-    gates.py record RUN_JSON [--baseline FILE]
+                 [--format auto|plain|github] [--shard I/N] [TARGET...]
+    gates.py shards N [--baseline FILE] [--cache warm|cold] [TARGET...]
+    gates.py record RUN_JSON... [--baseline FILE]
 
 `run` with no TARGET runs the prerequisites of the Makefile's `all:` rule
 (the per-push set, so the two cannot drift apart); a TARGET named `all`
@@ -41,6 +42,16 @@ with "cpu_cold" — a target with no cold number is NEW, never failed.
 log folding), `plain` in `== target` lines; `auto` (default) picks github
 iff GITHUB_ACTIONS=true.
 
+Shards (--shard I/N, CI's parallel jobs): the gate list (after the docs
+tier) is split into N disjoint parts whose union is the whole list, by
+longest-processing-time-first over the baseline's wall times (a gate
+without one weighs SHARD_DEFAULT_WALL): each part goes to the lightest
+shard so far. Every shard runs the SETUP targets itself (a shard with no
+gate runs nothing). A shard's gates are started longest first. `shards N`
+prints the partition. The assignment depends only on the target list and
+the baseline file, so N jobs of one commit agree on it; a gate can never
+fall between shards (test_gates.py checks union and disjointness).
+
 Exit: 0 all gates passed (and no ratchet failure), 1 a gate failed or the
 ratchet failed, 2 usage.
 """
@@ -63,6 +74,8 @@ DEFAULT_BASELINE = os.path.join(ROOT, "test", "duration-baseline.json")
 # concurrently: the truffle module's JVM tests (pin-audit smoke in `check`,
 # the smoke tests, the fast Java classes) all use truffle/out/test-tmp.
 SERIAL_GROUPS = [{"check", "test-ci", "test-java-fast"}]
+# The weight of a gate the baseline has no wall time for (a new gate).
+SHARD_DEFAULT_WALL = 30.0
 
 
 # The docs tier (--tier-base): a change that touches only Markdown outside
@@ -115,6 +128,46 @@ def all_targets(makefile):
     return m.group(1).split()
 
 
+def load_walls(path, cache="warm"):
+    """target -> wall seconds of the baseline (like load_baseline)."""
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path) as f:
+        b = json.load(f)
+    out = dict(b.get("wall_cold", {}))
+    if cache == "warm":
+        out.update(b.get("wall", {}))
+    return out
+
+
+def shard_targets(gates, n, walls):
+    """Split `gates` into n disjoint lists covering all of them: longest
+    first, each to the lightest shard (ties: the lowest index). Each list
+    keeps the longest-first order."""
+    weight = {t: walls.get(t, SHARD_DEFAULT_WALL) for t in gates}
+    shards = [[] for _ in range(n)]
+    load = [0.0] * n
+    for t in sorted(gates, key=lambda t: (-weight[t], gates.index(t))):
+        i = min(range(n), key=lambda i: (load[i], i))
+        shards[i].append(t)
+        load[i] += weight[t]
+    return shards, load
+
+
+def parse_shard(v):
+    m = re.fullmatch(r"(\d+)/(\d+)", v or "")
+    if not m or not 1 <= int(m.group(1)) <= int(m.group(2)):
+        raise ValueError("--shard must be I/N with 1 <= I <= N, not %r" % v)
+    return int(m.group(1)), int(m.group(2))
+
+
+def parse_shard_arg(v):
+    try:
+        return parse_shard(v)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
+
+
 def run_target(target, make, cwd, setup_done, log_path):
     """Run one make target; return (rc, wall, cpu)."""
     cmd = [make, "--no-print-directory"]
@@ -148,10 +201,23 @@ def emit(lock, text):
         sys.stdout.flush()
 
 
-def cmd_run(a):
+def expand(a):
     targets = []
     for t in a.targets or ["all"]:  # "all" stands for the `all:` rule's list
         targets += all_targets(os.path.join(a.dir, "Makefile")) if t == "all" else [t]
+    return targets
+
+
+def cmd_shards(a):
+    gates = [t for t in expand(a) if t not in SETUP]
+    shards, load = shard_targets(gates, a.n, load_walls(a.baseline, a.cache))
+    for i, (s, w) in enumerate(zip(shards, load), 1):
+        print("shard %d/%d (~%.0f s): %s" % (i, a.n, w, " ".join(s)))
+    return 0
+
+
+def cmd_run(a):
+    targets = expand(a)
     if a.tier_base:
         changed = changed_files(a.tier_base, a.dir)
         tiered = tier_targets(changed, targets)
@@ -163,6 +229,13 @@ def cmd_run(a):
         targets = tiered
     setup = [] if a.no_setup else list(SETUP)
     gates = [t for t in targets if t not in SETUP]
+    if a.shard:
+        i, n = a.shard
+        shards, load = shard_targets(gates, n, load_walls(a.baseline, a.cache))
+        gates = shards[i - 1]
+        print("gates: shard %d/%d (~%.0f s by the baseline): %s" % (i, n, load[i - 1], " ".join(gates) or "-"))
+        if not gates:
+            setup = []
     gha = a.format == "github" or (a.format == "auto" and os.environ.get("GITHUB_ACTIONS") == "true")
     os.makedirs(a.logdir, exist_ok=True)
     logdir = tempfile.mkdtemp(prefix="gates-", dir=a.logdir)
@@ -270,21 +343,31 @@ def report(results, base, mode, fail_ratio, skipped):
 
 
 def cmd_record(a):
-    with open(a.run_json) as f:
-        run = json.load(f)
-    res, cache = run["targets"], run.get("cache", "warm")
-    cpu = {t: r["cpu"] for t, r in sorted(res.items()) if r["rc"] == 0}
-    wall = {t: r["wall"] for t, r in sorted(res.items()) if r["rc"] == 0}
     old = {}
     if os.path.exists(a.baseline):
         with open(a.baseline) as f:
             old = json.load(f)
-    old.setdefault(section(cache), {}).update(cpu)
-    old.setdefault(section(cache, "wall"), {}).update(wall)
+    # several runs (CI's shards, each also running the SETUP targets):
+    # the max per target and section, so a normal run does not flap
+    new = {}
+    for path in a.run_json:
+        with open(path) as f:
+            run = json.load(f)
+        cache = run.get("cache", "warm")
+        for t, r in run["targets"].items():
+            if r["rc"] != 0:
+                continue
+            for kind in ("cpu", "wall"):
+                sec = new.setdefault(section(cache, kind), {})
+                sec[t] = max(sec.get(t, r[kind]), r[kind])
+    for sec, vals in new.items():
+        old.setdefault(sec, {}).update(vals)
+    cpu = {t for sec, vals in new.items() if sec.startswith("cpu") for t in vals}
     with open(a.baseline, "w") as f:
         json.dump(old, f, indent=1, sort_keys=True)
         f.write("\n")
-    print("gates: recorded %d targets (%s caches) into %s" % (len(cpu), cache, a.baseline))
+    print("gates: recorded %d targets (%s) from %d run(s) into %s"
+          % (len(cpu), " ".join(sorted(new)) or "-", len(a.run_json), a.baseline))
     return 0
 
 
@@ -312,9 +395,17 @@ def main(argv=None):
                    help="pick the docs tier when every change since this commit is a doc")
     r.add_argument("--no-setup", action="store_true",
                    help="do not run the SETUP targets first (a gate builds its own prerequisites)")
+    r.add_argument("--shard", type=parse_shard_arg, default=os.environ.get("GATE_SHARD") or None,
+                   help="I/N: run only shard I of N (CI's parallel jobs; see the module doc)")
     r.add_argument("targets", nargs="*")
+    sh = sub.add_parser("shards")
+    sh.add_argument("n", type=int)
+    sh.add_argument("--baseline", default=DEFAULT_BASELINE)
+    sh.add_argument("--cache", choices=["warm", "cold"], default=os.environ.get("GATE_CACHE") or "warm")
+    sh.add_argument("--dir", default=ROOT)
+    sh.add_argument("targets", nargs="*")
     rec = sub.add_parser("record")
-    rec.add_argument("run_json")
+    rec.add_argument("run_json", nargs="+")
     rec.add_argument("--baseline", default=DEFAULT_BASELINE)
     a = ap.parse_args(argv)
     if a.cmd == "run":
@@ -322,7 +413,16 @@ def main(argv=None):
             ap.error("-j must be >= 1")
         if a.cache not in ("warm", "cold"):
             ap.error("--cache / GATE_CACHE must be warm or cold, not %r" % a.cache)
+        if isinstance(a.shard, str):  # from GATE_SHARD: argparse types only the flag
+            try:
+                a.shard = parse_shard(a.shard)
+            except ValueError as e:
+                ap.error(str(e))
         return cmd_run(a)
+    if a.cmd == "shards":
+        if a.n < 1:
+            ap.error("N must be >= 1")
+        return cmd_shards(a)
     return cmd_record(a)
 
 
