@@ -16,8 +16,8 @@ import graalgo.language.GoLanguage;
 public final class IntrinsicTable {
     private IntrinsicTable() {}
 
-    public static final int VERSION = 1;
-    public static final String HASH = "12842fbba98ebf9b";
+    public static final int VERSION = 2;
+    public static final String HASH = "3efda6f921f4e982";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -268,12 +268,6 @@ public final class IntrinsicTable {
                 return new R_reflect_unsafeslice(language);
             case "reflect.verifyNotInHeapPtr":
                 return new R_reflect_verifyNotInHeapPtr(language);
-            case "runtime.(*Func).Name":
-                return new R_runtime___Func__Name(language);
-            case "runtime.Caller":
-                return new R_runtime_Caller(language);
-            case "runtime.FuncForPC":
-                return new R_runtime_FuncForPC(language);
             case "runtime.GC":
                 return new R_runtime_GC(language);
             case "runtime.GOMAXPROCS":
@@ -288,6 +282,10 @@ public final class IntrinsicTable {
                 return new R_runtime_NumCPU(language);
             case "runtime.NumGoroutine":
                 return new R_runtime_NumGoroutine(language);
+            case "runtime.Stack":
+                return new R_runtime_Stack(language);
+            case "runtime.callers":
+                return new R_runtime_callers(language);
             case "runtime.cmpstring":
                 return new R_runtime_cmpstring(language);
             case "runtime.entersyscall":
@@ -296,8 +294,12 @@ public final class IntrinsicTable {
                 return new R_runtime_exitsyscall(language);
             case "runtime.fcntl":
                 return new R_runtime_fcntl(language);
+            case "runtime.funcInfo":
+                return new R_runtime_funcInfo(language);
             case "runtime.nanotime":
                 return new R_runtime_nanotime(language);
+            case "runtime.pcFileLine":
+                return new R_runtime_pcFileLine(language);
             case "runtime.rand":
                 return new R_runtime_rand(language);
             case "runtime.randn":
@@ -2102,45 +2104,6 @@ public final class IntrinsicTable {
         }
     }
 
-    /** {@code runtime.(*Func).Name}: {@code func() string}. */
-    static final class R_runtime___Func__Name extends Root {
-        R_runtime___Func__Name(GoLanguage language) {
-            super(language, "runtime.(*Func).Name");
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            Object[] a = frame.getArguments();
-            return RuntimeIntrinsics.runtime___Func__Name(this, a[1]);
-        }
-    }
-
-    /** {@code runtime.Caller}: {@code func(int) (uintptr, string, int, bool)}. */
-    static final class R_runtime_Caller extends Root {
-        R_runtime_Caller(GoLanguage language) {
-            super(language, "runtime.Caller");
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            Object[] a = frame.getArguments();
-            return RuntimeIntrinsics.runtime_Caller(this, (long) a[1]);
-        }
-    }
-
-    /** {@code runtime.FuncForPC}: {@code func(uintptr) *runtime.Func}. */
-    static final class R_runtime_FuncForPC extends Root {
-        R_runtime_FuncForPC(GoLanguage language) {
-            super(language, "runtime.FuncForPC");
-        }
-
-        @Override
-        public Object execute(VirtualFrame frame) {
-            Object[] a = frame.getArguments();
-            return RuntimeIntrinsics.runtime_FuncForPC(this, (long) a[1]);
-        }
-    }
-
     /** {@code runtime.GC}: {@code func()}. */
     static final class R_runtime_GC extends Root {
         R_runtime_GC(GoLanguage language) {
@@ -2229,6 +2192,32 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.Stack}: {@code func([]uint8, bool) int}. */
+    static final class R_runtime_Stack extends Root {
+        R_runtime_Stack(GoLanguage language) {
+            super(language, "runtime.Stack");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_Stack(this, a[1], (boolean) a[2]);
+        }
+    }
+
+    /** {@code runtime.callers}: {@code func(int, []uintptr) int}. */
+    static final class R_runtime_callers extends Root {
+        R_runtime_callers(GoLanguage language) {
+            super(language, "runtime.callers");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_callers(this, (long) a[1], a[2]);
+        }
+    }
+
     /** {@code runtime.cmpstring}: {@code func(string, string) int}. */
     static final class R_runtime_cmpstring extends Root {
         R_runtime_cmpstring(GoLanguage language) {
@@ -2281,6 +2270,19 @@ public final class IntrinsicTable {
         }
     }
 
+    /** {@code runtime.funcInfo}: {@code func(uintptr) (string, uintptr)}. */
+    static final class R_runtime_funcInfo extends Root {
+        R_runtime_funcInfo(GoLanguage language) {
+            super(language, "runtime.funcInfo");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_funcInfo(this, (long) a[1]);
+        }
+    }
+
     /** {@code runtime.nanotime}: {@code func() int64}. */
     static final class R_runtime_nanotime extends Root {
         R_runtime_nanotime(GoLanguage language) {
@@ -2290,6 +2292,19 @@ public final class IntrinsicTable {
         @Override
         public Object execute(VirtualFrame frame) {
             return RuntimeIntrinsics.runtime_nanotime(this);
+        }
+    }
+
+    /** {@code runtime.pcFileLine}: {@code func(uintptr) (string, int)}. */
+    static final class R_runtime_pcFileLine extends Root {
+        R_runtime_pcFileLine(GoLanguage language) {
+            super(language, "runtime.pcFileLine");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_pcFileLine(this, (long) a[1]);
         }
     }
 

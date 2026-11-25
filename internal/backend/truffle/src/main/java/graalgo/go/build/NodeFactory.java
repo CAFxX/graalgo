@@ -25,6 +25,7 @@ import graalgo.go.nodes.N.Jump;
 import graalgo.go.nodes.N.Ref;
 import graalgo.go.nodes.N.Stmt;
 import graalgo.go.nodes.Unsafes;
+import graalgo.go.runtime.Positions;
 import graalgo.go.types.GoType;
 import graalgo.go.types.GoType.Field;
 import graalgo.go.types.Method;
@@ -113,6 +114,8 @@ public final class NodeFactory {
     private final Gir.Sections sec;
     private final Gir.FuncBody body;
     private final String name;
+    /** The function's positions (shared with its split copies and range-over-func bodies). */
+    private final Positions positions;
     private final FrameDescriptor.Builder fdb = FrameDescriptor.newBuilder();
     private final int[] slots;
     private final GoType[] ltypes;
@@ -167,7 +170,7 @@ public final class NodeFactory {
     /** gc names a range-over-func body {@code f-rangeN}, numbered apart from literals. */
     private int rangeCount;
 
-    private NodeFactory(FunctionUnit.Instance inst, Gir.FuncBody body, String name) {
+    private NodeFactory(FunctionUnit.Instance inst, Gir.FuncBody body, Positions positions) {
         this.inst = inst;
         this.pkg = inst.unit().pkg;
         this.env = inst.env;
@@ -175,7 +178,8 @@ public final class NodeFactory {
         this.types = pkg.program.types;
         this.sec = pkg.sections();
         this.body = body;
-        this.name = name;
+        this.positions = positions;
+        this.name = positions.function;
         int n = body.locals().length;
         this.slots = new int[n];
         this.ltypes = new GoType[n];
@@ -316,8 +320,38 @@ public final class NodeFactory {
     /** The call target of a function instantiation (called once per instance). */
     public static RootCallTarget buildFunction(FunctionUnit.Instance inst) {
         FunctionUnit u = inst.unit();
-        Gir.FuncBody b = u.pkg.gir.body(u.index);
-        return new NodeFactory(inst, b, u.symbol).buildRoot(0).getCallTarget();
+        PackageUnit p = u.pkg;
+        Gir.FuncBody b = p.gir.body(u.index);
+        String file = p.str(u.func.file());
+        int line = (int) u.func.line();
+        Positions ps = new Positions(u.traceName(), false, () -> decode(p, b, p.source(file), line));
+        return new NodeFactory(inst, b, ps).buildRoot(0).getCallTarget();
+    }
+
+    /**
+     * The position table of {@code b} (GIR {@code FuncBody.positions}: line deltas from the
+     * previous entry, the file "" for the body's own), with the declaration at {@code declSource}:
+     * {@code declLine}. Called once per function, on the first section or pc a tool asks for.
+     */
+    static Positions.Table decode(PackageUnit p, Gir.FuncBody b, com.oracle.truffle.api.source.Source declSource,
+            int declLine) {
+        Gir.Pos[] ps = b.positions();
+        com.oracle.truffle.api.source.Source own = p.source(p.str(b.file()));
+        com.oracle.truffle.api.source.Source[] sources = new com.oracle.truffle.api.source.Source[ps.length];
+        int[] lines = new int[ps.length];
+        int[] cols = new int[ps.length];
+        int[] lens = new int[ps.length];
+        int line = 0;
+        for (int i = 0; i < ps.length; i++) {
+            Gir.Pos q = ps[i];
+            line += (int) q.line();
+            String f = p.str(q.file());
+            sources[i] = f.isEmpty() ? own : p.source(f);
+            lines[i] = line;
+            cols[i] = (int) q.col();
+            lens[i] = (int) q.len();
+        }
+        return new Positions.Table(declSource != null ? declSource : own, declLine, sources, lines, cols, lens);
     }
 
     /**
@@ -325,8 +359,8 @@ public final class NodeFactory {
      * {@code cloneUninitialized} returns for Truffle splitting (truffle-design §4.7: the body is
      * decoded again from GIR, so a split copy starts with fresh inline caches).
      */
-    private static Calls.FuncRoot rebuild(FunctionUnit.Instance inst, Gir.FuncBody body, String name, boolean wrapper,
-            int captures, boolean split) {
+    private static Calls.FuncRoot rebuild(FunctionUnit.Instance inst, Gir.FuncBody body, Positions name,
+            boolean wrapper, int captures, boolean split) {
         NodeFactory f = new NodeFactory(inst, body, name);
         f.wrapper = wrapper;
         f.split = split;
@@ -385,18 +419,22 @@ public final class NodeFactory {
                 targetSlots[i] = deferSites.get(i)[0];
                 argsSlots[i] = deferSites.get(i)[1];
             }
-            root = new Calls.OpenDeferRoot(lang, fd, name, prologue, b, result, deferBits, targetSlots, argsSlots);
+            root = new Calls.OpenDeferRoot(lang, fd, positions, prologue, b, result, deferBits, targetSlots, argsSlots);
         } else if (hasDefer) {
-            root = new Calls.DeferRoot(lang, fd, name, prologue, b, result);
+            root = new Calls.DeferRoot(lang, fd, positions, prologue, b, result);
         } else {
-            root = new Calls.FuncRoot(lang, fd, name, prologue, b, result);
+            root = new Calls.FuncRoot(lang, fd, positions, prologue, b, result);
         }
         FunctionUnit.Instance i = inst;
         Gir.FuncBody gb = body;
-        String n = name;
+        Positions n = positions;
         boolean w = wrapper;
         root.setRebuild(() -> rebuild(i, gb, n, w, captures, true));
         root.setReadOnlyReceiver(readOnlyReceiver());
+        Gir.Stmt[] top = body.body();
+        if (top.length > 0 && top[top.length - 1] instanceof Gir.Stmt.Return r) {
+            root.setExitPos(r.pos());
+        }
         return root;
     }
 
@@ -1365,9 +1403,9 @@ public final class NodeFactory {
             case Gir.Expr.Call c:
                 return call(c);
             case Gir.Expr.MethodCall mc:
-                return typed(ty(mc.type()), new Calls.Call(methodInstance(mc.method(), mc.recvType(), mc.targs()),
+                return typed(ty(mc.type()), at(new Calls.Call(methodInstance(mc.method(), mc.recvType(), mc.targs()),
                         withRecv(value(mc.recv()), args(mc.args(), methodSig(mc.method(), mc.recvType(), mc.targs()),
-                                mc.spread())), wrapper));
+                                mc.spread())), wrapper), mc.pos()));
             case Gir.Expr.IfaceCall ic:
                 return ifaceCall(ic);
             case Gir.Expr.BuiltinCall bc:
@@ -1988,10 +2026,16 @@ public final class NodeFactory {
         GoType result = ty(c.type());
         FunctionUnit.Instance callee = staticCallee(c.fn());
         if (callee != null) {
-            return typed(result, new Calls.Call(callee, args(c.args(), sig, c.spread()), wrapper));
+            return typed(result, at(new Calls.Call(callee, args(c.args(), sig, c.spread()), wrapper), c.pos()));
         }
         Expr fn = expr(c.fn());
-        return typed(result, new Calls.CallClosure(fn, args(c.args(), sig, c.spread())));
+        return typed(result, at(new Calls.CallClosure(fn, args(c.args(), sig, c.spread())), c.pos()));
+    }
+
+    /** {@code call} at position {@code pos} of this function's table (stack walks, CallTag). */
+    private static <T extends N.CallRef> T at(T call, int pos) {
+        call.setPos(pos);
+        return call;
     }
 
     private static String methodKey(String name, String pkgPath) {
@@ -2024,14 +2068,14 @@ public final class NodeFactory {
             int index = methodIndex(rt, key);
             Expr recv = expr(ic.recv());
             Expr[] a = args(ic.args(), rt.u().imethods[index].sig, ic.spread());
-            return typed(result, new Calls.IfaceCall(recv, rt, index, a, wrapper));
+            return typed(result, at(new Calls.IfaceCall(recv, rt, index, a, wrapper), ic.pos()));
         }
         // A type parameter instantiated with a concrete type: the method is known now (D6).
         Method m = methodOf(rt, key);
         GoType sig = dynamicSig(rt, key, ic.args().length);
         Expr recv = expr(ic.recv());
         Expr[] a = sig == null ? plainArgs(ic.args()) : args(ic.args(), sig, ic.spread());
-        return typed(result, new Calls.Call(m::target, withRecv(new Calls.Adapt(m, recv), a), wrapper));
+        return typed(result, at(new Calls.Call(m::target, withRecv(new Calls.Adapt(m, recv), a), wrapper), ic.pos()));
     }
 
     /** No signature is recorded for a method reached through a type parameter. */
@@ -2135,14 +2179,24 @@ public final class NodeFactory {
             }
             capSlots[i] = slots[local];
         }
+        // gc: main.f.func1 for a literal in f, main.f.func1.func1 for one inside that literal.
         String litName = name + ".func" + (++litCount);
+        Positions outer = positions;
+        int at = fl.pos();
+        Gir.FuncBody lb = fl.body();
+        PackageUnit p = pkg;
+        Positions litPositions = new Positions(litName, fl.wrapper(), () -> {
+            Positions.Table t = outer.table();
+            boolean ok = outer.valid(at);
+            return decode(p, lb, ok ? t.sources()[at - 1] : null, ok ? t.lines()[at - 1] : 0);
+        });
         Supplier<RootCallTarget> target = new Supplier<>() {
             private RootCallTarget built;
 
             @Override
             public synchronized RootCallTarget get() {
                 if (built == null) {
-                    built = rebuild(inst, fl.body(), litName, fl.wrapper(), caps.length, false).getCallTarget();
+                    built = rebuild(inst, fl.body(), litPositions, fl.wrapper(), caps.length, false).getCallTarget();
                 }
                 return built;
             }
@@ -2492,11 +2546,42 @@ public final class NodeFactory {
         hoist = savedHoist;
         impureAhead = savedAhead;
         exempt = savedExempt;
-        if (ordered == null || ordered.isEmpty()) {
-            return body;
+        Stmt out = ordered == null || ordered.isEmpty() ? body : hoisted(ordered, body);
+        // The statement's position (StatementTag, run-time error lines); a block or a label
+        // is not a statement of its own, and a node that has one is a nested statement's.
+        if (!(s instanceof Gir.Stmt.Block) && !(s instanceof Gir.Stmt.Labeled) && out.pos() == 0) {
+            out.setPos(stmtPos(s));
         }
+        return out;
+    }
+
+    private static Stmt hoisted(List<Stmt> ordered, Stmt body) {
         ordered.add(body);
         return new Ctl.Block(ordered.toArray(new Stmt[0]));
+    }
+
+    /** The position of a GIR statement (every member has one). */
+    private static int stmtPos(Gir.Stmt s) {
+        return switch (s) {
+            case Gir.Stmt.Expr x -> x.pos();
+            case Gir.Stmt.Assign x -> x.pos();
+            case Gir.Stmt.Define x -> x.pos();
+            case Gir.Stmt.Var x -> x.pos();
+            case Gir.Stmt.IncDec x -> x.pos();
+            case Gir.Stmt.Send x -> x.pos();
+            case Gir.Stmt.Go x -> x.pos();
+            case Gir.Stmt.Defer x -> x.pos();
+            case Gir.Stmt.Return x -> x.pos();
+            case Gir.Stmt.Branch x -> x.pos();
+            case Gir.Stmt.Labeled x -> x.pos();
+            case Gir.Stmt.Block x -> x.pos();
+            case Gir.Stmt.If x -> x.pos();
+            case Gir.Stmt.Switch x -> x.pos();
+            case Gir.Stmt.TypeSwitch x -> x.pos();
+            case Gir.Stmt.Select x -> x.pos();
+            case Gir.Stmt.For x -> x.pos();
+            case Gir.Stmt.Range x -> x.pos();
+        };
     }
 
     private Stmt stmt0(Gir.Stmt s) {
@@ -3217,7 +3302,7 @@ public final class NodeFactory {
         targets.pop();
         rangeFuncDepth--;
         RootCallTarget yield = new graalgo.go.nodes.RangeFunc.YieldRoot(lang, name + "-range" + (++rangeCount),
-                seq(body), keySlot, valueSlot, target.brk, target.cont).getCallTarget();
+                positions, (int) r.pos(), seq(body), keySlot, valueSlot, target.brk, target.cont).getCallTarget();
         return new graalgo.go.nodes.RangeFunc(inPlace(r.x()), yield, defers[0] ? rangeDeferSlot : -1);
     }
 

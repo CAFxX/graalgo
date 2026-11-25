@@ -28,7 +28,7 @@ import graalgo.values.GoStructDescriptor;
  * {@code stop()}/shutdown no translator goroutine may remain parked,
  * otherwise {@code awaitQuiescence} would hang program exit.
  *
- * <p>verifies: GG-0073 (time slice)
+ * <p>verifies: GG-0074 (time slice)
  */
 public final class TimeChanLenCapTest {
 

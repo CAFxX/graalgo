@@ -39,6 +39,13 @@ The ratchet only goes down, in the tree and against the git base:
     change and exempt from the base comparison; the definition is recorded
     in the budget file under "_definitions".
 
+The duration baselines (test/duration-baseline*.json, test/lib/gates.py)
+are forward-only the same way: against the same git base, a target whose
+cpu/cpu_cold number is new or rose more than 25% (+1 s) needs a `reason`
+entry for that target added or changed in the change (gates.py
+`unreasoned_rises`; `gates.py record --reason`), so a re-record cannot
+silently launder a regression into the baseline.
+
 Usage: check_ratchets.py [--update] [repo-root]
 """
 
@@ -50,6 +57,7 @@ import sys
 from pathlib import Path
 
 BUDGET = Path(".github/scripts/ratchet_budget.json")
+DURATION = re.compile(r"^test/duration-baseline[\w-]*\.json$")
 SKIP = ("internal/frontend/go/", "docs/arch/", "research/")
 
 COUNTERS = {
@@ -163,6 +171,24 @@ def compare_base(budget, base_budget):
     return errors
 
 
+def duration_errors(root, base):
+    """Unreasoned rises of every tracked duration baseline vs the base."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "test" / "lib"))
+    import gates  # the rule's single definition
+    errors = []
+    for rel in tracked(root):
+        if not DURATION.match(rel) or not (root / rel).is_file():
+            continue
+        text = git(root, "show", f"{base}:{rel}")
+        for sec, t, old, new in gates.unreasoned_rises(json.loads(text) if text else {},
+                                                       json.loads((root / rel).read_text())):
+            errors.append(f"duration: {rel}: {sec} {t}: "
+                          f"{'NEW' if old is None else old} -> {new} s at the base commit's file "
+                          f"with no new `reason` entry for {t} (a new or >25% higher baseline "
+                          f"needs one: gates.py record --reason)")
+    return errors
+
+
 def main(argv):
     update = "--update" in argv
     args = [a for a in argv[1:] if not a.startswith("--")]
@@ -194,6 +220,7 @@ def main(argv):
         text = git(root, "show", f"{base}:{BUDGET.as_posix()}")
         if text:
             errors += compare_base(budget, json.loads(text))
+        errors += duration_errors(root, base)
     if errors:
         print(f"RATCHET GATE FAILED ({BUDGET}):")
         for e in errors:

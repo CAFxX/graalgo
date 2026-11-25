@@ -3,7 +3,7 @@ package graalgo.safepoint;
 import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 
 /**
- * GC safepoint seam (PLAN.md D8 [DECIDED]; GG-0073 seam slice).
+ * GC safepoint seam (PLAN.md D8 [DECIDED]; GG-0074 seam slice).
  *
  * <p>Frozen signature: {@code graalgo.safepoint.poll()}. The AST inserts
  * calls at function entries ({@code GoRootNode}) and loop back-edges

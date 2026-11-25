@@ -32,7 +32,7 @@ import graalgo.values.GoStructDescriptor;
  * or Phase-2 change. The Phase-2 primitives ({@link ChanOps},
  * {@code SelectOp}, {@code GoChan}) are consumed as-is.
  *
- * <p>verifies: GG-0073 (chan slice)
+ * <p>verifies: GG-0074 (chan slice)
  */
 final class ChanWire {
     private ChanWire() {}

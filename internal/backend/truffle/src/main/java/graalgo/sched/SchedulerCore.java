@@ -58,9 +58,10 @@ public final class SchedulerCore {
 
     /**
      * Carrier mode (ADR-0018, the default): goroutines are continuations on a few carrier
-     * threads, so spawning one costs the same however many are alive. Null in thread mode
-     * (one thread per goroutine: {@code -Dgraalgo.sched.goroutines=thread}, or a JVM that does
-     * not export {@code jdk.internal.vm} to the runtime).
+     * threads, so spawning one costs the same however many are alive. Null in thread mode, the
+     * explicit opt-in of one thread per goroutine ({@code -Dgraalgo.sched.goroutines=thread} or
+     * {@code go.GoroutineThreads=thread}). Never chosen automatically: a JVM that does not export
+     * {@code jdk.internal.vm} to the runtime fails at scheduler creation in carrier mode.
      */
     private final Carriers carriers;
 
@@ -81,12 +82,12 @@ public final class SchedulerCore {
             Object.class.getModule().isExported("jdk.internal.vm", SchedulerCore.class.getModule());
 
     /**
-     * Whether new schedulers run in carrier mode (GG-0073, ADR-0018: the default). The system
+     * Whether new schedulers run in carrier mode (GG-0074, ADR-0018: the default). The system
      * property {@code graalgo.sched.goroutines} selects the mode when a context does not set
      * {@code go.GoroutineThreads}: unset or {@code carrier}, carrier mode; {@code thread}, one
-     * thread per goroutine (GG-0073's fallback). Read per scheduler, so a test can switch it. A
-     * JVM without the {@code jdk.internal.vm} export fails loudly at scheduler creation rather
-     * than falling back to the quadratic mode unnoticed.
+     * thread per goroutine (GG-0074's explicit opt-in). Read per scheduler, so a test can switch
+     * it. A JVM without the {@code jdk.internal.vm} export fails loudly at scheduler creation
+     * rather than falling back to the quadratic mode unnoticed.
      */
     public static boolean carrierModeDefault() {
         String mode = System.getProperty("graalgo.sched.goroutines", "carrier");

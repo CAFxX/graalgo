@@ -46,7 +46,10 @@ public final class Handles {
     private long[] keys = new long[256];
     private Range[] refs = new Range[256];
     private int size;
-    private long next = 0xc000000000L;
+    /** The first handle: every handle is at or above it (the pc range of {@link Stacks} is below). */
+    public static final long FIRST = 0xc000000000L;
+
+    private long next = FIRST;
 
     private static int hash(Object obj) {
         int h = System.identityHashCode(obj);

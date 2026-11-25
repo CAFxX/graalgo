@@ -12,7 +12,7 @@ import graalgo.jfr.JfrEvents;
 import graalgo.jfr.ParkReason;
 
 /**
- * A single {@code select} operation (P2-M2, WS B; GG-0073 chan slice).
+ * A single {@code select} operation (P2-M2, WS B; GG-0074 chan slice).
  *
  * <p>Go select semantics:
  * <ol>

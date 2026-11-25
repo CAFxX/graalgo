@@ -10,6 +10,11 @@
 #
 # Too slow for per-push (~1 s a program).
 name: fuzz-newpath
+# A dispatch's title carries its inputs: ci_status.sh lets only a dispatch
+# with the default inputs supersede a red scheduled run (a reduced-scope
+# dispatch proves nothing about the full run); other events keep the
+# default title.
+run-name: "${{ github.event_name == 'workflow_dispatch' && format('fuzz-newpath dispatch inputs: n={0}', inputs.n) || '' }}"
 
 on:
   schedule:

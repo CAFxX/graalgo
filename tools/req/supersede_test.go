@@ -208,6 +208,21 @@ func TestPlanFileEdits_LineOutOfRange(t *testing.T) {
 	}
 }
 
+// A hit whose line does not mention the old ID (a stale or drifted line
+// number) fails the whole plan instead of skipping it silently ('u') or
+// deleting an unrelated line ('d').
+func TestPlanFileEdits_LineWithoutIDRefused(t *testing.T) {
+	for _, action := range []byte{'u', 'd'} {
+		c := planCtx(t, map[string]string{"doc.md": "GG-0001 here\nunrelated\n"})
+		ds := []disposition{{ref: Ref{ID: "GG-0001", File: "doc.md", Line: 2}, action: action}}
+		ws, err := planFileEdits(c, ds, "GG-0001", "GG-0003")
+		requireErrContains(t, err, "line does not mention GG-0001")
+		if ws != nil {
+			t.Fatalf("%c: failed plan must stage nothing, got %v", action, ws)
+		}
+	}
+}
+
 func TestPlanFileEdits_ReadError(t *testing.T) {
 	c := planCtx(t, nil)
 	ds := []disposition{{ref: Ref{ID: "GG-0001", File: "nosuch.go", Line: 1}, action: 'u'}}

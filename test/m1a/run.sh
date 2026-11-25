@@ -5,8 +5,9 @@
 # on the new node package (graalgo.go) via internal/backend/graalgo-bundle-run,
 # against the same program built and run by gc. Compared per program: stdout
 # (bytes), stderr (normalized by test/corpus/lifecycle/normalize.py: goroutine
-# ids, frame lines and hex addresses — stack-trace fidelity is not this gate's
-# subject), and the exit status.
+# ids, frame lines and hex addresses; a program with a `// m1a:traceback` line
+# keeps its frames' names and file:line, normalized by tbnorm.py), and the exit
+# status.
 #
 # Programs: every test/corpus/**/*.go without an import (the M1a set of
 # docs/arch/toolexec-design.md §8), made observable by transform.py, the
@@ -133,8 +134,11 @@ for prog in "${programs[@]}"; do
         gg_status=0
         TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
-        python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
-        grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"
+        norm="$NORMALIZE"
+        # A program with a `// m1a:traceback` line compares its traceback frames too.
+        if [ -f "$src" ] && grep -q '^// m1a:traceback$' "$src"; then norm="$HERE/tbnorm.py"; fi
+        python3 "$norm" < "$w/gc.err" > "$w/gc.nerr"
+        grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$norm" > "$w/gg.nerr"
         if [ "$gc_status" -ne "$gg_status" ]; then
             reason="exit status $gg_status, gc $gc_status"
         elif ! cmp -s "$w/gc.out" "$w/gg.out"; then

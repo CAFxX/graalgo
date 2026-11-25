@@ -26,7 +26,7 @@ import graalgo.language.GoLanguage;
 
 /**
  * Cancellation, hard exit and thread-local actions of a running Go program (playbook §10;
- * WP-TR-AUDIT-3 of docs/arch/truffle-audit.md; GG-0073: the same in both goroutine modes).
+ * WP-TR-AUDIT-3 of docs/arch/truffle-audit.md; GG-0074: the same in both goroutine modes).
  * Runs the linked program test/m1r/cancel/probe.go (built by test/m1r/cancel.sh), whose
  * goroutines block in every way a Go program blocks — channels, select, Mutex, WaitGroup,
  * timers, sleep, read(2) on a pipe and on stdin, inside a deferred call mid-panic — while

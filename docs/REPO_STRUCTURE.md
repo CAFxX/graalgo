@@ -340,13 +340,17 @@ directory's README repeats its status.
     [programs/](../test/m1r/programs/) against graalgo's fork with
     `go build -toolexec graalgo-tool`, runs it on the new node package and
     compares stdout, normalized stderr and exit status with gc (in the
-    default carrier goroutine mode; `spawn_flat.go` is the spawn-scaling
-    check of ADR-0018); [cancel.sh](../test/m1r/cancel.sh) builds
+    default carrier goroutine mode; `spawn_parked.go` keeps 20,000
+    goroutines parked at once, functional output only); [cancel.sh](../test/m1r/cancel.sh) builds
     [cancel/probe.go](../test/m1r/cancel/probe.go) and cancels it from the
     embedder (`Context.close(true)` with goroutines blocked everywhere,
     system calls included; thread-local action reach; `os.Exit` and panic
     as Truffle hard exits; both goroutine modes, ADR-0019; run by `make
-    test-goroutine-modes`).
+    test-goroutine-modes`); [tools.sh](../test/m1r/tools.sh) builds
+    [tools/probe.go](../test/m1r/tools/probe.go) and runs Truffle tools on it
+    (an `ExecutionListener` on statements and roots in both goroutine modes,
+    a collecting `CPUSampler` in carrier mode: Go names and file:line;
+    ADR-0020, BUG-0050; run by `make test-goroutine-modes`).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r
@@ -444,7 +448,10 @@ directory's README repeats its status.
     [programs/](../test/m1a/programs/) adds programs for areas the corpus
     is thin on (open-coded and chained defers, Goexit, recover through
     wrappers, range-over-func, the flat value model, interfaces, generics,
-    goroutines, bounds and conversion edge cases);
+    goroutines, bounds and conversion edge cases); a program with a
+    `// m1a:traceback` line has its traceback frames (names, file:line)
+    compared too, normalized by [tbnorm.py](../test/m1a/tbnorm.py) (tested by
+    [test_tbnorm.py](../test/m1a/test_tbnorm.py); ADR-0020);
     [multipkg/](../test/m1a/multipkg/) holds multi-package modules
     (`xflags/`: link `-X`, built with its `//m1a:ldflags` line).
     [defer_path.sh](../test/m1a/defer_path.sh) pins GG-0071's open-coding
@@ -480,6 +487,10 @@ directory's README repeats its status.
     [compile-health.yml](../.github/workflows/compile-health.yml); parser
     test [test_pe_report.py](../test/bench/realistic/test_pe_report.py) in
     `make pe-check-m1a`).
+    [scaling/spawn_flat.go](../test/bench/scaling/spawn_flat.go) is the
+    spawn-scaling check of ADR-0018 (spawn cost flat in the live count; a
+    wall-clock ratio compared with gc's output by the m1r runner): `make
+    bench-spawn-flat`, weekly in ci.yml's full-suite job, never per-push.
   - [spikes/abi/](../test/spikes/abi/) — prototypes behind
     [abi-spike.md](arch/abi-spike.md) (not part of any gate; each has a
     `run.sh` or is a `go run` tool):

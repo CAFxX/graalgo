@@ -73,6 +73,11 @@ public final class PackageUnit {
         return gir.string(index);
     }
 
+    /** The source of Go file {@code name} ({@link Program#source}). */
+    public com.oracle.truffle.api.source.Source source(String name) {
+        return program.source(name);
+    }
+
     String typeKey(int id) {
         return gir.string(s.types[id - 1].key());
     }

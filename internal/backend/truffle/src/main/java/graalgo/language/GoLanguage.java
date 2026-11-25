@@ -5,6 +5,8 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
 import com.oracle.truffle.api.ContextThreadLocal;
 import com.oracle.truffle.api.Option;
 import com.oracle.truffle.api.TruffleLanguage;
+import com.oracle.truffle.api.instrumentation.ProvidedTags;
+import com.oracle.truffle.api.instrumentation.StandardTags;
 import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
@@ -59,6 +61,10 @@ import org.graalvm.options.OptionStability;
         defaultMimeType = GoLanguage.WIRE_MIME,
         contextPolicy = TruffleLanguage.ContextPolicy.EXCLUSIVE,
         website = "https://go.dev")
+// The new path's statement, call and function-body nodes carry these (graalgo.go.nodes.N.Stmt,
+// N.CallRef, Calls.Body; WP-TR-AUDIT-6); v1's nodes are not instrumentable.
+@ProvidedTags({StandardTags.RootTag.class, StandardTags.RootBodyTag.class, StandardTags.StatementTag.class,
+        StandardTags.CallTag.class})
 public final class GoLanguage extends TruffleLanguage<GoContext> {
     public static final String ID = "go";
     /** frontend/v1 JSON wire document (temporary; deleted with v1). */
@@ -77,8 +83,8 @@ public final class GoLanguage extends TruffleLanguage<GoContext> {
     static final OptionKey<String> SourceFiles = new OptionKey<>("");
 
     @Option(help = "How goroutines run: 'carrier' (default): continuations on a few polyglot "
-            + "carrier threads (GG-0073, ADR-0018); or one polyglot thread per goroutine, "
-            + "'thread' (= 'virtual') or 'platform' (truffle-design §2.6 item 5), the fallback. "
+            + "carrier threads (GG-0074, ADR-0018); or one polyglot thread per goroutine, "
+            + "'thread' (= 'virtual') or 'platform' (truffle-design §2.6 item 5), an explicit opt-in. "
             + "Unset, -Dgraalgo.sched.goroutines=thread selects 'thread'.",
             category = OptionCategory.USER, stability = OptionStability.STABLE)
     static final OptionKey<String> GoroutineThreads = new OptionKey<>("carrier");
