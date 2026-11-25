@@ -1003,7 +1003,15 @@ half (H6).
   of descriptors.
 
 **(d) Maps.** `GoMap` remains the hand-written open-addressing table SPEC §3.4
-requires. The key *kind* is static, so the factory chooses
+requires. As built (WP-TR-AUDIT-4, [truffle-audit.md](truffle-audit.md) §6):
+integer/boolean keys probe unboxed; every other key kind probes through a
+`MapKeys.KeyOps` node chosen by the static key type (strings with the hash
+cached in `Str`, struct/array keys of scalar, string and pointer leaves via
+an exploded `KeyPlan`, interfaces via a limit-3 cache on the dynamic type),
+all PE-visible, with the generic `Values` code behind a boundary as the
+megamorphic and reflection path; only growth stays behind a boundary. Slot
+hashes are seeded per map (a random odd multiplier, multiply-shift). The
+paragraph's original plan follows. The key *kind* is static, so the factory chooses
 `MapGetI64Node`, `MapGetStrNode`, `MapGetGenericNode` (and the corresponding
 put/delete/range nodes). For integer and string keys the probe loop is plain
 Java over the table's arrays and is PE-safe; hashing a string is a loop over

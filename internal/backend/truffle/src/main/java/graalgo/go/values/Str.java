@@ -73,13 +73,57 @@ public final class Str {
         return o instanceof Str s && eq(this, s);
     }
 
-    @Override
-    public int hashCode() {
-        int h = 1;
-        for (int i = off; i < off + len; i++) {
-            h = 31 * h + b[i];
+    /**
+     * The process-wide key of the byte hash, drawn at start-up (F-9.3): a program cannot
+     * precompute colliding strings offline. Maps add their own per-map seed on top
+     * ({@link GoMap}), as gc combines its per-process aeskey with each map's seed.
+     */
+    private static final long HASH_KEY = java.util.concurrent.ThreadLocalRandom.current().nextLong();
+
+    /**
+     * {@link #hash()}'s cache: 0 until computed (a computed hash is never 0, so the field keeps
+     * the object at 32 bytes). Benign races, as {@code String.hash}.
+     */
+    private int hash;
+
+    /**
+     * The keyed hash of the bytes, cached in the string (Go strings are immutable, ADR-0015
+     * decision 3): a map lookup with a string that was hashed before does not rescan it.
+     */
+    public int hash() {
+        int h = hash;
+        if (h == 0) {
+            h = computeHash();
+            hash = h;
         }
         return h;
+    }
+
+    private int computeHash() {
+        byte[] a = b;
+        long h = HASH_KEY ^ len;
+        int i = off;
+        int end = off + len;
+        for (; i + 8 <= end; i += 8) {
+            long w = (a[i] & 0xFFL) | (a[i + 1] & 0xFFL) << 8 | (a[i + 2] & 0xFFL) << 16 | (a[i + 3] & 0xFFL) << 24
+                    | (a[i + 4] & 0xFFL) << 32 | (a[i + 5] & 0xFFL) << 40 | (a[i + 6] & 0xFFL) << 48
+                    | (long) a[i + 7] << 56;
+            h = (h ^ w * 0x9E3779B97F4A7C15L) * 0xBF58476D1CE4E5B9L;
+            h ^= h >>> 31;
+        }
+        for (; i < end; i++) {
+            h = (h ^ (a[i] & 0xFFL)) * 0x100000001B3L;
+        }
+        h ^= h >>> 33;
+        h *= 0xFF51AFD7ED558CCDL;
+        h ^= h >>> 33;
+        int r = (int) (h ^ h >>> 32);
+        return r != 0 ? r : 1;
+    }
+
+    @Override
+    public int hashCode() {
+        return hash();
     }
 
     @Override

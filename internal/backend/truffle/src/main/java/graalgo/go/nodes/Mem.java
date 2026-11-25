@@ -431,10 +431,11 @@ public final class Mem {
         }
     }
 
-    /** As {@link MapGetI} for every other key kind (hashing and {@code ==} behind a boundary). */
+    /** As {@link MapGetI} for every other key kind: hashing and {@code ==} by the key type's {@link MapKeys.KeyOps}. */
     public static final class MapGetG extends DynLoc {
         @Child private Ref map;
         @Child private Expr key;
+        @Child private MapKeys.KeyOps ops;
         private final Flat zero;
         private final int p;
         private final int r;
@@ -447,6 +448,7 @@ public final class Mem {
             super(aux);
             this.keyType = keyType;
             this.checkKey = Values.hashMightPanic(keyType);
+            this.ops = MapKeys.create(keyType);
             this.map = map;
             this.key = key;
             this.zero = zero;
@@ -473,7 +475,7 @@ public final class Mem {
 
         private int find(GoMap m, Object k) {
             try {
-                return m.find(k);
+                return m.findRaw(ops.hash(k), k, ops);
             } catch (Values.Uncomparable u) {
                 throw Panics.unhashable(this, u.type);
             }
@@ -510,12 +512,14 @@ public final class Mem {
     public static final class MapPutG extends DynLoc {
         @Child private Ref map;
         @Child private Expr key;
+        @Child private MapKeys.KeyOps ops;
         private final BranchProfile nil = BranchProfile.create();
 
-        public MapPutG(Ref map, Expr key, Aux aux) {
+        public MapPutG(Ref map, Expr key, GoType keyType, Aux aux) {
             super(aux);
             this.map = map;
             this.key = key;
+            this.ops = MapKeys.create(keyType);
         }
 
         @Override
@@ -528,7 +532,7 @@ public final class Mem {
             }
             int e;
             try {
-                e = m.put(k);
+                e = m.putRaw(ops.hash(k), k, ops);
             } catch (Values.Uncomparable u) {
                 throw Panics.unhashable(this, u.type);
             }

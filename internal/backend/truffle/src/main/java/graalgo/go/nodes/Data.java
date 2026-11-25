@@ -938,9 +938,11 @@ public final class Data {
         }
     }
 
+    /** {@code delete(m, k)}, every other key kind: by the key type's {@link MapKeys.KeyOps}. */
     public static final class MapDeleteG extends Stmt {
         @Child private Expr m;
         @Child private Expr key;
+        @Child private MapKeys.KeyOps ops;
 
         private final GoType keyType;
         private final boolean checkKey;
@@ -950,6 +952,7 @@ public final class Data {
             this.key = key;
             this.keyType = keyType;
             this.checkKey = Values.hashMightPanic(keyType);
+            this.ops = MapKeys.create(keyType);
         }
 
         @Override
@@ -961,7 +964,7 @@ public final class Data {
             }
             if (map != null) {
                 try {
-                    map.delete(map.find(k));
+                    map.delete(map.findRaw(ops.hash(k), k, ops));
                 } catch (Values.Uncomparable u) {
                     throw Panics.unhashable(this, u.type);
                 }
@@ -985,12 +988,20 @@ public final class Data {
         }
     }
 
-    /** {@code v, ok := m[k]}: the pair as a tuple (slow path: boxed, behind a boundary). */
+    /**
+     * {@code v, ok := m[k]}: the pair as a tuple. The lookup is the site's (an integer probe, or
+     * the key type's {@link MapKeys.KeyOps}); only a miss with a struct/array value builds its
+     * zero value behind a boundary.
+     */
     public static final class MapGetOk extends Ref {
         @Child private Expr m;
         @Child private Expr key;
+        /** Null for integer/boolean keys (the unboxed probe). */
+        @Child private MapKeys.KeyOps ops;
         private final GoType val;
-        private final boolean primKey;
+        /** Whether the zero value is immutable (scalars, references) and so {@link #zero} is shared; else built per miss. */
+        private final boolean zeroShared;
+        private final Object zero;
 
         private final GoType keyType;
         private final boolean checkKey;
@@ -1001,7 +1012,9 @@ public final class Data {
             this.m = m;
             this.key = key;
             this.val = val;
-            this.primKey = primKey;
+            this.ops = primKey ? null : MapKeys.create(keyType);
+            this.zeroShared = val.carrier() != GoType.C_FLAT;
+            this.zero = zeroShared ? val.zero() : null;
         }
 
         @Override
@@ -1011,21 +1024,20 @@ public final class Data {
             if (checkKey && (map == null || map.len() == 0)) {
                 Panics.checkMapKey(this, keyType, k);
             }
-            try {
-                return lookup(map, k);
-            } catch (Values.Uncomparable u) {
-                throw Panics.unhashable(this, u.type);
-            }
-        }
-
-        @TruffleBoundary
-        private Object[] lookup(GoMap map, Object k) {
             int e = -1;
             if (map != null) {
-                e = primKey ? map.find(k instanceof Boolean b ? (b ? 1L : 0L) : (long) k) : map.find(k);
+                if (ops == null) {
+                    e = map.find(k instanceof Boolean b ? (b ? 1L : 0L) : (long) k);
+                } else {
+                    try {
+                        e = map.findRaw(ops.hash(k), k, ops);
+                    } catch (Values.Uncomparable u) {
+                        throw Panics.unhashable(this, u.type);
+                    }
+                }
             }
             if (e < 0) {
-                return new Object[] {val.zero(), false};
+                return new Object[] {zeroShared ? zero : val.zero(), false};
             }
             return new Object[] {Values.load(val, map.vals, e * map.vp, e * map.vr, e * map.vb), true};
         }

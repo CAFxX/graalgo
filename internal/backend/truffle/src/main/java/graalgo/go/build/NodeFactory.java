@@ -1072,7 +1072,7 @@ public final class NodeFactory {
                 @Override
                 Stmt store(Expr value) {
                     Loc loc = primKey(kt) ? new Mem.MapPutI(asRef(m.get()), raw(kt, k.get()), aux)
-                            : new Mem.MapPutG(asRef(m.get()), k.get(), aux);
+                            : new Mem.MapPutG(asRef(m.get()), k.get(), kt, aux);
                     return NodeFactory.store(t, loc, value);
                 }
             };
@@ -2274,7 +2274,7 @@ public final class NodeFactory {
         for (Gir.MapEntry e : ml.entries()) {
             Loc loc = primKey(u.mapKey)
                     ? new Mem.MapPutI(new N.ReadRef(slot), raw(u.mapKey, expr(e.key())), aux)
-                    : new Mem.MapPutG(new N.ReadRef(slot), value(e.key()), aux);
+                    : new Mem.MapPutG(new N.ReadRef(slot), value(e.key()), u.mapKey, aux);
             pre.add(store(u.elem, loc, expr(e.value())));
         }
         return new N.Seq(pre.toArray(new Stmt[0]), new N.ReadRef(slot));

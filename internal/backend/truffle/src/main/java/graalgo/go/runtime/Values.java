@@ -138,7 +138,8 @@ public final class Values {
      * not comparable as a whole; a comparable type (a struct with an interface field) passes
      * on the report of the interface value inside it.
      */
-    private static Uncomparable atInterface(Uncomparable u, GoType dynamic) {
+    @TruffleBoundary
+    public static Uncomparable atInterface(Uncomparable u, GoType dynamic) {
         return comparable(dynamic) ? u : new Uncomparable(dynamic, u.hashing);
     }
 
@@ -165,6 +166,10 @@ public final class Values {
     /** Slot-wise {@code ==} of two values of structural type {@code u} at the given locations. */
     @TruffleBoundary
     public static boolean flatEqual(GoType u, Flat a, int pa, int ra, int ba, Flat b, int pb, int rb, int bb) {
+        KeyPlan plan = KeyPlan.of(u);
+        if (plan != null) {
+            return plan.eq(a, pa, ra, ba, b, pb, rb, bb);
+        }
         if (u.kind == GoType.ARRAY) {
             GoType e = u.elem;
             int np = e.nPrim();
@@ -233,15 +238,7 @@ public final class Values {
         GoType u = t.u();
         switch (u.kind) {
             case GoType.INTERFACE:
-                if (v == null) {
-                    return 0;
-                }
-                Iface i = (Iface) v;
-                try {
-                    return i.type.key.hashCode() * 31 + hash(i.type, i.data);
-                } catch (Uncomparable x) {
-                    throw atInterface(x, i.type);
-                }
+                return ifaceHash(v);
             case GoType.STRUCT, GoType.ARRAY:
                 return flatHash(u, (Flat) v, 0, 0, 0);
             case GoType.SLICE, GoType.MAP, GoType.FUNC:
@@ -256,7 +253,29 @@ public final class Values {
         }
     }
 
+    /** The hash of an interface value (null: nil): its dynamic type's key, then the data's hash. */
+    @TruffleBoundary
+    public static int ifaceHash(Object v) {
+        if (v == null) {
+            return 0;
+        }
+        Iface i = (Iface) v;
+        try {
+            return i.type.key.hashCode() * 31 + hash(i.type, i.data);
+        } catch (Uncomparable x) {
+            throw atInterface(x, i.type);
+        }
+    }
+
+    /**
+     * The hash of a struct/array value: its {@link KeyPlan}'s when it has one (the key nodes
+     * compute the same), else the leaf-wise recursion.
+     */
     private static int flatHash(GoType u, Flat a, int p, int r, int b) {
+        KeyPlan plan = KeyPlan.of(u);
+        if (plan != null) {
+            return plan.hash(a, p, r, b);
+        }
         int h = 17;
         if (u.kind == GoType.ARRAY) {
             GoType e = u.elem;

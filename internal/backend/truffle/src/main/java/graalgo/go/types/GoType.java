@@ -96,6 +96,11 @@ public final class GoType {
     public final GoType[] results;
     public final boolean variadic;
     public final IMethod[] imethods;
+    /**
+     * {@code graalgo.go.runtime.KeyPlan.of}'s cache: the plan, its "none" sentinel, or null
+     * before the first request. Immutable once set; benign races.
+     */
+    public Object keyPlan;
     // Layout, computed on first use (a struct may mention itself through pointers).
     private volatile boolean laidOut;
     private int nPrim;

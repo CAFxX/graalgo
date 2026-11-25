@@ -11,7 +11,9 @@ import java.util.concurrent.ThreadLocalRandom;
  * the runtime owns the iterator). Keys of integer and boolean types are stored unboxed in
  * {@code kprims} and found by {@link #find(long)}, a plain probe loop that partial evaluation
  * can inline; every other key kind is stored in carrier form in {@code krefs} and compared with
- * Go's {@code ==} behind a boundary. Values are stored flat, {@code vp} scalar, {@code vr}
+ * Go's {@code ==}: by the site's key-kind node ({@code MapKeys.KeyOps}, PE-visible) through
+ * {@link #findRaw}/{@link #putRaw}, or by the generic {@link Values} code behind a boundary
+ * (reflection). Values are stored flat, {@code vp} scalar, {@code vr}
  * reference and {@code vb} byte slots per entry, so no value is boxed. The nil map is Java {@code null}.
  *
  * <p>Deleted entries leave a tombstone that is squeezed out when the table next grows; a
@@ -19,6 +21,14 @@ import java.util.concurrent.ThreadLocalRandom;
  * gives Go's guarantees (an entry is produced at most once, a deleted one never).
  */
 public final class GoMap {
+    /**
+     * Go {@code ==} on keys in carrier form, consistent with the hash the caller passes to
+     * {@link #findRaw}: a site's key-kind node; {@code null} means the generic {@link Values#equal}.
+     */
+    public interface KeyEq {
+        boolean eq(Object stored, Object k);
+    }
+
     /** One compaction: where each old entry index went. */
     static final class Epoch {
         int[] remap;
@@ -46,8 +56,25 @@ public final class GoMap {
     private int used;
     private int count;
     private Epoch epoch = new Epoch();
+    /**
+     * The per-map hash seed (gc's {@code h.hash0}, F-9.3): a random odd multiplier. The slot of
+     * a key is the top bits of {@code key * seed} (Dietzfelbinger's multiply-shift, a universal
+     * family: keys found colliding in one map do not collide in another), and, like Fibonacci
+     * hashing, it spreads arithmetic key sequences without clustering the linear probes.
+     */
+    private final long seed;
+    /** {@code 32 - log2(index.length)}: a slot is the top bits of the 32-bit stored hash. */
+    private int shift;
+    /** The state of the range-start generator: benign races (concurrent ranges only read entries). */
+    private long rng;
 
     public GoMap(GoType keyType, GoType valType, int hint) {
+        this(keyType, valType, hint, ThreadLocalRandom.current().nextLong());
+    }
+
+    private GoMap(GoType keyType, GoType valType, int hint, long seed) {
+        this.seed = seed | 1;
+        this.rng = seed * 0xD1342543DE82EF95L + 1;
         this.keyType = keyType;
         this.valType = valType;
         this.vp = valType.nPrim();
@@ -65,6 +92,7 @@ public final class GoMap {
 
     private void allocate(int cap) {
         index = new int[cap * 2];
+        shift = Integer.numberOfLeadingZeros(cap * 2) + 1;
         hashes = new int[cap];
         live = new boolean[cap];
         kprims = primKeys ? new long[cap] : Flat.NO_PRIMS;
@@ -79,15 +107,19 @@ public final class GoMap {
         return count;
     }
 
-    private static int mix(long k) {
-        return (int) ((k * 0x9E3779B97F4A7C15L) >>> 32);
+    /**
+     * The seeded hash of a 64-bit key or of a key's raw hash: the high half of the product with
+     * the map's multiplier; its top bits pick the slot ({@link #shift}).
+     */
+    private int scramble(long k) {
+        return (int) ((k * seed) >>> 32);
     }
 
     /** The entry of an integer/boolean key, or -1. */
     public int find(long k) {
         int[] idx = index;
         int mask = idx.length - 1;
-        for (int i = mix(k) & mask;; i = (i + 1) & mask) {
+        for (int i = scramble(k) >>> shift;; i = (i + 1) & mask) {
             int e = idx[i];
             if (e == 0) {
                 return -1;
@@ -98,18 +130,32 @@ public final class GoMap {
         }
     }
 
-    /** The entry of a key in carrier form, or -1. Panics for an uncomparable dynamic type. */
+    /**
+     * The entry of a key in carrier form, or -1: the generic path (reflection), hashing and
+     * comparing with {@link Values}. Throws {@link Values.Uncomparable} for an unhashable key.
+     */
     @TruffleBoundary
     public int find(Object k) {
-        int h = Values.hash(keyType, k);
+        return findRaw(Values.hash(keyType, k), k, null);
+    }
+
+    /**
+     * The entry of {@code k} whose raw hash ({@code Values.hash} of the key type, computed by the
+     * caller's key node) is {@code raw}, or -1. PE-visible: with {@code eq} a constant node, the
+     * probe loop compiles to hash compares and the inlined key equality.
+     */
+    public int findRaw(int raw, Object k, KeyEq eq) {
+        int h = scramble(raw);
         int[] idx = index;
+        int[] hs = hashes;
+        Object[] ks = krefs;
         int mask = idx.length - 1;
-        for (int i = h & mask;; i = (i + 1) & mask) {
+        for (int i = h >>> shift;; i = (i + 1) & mask) {
             int e = idx[i];
             if (e == 0) {
                 return -1;
             }
-            if (e > 0 && hashes[e - 1] == h && Values.equal(keyType, krefs[e - 1], k)) {
+            if (e > 0 && hs[e - 1] == h && (eq == null ? Values.equal(keyType, ks[e - 1], k) : eq.eq(ks[e - 1], k))) {
                 return e - 1;
             }
         }
@@ -118,13 +164,18 @@ public final class GoMap {
     /** The entry of {@code k}, inserted with a zero value if absent. */
     public int put(long k) {
         int e = find(k);
-        return e >= 0 ? e : insert(mix(k), k, null);
+        return e >= 0 ? e : insert(scramble(k), k, null);
     }
 
-    /** As {@link #put(long)} for a key in carrier form (a struct/array key must be a private copy). */
+    /** As {@link #put(long)} for a key in carrier form (a struct/array key must be a private copy): the generic path. */
     @TruffleBoundary
     public int put(Object k) {
-        int e = find(k);
+        return putRaw(Values.hash(keyType, k), k, null);
+    }
+
+    /** As {@link #put(Object)} with the caller's raw hash and equality ({@link #findRaw}). */
+    public int putRaw(int raw, Object k, KeyEq eq) {
+        int e = findRaw(raw, k, eq);
         if (e >= 0) {
             // gc's NeedKeyUpdate: assigning to an existing entry stores the new key, which an
             // equal key can tell apart (+0/-0, and through interfaces and struct fields). For
@@ -132,10 +183,9 @@ public final class GoMap {
             krefs[e] = k;
             return e;
         }
-        return insert(Values.hash(keyType, k), 0, k);
+        return insert(scramble(raw), 0, k);
     }
 
-    @TruffleBoundary
     private int insert(int h, long pk, Object rk) {
         if (used == hashes.length) {
             grow();
@@ -158,13 +208,14 @@ public final class GoMap {
 
     private void link(int e, int h) {
         int mask = index.length - 1;
-        int i = h & mask;
+        int i = h >>> shift;
         while (index[i] > 0) {
             i = (i + 1) & mask;
         }
         index[i] = e + 1;
     }
 
+    @TruffleBoundary
     private void grow() {
         int oldUsed = used;
         int[] oh = hashes;
@@ -208,13 +259,12 @@ public final class GoMap {
     }
 
     /** Removes entry {@code e} (from {@link #find}); a negative entry is a no-op. */
-    @TruffleBoundary
     public void delete(int e) {
         if (e < 0) {
             return;
         }
         int mask = index.length - 1;
-        int i = hashes[e] & mask;
+        int i = hashes[e] >>> shift;
         while (index[i] != e + 1) {
             i = (i + 1) & mask;
         }
@@ -244,7 +294,7 @@ public final class GoMap {
      */
     @TruffleBoundary
     public GoMap copy() {
-        GoMap c = new GoMap(keyType, valType, count);
+        GoMap c = new GoMap(keyType, valType, count, seed);
         for (int e = 0; e < used; e++) {
             if (!live[e]) {
                 continue;
@@ -262,6 +312,16 @@ public final class GoMap {
         return primKeys ? (Object) kprims[e] : krefs[e];
     }
 
+    /**
+     * A random entry index below {@link #used} (> 0) where a range starts: an LCG step per
+     * range (the high bits), so iteration order stays unpredictable without a boundary call.
+     */
+    int rangeStart() {
+        long r = rng * 0x5851F42D4C957F2DL + 0x14057B7EF767814FL;
+        rng = r;
+        return (int) (((r >>> 33) * used) >>> 31);
+    }
+
     /** A range iterator: random start, each live entry at most once. */
     public static final class Iter {
         private final GoMap m;
@@ -270,18 +330,16 @@ public final class GoMap {
         private int pos;
         private boolean wrapped;
 
-        @TruffleBoundary
         public Iter(GoMap m) {
             this.m = m;
             if (m != null) {
                 epoch = m.epoch;
-                start = m.used == 0 ? 0 : ThreadLocalRandom.current().nextInt(m.used);
+                start = m.used == 0 ? 0 : m.rangeStart();
                 pos = start;
             }
         }
 
         /** The next live entry, or -1 at the end. */
-        @TruffleBoundary
         public int next() {
             if (m == null) {
                 return -1;

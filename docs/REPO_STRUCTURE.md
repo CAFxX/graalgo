@@ -196,7 +196,8 @@ directory's README repeats its status.
       `Iface`, `Closure`),
       [nodes/](../internal/backend/truffle/src/main/java/graalgo/go/nodes/)
       (typed node families, memory locations, DSL arithmetic, calls with
-      inline caches, open-coded defers),
+      inline caches, open-coded defers, the map-key hash/`==` nodes of
+      `MapKeys`),
       [build/](../internal/backend/truffle/src/main/java/graalgo/go/build/)
       (the node factory over decoded GIR) and
       [runtime/](../internal/backend/truffle/src/main/java/graalgo/go/runtime/)

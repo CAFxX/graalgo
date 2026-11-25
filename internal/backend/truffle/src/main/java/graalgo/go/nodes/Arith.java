@@ -685,10 +685,11 @@ public final class Arith {
 
     // ---------------------------------------------------------------- reference comparisons
 
-    /** {@code ==} on interface values: dynamic types, then Go equality of the data. */
+    /** {@code ==} on interface values: dynamic types, then Go equality of the data ({@link MapKeys.IfaceEq}'s cache). */
     public static final class EqIface extends Bool {
         @Child private Expr l;
         @Child private Expr r;
+        @Child private MapKeys.IfaceEq eq = MapKeysFactory.IfaceEqNodeGen.create();
         private final BranchProfile uncomparable = BranchProfile.create();
 
         public EqIface(Expr l, Expr r) {
@@ -701,7 +702,7 @@ public final class Arith {
             Object a = l.executeGeneric(frame);
             Object b = r.executeGeneric(frame);
             try {
-                return Values.ifaceEqual(a, b);
+                return eq.execute(a, b);
             } catch (Values.Uncomparable u) {
                 uncomparable.enter();
                 throw Panics.uncomparable(this, u.type);
@@ -709,15 +710,15 @@ public final class Arith {
         }
     }
 
-    /** {@code ==} on struct or array values of a static type. */
+    /** {@code ==} on struct or array values of a static type: its {@link MapKeys.KeyOps} (a {@code KeyPlan} or the generic code). */
     public static final class EqFlat extends Bool {
         @Child private Expr l;
         @Child private Expr r;
-        private final GoType type;
+        @Child private MapKeys.KeyOps eq;
         private final BranchProfile uncomparable = BranchProfile.create();
 
         public EqFlat(GoType type, Expr l, Expr r) {
-            this.type = type;
+            this.eq = MapKeys.create(type);
             this.l = l;
             this.r = r;
         }
@@ -727,7 +728,7 @@ public final class Arith {
             Flat a = (Flat) l.executeGeneric(frame);
             Flat b = (Flat) r.executeGeneric(frame);
             try {
-                return Values.flatEqual(type, a, 0, 0, 0, b, 0, 0, 0);
+                return eq.eq(a, b);
             } catch (Values.Uncomparable u) {
                 uncomparable.enter();
                 throw Panics.uncomparable(this, u.type);

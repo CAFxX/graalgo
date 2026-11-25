@@ -395,3 +395,72 @@ convention (truffle-design H8) costs every non-inlined call. (c) **reflect
 over the pointer model**: `leafAt`/`gcOffOfLeaf`/`extent` walks behind
 views and conversions are still ~15 % of `tmplrender`. (d) **footprint**:
 peak RSS 1.1–1.5 GB at `-Xmx2g` against gc's 18 MB.
+
+### 8.2 Lane perf-boundaries (2026-11-25): map keys and interface `==` without boundaries
+
+WP-TR-AUDIT-4 ([truffle-audit.md](truffle-audit.md) F-6.3, F-7.1,
+F-9.3). Before: master `e577971d`; after: `wt/perf/boundaries`; the same
+tree measured before and after the change on the shared host (load 15–30),
+`make bench-suite BENCH_ARGS="--reps 3 --pgo"` and `make bench-realistic
+BENCH_ARGS="--reps 3"` (default 4 s window), graalgo `-Xmx2g
+-XX:ActiveProcessorCount=4` under `nice -n 19`. Ratios are steady medians
+against gc (and gc+PGO) of the same run.
+
+| Benchmark | ×gc before | ×gc after | ×gc+PGO after | CPU ×gc before → after |
+|---|---:|---:|---:|---:|
+| `mapstr` | 1.63× | **0.54×** | 0.58× | 2.54 → 1.44 |
+| `mapint` | 0.51× | **0.29×** | 0.28× | 1.61 → 1.65 |
+| suite geomean (28) | 1.47× | **1.40×** | 1.47× (was 1.57×) | |
+| `reqpipe` | 4.81× | 4.15× | | 7.55 → 7.93 |
+| `textproc` | 1.53× | 1.56× | | 3.27 → 3.30 |
+| realistic geomean (8) | 5.48× | 5.36× | | |
+
+Everything else in the suite moves within the ±15 % the host gives a
+single run (`ifacesplit` 1.37→1.72× and `nbody` 2.62→2.31× in opposite
+directions, neither on these paths). `textproc` does not move: its map
+work was already a small share (the remaining time is elsewhere; the
+WP-TR-AUDIT-12 study, ADR-0021, measures its string search kernels).
+
+What changed:
+
+1. **Key-kind nodes** (`MapKeys`): every non-integer map get/put/delete,
+   `v, ok := m[k]` (which was entirely behind a boundary, integer keys
+   included), interface `==` and struct/array `==` run PE-visible nodes
+   chosen by the static type — strings, boxed scalars, pointers, channels,
+   struct/array types whose leaves are scalars/strings/pointers (`KeyPlan`:
+   merged runs, exploded, ≤ 8 entries) and interfaces (limit-3 cache on the
+   dynamic type, each entry the key node of that type); the generic
+   `Values` code behind a boundary is the megamorphic and reflection path
+   and computes the same hash (unit-tested pairwise, mutation-checked).
+   Map range iteration (`Iter`, `next`) and `delete` lost their boundaries;
+   only table growth keeps one.
+2. **String hash cached in `Str`** (an `int` in the object's padding; the
+   WP-TR-AUDIT-12 study measured re-hash 6.4 → 0.9 ns) and keyed per
+   process.
+3. **Seeded slots** (F-9.3): the slot is the top bits of `hash × m`, `m` a
+   random odd multiplier per map (multiply-shift: a universal family, so
+   keys found colliding in one map do not collide in another). The first
+   attempt (xor-seed, fold, multiply, low bits) made `mapint` 1.5× slower
+   than master: arithmetic key sequences lost Fibonacci hashing's spread
+   and the linear probes clustered; multiply-shift keeps that spread
+   (0.27–0.29× gc over 6 runs, each with its own multiplier). Range order
+   is unchanged: insertion order from a random start (now a per-map LCG,
+   no boundary).
+
+PE evidence: the boundary call sites of every compiled root (the
+`TruffleBoundary` speculations in `-Djdk.graal.Dump=Truffle:1` graphs) —
+`mapstr`: `GoMap.find(Object)`, `GoMap.put(Object)`,
+`MapGetOk.lookup` → only `GoMap.grow()`; `textproc`: `find`, `put`,
+`Iter.<init>`, `Iter.next`, 3× `Values.ifaceEqual` → `grow()`; `reqpipe`:
+2× `find`, `put`, 4× `ifaceEqual` → `grow()` (`compiler.InstrumentBoundaries`
+is unusable here: it fails compilations with a `ClassCastException` in
+the compiler). `TracePerformanceWarnings=all`: 0 on `mapstr`, `mapint`,
+`structs`, `ifacepoly`, `ifacemega`, `textproc`, `reqpipe`, `jsonrt`; 0
+failed compilations. A key-kind program run with `CompileImmediately`
+(int → +string → +struct/float → megamorphic interface keys, NaN and ±0
+struct keys, `err == sentinel`, an unhashable key's panic) matched gc
+and compiled its hot root 4 times across the 4 phases (2 deopts, no
+cycle). Open: reflect's `mapaccess_faststr`/`mapassign_faststr0`
+intrinsics in `reqpipe` are still boundary calls; NaN keys hash alike
+(gc randomizes them), so many NaN keys in one map probe linearly.
+
