@@ -28,20 +28,26 @@ implemented.
 1. **Every blocking wait of a polyglot thread is Truffle-blocked.** Idle
    carriers (`setBlockedThreadInterruptibleFunction` around the run-queue
    poll), pinned parks and thread-mode parks (`LockSupport.park` as an
-   `Interruptible` that turns the interrupt into `InterruptedException`), the
+   `Interruptible` that turns the interrupt into `InterruptedException`; Truffle
+   re-invokes it after the action, and that call returns at once — a spurious
+   wakeup the caller re-checks — because the interrupted `park` may also have
+   consumed the waker's permit: BUG-0050), the
    system-call wait, and contended pin-lock acquisition
    (`ReentrantLock::lockInterruptibly`). Parked goroutines in carrier mode are
    unmounted continuations, not threads: thread-local actions target threads,
    so they reach every carrier (idle, running, blocked) and the eval thread;
    a parked goroutine is reached when it next runs, or unwound by the
-   scheduler teardown. A cancellation or hard exit that reaches a carrier
+   scheduler teardown; a goroutine spawned once the teardown has begun is
+   refused with the same unwind (BUG-0056). A cancellation or hard exit that reaches a carrier
    outside a goroutine ends the carrier and stops the pool.
 2. **Cancellable system calls.** A may-block call owns its native buffers:
    one `malloc` block freed by whichever side finishes last (the goroutine
    after copying results out, or the off-pool thread after the kernel
    returned when the goroutine left first). The goroutine's wait is
    Truffle-blocked and also ends when the scheduler aborts its calls (teardown,
-   or another call abandoned during teardown). A transfer on a descriptor
+   or another call abandoned during teardown). A call the off-pool executor
+   refuses (no thread) is not abandoned: it fails its goroutine as an internal
+   error and aborts nothing (BUG-0057). A transfer on a descriptor
    (`rd`/`wr` table entries) first `poll(2)`s the descriptor together with a
    per-scheduler abort `eventfd`; the abort makes it return `EINTR` without
    issuing the transfer, so the off-pool thread ends as well. Alternatives

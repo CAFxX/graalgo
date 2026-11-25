@@ -349,8 +349,8 @@ directory's README repeats its status.
     test-goroutine-modes`); [tools.sh](../test/m1r/tools.sh) builds
     [tools/probe.go](../test/m1r/tools/probe.go) and runs Truffle tools on it
     (an `ExecutionListener` on statements and roots in both goroutine modes,
-    a collecting `CPUSampler` in carrier mode: Go names and file:line;
-    ADR-0020, BUG-0050; run by `make test-goroutine-modes`);
+    a collecting `CPUSampler`: Go names and file:line, both modes;
+    ADR-0020; run by `make test-goroutine-modes`);
     [leak.sh](../test/m1r/leak.sh) runs
     [leak/cycle.go](../test/m1r/leak/cycle.go) in successive contexts of one
     JVM and fails on a leaked thread or live-heap growth (BUG-0052; same

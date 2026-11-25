@@ -64,6 +64,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.sched.WakeupModelTest.class);
         TESTS.add(graalgo.sched.WakeupRaceStressTest.class);
         TESTS.add(graalgo.sched.CarriersTest.class);
+        TESTS.add(graalgo.syscall.BlockingCallTest.class);
         TESTS.add(graalgo.sched.JfrParkCostTest.class);
     }
 

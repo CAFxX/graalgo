@@ -33,6 +33,17 @@ import com.oracle.truffle.api.CompilerDirectives.TruffleBoundary;
  * every thread is full, and while the thread's own scheduler is exiting
  * (the full check returned: pin section, fatal reporter) every poll stays
  * full, so the exit freeze happens at the next safepoint.
+ *
+ * <p><strong>Carrier mode</strong> (ADR-0018): the last-seen epoch belongs to the carrier
+ * thread (its {@code GoThreadSlot}, or {@code SEEN}), not to the goroutine, and is
+ * deliberately not swapped on mount: a goroutine mounted after another one's full poll in the
+ * same tick does its first quantum check at the next tick — the same "at most one tick late"
+ * bound as above, and only for a goroutine whose quantum had already expired before it parked
+ * (its start and every quantum park set a fresh deadline). Exit stays immediate (it bumps
+ * the epoch; an exiting scheduler's result matches no epoch). Forcing a full poll on every mount would add a boundary
+ * call and a {@code nanoTime} to every mount, and measured no fairness gain (review round 4:
+ * {@code WakeupRaceStressTest} handoff fairness pair/spinner 1.07–1.13 vs 1.08–1.10 without,
+ * ~10% fewer pair rounds; torture F1 spinner CV at noise level either way).
  */
 public final class Safepoint {
     private Safepoint() {}

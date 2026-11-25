@@ -27,7 +27,7 @@ opt-in thread-per-goroutine mode. [cancel.sh](cancel.sh) builds [cancel/probe.go
 both modes (`graalgo.launcher.ToolsProbe`: a statement/root
 `ExecutionListener` sees `main.fib`'s exact calls and statements at their
 lines, a collecting `CPUSampler` records Go names and `main.go` sections —
-carrier mode only, BUG-0050; ADR-0020).
+in both goroutine modes, ADR-0020).
 [leak.sh](leak.sh) builds [leak/cycle.go](leak/cycle.go) and runs it in 12
 successive contexts of one JVM per mode (`graalgo.launcher.ContextLeakProbe`):
 every run right, no thread left, live heap flat (≤ 2 MB per cycle; BUG-0052).
