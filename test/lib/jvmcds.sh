@@ -16,6 +16,12 @@
 # silently (-Xlog:cds=off: the JVM's CDS notices go to stdout, which the
 # gates compare).
 #
+# Integrity (the dev host corrupts large copies under load, BUG-0012): the
+# jars and the archive are hashed into <dir>/MANIFEST, written last; every
+# setup verifies them (one sha256 pass over ~100 MB, per gate, not per JVM)
+# and a mismatch deletes the directory and makes it again, so a damaged
+# archive or jar is never mapped.
+#
 #   jvm_cds_setup bundle <runner>
 #                    for graalgo-bundle-run (toolexec_setup calls it last;
 #                    needs toolexec_build): the truffle jar + bundle.jsa
@@ -51,6 +57,11 @@ jvm_cds_setup() {
     if [ -d "$dir" ] && [ ! -f "$dir/$kind.jsa" ] && [ -n "$(find "$dir" -maxdepth 0 -mmin +10)" ]; then
         rm -rf "$dir"
     fi
+    # A complete entry that fails its manifest (or has none): delete, remake.
+    if [ -f "$dir/$kind.jsa" ] && ! _jvm_cds_verify "$dir"; then
+        echo "jvmcds: $dir fails its manifest: deleted, remade" >&2
+        rm -rf "$dir"
+    fi
     if mkdir "$dir" 2>/dev/null; then
         _jvm_cds_make "$kind" "$dir" "$runner" "$mods" || { rm -rf "$dir"; return 0; }
         # keep the three newest keys of this kind
@@ -60,6 +71,10 @@ jvm_cds_setup() {
     _jvm_cds_export "$dir" "$mods"
     GRAALGO_JAVA_OPTS="${GRAALGO_JAVA_OPTS:-} -XX:SharedArchiveFile=$dir/$kind.jsa $JVMCDS_LOG"
     export GRAALGO_JAVA_OPTS
+}
+
+_jvm_cds_verify() { # <dir>: 0 iff MANIFEST exists and every file matches
+    [ -f "$1/MANIFEST" ] && (cd "$1" && sha256sum --quiet --strict -c MANIFEST) >/dev/null 2>&1
 }
 
 _jvm_cds_export() { # <dir> <mods>
@@ -114,6 +129,9 @@ EOF
         "${cmd[@]}" ) >/dev/null 2>&1 </dev/null
     [ -s "$dir/$kind.jsa.new" ] || return 1
     rm -rf "$w"
+    # the manifest first, the archive's final name last: an entry with a
+    # .jsa always has its manifest (a reader in between sees no archive)
+    (cd "$dir" && sha256sum ./*.jar "$kind.jsa.new" | sed "s/$kind\.jsa\.new\$/$kind.jsa/" > MANIFEST) || return 1
     mv "$dir/$kind.jsa.new" "$dir/$kind.jsa"
 }
 

@@ -51,7 +51,23 @@ case "${1:-build}" in
     echo "== go vet ==" >&2
     "$GO" vet $OV .
     echo "== go test ==" >&2
-    "$GO" test $OV .
+    # go test caches a pass keyed on the test binary, the env vars the tests
+    # read and the files they open inside this module; a file outside it is
+    # not hashed. Each ../ path a test names is hashed into
+    # GRAALGO_FE_EXT_INPUTS, which the test reading it looks up (so it is in
+    # the key); a test file naming a ../ path without that lookup fails here.
+    # (TMPDIR must be outside the module too, or every t.TempDir path is an
+    # input that differs per run: the Makefile points it at <repo>/.tmp.)
+    ext_files=$(grep -ho '"\.\./[^"]*"' ./*_test.go | tr -d '"' | LC_ALL=C sort -u)
+    for f in $(grep -l '"\.\./[^"]*"' ./*_test.go); do
+      grep -q 'os.Getenv("GRAALGO_FE_EXT_INPUTS")' "$f" || {
+        echo "build.sh check: $f names a path outside the module but does not read GRAALGO_FE_EXT_INPUTS (its result would be cached across changes to that file)" >&2; exit 1; }
+    done
+    if grep -n 'filepath.Join("\.\."' ./*_test.go; then
+      echo "build.sh check: a test builds a ../ path with filepath.Join: name it as a literal so its file is hashed (see above)" >&2; exit 1
+    fi
+    GRAALGO_FE_EXT_INPUTS=$(for f in $ext_files; do find "$f" -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum; done | sha256sum | cut -c1-40) \
+      "$GO" test $OV .
     echo "== vendoring diff gate ==" >&2
     diff -r "$GOROOT_DIR/src/go" "$PWD/go" && echo "vendored tree byte-identical to GOROOT/src/go" >&2
     echo "== frontend/v1 wire-format validator ==" >&2

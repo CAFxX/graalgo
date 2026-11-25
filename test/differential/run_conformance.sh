@@ -71,6 +71,11 @@ fi
 # 1/64 of RAM, so how far the heap grows (init1.go asserts Sys grows by
 # less than the 1000 MB of garbage it makes) depended on the host's RAM.
 export GRAALGO_JAVA_OPTS="${GRAALGO_JAVA_OPTS:-} -Xms2g -Xmx2g"
+# Class-data sharing for the graalgo-sync-run JVMs (test/lib/jvmcds.sh: one
+# archive of the interop + truffle classes, made once per build with the
+# flags above; -23% CPU per program on snapshot-check's corpus). The same
+# classes run either way; any failure is no CDS, never a failed run.
+eval "$(GRAALGO_ROOT="$HERE/../.." bash "$HERE/../lib/jvmcds.sh" sync-env)"
 
 JOBS="${JOBS:-4}"
 OUTDIR="${OUTDIR:-$HERE/.tmp/conformance}"

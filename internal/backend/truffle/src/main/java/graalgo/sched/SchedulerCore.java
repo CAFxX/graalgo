@@ -124,6 +124,11 @@ public final class SchedulerCore {
     }
 
     /** Whether the owning context is being cancelled or hard-exited ({@link #bindContext}). */
+    /** {@link #terminate} has begun (tests). */
+    boolean terminatedForTest() {
+        return terminated;
+    }
+
     boolean isTornDown() {
         return tornDown.getAsBoolean();
     }

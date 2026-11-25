@@ -35,6 +35,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,6 +64,7 @@ type config struct {
 	repo, work, snapshot, expected, slice, javaOpts string
 	only                                            map[string]bool
 	confirm                                         bool
+	jobs                                            int
 }
 
 func main() {
@@ -75,6 +77,7 @@ func main() {
 	flag.BoolVar(&c.confirm, "confirm", true, "re-run slice survivors against the full corpus")
 	flag.StringVar(&only, "only", "", "comma-separated mutant ids to run (default: all)")
 	flag.StringVar(&report, "report", "", "JSON report path (default: <work>/report.json)")
+	flag.IntVar(&c.jobs, "jobs", 1, "programs the gate runs at a time (1 on a shared host; CI's 4-vCPU runner: 4)")
 	flag.StringVar(&c.javaOpts, "java-opts", "-Xmx2g -XX:ActiveProcessorCount=4", "GRAALGO_JAVA_OPTS for gate runs")
 	flag.Parse()
 
@@ -240,7 +243,7 @@ func (c *config) gate(copyDir, dh, programs string) (string, string) {
 	os.MkdirAll(tmp, 0o755)
 	args := []string{"-n", "19", dh, "snapshot", "check",
 		"-config", "backends-p3.json", "-corpus", "corpus", "-backend", "graalgo",
-		"-snapshot", c.snapshot, "-expected", c.expected, "-jobs", "1", "-timeout", "120", "-fail-fast"}
+		"-snapshot", c.snapshot, "-expected", c.expected, "-jobs", strconv.Itoa(max(c.jobs, 1)), "-timeout", "120", "-fail-fast"}
 	if programs != "" {
 		args = append(args, "-programs", programs)
 	}

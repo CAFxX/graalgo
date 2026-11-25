@@ -85,7 +85,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.int
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror --add-exports java.base/jdk.internal.vm=ALL-UNNAMED
 
-.PHONY: all main smoke smoke-test clean check run run-sched pin-audit torture
+.PHONY: all main smoke smoke-test clean check pin-smoke run run-sched pin-audit torture
 
 all: main
 
@@ -202,6 +202,17 @@ check: main $(OUT_TEST)/.built
 	@if grep -rn --include='*.java' 'java\.lang\.foreign' src/main/ | grep -v 'src/main/java/graalgo/syscall/'; then \
 		echo "PIN-SURFACE GATE FAILED: FFM usage"; exit 1; fi
 	@echo "pin-surface gate clean"
+	@echo "(the pin-audit smoke is its own gate: \`make pin-smoke\`, the root's test-pin-smoke)"
+
+# Pin-audit smoke (P2-M7, GG-0057; per-push as the root's test-pin-smoke,
+# its own gate since 2026-11-25 so that CI's shards can run it beside the
+# static gates of `check` instead of after them): the scheduler/runtime
+# suite (every class SchedTestRunner registers, fast and slow) in a child
+# JVM in thread-per-goroutine mode with jdk.VirtualThreadPinned enabled;
+# FAILS on any unexpected pin and on any failing test. It is also the
+# per-push thread-mode run of that whole suite (the root's
+# test-goroutine-modes relies on it for the Java classes).
+pin-smoke: main $(OUT_TEST)/.built
 	@echo "== pin-audit smoke (P2-M7, GG-0057) =="
 	@echo "-- runs the scheduler/runtime suite in a child JVM with jdk.VirtualThreadPinned"
 	@echo "-- enabled; FAILS on any unexpected pin. Full corpus: make pin-audit."

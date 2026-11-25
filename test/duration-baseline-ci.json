@@ -1,9 +1,9 @@
 {
- "_about": "CI (GitHub ubuntu-24.04 runner, 4 vCPU) gate costs; the dev host's are test/duration-baseline.json. cpu_cold/wall_cold: per gate the higher of the first green CI runs 45501960547 (push) and 45502017650 (workflow_dispatch), both master 09acff6b with both caches missed (they ran concurrently); they replace the seeds from the red runs of c35a2888. No warm run yet: a warm run compares with cpu_cold (lax) until one is recorded. Re-record with `python3 test/lib/gates.py record gate-times.json --baseline test/duration-baseline-ci.json` from the gate-times artifact of a green CI run (docs/dev/test-profile.md).",
+ "_about": "CI (GitHub ubuntu-24.04 runner, 4 vCPU) gate costs; the dev host's are test/duration-baseline.json. cpu_cold/wall_cold: per gate the higher of the first green CI runs 45501960547 (push) and 45502017650 (workflow_dispatch), both master 09acff6b with both caches missed (they ran concurrently); they replace the seeds from the red runs of c35a2888. No warm run yet: a warm run compares with cpu_cold (lax) until one is recorded. Re-record with `python3 test/lib/gates.py record gate-times.json --baseline test/duration-baseline-ci.json` from the gate-times artifact of a green CI run (docs/dev/test-profile.md). 2026-11-25 (test-speed2): `check`'s pin-audit smoke became the test-pin-smoke gate; until a sharded run is recorded, their cold numbers are check's 09acff6b numbers split by the dev host's measured shares (pin smoke 192 of 280 CPU s, 108 of 182 s wall). The shards record as four gate-times-<shard> artifacts: `gh run download <id> -p 'gate-times-*'` then `gates.py record gate-times-*/gate-times.json`.",
  "cpu": {},
  "cpu_cold": {
   "build": 18.7,
-  "check": 340.0,
+  "check": 106.9,
   "generate": 25.2,
   "graalgo": 3.3,
   "java-test-classes": 10.4,
@@ -21,14 +21,18 @@
   "test-m1r": 59.9,
   "test-m1w13": 30.8,
   "test-p3frontend": 76.9,
+  "test-pin-smoke": 233.1,
   "test-regression": 244.6,
   "test-toolexec": 169.3,
   "test-v2": 2.2
  },
+ "reason": {
+  "test-pin-smoke": "2026-11-25 test-speed2: split out of check (same command); check's 09acff6b cold number split by the dev host's measured shares until a sharded run is recorded"
+ },
  "wall": {},
  "wall_cold": {
   "build": 7.1,
-  "check": 377.5,
+  "check": 153.5,
   "generate": 9.9,
   "graalgo": 1.2,
   "java-test-classes": 3.8,
@@ -46,6 +50,7 @@
   "test-m1r": 33.8,
   "test-m1w13": 19.6,
   "test-p3frontend": 55.7,
+  "test-pin-smoke": 224.0,
   "test-regression": 182.4,
   "test-toolexec": 60.6,
   "test-v2": 1.0

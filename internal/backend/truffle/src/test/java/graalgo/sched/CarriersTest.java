@@ -292,6 +292,10 @@ public final class CarriersTest {
                 }
             });
             assertTrue(inBody.await(20, TimeUnit.SECONDS), "spawner running");
+            // The admission that started the spawner left its permit set (a running goroutine
+            // consumes a permit only when it parks): cleared, so only terminate's unpark of its
+            // live-list snapshot sets it again. Nothing else wakes a goroutine running its body.
+            spawner.permit = false;
         } finally {
             SchedulerCore.install(prev);
         }
@@ -304,7 +308,7 @@ public final class CarriersTest {
             }
         });
         long t0 = System.nanoTime();
-        awaitTrue(() -> spawner.permit, "terminate's live-list snapshot reached the spawner");
+        awaitTrue(() -> s.terminatedForTest() && spawner.permit, "terminate's live-list snapshot reached the spawner");
         spawnNow.countDown();
         assertTrue(term.join(java.time.Duration.ofSeconds(20)), "terminate returned");
         long ms = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - t0);

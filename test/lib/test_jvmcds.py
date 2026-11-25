@@ -106,6 +106,27 @@ class JvmCdsTest(unittest.TestCase):
         self.assertIn("export GRAALGO_INTEROP_CLASSES=", out.stdout)
         self.assertIn("export GRAALGO_JAVA_OPTS=", out.stdout)
 
+    def test_corrupt_entry_is_remade(self):
+        # BUG-0012: a damaged archive or jar is never mapped: the setup
+        # deletes the entry and makes it again (a new jar run)
+        classes, opts = self.setup_cds()
+        d = os.path.dirname(classes)
+        jsa = [f for f in os.listdir(d) if f.endswith(".jsa")][0]
+        for victim, damage in ((jsa, b"X"), ("truffle.jar", b"J"), ("MANIFEST", None)):
+            n = self.jars()
+            p = os.path.join(d, victim)
+            if damage is None:
+                os.unlink(p)
+            else:
+                with open(p, "r+b") as f:
+                    f.write(damage)
+            self.assertEqual(self.setup_cds(), (classes, opts), victim)
+            self.assertEqual(self.jars(), n + 1, victim)  # remade, not reused
+            with open(os.path.join(d, jsa)) as f:
+                self.assertEqual(f.read(), "jsa\n", victim)
+            self.assertEqual(self.setup_cds(), (classes, opts))
+            self.assertEqual(self.jars(), n + 1, victim)  # the remade entry is reused
+
     def test_failures_mean_no_cds(self):
         self.assertEqual(self.setup_cds(GRAALGO_CDS="off"), ("none", "-Xmx1g"))
         self.assertEqual(self.setup_cds(FAIL_DUMP="1"), ("none", "-Xmx1g"))

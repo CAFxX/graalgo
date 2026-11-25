@@ -1,7 +1,7 @@
 {
  "cpu": {
   "build": 48.3,
-  "check": 278.0,
+  "check": 74.4,
   "check-links-external": 0.6,
   "generate": 1.7,
   "graalgo": 0.2,
@@ -11,7 +11,7 @@
   "test-ci": 38.1,
   "test-diffharness": 39.8,
   "test-gir": 8.3,
-  "test-goroutine-modes": 41.7,
+  "test-goroutine-modes": 91.1,
   "test-imgcheck": 21.2,
   "test-java-fast": 38.8,
   "test-m1a": 257.1,
@@ -20,13 +20,18 @@
   "test-m1r": 39.5,
   "test-m1w13": 20.1,
   "test-p3frontend": 79.7,
+  "test-pin-smoke": 180.7,
   "test-regression": 168.9,
   "test-toolexec": 127.5,
   "test-v2": 1.2
  },
+ "reason": {
+  "test-goroutine-modes": "2026-11-25 test-speed2 at f7da9e04: master added tools.sh and leak.sh (mem-leak lane, ~+50 CPU s); this lane dropped the 4-class Java leg the pin smoke covers",
+  "test-pin-smoke": "2026-11-25 test-speed2: split out of check (same command): 181 CPU s, check 280 -> 74 (and ~19 on an unchanged frontend: go test cached)"
+ },
  "wall": {
   "build": 35.9,
-  "check": 177.0,
+  "check": 58.8,
   "check-links-external": 8.1,
   "generate": 4.4,
   "graalgo": 0.7,
@@ -36,7 +41,7 @@
   "test-ci": 27.3,
   "test-diffharness": 36.3,
   "test-gir": 2.6,
-  "test-goroutine-modes": 25.1,
+  "test-goroutine-modes": 35.3,
   "test-imgcheck": 9.6,
   "test-java-fast": 40.5,
   "test-m1a": 211.8,
@@ -45,6 +50,7 @@
   "test-m1r": 23.8,
   "test-m1w13": 13.0,
   "test-p3frontend": 60.1,
+  "test-pin-smoke": 88.7,
   "test-regression": 125.8,
   "test-toolexec": 40.1,
   "test-v2": 0.6

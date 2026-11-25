@@ -19,8 +19,9 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 
 - `make all` — the per-push gate, in order: `generate` (gofrontend,
   overlay, the 18 generated `synth_*.go`, the GIR Go/Java codecs), `build`
-  (truffle + interop Java modules), `snapshot-check`, `check`, the module
-  tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
+  (truffle + interop Java modules), `snapshot-check`, `check`,
+  `test-pin-smoke` (the scheduler/runtime suite in thread mode under
+  `jdk.VirtualThreadPinned`), the module tests `test-v2`, `test-toolexec`, `test-gir`, `test-p3frontend`, then
   `test-ci` (smoke + `test-jit`), `test-java-fast`, `test-regression`,
   and the new path's gates `test-m1a` (import-free corpus vs gc through
   the `-toolexec` path), `pe-check-m1a`, `test-m1w13`, `test-imgcheck`,
@@ -39,7 +40,11 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   then CI's drift check — run through
   [test/lib/gates.py](test/lib/gates.py), which times every gate (wall +
   CPU) and prints the table; `GATE_JOBS=N` runs N gates at once (default
-  1 on this shared host; CI uses 2). Never a hand-picked subset of targets: gates
+  1 on this shared host; CI uses 2; the network-bound
+  `check-links-external` runs beside them without a slot). CI splits the
+  list into four parallel jobs (`GATE_SHARD=I/4`, `gates.py --shard`:
+  disjoint shards covering the whole list; `gates.py shards 4` prints
+  them). Never a hand-picked subset of targets: gates
   share inputs (a new `test/m1a/programs` file is also an input of
   `test-toolexec`'s reference-interpreter differential), so "the gate for
   my area passed" is not evidence. Per-push CI outside `pre-land`: only
@@ -59,7 +64,10 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
   for a reviewed, intended cost increase, and say so in the commit. The gc
   leg of the m1* gates is replayed from a content-addressed cache
   (`.tmp/gc-oracle`, [test/lib/gcoracle.sh](test/lib/gcoracle.sh);
-  `GC_ORACLE_CACHE=off` forces live gc). Tiers: `make quick` is the
+  `GC_ORACLE_CACHE=off` forces live gc). Every test cache keys on all
+  of its inputs (the scripts' own text included), verifies a sha256
+  manifest on load (a damaged entry is a deleted miss: BUG-0012) and never
+  stores a timed-out, signal-killed or crashed run. Tiers: `make quick` is the
   inner loop (static repo gates, module suites, slices of the
   differential gates; minutes, never landing evidence); CI off master runs
   only the docs tier for a Markdown-only change; master, `make all` and
