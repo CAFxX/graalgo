@@ -868,8 +868,11 @@ snapshot-check: build
 # (~1-2 h): nightly in .github/workflows/mutation.yml, not per-push.
 MUTATION_SLICE ?= 06_nested_defer,60_narrow_unary_widen,49_int_arith_edges,50_shifts,51_int_conversions,52_float_edges,53_compare_ops,55_slice_bounds,56_map_ops,57_defer_order
 MUTATION_WORK ?=
+# Programs the gate runs at a time (1: shared host; mutation.yml's 4-vCPU
+# runner passes 4, as per-push snapshot-check runs there).
+MUTATION_JOBS ?= 1
 mutation: generate build
-	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) \
+	cd tools/mutation && $(GO) run . -repo $(CURDIR) -slice $(MUTATION_SLICE) -jobs $(MUTATION_JOBS) \
 	  $(if $(MUTATION_WORK),-work $(MUTATION_WORK)) $(if $(MUTANTS),-only $(MUTANTS))
 
 # Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
