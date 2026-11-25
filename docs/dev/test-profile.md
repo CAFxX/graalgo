@@ -8,6 +8,111 @@ times are ratcheted against the baseline of the environment (local:
 SLOWER warning above 1.2x; CI: failure above 2x + 30 s; see "Baselines per
 environment" below).
 
+## m3-plan D1 (2026-11-25): snapshot-check on the new path, batched
+
+`make snapshot-check` ran every snapshot-corpus program on v1's
+`graalgo-sync-run` (one JVM per program, gofrontend and a 113 MB JSON
+export each). It now builds each program through `go build -toolexec
+graalgo-tool` with the stdlib fork (exactly the file gc's leg builds) and
+runs the built programs in one JVM, a fresh context each: the diffharness
+speaks batchrun.sh's protocol itself (`batchRun` in
+[backends-newpath.json](../../test/differential/backends-newpath.json),
+`test/differential/internal/harness/batch.go`), with the same rules — `BATCH_ISOLATED_RE`
+sources and every program a dead batch left run in their own process.
+`GRAALGO_BATCH=off` gives one JVM per program. The gc leg is as before
+(`-verify-ref gc-a`: gc re-run live, compared with the committed
+snapshot).
+
+Equivalence: the full corpus both ways gives the same 61 verdicts (59
+MATCH, 2 EXPECTED with the same pinned signatures). Planted: a changed
+expected output (DRIFT), a listed program that matches (STALE), an entry
+without its signature (UNPINNED) and an unlisted divergence (DRIFT) fail
+the gate in one 4-program run; the batch driver's own tests
+(`batch_test.go`: per-process equivalence, a killed batch JVM -> the rest
+rerun in their own processes, isolation, timeouts) run in
+`test-diffharness` (1.3 s).
+
+Dev host (`nice -n 19`, `SNAPSHOT_JOBS=1`, `-Xmx2g
+-XX:ActiveProcessorCount=4`, load 6–10; wall / CPU s, incl. the gc
+verify leg):
+
+| snapshot-check | wall | CPU |
+|---|---:|---:|
+| v1 (baseline) | 433 | 659 |
+| new path, one JVM per program (`GRAALGO_BATCH=off`) | 52 | 104 |
+| new path, batched (`make snapshot-check`) | 23 | 28 |
+
+CI (4 vCPU, `SNAPSHOT_JOBS=4`: up to 4 batch JVMs) is estimated from the
+dev-host ratio of the v1 numbers (875 / 659 CPU): ~40 CPU s and ~20–30 s
+wall instead of 875 / 260; the CI baseline carries a conservative estimate
+(cpu 80, wall 40; cold 150 / 80) until the first green run re-records it,
+and the shards rebalance on it (`gates.py shards 4`): snapshot-check is
+no longer the floor.
+
+## Round 3 (2026-11-25): the m1* gates' graalgo legs in one JVM
+
+The m1* gates started one JVM per program (~0.4 s wall, ~0.9 s CPU of JVM
+start, class loading and warm-up before a line of Go ran): ~250 programs
+per push. Now each gate builds every program, then runs the queued
+graalgo legs in ONE JVM ([batchrun.sh](../../test/lib/batchrun.sh),
+`graalgo-bundle-run --batch`, `graalgo.launcher.BundleBatchMain`), each in
+a fresh polyglot Context built exactly as `BundleMain` builds it (what
+production does per program run), with its stdin/stdout/stderr dup2'd
+onto descriptors 0-2, its working directory and `os.Args`
+(`graalgo.syscall.ProcessStdio`: a program's system calls reach the real
+descriptors), and its timeout as timeout(1) gives it (status 124, the
+context cancelled). A JVM that dies under a program (or a cancel that does
+not finish: the batch halts) leaves that program and every later one to
+the gate's per-process leg, so a crash is never silent and never decides
+a verdict. `GRAALGO_BATCH=off` is the old path; `BATCH_SAVE=DIR` keeps
+every leg's output for a both-ways diff.
+
+What stays per process: a program with its own environment (the JVM has
+one environ: m1c `//m1c:env`, m1d `// env:`), a program naming a
+process-global mutator that outlives its context or ends the process
+(`batch_isolated`: rlimits, umask, credentials, session, signals, raw
+exit), m1c's probes (they decide what runs), and the probes that need a
+JVM of their own (cancel.sh, tools.sh, leak.sh, pe-check-m1a's JIT
+checks, test-imgcheck's 6 runs).
+
+Equivalence: m1a (188), m1r (26), m1c (16), m1d (6) and m1w13 (15) run
+both ways with `BATCH_SAVE`: identical verdicts, and the 246 batched legs'
+stdout, stderr and status byte-identical except one printed heap address
+(random per run). The first diff found a real per-context leak: goroutine
+ids came from a JVM-wide counter (the second program's main printed
+`goroutine 103`); they are per scheduler now. Planted
+([test/m1r/batch.sh](../../test/m1r/batch.sh), in test-goroutine-modes):
+stdio/args/cwd apart, a goroutine leaked past main silent in the next
+program, a hang -> 124 and the batch goes on, `os.Exit` from a goroutine,
+main is goroutine 1 after 7 runs (fails with the old counter), a SIGKILLed
+batch JVM -> per-process reruns of it and the rest, a divergent program
+still fails m1r/run.sh; [test_batchrun.py](../../test/lib/test_batchrun.py)
+(`make check`) covers the driver with a fake runner.
+
+Also: graalgo-tool's end-to-end tests (each with its own GOCACHE, module
+and binaries) run `t.Parallel`, `go test -parallel 4`. Not taken:
+slicing snapshot-check across CI shards (m3-plan D1 moved it to the new
+path: 433 -> 23 s, above).
+
+Dev host (`nice -n 19`, warm gc-oracle cache, load 6–12; wall / CPU s):
+
+| gate | before | after |
+|---|---:|---:|
+| test-m1a | 108.9 / 189 | 55 / 61 |
+| test-m1r | 21.1 / 47 | 12.5 / 26 |
+| test-m1c | 13.0 / 25 | 9.3 / 15 |
+| test-m1d | 7.8 / 17 | 7.2 / 17 |
+| test-m1w13 | 10.6 / 18 | 7.0 / 10 |
+| test-toolexec | 30 (module go test) / 120 | 16 / 129 |
+| test-goroutine-modes | 35 / 89 | 42 / 102 (+ batch.sh ~7 / 10; its 13 program legs in 4 JVMs; load ~12) |
+
+Round-4 levers: leak.sh (12 s / 27 CPU s) and cancel.sh (7 / 27) in
+test-goroutine-modes; test-pin-smoke's slow classes; the per-program build
+loop that now dominates m1a (go build through graalgo-tool, transform.py,
+2 normalize.py runs per program: one python process for the whole
+compare phase); the CI baseline's walls for the m1* gates (re-record from
+the first green run so `gates.py --shard` balances on the new numbers).
+
 ## Round 2 (2026-11-25): where the minutes went, and what changed
 
 Profiled on master a542c799 (one `pre-land` through gates.py with a timing

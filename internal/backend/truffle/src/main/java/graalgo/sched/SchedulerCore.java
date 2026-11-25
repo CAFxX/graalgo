@@ -55,6 +55,9 @@ public final class SchedulerCore {
      * (carrier mode: {@link #carriers} is non-null).
      */
     private final Function<Runnable, Thread> goroutineThreads;
+    /** This scheduler's goroutine ids (GoroutineHandle#id): the first spawned, main, is 1. */
+    private final java.util.concurrent.atomic.AtomicLong goroutineIds =
+            new java.util.concurrent.atomic.AtomicLong(1);
 
     /**
      * Carrier mode (ADR-0018, the default): goroutines are continuations on a few carrier
@@ -965,7 +968,7 @@ public final class SchedulerCore {
     }
 
     private GoroutineHandle spawn(Runnable body, boolean main, boolean system) {
-        GoroutineHandle h = new GoroutineHandle(body);
+        GoroutineHandle h = new GoroutineHandle(goroutineIds.getAndIncrement(), body);
         h.isMain = main;
         h.system = system;
         if (main) {

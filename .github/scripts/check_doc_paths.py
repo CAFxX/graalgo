@@ -46,12 +46,11 @@ import sys
 from pathlib import Path
 
 ARCHIVED = (
-    "docs/arch/phases/", "docs/arch/reviews/", "docs/arch/spikes/",  # dead-path-ok (the archive exists)
-    "docs/arch/research/", "research/", "internal/frontend/go/",
+    "docs/archive/", "research/", "internal/frontend/go/",
     "test/corpus/",  # per-wave run logs of the research era
 )
 EXEMPT = {
-    # owner: spec-reconcile lane (SPEC.md); should read docs/arch/research/T1-*.md
+    # owner: spec-reconcile lane (SPEC.md); should read docs/archive/research/T1-*.md
     ("docs/arch/SPEC.md", "research/T1"),
 }
 TOP = ("cmd/", "internal/", "docs/", "test/", "tools/", "stdlib/",

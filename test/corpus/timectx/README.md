@@ -26,4 +26,5 @@ Go programs exercising the P3-M5 synthetic `time` and `context` packages
 | `tc16_timer_reset_expired.go` | `Reset` on expired timer |
 
 Timing-sensitive programs print fixed strings only, never measured
-durations. `run_differential.sh` follows the iface/sync harness pattern.
+durations. The import-free programs run on the new path in `make test-m1a` (the
+v1 runner was deleted, m3-plan D0).

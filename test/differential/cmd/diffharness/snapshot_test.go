@@ -68,6 +68,11 @@ func TestScrubEnvPaths(t *testing.T) {
 	if out := scrubEnvPaths("hello, world\n", "/x"); out != "hello, world\n" {
 		t.Fatalf("program output mangled: %q", out)
 	}
+	// the reference toolchain's GOROOT (dev host vs CI) in a traceback
+	t.Setenv("DH_GO", "/opt/go/")
+	if got := scrubEnvPaths("\t/opt/go/src/reflect/type.go:594\n\t/opt/gofoo/x.go:1", "/corpus"); got != "\t{GOROOT}/src/reflect/type.go:594\n\t/opt/gofoo/x.go:1" {
+		t.Fatalf("GOROOT not scrubbed (or over-scrubbed): %q", got)
+	}
 }
 
 func TestClassify(t *testing.T) {

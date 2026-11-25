@@ -89,7 +89,7 @@ local generic type (`main.T?1`: `issue54456.go`, `nested.go`).
 
 | v1 gate / corpus | Cadence | Behavior covered | New-path coverage today | Action at M3 |
 |---|---|---|---|---|
-| `snapshot-check` (62 programs, `graalgo-sync-run`) | per push | language + small std on gc's snapshot | the same 61 programs: 59/61 (§2.1); `test-m1a` (~190 programs), `test-m1r`/`m1c`/`m1d` | **re-point** the backend (D1); 2 entries in the register |
+| `snapshot-check` (62 programs, `graalgo-sync-run`) | per push | language + small std on gc's snapshot | the same 61 programs: 59/61 (§2.1); `test-m1a` (~190 programs), `test-m1r`/`m1c`/`m1d` | **re-pointed** (D1, done); 2 entries in the register |
 | `conformance.yml` srctest (GOROOT/test, `backends-p3.json`) | path-filtered push | the Go language suite | 162/201 (§2.1) | **re-point** (D2); register re-triaged from §2.1 |
 | `TypeparamDifferentialTest` (`backends.json` → `graalgo-run`) | weekly | generics suite | 186/196 (§2.1) | replace the Java class by `diffharness typeparam run` on the new backend (D2) |
 | `test-regression` (7 `graalgo test` packages via `cmd/graalgo`) | per push | `go test` on user packages (M2) + 7 fixed v1 bugs | not covered: `go test` through the launcher is M2 | **gap G5**: run them through the launcher when M2's `go test` lands; until then the 7 bugs are v1-only (`narrow-array-fmt` BUG-0003 and `tls-wrap-hang` BUG-0053 are v1 defects) |
@@ -101,12 +101,12 @@ local generic type (`main.T?1`: `issue54456.go`, `nested.go`).
 | `mutation.yml` (32 mutants: 27 in `graalgo/frontend`, 4 in `graalgo/values`, 1 runtime; gate = v1 snapshot-check) | nightly | the oracle can fail | nothing: no new-path mutant set | **gap G6**: new-path mutant set against the re-pointed snapshot-check + `test-m1a` (WP-MUT) (D3) |
 | `fuzz-soak.yml` 4a (`tools/fuzz-soak`, `graalgo-sync-run`) | nightly | template-fuzzer differential | `fuzz-newpath.yml` (nightly) and fuzz-soak 4b, both new path | delete 4a and `tools/fuzz-soak/harness` (D3); keep the generator only if 4b uses it |
 | `stdlib-gate.yml` (334 wave programs via 76 `run_differential.sh`) | manual (BUG-0033) | std package behavior | §2.1 row 4: 379/486 on the new path | replace the wave runners by one new-path runner over the wave programs (the method of §1) with a reason-coded register (D3); BUG-0033 becomes that triage |
-| test/corpus topic `run_differential.sh` (9 scripts), `tools/fuzz` | no caller | – | – | delete now (dead, D0) |
+| test/corpus topic `run_differential.sh` (9 scripts), `tools/fuzz` | no caller | – | – | **deleted** (D0, done) |
 | `test/e2e` (module mode, `graalgo-sync-run`) | manual | module-mode build/run | `test-toolexec` multi-package and launcher tests | re-point to the launcher (D4) |
 | `make bench`, `fast-run`, truffle `run`/`run-sched`/`smoke`/`pin-audit` | manual | v1 benchmarks, warm-JVM loop | `make bench-suite`, `bench-realistic`, `bench-m1a` | delete the v1 targets; `bench` = `bench-suite` (D3) |
 | `tools/godebug-diff` (`SchedMain`) | manual | GODEBUG parity | WP-GODEBUG (new path, W5) | re-point to bundles with WP-UPG1, or delete (D3) |
 | `gate1`, `gate1-pilot` | manual | v1 trial `go test` of 5 std packages | M2's std-test runner | delete (D6) |
-| `test-diffharness` | per push | the comparator (gc vs gc) | itself | drop its precondition on `graalgo-sync-run`/interop classes (D1) |
+| `test-diffharness` | per push | the comparator (gc vs gc) | itself | precondition on `graalgo-sync-run`/interop classes dropped (D1, done) |
 
 ## 3. Gaps that must close (or be accepted as dropped) before D6
 
@@ -116,8 +116,8 @@ regression).
 
 | # | Gap | Programs | Proposed work | Size | Prio |
 |---|---|---|---|---|---|
-| G1 ★ | **link floor of `crypto/*`, `hash/crc32`, `math/big`, `hash/maphash`, `iter`**: `crypto/fips140.isBypassed` (23), `crypto/internal/fips140.fatal` (9), `fips140/subtle.xorBytes` (1), `hash/crc32.castagnoliSSE42` (17), `math/big.addMulVVWW` (2), `runtime.memhash` (3), `runtime.coroswitch` (2, `iter.Pull`) | 57 corpus (21 ★) | **closed** (§3.1): 48/57 match gc; the 9 left are G7 (sockets: 4), gc-nondeterministic programs (random keys, hedged ECDSA: 4) and BUG-0061 (1) | done | – |
-| G2 ★ | **runtime API surface of the facade**: `runtime.ReadMemStats` (3), `MemProfile` (2), `runtime/debug.setGCPercent`, `setPanicOnFault`, `runtime.Breakpoint` (3, not declared), `internal/cpu.cpuid` (12: `testing` imports), `runtime.fastrand`/`fastrandn` linknames (4), `syscall.runtimeClearenv` (1), `runtime.GOROOT()` (`winbatch.go`) | 10 srctest + 18 corpus (5 ★) | **closed** (§3.1): corpus 16/17, srctest 6/11 match gc; left: BUG-0059 (`MemProfile` records, 2), BUG-0060 (`recover` rule, 2, now reached), `recover4.go` (`mmap`, G7), `testing/05_subtests` (unnormalized test durations, a G9 harness artifact) | done | – |
+| G1 ★ | **link floor of `crypto/*`, `hash/crc32`, `math/big`, `hash/maphash`, `iter`**: `crypto/fips140.isBypassed` (23), `crypto/internal/fips140.fatal` (9), `fips140/subtle.xorBytes` (1), `hash/crc32.castagnoliSSE42` (17), `math/big.addMulVVWW` (2), `runtime.memhash` (3), `runtime.coroswitch` (2, `iter.Pull`) | 57 corpus (21 ★) | **closed** (§3.1): 48/57 match gc; the 9 left are G7 (sockets: 4), gc-nondeterministic programs (random keys, hedged ECDSA: 4) and BUG-0062 (1) | done | – |
+| G2 ★ | **runtime API surface of the facade**: `runtime.ReadMemStats` (3), `MemProfile` (2), `runtime/debug.setGCPercent`, `setPanicOnFault`, `runtime.Breakpoint` (3, not declared), `internal/cpu.cpuid` (12: `testing` imports), `runtime.fastrand`/`fastrandn` linknames (4), `syscall.runtimeClearenv` (1), `runtime.GOROOT()` (`winbatch.go`) | 10 srctest + 18 corpus (5 ★) | **closed** (§3.1): corpus 16/17, srctest 6/11 match gc; left: BUG-0060 (`MemProfile` records, 2), BUG-0061 (`recover` rule, 2, now reached), `recover4.go` (`mmap`, G7), `testing/05_subtests` (unnormalized test durations, a G9 harness artifact) | done | – |
 | G3 ★ | **finalizers**: `SetFinalizer` never runs on the new path (`deferfin`, `mallocfin`, `tinyfin`, `lc32_finalizer_wakes_main`) or a finalizer panic is not fatal (`lc33`) | 3 srctest + 2 corpus (2 ★) | **closed** (§3.1): srctest 3/3, corpus `lc32`, `lc33`, `gc05`, `gc06` match gc; `gc01`/`gc07` are nondeterministic under gc itself (tiny allocator, racy reads) | done | – |
 | G4 ★ | **new-path node bugs found by the run**: `ClassCastException` `Iface`↔`RawIface` (`switch.go`, `testing/quick`), `Complex` (`shift3.go`); `len` of a constant-length array pointer skips the call (`range.go`, `const4.go`: side effect elided); nil dereference at a large offset not trapped (`nilptr.go`) and nil method value calls (`ddd.go`, `method.go`); `new(x)` (`newexpr.go`, BUG-0005 still open on the new path); `slicecap.go`; zero-size allocation identity (`zerosize.go`); false `checkptr` traps (`inline_literal.go`, `unsafebuiltins.go`, `03c_uintptr2ptr_trap.go`: gc traps only under `-d=checkptr`); `runtime.Caller` skip through inlined frames (`inline_caller.go`); traceback `main.main(...)` vs `main.main()` (`27_panic_trace`, `maymorestack.go`); generics: nil array length NPE (`boundmethod.go`, `interfacearg.go`), local generic type definitions (`issue54456.go`, `nested.go`); timer channel `len`/`cap` must be 0 (go ≥ 1.23: `tm15`, `tc07`); `reflect.FuncOf`/`StructOf` method code pointers (`47_reflect_funcof_structof`, W9b) | 17 srctest + 5 typeparam + 5 corpus + 2 snapshot (v1 passes most) | one fix + regression program each, in `test/m1a/programs` or `test/m1r/programs` | 6–10 | P0 |
 | G5 | **`go test` through the launcher (M2)**: `test-regression`'s 7 packages | 7 packages | M2; then `test-regression` runs on the launcher unchanged (`cmd/graalgo` = launcher) | in M2 | P1 (blocks D4) |
@@ -165,7 +165,7 @@ What landed:
   figures (documented on it, [mstats.go](../../stdlib/fork/runtime/mstats.go));
   `internal/cpu` (and `x/sys/cpu`) probes model "no optional feature" with
   the host's vendor and brand string; `runtime/debug` and `runtime/trace`
-  hooks, profiles (empty, BUG-0059), `Breakpoint` (SIGTRAP crash),
+  hooks, profiles (empty, BUG-0060), `Breakpoint` (SIGTRAP crash),
   `LockOSThread`, `Pinner`, the legacy `fastrand`/`cheaprand` linknames,
   `runtimeClearenv`; the link now stamps `runtime.defaultGOROOT`,
   `buildVersion` and `modinfo` as cmd/link does (`runtime.GOROOT`,
@@ -185,7 +185,7 @@ What landed:
 Left on these programs (none of them a G1–G3 symbol): G7's sockets and
 `mmap` (5), gc-nondeterministic programs (6: `ecdh`, three `ecdsa`
 signatures, `gc01`'s tiny-allocated finalizer target, `gc07`'s racy
-reads), BUG-0059 (2), BUG-0060 (2), BUG-0061 (1), G8 (2) and one G9
+reads), BUG-0060 (2), BUG-0061 (2), BUG-0062 (1), G8 (2) and one G9
 harness artifact. `lc09_goexit_main` races a new goroutine against main's
 deferred call (both orders are valid Go; 1 run in 8 differs from gc's).
 
@@ -203,8 +203,8 @@ baselined gate costs of [test/duration-baseline.json](../../test/duration-baseli
 
 | Step | What | Depends on | Per-push saving (dev wall / CPU; CI CPU) | Weekly / nightly saving |
 |---|---|---|---|---|
-| **D0** | **ADR-0017 stage 1** (accepted): `git mv` the archive docs to `docs/archive/` (planned), `test/corpus/lifecycle/normalize.py` → `test/lib/`; plus the proven-dead files of §6 | quiet window | 0 | 0 |
-| **D1** | **snapshot-check on the new path**: `test/differential/backends-newpath.json` (planned) — the backend of §1 — becomes the `snapshot-check` config; `corpus-exclusions.yaml` re-triaged to the 2 measured divergences (G4 ids); `test-diffharness` drops its `graalgo-sync-run` precondition; the diffharness default `-config` stops naming `backends.json`; `jvmcds.sh sync-env` leaves the recipe | — | **−376 s / −547 s; CI −725 s est.** (433 → 57 wall, 659 → 112 CPU measured) | mutation.yml's per-mutant gate gets ~6× cheaper once G6 lands |
+| **D0** ✅ | **ADR-0017 stage 1** (accepted; **done** 2026-11-25, lane `m3-d0d1`): the archive docs `git mv`'d to [docs/archive/](../archive/) (601 renames; links and the archive skips of `check_doc_paths`/`check_gg_ids`/`check_ratchets`/`check_makefile` re-pointed), the lifecycle corpus's `normalize.py` → [test/lib/](../../test/lib/normalize.py) (6 callers); the proven-dead files of §6 deleted (`tools/fuzz`, the 9 topic `run_differential.sh`, the frontend probe) | quiet window | 0 | 0 |
+| **D1** ✅ | **snapshot-check on the new path** (**done** 2026-11-25, lane `m3-d0d1`): [backends-newpath.json](../../test/differential/backends-newpath.json) — the backend of §1, each program built as gc's leg builds it ([newpath_build.sh](../../test/differential/newpath_build.sh), set up once by [newpath.sh](../../test/differential/newpath.sh)) — is the `snapshot-check` (and `make snapshot`) config, and the built programs run **batched** in one JVM, a fresh context each (the diffharness speaks batchrun.sh's protocol: `batchRun`, `test/differential/internal/harness/batch.go`; `GRAALGO_BATCH=off` = one JVM each, same 61 verdicts); `corpus-exclusions.yaml` re-triaged to the 2 measured divergences (`27_panic_trace` BUG-0011, `47_reflect_funcof_structof` BUG-0059, both G4; 6 v1 entries pruned as STALE), v1's register kept as `corpus-exclusions-v1.yaml` for the v1 mutation oracle only (G6/D3 retire it); `test-diffharness` dropped its `graalgo-sync-run` precondition; the diffharness default `-config` is `backends-newpath.json` (`srctest`/`typeparam` keep theirs until D2); `jvmcds.sh sync-env` left the recipe; tracebacks through std scrub the toolchain's GOROOT. Planted DRIFT (changed output, unlisted divergence), STALE and UNPINNED fail the gate | — | **−410 s / −631 s** (433 → 23 wall, 659 → 28 CPU, measured; one JVM per program would be 52 / 104); CI −795 s CPU est. (875 → ~80 baseline estimate) | mutation.yml's per-mutant gate gets ~6× cheaper once G6 lands |
 | **D2** | **conformance and typeparam on the new path**: `run_conformance.sh` uses the new backend, `srctest-exclusions.yaml` re-triaged from §2.1 (39 stale entries deleted, 32 new reason-coded entries citing G1–G4/G7 ids); `TypeparamDifferentialTest` replaced by a `make test-typeparam` (planned) over `diffharness typeparam run` in the weekly job; `typeparam-exclusions.yaml` re-triaged | D1 | 0 (path-filtered job: conformance 234 s wall at 1 job on the new path) | weekly: TypeparamDifferentialTest's share of the 437 s v1 classes |
 | **D3** | **re-point or delete the v1-driven tools**: `test-jit`'s `peguard` → `pe-check-m1a`; `make bench` → `bench-suite`; delete `fast-run`/truffle `run`/`run-sched`/`smoke`/`pin-audit`, fuzz-soak 4a + `tools/fuzz-soak/harness`, the 76 wave `run_differential.sh` + `run_wave*.sh`; `stdlib-gate.yml` → one new-path runner over the wave programs with a register (BUG-0033); `tools/godebug-diff` → bundles or delete; new-path mutant set (G6) in `tools/mutation` | D1 (G6 for mutation) | test-ci ~−15 s CPU est. | fuzz-soak 4a (4 h nightly runner) gone |
 | **D4** | **`cmd/graalgo` = the launcher** (ADR-0017 stage 2 head): `internal/toolexec/cmd/graalgo-launcher` built as `graalgo`; `test-regression` then runs through it unchanged; `test/e2e` re-pointed; delete `internal/driver`, `internal/vet` | **G5 (M2 `go test`)** | test-regression 126 s / 169 s → ~60 s CPU est. (no gofrontend, bundle JVM) | – |
@@ -235,13 +235,13 @@ replacement typeparam run costs (162 s wall at 1 job, measured).
    now and `test-regression` is deleted at D6. Proposed: wait (G5 is M2's
    own gate).
 
-## 6. Trivially dead files (proven unused; delete in D0)
+## 6. Trivially dead files (proven unused; deleted in D0)
 
 | Path | Evidence |
 |---|---|
-| [tools/fuzz/](../../tools/fuzz/) | no Makefile target, workflow or script calls it; the only reference outside it is a `.gitignore` line |
+| `tools/fuzz` (deleted) | no Makefile target, workflow or script calls it; the only reference outside it is a `.gitignore` line (removed with it) |
 | the 9 topic `run_differential.sh` of [test/corpus/](../../test/corpus/) (`atomic`, `fastrand`, `iface`, `lifecycle`, `map`, `slice`, `sync`, `timectx`, `traceback`) | `git grep run_differential.sh` outside test/corpus matches only docs; the `.go` programs stay (`test-m1a` reads them) |
-| `internal/frontend/tools/probe/main.go` | zero references outside docs |
+| `internal/frontend/tools/probe/main.go` (deleted) | zero references outside docs |
 
 `tools/stdlib-linkdiff` and `tools/stdlib-vendor` have no caller either, but
 WP-UPG1 may reuse them (ADR-0017): kept until that lane decides.

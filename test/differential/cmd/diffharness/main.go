@@ -106,7 +106,7 @@ type runFlags struct {
 
 func baseFlags(fs *flag.FlagSet) *runFlags {
 	rf := &runFlags{}
-	fs.StringVar(&rf.config, "config", "backends.json", "backend config JSON")
+	fs.StringVar(&rf.config, "config", "backends-newpath.json", "backend config JSON")
 	fs.StringVar(&rf.corpus, "corpus", "corpus", "corpus directory")
 	fs.StringVar(&rf.out, "out", "results.json", "JSON report output path")
 	fs.IntVar(&rf.timeout, "timeout", 0, "per-program timeout seconds (0 = config default)")

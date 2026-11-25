@@ -1,8 +1,11 @@
 // Command mutation validates the differential oracle by mutating graalgo
 // itself (SPEC §5.7, GG-0034): deliberately break the lowering/runtime and
-// confirm the per-push differential gate (`make snapshot-check`, i.e.
-// `diffharness snapshot check` against gc's snapshot) goes red. A gate that
-// has never been seen failing is not evidence.
+// confirm the differential gate (`diffharness snapshot check` against gc's
+// snapshot) goes red. A gate that has never been seen failing is not
+// evidence. The mutants target v1, so the gate here is v1's: backends-p3.json
+// (graalgo-sync-run) with v1's register, corpus-exclusions-v1.yaml; the
+// per-push `make snapshot-check` runs the new path since m3-plan D1, and
+// m3-plan G6/D3 give it its own mutant set (then this v1 oracle goes).
 //
 // Every mutant runs on a SCRATCH COPY of the repository (rsync, .git,
 // scratch dirs and the lane worktrees under .worktrees/ excluded) — the working tree is never modified. Per mutant:
@@ -125,7 +128,10 @@ func main() {
 	if snaps, _ := filepath.Glob(filepath.Join(copyDir, "test/snapshots/go*.json")); len(snaps) == 1 {
 		c.snapshot = snaps[0]
 	}
-	c.expected = filepath.Join(copyDir, "test/differential/corpus-exclusions.yaml")
+	// The mutants target v1 (graalgo-sync-run, backends-p3.json) and so does
+	// this oracle, with v1's register, until m3-plan G6 gives the new path
+	// its own mutant set (snapshot-check itself is on the new path, D1).
+	c.expected = filepath.Join(copyDir, "test/differential/corpus-exclusions-v1.yaml")
 
 	// Validate every mutant applies exactly once BEFORE spending compute.
 	for _, m := range spec.Mutants {

@@ -26,7 +26,7 @@
 #                    for graalgo-bundle-run (toolexec_setup calls it last;
 #                    needs toolexec_build): the truffle jar + bundle.jsa
 #   jvm_cds_setup sync
-#                    for graalgo-sync-run (snapshot-check, test-regression):
+#                    for graalgo-sync-run (test-regression):
 #                    the interop and truffle jars + sync.jsa
 #   Both find or make the archive (one extra JVM run, once per key), then
 #   export the class variables and add -XX:SharedArchiveFile to

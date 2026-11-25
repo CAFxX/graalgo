@@ -6,9 +6,9 @@ out/
 **/gocache*/
 **/bin/
 # vendored upstream toolchain (not our work)
-docs/arch/spikes/03-versiontax/src/go1.26.8/
+docs/archive/spikes/03-versiontax/src/go1.26.8/
 # heavy experiment probe outputs (kept on disk, outside version control)
-docs/arch/spikes/05-cmdgo/probes/
+docs/archive/spikes/05-cmdgo/probes/
 # compiled binaries, archives and recordings: never tracked (size/binary
 # gate in `make check`, allowlist .github/scripts/large_files_allowlist.txt)
 *.so
@@ -20,8 +20,8 @@ docs/arch/spikes/05-cmdgo/probes/
 *.err
 hs_err_pid*.log
 tools/req/req
-docs/arch/spikes/05-cmdgo/src/toolexec-log/toolexec-log
-docs/arch/spikes/**/.t4-wave2-cache/
+docs/archive/spikes/05-cmdgo/src/toolexec-log/toolexec-log
+docs/archive/spikes/**/.t4-wave2-cache/
 research/**/.t4-wave2-cache/
 .DS_Store
 
@@ -32,7 +32,6 @@ test/differential/diffharness
 /graalgo
 
 # fuzzer runtime state (journal, scratch programs, resume state)
-tools/fuzz/work/
 .gocache/
 .tmp/
 

@@ -28,7 +28,7 @@ fails the check as STALE until its entry is removed.
 |---|---|
 | `format` | `"graalgo-behavior-snapshot/v2"`; any other value fails the check loudly |
 | `toolchain` | Reference toolchain, e.g. `"go1.27.1"` |
-| `reference` | Reference backend name in [`backends-p3.json`](../../test/differential/backends-p3.json) (`"gc-a"`) |
+| `reference` | Reference backend name in [`backends-newpath.json`](../../test/differential/backends-newpath.json) (`"gc-a"`) |
 | `recordedAt` | RFC3339 UTC timestamp |
 | `corpus` | Repo-relative corpus label |
 | `normalizer` | Normalization rule-set id; a change fails the check until re-recorded |

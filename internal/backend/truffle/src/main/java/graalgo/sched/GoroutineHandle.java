@@ -24,10 +24,15 @@ import java.util.concurrent.atomic.AtomicReference;
  * wakeups directly; P2-M1 routes all wakeups through the drainer.
  */
 public final class GoroutineHandle {
-    private static final AtomicLong ID_GEN = new AtomicLong(1);
+    /** Ids of handles made outside a scheduler (unit tests that drive a drainer by hand). */
+    private static final AtomicLong UNSCHEDULED_IDS = new AtomicLong(1);
 
-    /** Stable id, for logs and tests. */
-    public final long id = ID_GEN.getAndIncrement();
+    /**
+     * The goroutine id ({@code goid}: tracebacks print it), unique within its scheduler: a
+     * scheduler is one program run, and its main goroutine is 1 as in gc however many runs this
+     * JVM made before (successive contexts in one JVM: the gates' batch runner, embedders).
+     */
+    public final long id;
 
     /** The thread running this goroutine (thread mode only; null on carriers); set before start. */
     public volatile Thread thread;
@@ -208,7 +213,13 @@ public final class GoroutineHandle {
     /** Body executed by the vthread. */
     final Runnable body;
 
-    GoroutineHandle(Runnable body) {
+    GoroutineHandle(long id, Runnable body) {
+        this.id = id;
         this.body = body;
+    }
+
+    /** A handle outside any scheduler (unit tests): ids from one process-wide sequence. */
+    GoroutineHandle(Runnable body) {
+        this(UNSCHEDULED_IDS.getAndIncrement(), body);
     }
 }

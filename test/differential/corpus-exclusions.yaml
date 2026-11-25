@@ -1,5 +1,7 @@
 # Reviewed expected divergences of the differential corpus (corpus/)
-# against gc's behavior snapshot (test/snapshots/go<VERSION>.json).
+# against gc's behavior snapshot (test/snapshots/go<VERSION>.json), on the
+# new path (backends-newpath.json: `go build -toolexec graalgo-tool`, the
+# standard-library fork, graalgo-bundle-run).
 #
 # SPEC §5.6 (GG-0033): one entry per program, reason code from the closed
 # vocabulary backend-specific / unspecified-behavior / deferred-parity,
@@ -10,44 +12,24 @@
 #
 # History:
 #   1 (2026-11-17): created when snapshots moved from graalgo's own output
-#     to gc's. Replaces backends-p3.json "exclusions" (11 entries, free-text
-#     reasons): 14_goroutines_sum, 17_generics, 18_errors, 28_exit_code,
-#     37_utf8, 39_named_returns verified matching gc and pruned (stale);
-#     the rest re-verified diverging and carried over. 58/59 are graalgo
-#     bugs found by the new edge-case corpus (49-57), split into their own
-#     programs so the rest of 52/57 keeps gating.
+#     to gc's (v1 backend, backends-p3.json).
 #   2 (2026-11-18): every entry cites its bug id (docs/dev/bugs.md) and pins
-#     the DiffSignature of its expected divergence (global review G2): a
-#     listed program that diverges in a NEW way (e.g. crashes instead of
-#     printing the known wrong output) is DRIFT, and an unpinned entry
-#     fails as UNPINNED. 27 and 59 re-verified diverging after T0.A.
-version: 2
+#     the DiffSignature of its expected divergence (global review G2).
+#   3 (2026-11-25, m3-plan D1): snapshot-check moved to the new path and
+#     the register was re-triaged to its measured divergences: of v1's 7
+#     entries, 10_closures, 19_sort, 40_method_values, 42_json (BUG-0001),
+#     58_float_minmax_signed_zero (BUG-0009) and 59_recover_named_results
+#     (BUG-0010) match gc on the new path (pruned); 27_panic_trace still
+#     diverges (re-pinned); 47_reflect_funcof_structof is new (BUG-0059).
+#     v1's register lives on as corpus-exclusions-v1.yaml for the v1
+#     mutation oracle (tools/mutation) until m3-plan G6/D3 retire it.
+version: 3
 exclusions:
-- file: 10_closures
-  reason: deferred-parity
-  detail: BUG-0001: frontend/v1 rejects calling a function value through an index expression (ops[0](5)) - retired by the T1 toolexec frontend
-  signature: 20c81ea004086083
-- file: 19_sort
-  reason: deferred-parity
-  detail: BUG-0001: synthetic sort.Slice panics 'not in M7 scope (needs reflect)' - retired when the real sort package compiles (T1, delete synth_*)
-  signature: f37bdf7d90f4f621
 - file: 27_panic_trace
   reason: deferred-parity
-  detail: BUG-0011: goroutine trace format differs - frames print as 'level3()' without package qualifier/args/absolute file path (gc 'main.level3(...)' + '/abs/main.go:N') - panic model work (T0.A) (re-verified diverging 2026-11-18 after the T0.A lifecycle work)
-  signature: 8477da250b59757f
-- file: 40_method_values
+  detail: BUG-0011: the last frame of the panic trace prints as 'main.main(...)' (gc 'main.main()': no elided-arguments marker on a function without arguments); every other frame matches - traceback rendering (m3-plan G4)
+  signature: ebc676b257cc69bd
+- file: 47_reflect_funcof_structof
   reason: deferred-parity
-  detail: BUG-0001: frontend/v1 type error 'identifier Acc denotes *types.TypeName' on method expressions - retired by the T1 frontend
-  signature: ccb1cc089751cfef
-- file: 42_json
-  reason: deferred-parity
-  detail: BUG-0001: synthetic encoding/json Marshal panics 'not in M7 scope (needs reflect, P3-M8)' - retired when the real encoding/json compiles (T1)
-  signature: adae9468ba48c0d6
-- file: 58_float_minmax_signed_zero
-  reason: deferred-parity
-  detail: BUG-0009: min/max on signed zeros depend on operand order (max(-0.0, 0.0) = -0, min(0.0, -0.0) = 0; gc - 0 and -0) - lowering of the min/max builtins
-  signature: 7bed369f572b5d11
-- file: 59_recover_named_results
-  reason: deferred-parity
-  detail: BUG-0010: a function that recovers from a panic returns zero values instead of its named results as set by deferred calls (gc '40 recovered - boom') - panic model (T0.A) (re-verified diverging 2026-11-18 after the T0.A lifecycle work)
-  signature: cd5546afc0d310ec
+  detail: BUG-0059: reflect.StructOf of a struct with methods dies with 'fatal error: reflect: method code pointers are not available (graalgo: reflect call path)' (gc builds the type and exits 0) - the W9b reflect call path (m3-plan G4)
+  signature: 6dbc1dcdd3f0e9bf

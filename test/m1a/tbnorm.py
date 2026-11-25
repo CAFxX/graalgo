@@ -3,7 +3,7 @@
 
 The stderr normalizer of the m1a programs that opt in with a
 `// m1a:traceback` line (test/m1a/run.sh): where
-test/corpus/lifecycle/normalize.py drops every frame, this one compares
+test/lib/normalize.py drops every frame, this one compares
 them — function names and file:line of each Go frame (WP-TR-AUDIT-6):
 - goroutine IDs -> N in "goroutine N [reason]:" headers;
 - a frame's argument list -> "(...)": gc prints argument words (or "..."

@@ -1,0 +1,75 @@
+{
+  "backends": [
+    {
+      "build": [
+        "{GO}/bin/go",
+        "build",
+        "-o",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "gc-a",
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "GO": "${DH_GO}"
+      }
+    },
+    {
+      "build": [
+        "{GO}/bin/go",
+        "build",
+        "-o",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "gc-b",
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "GO": "${DH_GO}"
+      }
+    },
+    {
+      "batchIsolatedFrom": "../lib/batchrun.sh",
+      "batchRun": [
+        "{RUNNER}",
+        "--batch",
+        "{MANIFEST}",
+        "{RESULTS}"
+      ],
+      "build": [
+        "{BUILD}",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "graalgo",
+      "noiseSets": [
+        "jvm"
+      ],
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "BUILD": "${GRAALGO_ROOT}/test/differential/newpath_build.sh",
+        "RUNNER": "${GRAALGO_ROOT}/internal/backend/graalgo-bundle-run"
+      }
+    }
+  ],
+  "exclusions": [],
+  "timeoutSec": 30
+}

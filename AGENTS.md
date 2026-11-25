@@ -116,8 +116,11 @@ current plan of record is [docs/arch/RECOVERY.md](docs/arch/RECOVERY.md);
 - [test/snapshots/](test/snapshots/) records **gc's** behavior on the
   differential corpus — never graalgo's. `make snapshot` re-records gc and
   runs only when a corpus program changes or on a toolchain upgrade.
-- `make snapshot-check` runs the corpus under graalgo and fails on any
-  divergence from gc's snapshot. A known graalgo divergence is a reviewed,
+- `make snapshot-check` runs the corpus on the new path (each program
+  built by `go build -toolexec graalgo-tool` with the stdlib fork, the
+  built programs in one JVM, a fresh context each:
+  [backends-newpath.json](test/differential/backends-newpath.json), m3-plan
+  D1) and fails on any divergence from gc's snapshot. A known graalgo divergence is a reviewed,
   reason-coded (SPEC §5.6: `backend-specific`, `unspecified-behavior`,
   `deferred-parity`) entry in
   [test/differential/corpus-exclusions.yaml](test/differential/corpus-exclusions.yaml);

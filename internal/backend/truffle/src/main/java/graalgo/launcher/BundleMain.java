@@ -45,7 +45,7 @@ public final class BundleMain {
         Runtime.getRuntime().halt(status);
     }
 
-    private static int gomaxprocs() {
+    static int gomaxprocs() {
         String v = System.getenv("GOMAXPROCS");
         try {
             return v == null ? 0 : Integer.parseInt(v.trim());

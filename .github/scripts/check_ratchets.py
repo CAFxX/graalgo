@@ -58,7 +58,7 @@ from pathlib import Path
 
 BUDGET = Path(".github/scripts/ratchet_budget.json")
 DURATION = re.compile(r"^test/duration-baseline[\w-]*\.json$")
-SKIP = ("internal/frontend/go/", "docs/arch/", "research/")
+SKIP = ("internal/frontend/go/", "docs/arch/", "docs/archive/", "research/")
 
 COUNTERS = {
     "placeholder": {

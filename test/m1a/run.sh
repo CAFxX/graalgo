@@ -4,7 +4,7 @@
 # through graalgo-tool (-toolexec: shadow compile, GIR, bundle link) and run
 # on the new node package (graalgo.go) via internal/backend/graalgo-bundle-run,
 # against the same program built and run by gc. Compared per program: stdout
-# (bytes), stderr (normalized by test/corpus/lifecycle/normalize.py: goroutine
+# (bytes), stderr (normalized by test/lib/normalize.py: goroutine
 # ids, frame lines and hex addresses; a program with a `// m1a:traceback` line
 # keeps its frames' names and file:line, normalized by tbnorm.py), and the exit
 # status.
@@ -54,7 +54,7 @@ RUNNER="$ROOT/internal/backend/graalgo-bundle-run"
 command -v python3 >/dev/null || infra_die "python3 not found"
 infra_mktemp m1a
 TIMEOUT="${M1A_TIMEOUT:-60}"
-NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
+NORMALIZE="$ROOT/test/lib/normalize.py"
 
 # The toolexec tools, built by the tracked gc toolchain, and the
 # standard-library fork they build against (test/lib/toolexec.sh).
@@ -63,6 +63,8 @@ NORMALIZE="$ROOT/test/corpus/lifecycle/normalize.py"
 toolexec_setup
 # shellcheck source=../lib/gcoracle.sh
 . "$HERE/../lib/gcoracle.sh"
+# shellcheck source=../lib/batchrun.sh
+. "$HERE/../lib/batchrun.sh"
 
 if [ $# -eq 0 ]; then
     # The corpus programs that import nothing; all of test/m1a/programs (written for this
@@ -100,6 +102,17 @@ run_leg() { # <exe> <stdout> <stderr> -> exit status
 
 gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg "${bflags[@]}"; }
 
+# Phase 1: build both legs of every program (the gc leg replayed from
+# test/lib/gcoracle.sh's cache when unchanged) and queue the graalgo leg;
+# phase 2 runs the queue in one JVM (test/lib/batchrun.sh: a fresh context
+# per program; a program it must not share a process with runs in its own);
+# phase 3 compares.
+gg_proc() { # <n>: the graalgo leg in its own process -> exit status
+    TMPDIR="$TMP" run_leg "$TMP/w/$1/gg.bin" "$TMP/w/$1/gg.out" "$TMP/w/$1/gg.err"
+}
+declare -a P_PROG P_SRC P_CAT P_REASON
+declare -A GG_DIRECT=()
+batch_init
 n=0
 for prog in "${programs[@]}"; do
     n=$((n + 1))
@@ -123,16 +136,31 @@ for prog in "${programs[@]}"; do
     ldflags=$(head -20 "$hdr" | sed -n 's|^//m1a:ldflags \(.*\)$|\1|p' | head -1)
     bflags=()
     [ -n "$ldflags" ] && bflags=("-ldflags=$ldflags")
-    # The gc leg, replayed from test/lib/gcoracle.sh's cache when unchanged.
     gc_oracle "$w" "$w/mod" gc_live m1a "$TIMEOUT" "${bflags[@]}"
     gc_status=$(cat "$w/gc.status")
     if [ "$gc_status" = build ]; then
         reason="gc rejects the program (corpus bug)"
     elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" "${bflags[@]}" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(head -1 "$w/gg.build")"
+    elif batch_isolated "$w/mod"; then
+        st=0
+        gg_proc "$n" || st=$?
+        GG_DIRECT[$n]=$st
     else
-        gg_status=0
-        TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
+        batch_add "$n" "$w" "$w/gg.bin" /dev/null "$w/gg.out" "$w/gg.err" "$TIMEOUT"
+    fi
+    P_PROG[n]="$prog" P_SRC[n]="$src" P_CAT[n]="$category" P_REASON[n]="$reason"
+done
+
+batch_run "$RUNNER" gg_proc
+
+n=0
+for prog in "${programs[@]}"; do
+    n=$((n + 1))
+    w="$TMP/w/$n" src="${P_SRC[n]}" category="${P_CAT[n]}" reason="${P_REASON[n]}"
+    if [ -z "$reason" ]; then
+        gc_status=$(cat "$w/gc.status")
+        gg_status="${GG_DIRECT[$n]:-${BATCH_STATUS[$n]}}"
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
         norm="$NORMALIZE"
         # A program with a `// m1a:traceback` line compares its traceback frames too.

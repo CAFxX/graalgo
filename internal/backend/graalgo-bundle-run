@@ -39,9 +39,17 @@ done
 # docs/arch/toolexec-design.md §13 finding 4). The flag removes the trigger;
 # the defect is the runtime's and the flag goes when a GraalVM pin has it
 # fixed.
+# `--batch MANIFEST RESULTS`: the test gates' batch runner instead
+# (graalgo.launcher.BundleBatchMain, test/lib/batchrun.sh): many linked
+# programs in fresh contexts of this one JVM, same flags.
+MAIN=graalgo.launcher.BundleMain
+if [ "${1:-}" = --batch ]; then
+  MAIN=graalgo.launcher.BundleBatchMain
+  shift
+fi
 # shellcheck disable=SC2086
 exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED --add-exports java.base/jdk.internal.vm=ALL-UNNAMED -Xss32m -XX:-UsePerfData -XX:G1HeapRegionSize=32m \
   -Djava.lang.invoke.MethodHandle.CUSTOMIZE_THRESHOLD=-1 ${GRAALGO_JAVA_OPTS:-} \
   --sun-misc-unsafe-memory-access=allow \
   -Djava.io.tmpdir="${TMPDIR:-/tmp}" \
-  -cp "$CP" graalgo.launcher.BundleMain "$@"
+  -cp "$CP" "$MAIN" "$@"

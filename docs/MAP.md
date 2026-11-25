@@ -28,7 +28,7 @@ and is **deleted at the M3 cutover** — never build on it.
 | change the scheduler | [graalgo/sched/](../internal/backend/truffle/src/main/java/graalgo/sched/) (shared with v1) + the new path's adapter [graalgo/go/runtime/](../internal/backend/truffle/src/main/java/graalgo/go/runtime/) (`G`); [graalgo/safepoint/](../internal/backend/truffle/src/main/java/graalgo/safepoint/) | `make test-java-fast`, [tools/torture/](../tools/torture/), `make test-m1c` |
 | change the launcher / tool protocol | [internal/toolexec/cmd/](../internal/toolexec/cmd/) (`graalgo-launcher`, `graalgo-tool`, `graalgo-stub`, each with a README), runner [graalgo-bundle-run](../internal/backend/graalgo-bundle-run) | `make test-toolexec` |
 | add a differential program | new path: [test/m1a/programs/](../test/m1a/programs/) (no imports), [test/m1r/programs/](../test/m1r/programs/) (std), [test/m1c/programs/](../test/m1c/programs/) (sync/time/syscalls), [test/m1w13/programs/](../test/m1w13/programs/) (`unsafe`); a fuzz reproducer → [test/fuzz/repro/](../test/fuzz/repro/) | the dir's `run.sh` / make target |
-| add a v1-era corpus program | [test/corpus/](../test/corpus/README.md) + [test/differential/](../test/differential/README.md) (gc snapshot in [test/snapshots/](../test/snapshots/)) | `make snapshot-check SNAPSHOT_PROGRAMS=…` |
+| add a snapshot-corpus program | [test/differential/corpus/](../test/differential/corpus/README.md) (gc snapshot in [test/snapshots/](../test/snapshots/): `make snapshot`; runs on the new path) | `make snapshot-check SNAPSHOT_PROGRAMS=…` |
 | run the gates | [Makefile](../Makefile) header; `make quick` (inner loop, minutes, not evidence), `make check-repo` (docs-only, no JVM), `make check`, `make all` (per-push), `make pre-land` (before a lane reports done: `all` + external links + harness self-test + drift, timed); [AGENTS.md](../AGENTS.md) §2 | — |
 | see / cut what the gates cost | [test-profile.md](dev/test-profile.md) (profile, top costs, levers); `make test-times` (per-gate wall + CPU vs [test/duration-baseline.json](../test/duration-baseline.json)) | `make test-times` |
 | benchmark | [test/bench/](../test/bench/README.md), [performance.md](arch/performance.md), [north-star.md](arch/north-star.md) | `make bench-suite`, `make bench-realistic`, `make bench-m1a` |
@@ -84,16 +84,16 @@ the measured readiness, gaps and ordered deletion steps: [m3-plan.md](arch/m3-pl
 - launchers [graalgo-run](../internal/backend/graalgo-run) and
   [graalgo-sync-run](../internal/backend/graalgo-sync-run);
   [tools/gate1/](../tools/gate1/)
-- docs of the v1 format: [frontend-v1.md](arch/frontend-v1.md),
-  [frontend-v2.md](arch/frontend-v2.md) (historical),
+- docs of the v1 format: [frontend-v1.md](archive/frontend-v1.md),
+  [frontend-v2.md](archive/frontend-v2.md) (historical),
   [bridge-inventory.md](arch/bridge-inventory.md) (the frozen list)
 
 Still **v1-driven** today but not in §9.1 (they must be re-pointed at M3,
-see ADR-0017): `make snapshot-check` / [test/differential/](../test/differential/README.md),
+see ADR-0017): [test/differential/](../test/differential/README.md)'s conformance, typeparam and mutation oracles (`make snapshot-check` runs the new path since m3-plan D1),
 [test/regression/](../test/regression/), [test/e2e/](../test/e2e/),
-[test/jit/](../test/jit/), [test/corpus/lifecycle/](../test/corpus/lifecycle/),
+[test/jit/](../test/jit/),
 `make bench` ([test/bench/run.sh](../test/bench/run.sh)),
-[tools/fuzz/](../tools/fuzz/), [tools/fuzz-soak/](../tools/fuzz-soak/),
+[tools/fuzz-soak/](../tools/fuzz-soak/),
 [tools/mutation/](../tools/mutation/), [tools/godebug-diff/](../tools/godebug-diff/),
 [tools/run_stdlib_gate.sh](../tools/run_stdlib_gate.sh), `make fast-run`.
 
@@ -142,10 +142,11 @@ packages, test matrix), [abi-spike.md](arch/abi-spike.md),
 [tstring-bytecode-study.md](arch/tstring-bytecode-study.md) (WP-TR-AUDIT-12:
 TruffleString and Bytecode DSL go/no-go, ADR-0021/0022 proposed),
 [m3-plan.md](arch/m3-plan.md) (M3 readiness and deletion steps), [dev/](dev/).
-History (read for context only): [FEASIBILITY.md](arch/FEASIBILITY.md),
-[PHASES.md](arch/PHASES.md), [phases/](arch/phases/), [reviews/](arch/reviews/),
-[spikes/](arch/spikes/), [research/](arch/research/), [docs/spec/](spec/),
-[frontend-v1.md](arch/frontend-v1.md), [frontend-v2.md](arch/frontend-v2.md),
+History (read for context only), all under [docs/archive/](archive/)
+(ADR-0017 stage 1): [FEASIBILITY.md](archive/FEASIBILITY.md),
+[PHASES.md](archive/PHASES.md), [phases/](archive/phases/), [reviews/](archive/reviews/),
+[spikes/](archive/spikes/), [research/](archive/research/), [spec/](archive/spec/),
+[frontend-v1.md](archive/frontend-v1.md), [frontend-v2.md](archive/frontend-v2.md);
 [build-artifact-native-image.md](arch/build-artifact-native-image.md),
 [non-scalar-specialization-audit.md](arch/non-scalar-specialization-audit.md),
 [research/](../research/) (Phase-5 survey).

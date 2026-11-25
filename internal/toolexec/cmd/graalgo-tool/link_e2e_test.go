@@ -25,6 +25,7 @@ func (e *env) write(name, content string) {
 // registry — unifies linknamed variables, and records all of it in the
 // bundle.
 func TestLinkResolvesSymbols(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	e.write("main.go", `package main
 
@@ -90,6 +91,7 @@ func impl(x int) int {
 // Design §5.3 rule 3: a reachable function with neither a Go body nor an
 // intrinsic fails the link, naming the symbol; an unreachable one does not.
 func TestLinkFailsOnReachableUndefined(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	src := `package lib
 
@@ -128,6 +130,7 @@ func Unused() int {
 // producing a program that cannot run: the runtime's assembly and
 // compiler-provided functions have no intrinsics.
 func TestLinkAgainstUpstreamRuntimeFails(t *testing.T) {
+	t.Parallel()
 	e := setup(t)
 	os.Remove(e.toolLog)
 	out, err := goCmd(t, e.moduleDir, []string{

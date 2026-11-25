@@ -9,7 +9,7 @@
 Type-checks a single-file Go program with the vendored `go/*` packages and
 emits the `frontend/v1` typed-AST JSON document to stdout.
 
-- Wire format: [`../../docs/arch/frontend-v1.md`](../../docs/arch/frontend-v1.md) (normative)
+- Wire format: [`../../docs/archive/frontend-v1.md`](../../docs/archive/frontend-v1.md) (normative)
 - Vendoring: [`VENDORING.md`](VENDORING.md) (pinned revision, re-vendor procedure)
 - Java consumer: `graalgo.frontend.NodeFactory` ([`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/))
 
@@ -37,7 +37,7 @@ python3 tools/validate_frontend_v1.py --selftest                 # validator sel
 ```
 
 Regenerating goldens after an *intentional* wire change (must ship with a
-[`docs/arch/frontend-v1.md`](../../docs/arch/frontend-v1.md) update in
+[`docs/archive/frontend-v1.md`](../../docs/archive/frontend-v1.md) update in
 the same change):
 
 ```sh
@@ -80,4 +80,4 @@ The requirement status of GG-0069 (which superseded `GG-0066` and, before it,
 `GG-0012`), GG-0013 and GG-0044 lives in [requirements/](../../requirements/)
 (`tools/req trace GG-0069`); this
 README does not duplicate it. History:
-[CHECKPOINT.md](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).
+[CHECKPOINT.md](../../docs/archive/phases/phase1/CHECKPOINT.md) (WS-B section).

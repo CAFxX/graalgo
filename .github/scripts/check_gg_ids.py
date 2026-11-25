@@ -12,8 +12,8 @@ Second rule (a recurring error class): a SUPERSEDED or RETIRED id
 (requirements/<id>.yaml `status:`) cited in live docs or code fails unless
 the citation is marked as history — the line or an adjacent line says
 supersede(d)/retired/history/re-issued/formerly/"now GG-…" — or the file is
-a historical record (HISTORICAL: the registry itself, ADRs, the dated SPEC
-extract, the SPEC's own amendment trail).
+a historical record (HISTORICAL: the registry itself, ADRs,
+the SPEC's own amendment trail; the archived dated SPEC extract is skipped).
 
 Skipped: test fixtures that cite fake ids on purpose (FIXTURES), the archived research-era trees (ARCHIVED), which cite ids that
 were renumbered before the registry was frozen, and binary files. An id
@@ -31,11 +31,10 @@ ID = re.compile(r"\bGG-(?:[A-Z]+-)?\d{4}\b")
 # Test fixtures that cite fake ids on purpose (the req CLI's own tests
 # and this gate's test).
 FIXTURES = re.compile(r"^(tools/req/.*_test\.go|\.github/scripts/test_check_gg_ids\.py)$")
-ARCHIVED = ("docs/arch/phases/", "docs/arch/reviews/", "docs/arch/spikes/",  # dead-path-ok (archive)
-            "docs/arch/research/", "research/")
+ARCHIVED = ("docs/archive/", "research/")
 
 
-HISTORICAL = ("requirements/", "docs/dev/adr/", "docs/spec/spec-extract.md", "docs/arch/SPEC.md")
+HISTORICAL = ("requirements/", "docs/dev/adr/", "docs/arch/SPEC.md")
 DEAD_STATUS = re.compile(r"^status:\s*(superseded|retired)\s*$", re.M)
 HISTORY_MARK = re.compile(r"(?i)supersed|retire|histor|re-issu|formerly|\bnow GG-")
 

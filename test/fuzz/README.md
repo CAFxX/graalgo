@@ -14,5 +14,5 @@ Not per-push: `make fuzz-newpath N=200 SEED=1`, nightly in
   gate it belongs to ([test/m1a/](../m1a/README.md), [test/m1r/](../m1r/README.md), …)
 - [test_fuzz.py](test_fuzz.py) — the harness's own tests
 
-**Not here:** the v1-era fuzzers [tools/fuzz/](../../tools/fuzz/) and
-[tools/fuzz-soak/](../../tools/fuzz-soak/) (they drive `graalgo-sync-run`).
+**Not here:** the v1-era fuzzer [tools/fuzz-soak/](../../tools/fuzz-soak/)
+(it drives `graalgo-sync-run`; v1's `tools/fuzz` was deleted, m3-plan D0).

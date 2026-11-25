@@ -1,9 +1,10 @@
 # diffharness — differential-vs-gc smoke harness
 
-> **Status: shared harness, v1-driven gates.** "The product launcher" below
-> is v1's `graalgo-sync-run` ([backends-p3.json](backends-p3.json)); the
-> new path's gates are `test/m1*` ([docs/MAP.md](../../docs/MAP.md)). The
-> gc snapshot and the exclusion registers carry over to the new path at M3.
+> **Status: shared harness, mixed gates.** `make snapshot-check` runs the
+> **new path** ([backends-newpath.json](backends-newpath.json), m3-plan D1);
+> `run_conformance.sh`/`srctest`/`typeparam` and `make mutation` still run
+> v1's `graalgo-sync-run`/`graalgo-run` ([backends-p3.json](backends-p3.json),
+> [backends.json](backends.json)) until m3-plan D2/D3.
 
 The conformance net for graalgo (SPEC §5.1/§5.5): compile and run the same
 corpus programs under gc and graalgo, compare observables, report
@@ -12,13 +13,22 @@ divergences.
 Gates built on it (current):
 
 - `make snapshot-check` (per push, in `make all`): every corpus program
-  under the product launcher vs **gc's** committed snapshot
-  ([../snapshots/](../snapshots/)); expected divergences are reviewed,
-  reason-coded entries in [corpus-exclusions.yaml](corpus-exclusions.yaml)
-  and fail as STALE once they match gc.
+  on the new path vs **gc's** committed snapshot
+  ([../snapshots/](../snapshots/)): [newpath.sh](newpath.sh) sets up
+  graalgo-tool, the stub and the standard-library fork once
+  (`test/lib/toolexec.sh`), [newpath_build.sh](newpath_build.sh) builds each
+  program with `go build -toolexec graalgo-tool` exactly as gc's `go build
+  -o {BIN} {SRC}`, and the built programs run in one JVM, a fresh context
+  each (`batchRun`: `graalgo-bundle-run --batch`, below). Expected
+  divergences are reviewed, reason-coded entries in
+  [corpus-exclusions.yaml](corpus-exclusions.yaml) and fail as STALE once
+  they match gc.
 - `make mutation` (nightly): mutates graalgo itself
-  ([../../tools/mutation/](../../tools/mutation/)) and requires the gate
-  above to go red — the oracle validation of SPEC §5.7.
+  ([../../tools/mutation/](../../tools/mutation/)) and requires the
+  snapshot gate to go red — the oracle validation of SPEC §5.7. Its mutants
+  target v1, so it gates them on v1's backend with v1's register,
+  [corpus-exclusions-v1.yaml](corpus-exclusions-v1.yaml), until m3-plan
+  G6/D3.
 - `run_conformance.sh` (layer 2): GOROOT/test via the `srctest` adapter,
   expected divergences in [srctest-exclusions.yaml](srctest-exclusions.yaml).
 - `run.sh` (CI): harness self-test on gc-vs-gc only (the `validate`
@@ -41,7 +51,9 @@ toolchain root, or rely on `~/tools/go`, or on `go` in `PATH`.
 - `internal/harness/` — config, backend runner, normalizer, comparator, corpus
 - `internal/mutate/` — AST mutation generator (oracle validation)
 - `corpus/` — 45 small Go programs covering the language surface
-- `backends.json` — backend declarations (the seam)
+- `backends-newpath.json` — the snapshot gate's backends (gc-a, gc-b, the
+  new path); `backends-p3.json`, `backends.json` — v1's (conformance,
+  typeparam, mutation)
 - `mutations.txt` — mutation-validation manifest (`CLASS TARGET` lines)
 - `testdata/` — fixtures for harness unit tests
 
@@ -71,12 +83,26 @@ backends[0] (the reference); `run` compares every backend against the first.
 |---|---|---|---|
 | `gc-a` | `{GO}/bin/go build -o {BIN} {SRC}` | `{BIN}` | reference backend |
 | `gc-b` | same as gc-a | `{BIN}` | oracle twin for green/mutation runs |
-| `graalgo` | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | [backends-p3.json](backends-p3.json): product launcher `${GRAALGO_BACKEND_DIR}/graalgo-sync-run` (P3SyncMain); [backends.json](backends.json): phase-1 `graalgo-run` (`batch: true`, typeparam adapter) |
+| `graalgo` | `newpath_build.sh {BIN} {SRC}` | `{BIN}` | [backends-newpath.json](backends-newpath.json): the new path (`go build -toolexec graalgo-tool`, graalgo-bundle-run), batched |
+| `graalgo` (v1) | `{GRAALGO_RUN} --check {SRC}` | `{GRAALGO_RUN} {SRC}` | [backends-p3.json](backends-p3.json): product launcher `${GRAALGO_BACKEND_DIR}/graalgo-sync-run` (P3SyncMain); [backends.json](backends.json): phase-1 `graalgo-run` (`batch: true`, typeparam adapter) |
 
 `GRAALGO_BACKEND_DIR` defaults to `<repo>/internal/backend` in the Makefile and
 scripts. JVM backends declare `noiseSets: ["jvm"]`: one harness-owned
 definition of JVM stderr noise (Unsafe deprecation and HotSpot VM
 warnings). `diffharness run -backends gc-a,gc-b` selects backends.
+
+**Batched runs** (`batchRun`, `batchIsolatedFrom`; [internal/harness/batch.go](internal/harness/batch.go)):
+a backend whose run command is the built binary may declare a launcher that
+runs many built programs in one process, test/lib/batchrun.sh's protocol
+(`graalgo-bundle-run --batch <manifest> <results>`: each program in a fresh
+polyglot Context with its own stdio, working directory, `os.Args` and
+timeout, status 124 on a timeout). `snapshot check` then builds every
+program, runs the built ones in at most `-jobs` batch JVMs, and gives the
+rest their own process: a program whose sources match `BATCH_ISOLATED_RE`
+(read from the named file, batchrun.sh: one definition), and every program a
+batch did not finish (the JVM died: reported with its stderr, never a
+verdict by itself). `GRAALGO_BATCH=off` runs every program in its own
+process (equivalence checks, debugging).
 
 ## What is compared
 
