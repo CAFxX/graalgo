@@ -3,7 +3,7 @@
 **Date:** 2026-11-25
 **Status:** accepted by evidence (lane perf-frames, WP-TR-AUDIT-5 of
 [truffle-audit.md](../../arch/truffle-audit.md), finding F-8.1); implemented
-in full; the coordinator confirms. Decides SPEC amendment **A9**
+in full; confirmed by the coordinator 2026-11-25 (follow-up: the interpreter-only `fib` slowdown 249 → 488 ms is undiagnosed and tracked in performance.md §8.3). Decides SPEC amendment **A9**
 ([truffle-design.md](../../arch/truffle-design.md) T7), which the owner
 deferred pending benchmarks on 2026-11-18.
 **Scope:** the closure representation of the new path
