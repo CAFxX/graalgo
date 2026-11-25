@@ -17,7 +17,7 @@ public final class IntrinsicTable {
     private IntrinsicTable() {}
 
     public static final int VERSION = 1;
-    public static final String HASH = "19f049a59e81adcb";
+    public static final String HASH = "12842fbba98ebf9b";
 
     /** The root node implementing {@code symbol}, or null if it is not registered. */
     public static RootNode root(GoLanguage language, String symbol) {
@@ -304,6 +304,10 @@ public final class IntrinsicTable {
                 return new R_runtime_randn(language);
             case "runtime.runtimeError":
                 return new R_runtime_runtimeError(language);
+            case "runtime.typePkgPath":
+                return new R_runtime_typePkgPath(language);
+            case "runtime.typeString":
+                return new R_runtime_typeString(language);
             case "runtime.write":
                 return new R_runtime_write(language);
             case "sync.fatal":
@@ -2324,6 +2328,32 @@ public final class IntrinsicTable {
         public Object execute(VirtualFrame frame) {
             Object[] a = frame.getArguments();
             return RuntimeIntrinsics.runtime_runtimeError(this, (long) a[1]);
+        }
+    }
+
+    /** {@code runtime.typePkgPath}: {@code func(*internal/abi.Type) string}. */
+    static final class R_runtime_typePkgPath extends Root {
+        R_runtime_typePkgPath(GoLanguage language) {
+            super(language, "runtime.typePkgPath");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_typePkgPath(this, a[1]);
+        }
+    }
+
+    /** {@code runtime.typeString}: {@code func(*internal/abi.Type) string}. */
+    static final class R_runtime_typeString extends Root {
+        R_runtime_typeString(GoLanguage language) {
+            super(language, "runtime.typeString");
+        }
+
+        @Override
+        public Object execute(VirtualFrame frame) {
+            Object[] a = frame.getArguments();
+            return RuntimeIntrinsics.runtime_typeString(this, a[1]);
         }
     }
 

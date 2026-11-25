@@ -178,9 +178,16 @@ a semantic divergence: no program produces a wrong result, it fails fast.
   process does not die of the signal.
 - **`reflect.StructOf` types have no promoted methods**; upstream supports
   them only for some embedded-field shapes and panics for the rest.
-- **GODEBUG defaults** from `//go:debug` lines and `go.mod` are not recorded
-  at link time: `internal/godebug` sees the environment's setting only.
-  `runtime/metrics` has no `/godebug/non-default-behavior` samples.
+- **GODEBUG:** the runtime's own settings are `panicnil` only (the default
+  from `//go:debug` lines and `go.mod`, which cmd/go passes as
+  `-X runtime.godebugDefault`, then the environment, re-read when the program
+  changes `GODEBUG`); `internal/godebug` sees the same default and
+  environment. `runtime/metrics` has no `/godebug/non-default-behavior`
+  samples.
+- **`-X` and `//go:linkname`:** the link matches a `-X` setting against a
+  package's variables by their declared names; a string variable that
+  `//go:linkname` gives another symbol name is matched by its declared
+  name, where cmd/link matches the symbol name.
 - **Blocking I/O cost:** a `read`/`write` whose descriptor is not ready
   (an empty pipe, a full one, a terminal waiting for input) is handed to a
   thread outside the scheduler; ready descriptors — regular files always —

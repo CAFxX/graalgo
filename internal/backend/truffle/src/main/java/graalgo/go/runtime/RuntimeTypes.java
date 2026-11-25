@@ -7,6 +7,7 @@ import com.oracle.truffle.api.nodes.RootNode;
 import graalgo.go.types.GoType;
 import graalgo.go.types.Method;
 import graalgo.go.types.TypeTable;
+import graalgo.go.values.Flat;
 import graalgo.go.values.Iface;
 import graalgo.go.values.Str;
 import graalgo.language.GoLanguage;
@@ -18,13 +19,15 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * The language-level type universe: the {@link TypeTable} and the runtime's own error types
- * (the panic value model of {@code graalgo.runtime.RuntimeErrorTypes}: {@code runtime.errorString},
- * {@code runtime.plainError}, {@code runtime.boundsError}, {@code *runtime.TypeAssertionError},
- * {@code *runtime.PanicNilError}). Until the facade {@code runtime} package (toolexec W5)
- * declares them in Go, they are defined here with Java-implemented {@code Error()} and
- * {@code RuntimeError()} methods, so a recovered runtime panic satisfies {@code error} and
- * {@code runtime.Error} like any Go value. Their data word is the {@link GoErrorValue}.
+ * The language-level type universe: the {@link TypeTable} and the runtime's error types. The
+ * exported ones, {@code *runtime.TypeAssertionError} and {@code *runtime.PanicNilError}, are the
+ * facade runtime's Go declarations (stdlib/fork/runtime/error.go, BUG-0046), instantiated here
+ * from the running program's {@code runtime} package ({@link #attachRuntime}). The unexported
+ * ones of the panic value model of {@code graalgo.runtime.RuntimeErrorTypes} ({@code
+ * runtime.errorString}, {@code runtime.plainError}, {@code runtime.boundsError}) are defined here
+ * with Java-implemented {@code Error()} and {@code RuntimeError()} methods, so a recovered
+ * runtime panic satisfies {@code error} and {@code runtime.Error} like any Go value; their data
+ * word is the {@link GoErrorValue}.
  */
 public final class RuntimeTypes {
     /** A Java-implemented Go function: arguments in calling-convention form. */
@@ -63,34 +66,72 @@ public final class RuntimeTypes {
     private final GoLanguage language;
     private final Map<String, GoType> errorTypes = new HashMap<>();
     private final Map<String, RootCallTarget> shared = new ConcurrentHashMap<>();
+    /** The defined types of the running program's {@code runtime} package, by name. */
+    private volatile Function<String, GoType> runtimePackage;
 
     public RuntimeTypes(GoLanguage language) {
         this.language = language;
         for (String name : new String[] {"errorString", "plainError", "boundsError"}) {
-            errorTypes.put("runtime." + name, define(name, false));
-        }
-        for (String name : new String[] {"TypeAssertionError", "PanicNilError"}) {
-            errorTypes.put("*runtime." + name, table.pointer(define(name, true)));
+            errorTypes.put("runtime." + name, define(name));
         }
     }
 
-    private GoType define(String name, boolean pointer) {
-        GoType[] self = new GoType[1];
+    /** A value-receiver error type whose data word is the {@link GoErrorValue}. */
+    private GoType define(String name) {
         Map<String, Method> methods = new HashMap<>();
         // Identity-compared opaque data word: the underlying type only has to be a reference.
         GoType t = table.named("runtime", name, new GoType[0], () -> table.basic(GoType.UNSAFE_POINTER),
-                () -> pointer ? Map.of() : methods, () -> methods);
-        self[0] = t;
+                () -> methods, () -> methods);
         RootCallTarget error = new NativeRoot(language, "runtime." + name + ".Error",
                 args -> Str.of(((GoErrorValue) args[1]).errorString())).getCallTarget();
         RootCallTarget marker = new NativeRoot(language, "runtime." + name + ".RuntimeError", args -> null)
                 .getCallTarget();
         GoType errorSig = table.func(new GoType[0], new GoType[] {table.string}, false);
         GoType markerSig = table.func(new GoType[0], new GoType[0], false);
-        methods.put("Error", new Method("Error", new int[0], pointer, t, pointer, () -> error, () -> errorSig));
-        methods.put("RuntimeError", new Method("RuntimeError", new int[0], pointer, t, pointer, () -> marker,
+        methods.put("Error", new Method("Error", new int[0], false, t, false, () -> error, () -> errorSig));
+        methods.put("RuntimeError", new Method("RuntimeError", new int[0], false, t, false, () -> marker,
                 () -> markerSig));
         return t;
+    }
+
+    /**
+     * Attaches the running program's {@code runtime} package: {@code declared} returns the
+     * defined type it declares under a name (one program runs at a time per process).
+     */
+    public void attachRuntime(Function<String, GoType> declared) {
+        runtimePackage = declared;
+    }
+
+    private GoType runtimeType(String name) {
+        Function<String, GoType> declared = runtimePackage;
+        if (declared == null) {
+            throw new IllegalStateException("no runtime package attached: the program was not linked with the facade runtime");
+        }
+        return declared.apply(name);
+    }
+
+    /**
+     * gc's {@code &TypeAssertionError{iface, concrete, asserted, missingMethod}} as an {@code any}:
+     * the facade's struct with the types' descriptors ({@code iface}, {@code concrete} null for
+     * none).
+     */
+    @TruffleBoundary
+    public Iface typeAssertionError(GoType iface, GoType concrete, GoType asserted, String missingMethod) {
+        GoType t = runtimeType("TypeAssertionError");
+        Flat e = t.zeroFlat();
+        GoType.Field[] f = t.u().fields;
+        e.refs[f[0].refOff] = iface == null ? null : table.descriptors.typeWord(iface);
+        e.refs[f[1].refOff] = concrete == null ? null : table.descriptors.typeWord(concrete);
+        e.refs[f[2].refOff] = table.descriptors.typeWord(asserted);
+        e.refs[f[3].refOff] = Str.of(missingMethod);
+        return new Iface(table.pointer(t), e);
+    }
+
+    /** gc's {@code new(PanicNilError)} as an {@code any}. */
+    @TruffleBoundary
+    public Iface panicNilError() {
+        GoType t = runtimeType("PanicNilError");
+        return new Iface(table.pointer(t), t.zeroFlat());
     }
 
     /** The interface value of a runtime error. */

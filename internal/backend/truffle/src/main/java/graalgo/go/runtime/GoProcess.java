@@ -51,11 +51,28 @@ public final class GoProcess {
     /** {@code internal/godebug}'s update hook ({@code setUpdate}): called with the GODEBUG setting when it changes. */
     public volatile graalgo.go.values.Closure godebugUpdate;
 
-    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types) {
+    /** The link's {@code -X runtime.godebugDefault}: the program's default GODEBUG settings. */
+    public final String godebugDefault;
+    /** gc's {@code debug.panicnil}: 1 makes {@code panic(nil)} panic with a nil value. */
+    private volatile int panicNil;
+
+    public GoProcess(Flat[] globals, SchedulerCore sched, OutputStream err, TypeTable types, String godebugDefault) {
         this.globals = globals;
         this.sched = sched;
         this.err = err;
         this.types = types;
+        this.godebugDefault = godebugDefault;
+        this.panicNil = Godebug.startup("panicnil", godebugDefault, System.getenv("GODEBUG"));
+    }
+
+    public int panicNil() {
+        return panicNil;
+    }
+
+    /** gc {@code reparsedebugvars}: the GODEBUG environment variable changed to {@code env}. */
+    @TruffleBoundary
+    public void godebugChanged(String env) {
+        panicNil = Godebug.reparse("panicnil", godebugDefault, env, panicNil);
     }
 
     @TruffleBoundary
@@ -195,6 +212,9 @@ public final class GoProcess {
      * address of its data word, which the test normalizer masks.
      */
     private String renderValue(Object value) {
+        if (value == null) {
+            return "nil"; // panic(nil) under GODEBUG=panicnil=1
+        }
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e) {
             return indent(e.errorString());
@@ -238,6 +258,9 @@ public final class GoProcess {
      * any other value as {@code type <dynamic type>}.
      */
     private static String throwValueText(Object value) {
+        if (value == null) {
+            return "nil";
+        }
         Iface v = (Iface) value;
         if (v.data instanceof GoErrorValue e && e.typeName() != null) {
             return "type " + e.typeName();

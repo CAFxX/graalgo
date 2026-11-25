@@ -578,6 +578,11 @@ func link(args []string) {
 	// runtime.godebugDefault) and the module build info travel in the
 	// bundle; the backend applies them (design §3.6).
 	b := &bundle.Bundle{Runner: os.Getenv("GRAALGO_RUNNER"), X: fl.multi["X"], ModInfo: modinfo}
+	xs, err := golink.ParseX(fl.multi["X"])
+	if err != nil {
+		fatalf("link: %v", err)
+	}
+	var archives []string // per b.Packages entry
 	seenMain := false
 	for _, p := range paths {
 		gir, err := archive.Read(pkgFile[p], archive.IRMember)
@@ -592,6 +597,7 @@ func link(args []string) {
 			b.Main = p
 		}
 		b.Packages = append(b.Packages, bundle.Package{ImportPath: p, IR: gir})
+		archives = append(archives, pkgFile[p])
 	}
 	if !seenMain {
 		// cmd/go lists the main package in importcfg.link; be robust if
@@ -602,6 +608,7 @@ func link(args []string) {
 		}
 		b.Main = "main"
 		b.Packages = append(b.Packages, bundle.Package{ImportPath: "main", IR: gir})
+		archives = append(archives, mainArchive)
 	}
 	// Symbol resolution and reachability (design §5.3): a reachable
 	// function without a Go body and without an intrinsic fails the link.
@@ -613,6 +620,7 @@ func link(args []string) {
 		}
 		files[i] = f
 	}
+	applyX(b, files, xs, archives)
 	res, err := golink.Resolve(files, intrinsics.Registry)
 	if err != nil {
 		var le *golink.Error
@@ -653,5 +661,40 @@ func link(args []string) {
 	file := append(append(stub, enc...), bundle.Trailer(int64(len(stub)), int64(len(enc)))...)
 	if err := os.WriteFile(out, file, 0o755); err != nil {
 		fatalf("link: %v", err)
+	}
+}
+
+// applyX applies the link's -X settings to the packages' variable
+// initializers (golink.ApplyX) and re-encodes the packages it changed.
+// gc's verdict on a non-constant initializer is read from the package's gc
+// object, which the archive keeps next to the IR.
+func applyX(b *bundle.Bundle, files []*ir.File, xs []golink.XSetting, archives []string) {
+	if len(xs) == 0 {
+		return
+	}
+	changed, err := golink.ApplyX(files, xs, func(i int, symbol string) (bool, error) {
+		obj, err := archive.Read(archives[i], "_go_.o")
+		if err != nil {
+			return false, fmt.Errorf("%s: %v", archives[i], err)
+		}
+		return golink.StaticData(obj, symbol)
+	})
+	if err != nil {
+		var le *golink.Error
+		if errors.As(err, &le) {
+			// cmd/link reports every bad setting, then fails.
+			for _, problem := range le.Problems {
+				fmt.Fprintf(os.Stderr, "%s\n", problem)
+			}
+			os.Exit(2)
+		}
+		fatalf("link: %v", err)
+	}
+	for _, i := range changed {
+		data, err := ir.Encode(files[i])
+		if err != nil {
+			fatalf("link: %s: %v", b.Packages[i].ImportPath, err)
+		}
+		b.Packages[i].IR = data
 	}
 }

@@ -100,7 +100,8 @@ directory's README repeats its status.
     table, and the R15 gate that checks every entry against the roles
     derived from the standard library's own call sites (`Scan`, `Check`);
     [link/](../internal/toolexec/link/) is link-time
-    symbol resolution and reachability (toolexec-design §5.3).
+    symbol resolution and reachability (toolexec-design §5.3) and the
+    link's `-X` settings (§3.6).
     Tested by `make test-toolexec`.
   - [frontend/](../internal/frontend/) — Go source → IR. Moved here from
     `phases/phase1/frontend/` (code lane 2, 2026-10-13). The main Go module
@@ -444,7 +445,8 @@ directory's README repeats its status.
     is thin on (open-coded and chained defers, Goexit, recover through
     wrappers, range-over-func, the flat value model, interfaces, generics,
     goroutines, bounds and conversion edge cases);
-    [multipkg/](../test/m1a/multipkg/) holds multi-package modules.
+    [multipkg/](../test/m1a/multipkg/) holds multi-package modules
+    (`xflags/`: link `-X`, built with its `//m1a:ldflags` line).
     [defer_path.sh](../test/m1a/defer_path.sh) pins GG-0071's open-coding
     limit and runs the defer programs with every function forced onto the
     chain.

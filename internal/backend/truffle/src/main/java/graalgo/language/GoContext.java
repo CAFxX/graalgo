@@ -284,7 +284,8 @@ public final class GoContext {
             SchedulerCore sched = newScheduler(gmp);
             scheduler = sched;
             graalgo.go.runtime.GoProcess p =
-                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types);
+                    new graalgo.go.runtime.GoProcess(program.newGlobals(), sched, env.err(), program.types,
+                            program.godebugDefault());
             process = p;
             SchedulerCore prev = SchedulerCore.install(sched);
             sched.start();
