@@ -350,7 +350,11 @@ directory's README repeats its status.
     [tools/probe.go](../test/m1r/tools/probe.go) and runs Truffle tools on it
     (an `ExecutionListener` on statements and roots in both goroutine modes,
     a collecting `CPUSampler`: Go names and file:line, both modes;
-    ADR-0020; run by `make test-goroutine-modes`).
+    ADR-0020; run by `make test-goroutine-modes`);
+    [leak.sh](../test/m1r/leak.sh) runs
+    [leak/cycle.go](../test/m1r/leak/cycle.go) in successive contexts of one
+    JVM and fails on a leaked thread or live-heap growth (BUG-0052; same
+    target).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r

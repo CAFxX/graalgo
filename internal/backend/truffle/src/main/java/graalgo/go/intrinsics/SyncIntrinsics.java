@@ -98,12 +98,28 @@ final class SyncIntrinsics {
 
     /** gc's {@code semTabSize}. */
     private static final int ROOTS = 251;
-    private static final Root[] TABLE = new Root[ROOTS];
 
-    static {
-        for (int i = 0; i < ROOTS; i++) {
-            TABLE[i] = new Root();
+    /**
+     * The process's {@code semtable}, created on first use. Per process, never static: its
+     * queues hold the waiters (goroutines, the addresses' objects) a closed context left parked,
+     * which a static table kept alive with their whole program (BUG-0052).
+     */
+    private static Root[] table(Node node) {
+        GoProcess p = GoProcess.get(node);
+        Object t = p.semtable;
+        if (t == null) {
+            synchronized (p) {
+                t = p.semtable;
+                if (t == null) {
+                    Root[] roots = new Root[ROOTS];
+                    for (int i = 0; i < ROOTS; i++) {
+                        roots[i] = new Root();
+                    }
+                    p.semtable = t = roots;
+                }
+            }
         }
+        return (Root[]) t;
     }
 
     private static Addr addr(Node node, Object p) {
@@ -113,8 +129,8 @@ final class SyncIntrinsics {
         return new Addr(Unsafe.referent(p), Unsafe.offset(p));
     }
 
-    private static Root rootFor(Addr a) {
-        return TABLE[Math.floorMod(a.hashCode(), ROOTS)];
+    private static Root rootFor(Node node, Addr a) {
+        return table(node)[Math.floorMod(a.hashCode(), ROOTS)];
     }
 
     /** gc's {@code cansemacquire}: decrement {@code *addr} if it is positive. */
@@ -138,7 +154,7 @@ final class SyncIntrinsics {
         }
         SchedulerCore sched = SchedulerCore.current();
         Addr a = addr(node, addr);
-        Root root = rootFor(a);
+        Root root = rootFor(node, a);
         Waiter w = new Waiter(sched.currentGoroutine(), 0);
         for (;;) {
             synchronized (root) {
@@ -162,7 +178,7 @@ final class SyncIntrinsics {
     @TruffleBoundary
     private static void release(Node node, Object addr, boolean handoff) {
         Addr a = addr(node, addr);
-        Root root = rootFor(a);
+        Root root = rootFor(node, a);
         AtomicIntrinsics.sync_atomic_AddUint32(node, addr, 1);
         if (root.nwait == 0) {
             return; // nobody waits anywhere in this root (checked after the add: no lost wakeup)
@@ -252,7 +268,7 @@ final class SyncIntrinsics {
     @TruffleBoundary
     static void sync_runtime_notifyListWait(Node node, Object l, long t) {
         Addr a = addr(node, l);
-        Root root = rootFor(a);
+        Root root = rootFor(node, a);
         SchedulerCore sched = SchedulerCore.current();
         synchronized (root) {
             if (less(t, AtomicIntrinsics.sync_atomic_LoadUint32(node, notifyField(l)))) {
@@ -270,7 +286,7 @@ final class SyncIntrinsics {
             return;
         }
         Addr a = addr(node, l);
-        Root root = rootFor(a);
+        Root root = rootFor(node, a);
         ArrayDeque<Waiter> q;
         synchronized (root) {
             q = root.queues.remove(a);
@@ -291,7 +307,7 @@ final class SyncIntrinsics {
             return;
         }
         Addr a = addr(node, l);
-        Root root = rootFor(a);
+        Root root = rootFor(node, a);
         Waiter found = null;
         synchronized (root) {
             long t = AtomicIntrinsics.sync_atomic_LoadUint32(node, notify);

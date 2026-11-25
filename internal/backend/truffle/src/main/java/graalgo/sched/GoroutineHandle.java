@@ -137,6 +137,12 @@ public final class GoroutineHandle {
     volatile long quantumDeadlineNanos;
 
     /**
+     * Depth of {@link SchedulerCore#disablePreemption} sections (gc's {@code m.locks}). Only the
+     * goroutine itself reads or writes it, on its own thread.
+     */
+    int preemptOff;
+
+    /**
      * Wake action for {@code parkCurrent(Runnable)}; runs on the woken
      * goroutine's own vthread immediately after resume. Set before the
      * PARKED token is offered; consumed on resume.
