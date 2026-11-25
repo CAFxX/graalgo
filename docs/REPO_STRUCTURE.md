@@ -329,6 +329,10 @@ directory's README repeats its status.
     path; [gcoracle.sh](../test/lib/gcoracle.sh) replays their gc leg from
     a content-addressed cache; [jvmcds.sh](../test/lib/jvmcds.sh) gives
     their runner JVMs a class-data-sharing archive;
+    [batchrun.sh](../test/lib/batchrun.sh) runs their graalgo legs in one
+    JVM, a fresh context per program (`graalgo-bundle-run --batch`,
+    `graalgo.launcher.BundleBatchMain`; a program that kills the JVM and
+    every later one rerun in their own processes);
     [gates.py](../test/lib/gates.py) runs the gates timed (`make
     test-times`, `make pre-land`, CI) and ratchets their CPU time against
     [duration-baseline.json](../test/duration-baseline.json) (CI's:
@@ -355,7 +359,10 @@ directory's README repeats its status.
     [leak.sh](../test/m1r/leak.sh) runs
     [leak/cycle.go](../test/m1r/leak/cycle.go) in successive contexts of one
     JVM and fails on a leaked thread or live-heap growth (BUG-0052; same
-    target).
+    target); [batch.sh](../test/m1r/batch.sh) plants the batch runner's
+    hazards ([batch/](../test/m1r/batch/): a leaked goroutine, a hang, a
+    hard exit, a JVM-killing raw exit, a divergence) and checks each
+    program still gets its own process's verdict (same target).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r

@@ -75,6 +75,8 @@ toolexec_setup
 export GODEBUG=cpu.all=off
 # shellcheck source=../lib/gcoracle.sh
 . "$HERE/../lib/gcoracle.sh"
+# shellcheck source=../lib/batchrun.sh
+. "$HERE/../lib/batchrun.sh"
 
 if [ $# -eq 0 ]; then
     mapfile -t programs < <(cd "$ROOT" && ls test/m1c/programs/*.go | sort)
@@ -89,9 +91,21 @@ run_leg() { # <exe> <stdout> <stderr> [NAME=VALUE...] -> exit status
     return "$status"
 }
 
-# compare <src> <workdir> -> sets $reason ("" when graalgo matches gc)
-compare() {
-    local src="$1" w="$2" gc_status gg_status
+# prepare <src> <workdir> <id> <queue|direct> -> sets $reason (a build
+# failure; "" when both legs built): builds both legs and queues the graalgo
+# leg in the batch (test/lib/batchrun.sh), or runs it now in its own process
+# (direct: the probes, which decide what runs; a program with its own
+# environment; batch_isolated). judge <src> <workdir> <id> then sets $reason
+# ("" when graalgo matches gc).
+declare -A GG_ENVS=() GG_DIRECT=()
+gg_proc() { # <id>: the graalgo leg in its own process -> exit status
+    local w="${GG_W[$1]}" envs=()
+    eval "envs=(${GG_ENVS[$1]})"
+    TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" "${envs[@]}"
+}
+declare -A GG_W=()
+prepare() {
+    local src="$1" w="$2" id="$3" how="$4" gc_status st
     mkdir -p "$w/mod"
     cp "$src" "$w/mod/main.go"
     printf 'module m1c/p\n\ngo 1.27\n' > "$w/mod/go.mod"
@@ -118,20 +132,35 @@ compare() {
     elif ! ( cd "$w/mod" && GOFLAGS="$goflags" toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
     else
-        gg_status=0
-        TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" "${envs[@]}" || gg_status=$?
-        infra_check_run "$src" "$gg_status" "$w/gg.err"
-        python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
-        grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"
-        if [ "$gc_status" -ne "$gg_status" ]; then
-            reason="exit status $gg_status, gc $gc_status"
-        elif ! cmp -s "$w/gc.out" "$w/gg.out"; then
-            reason="stdout differs"
-        elif ! cmp -s "$w/gc.nerr" "$w/gg.nerr"; then
-            reason="stderr differs"
-        elif [ ! -s "$w/gc.nerr" ] && [ ! -s "$w/gc.out" ]; then
-            reason="the program prints nothing (corpus bug: nothing was compared)"
+        GG_W[$id]="$w"
+        GG_ENVS[$id]=""
+        [ "${#envs[@]}" -gt 0 ] && GG_ENVS[$id]="$(printf '%q ' "${envs[@]}")"
+        if [ "$how" = direct ] || [ "${#envs[@]}" -gt 0 ] || batch_isolated "$w/mod"; then
+            st=0
+            gg_proc "$id" || st=$?
+            GG_DIRECT[$id]=$st
+        else
+            batch_add "$id" "$w" "$w/gg.bin" /dev/null "$w/gg.out" "$w/gg.err" "$TIMEOUT"
         fi
+    fi
+}
+
+judge() { # <src> <workdir> <id>
+    local src="$1" w="$2" id="$3" gc_status gg_status
+    [ -n "$reason" ] && return 0
+    gc_status=$(cat "$w/gc.status")
+    gg_status="${GG_DIRECT[$id]:-${BATCH_STATUS[$id]}}"
+    infra_check_run "$src" "$gg_status" "$w/gg.err"
+    python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
+    grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"
+    if [ "$gc_status" -ne "$gg_status" ]; then
+        reason="exit status $gg_status, gc $gc_status"
+    elif ! cmp -s "$w/gc.out" "$w/gg.out"; then
+        reason="stdout differs"
+    elif ! cmp -s "$w/gc.nerr" "$w/gg.nerr"; then
+        reason="stderr differs"
+    elif [ ! -s "$w/gc.nerr" ] && [ ! -s "$w/gc.out" ]; then
+        reason="the program prints nothing (corpus bug: nothing was compared)"
     fi
 }
 
@@ -141,7 +170,8 @@ probe() { # <name> -> 0 when the probe matches gc; sets $probe_reason
     if [ -z "${probe_state[$name]+x}" ]; then
         local psrc="$ROOT/test/m1c/probes/$name.go"
         [ -f "$psrc" ] || { echo "run.sh: no such probe: $name" >&2; exit "$USAGE_EXIT"; }
-        compare "$psrc" "$TMP/probe/$name"
+        prepare "$psrc" "$TMP/probe/$name" "probe-$name" direct
+        judge "$psrc" "$TMP/probe/$name" "probe-$name"
         probe_state[$name]="$reason"
         rm -rf "$TMP/probe/$name"
     fi
@@ -154,6 +184,8 @@ fail=0
 pending=0
 report="${M1C_REPORT:-}"
 [ -n "$report" ] && : > "$report"
+batch_init
+declare -A P_STATE=() # n -> "skip" (pending/failed on a probe) or the build reason
 n=0
 for prog in "${programs[@]}"; do
     n=$((n + 1))
@@ -170,10 +202,23 @@ for prog in "${programs[@]}"; do
             echo "PENDING $prog: probe $req: $probe_reason"
             [ -n "$report" ] && echo "PENDING $prog: probe $req: $probe_reason" >> "$report"
         fi
+        P_STATE[$n]=skip
         continue
     fi
+    prepare "$src" "$TMP/w/$n" "$n" queue
+    P_STATE[$n]="$reason"
+done
+
+batch_run "$RUNNER" gg_proc
+
+n=0
+for prog in "${programs[@]}"; do
+    n=$((n + 1))
+    [ "${P_STATE[$n]}" = skip ] && continue
+    case "$prog" in /*) src="$prog" ;; *) src="$ROOT/$prog" ;; esac
     w="$TMP/w/$n"
-    compare "$src" "$w"
+    reason="${P_STATE[$n]}"
+    judge "$src" "$w" "$n"
     if [ -z "$reason" ]; then
         pass=$((pass + 1))
         [ -n "$report" ] && echo "PASS $prog" >> "$report"

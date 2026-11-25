@@ -82,6 +82,8 @@ run_leg() { # <dir> <stdout> <stderr> <stdin> <src> -> exit status
 
 # shellcheck source=../lib/gcoracle.sh
 . "$HERE/../lib/gcoracle.sh"
+# shellcheck source=../lib/batchrun.sh
+. "$HERE/../lib/batchrun.sh"
 gc_live() {
     if ( cd "$w/mod" && "$GO" build -o "$w/gc/prog" . ) >"$w/gc.build" 2>&1; then
         local st=0
@@ -96,6 +98,15 @@ pass=0
 fail=0
 report="${M1D_REPORT:-}"
 [ -n "$report" ] && : > "$report"
+# Build every program (phase 1), run the graalgo legs in one JVM
+# (test/lib/batchrun.sh; a program with an env directive, or one that must
+# not share a process, runs in its own), then compare (phase 2).
+gg_proc() { # <n>: the graalgo leg in its own process -> exit status
+    run_leg "$TMP/w/$1/gg" "$TMP/w/$1/gg.out" "$TMP/w/$1/gg.err" "${P_STDIN[$1]}" "${P_SRC[$1]}"
+}
+declare -a P_SRC P_STDIN P_REASON
+declare -A GG_DIRECT=()
+batch_init
 n=0
 for prog in "${programs[@]}"; do
     n=$((n + 1))
@@ -119,9 +130,29 @@ for prog in "${programs[@]}"; do
         reason="gc rejects the program (corpus bug)"
     elif ! ( cd "$w/mod" && toolexec_build "$w/gg/prog" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
+    fi
+    P_SRC[n]="$src" P_STDIN[n]="$stdin" P_REASON[n]="$reason"
+    if [ -n "$reason" ]; then
+        :
+    elif [ -n "$(directive "$src" env)" ] || batch_isolated "$w/mod"; then
+        st=0
+        gg_proc "$n" || st=$?
+        GG_DIRECT[$n]=$st
     else
-        gg_status=0
-        run_leg "$w/gg" "$w/gg.out" "$w/gg.err" "$stdin" "$src" || gg_status=$?
+        read -r -a args <<< "$(directive "$src" args | head -1)"
+        batch_add "$n" "$w/gg" ./prog "$stdin" "$w/gg.out" "$w/gg.err" "$TIMEOUT" "${args[@]}"
+    fi
+done
+
+batch_run "$RUNNER" gg_proc
+
+n=0
+for prog in "${programs[@]}"; do
+    n=$((n + 1))
+    w="$TMP/w/$n" reason="${P_REASON[n]}"
+    if [ -z "$reason" ]; then
+        gc_status=$(cat "$w/gc.status")
+        gg_status="${GG_DIRECT[$n]:-${BATCH_STATUS[$n]}}"
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
         python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
         grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"

@@ -78,12 +78,23 @@ run_leg() { # <exe> <stdout> <stderr> -> exit status
 
 # shellcheck source=../lib/gcoracle.sh
 . "$HERE/../lib/gcoracle.sh"
+# shellcheck source=../lib/batchrun.sh
+. "$HERE/../lib/batchrun.sh"
 gc_live() { gc_leg_build_run "$w/mod" "$w" run_leg; }
 
 pass=0
 fail=0
 report="${M1R_REPORT:-}"
 [ -n "$report" ] && : > "$report"
+# Build every program (phase 1), run the graalgo legs in one JVM
+# (test/lib/batchrun.sh; a program that must not share a process runs in
+# its own), then compare (phase 2).
+gg_proc() { # <n>: the graalgo leg in its own process -> exit status
+    TMPDIR="$TMP" run_leg "$TMP/w/$1/gg.bin" "$TMP/w/$1/gg.out" "$TMP/w/$1/gg.err"
+}
+declare -a P_SRC P_REASON
+declare -A GG_DIRECT=()
+batch_init
 n=0
 for prog in "${programs[@]}"; do
     n=$((n + 1))
@@ -101,9 +112,25 @@ for prog in "${programs[@]}"; do
         reason="gc rejects the program (corpus bug)"
     elif ! ( cd "$w/mod" && toolexec_build "$w/gg.bin" "$RUNNER" ) >"$w/gg.build" 2>&1; then
         reason="graalgo-tool build failed: $(grep -v '^#' "$w/gg.build" | head -1)"
+    elif batch_isolated "$w/mod"; then
+        st=0
+        gg_proc "$n" || st=$?
+        GG_DIRECT[$n]=$st
     else
-        gg_status=0
-        TMPDIR="$TMP" run_leg "$w/gg.bin" "$w/gg.out" "$w/gg.err" || gg_status=$?
+        batch_add "$n" "$w" "$w/gg.bin" /dev/null "$w/gg.out" "$w/gg.err" "$TIMEOUT"
+    fi
+    P_SRC[n]="$src" P_REASON[n]="$reason"
+done
+
+batch_run "$RUNNER" gg_proc
+
+n=0
+for prog in "${programs[@]}"; do
+    n=$((n + 1))
+    w="$TMP/w/$n" src="${P_SRC[n]}" reason="${P_REASON[n]}"
+    if [ -z "$reason" ]; then
+        gc_status=$(cat "$w/gc.status")
+        gg_status="${GG_DIRECT[$n]:-${BATCH_STATUS[$n]}}"
         infra_check_run "$prog" "$gg_status" "$w/gg.err"
         python3 "$NORMALIZE" < "$w/gc.err" > "$w/gc.nerr"
         grep -av '^WARNING: \|^NOTE: Picked up' "$w/gg.err" | python3 "$NORMALIZE" > "$w/gg.nerr"

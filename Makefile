@@ -796,7 +796,9 @@ test-java-fast: java-test-classes java-test-lists-check
 # (EncapsulatingNodeReference) see goroutines migrate between carriers;
 # (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
 # and leak-free, in both modes; (4) test/m1r/leak.sh: successive contexts in
-# one JVM leave no thread and no live heap behind (BUG-0052), in both modes.
+# one JVM leave no thread and no live heap behind (BUG-0052), in both modes;
+# (5) test/m1r/batch.sh: the planted hazards of the gates' batch runner
+# (test/lib/batchrun.sh: every m1* gate runs its graalgo legs in one JVM).
 THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go test/m1a/programs/traceback_goroutine.go
 THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go test/m1r/programs/callers.go
 THREAD_MODE_M1C := test/m1c/programs/sync_contention.go test/m1c/programs/time_timers.go
@@ -814,6 +816,7 @@ test-goroutine-modes: build java-test-classes
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then
 # decides. Logs live under the gitignored out/ dirs. Each run is also
 # streamed (tee) so a hang or a lost runner leaves its progress in the CI
+	GO="$(GO)" test/m1r/batch.sh
 # log instead of nothing (the CLASS lines carry per-class timings).
 JT_SLOW_LOGS := $(JT_BK)/truffle/out/test-tmp/java-slow-truffle.log $(JT_BK)/truffle/out/test-tmp/java-slow-runtime.log $(JT_BK)/interop/out/test-tmp/java-slow-interop.log
 test-java-slow: java-test-classes java-test-lists-check
