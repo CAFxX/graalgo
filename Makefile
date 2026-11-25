@@ -407,6 +407,13 @@ bench: build
 # in-test watchdog is possible (timers do not fire under graalgo, PKG-048),
 # so a reintroduced hang is killed here and fails the gate instead of
 # hanging CI. Post-fix the suite passes in ~75s.
+# A directory's optional `jvm.opts` file adds JVM flags after the caller's
+# GRAALGO_JAVA_OPTS (so it can raise a heap cap): tls-wrap-hang's test binary
+# (crypto/tls and its dependencies) is a ~300 MB v1 JSON wire document, held
+# several times over while the v1 runner builds its AST (~1.5 GB live at the
+# peak), so the 2 GB cap of AGENTS.md §7 and CI's full-suite job is an OOM
+# there. v1-only (the new path loads a binary GIR bundle), deleted at M3:
+# BUG-0053.
 REGRESSION_TEST_DIRS := $(wildcard test/regression/*/)
 REGRESSION_TMP := $(CURDIR)/test/regression/.tmp
 test-regression: generate build graalgo
@@ -414,7 +421,9 @@ test-regression: generate build graalgo
 	mkdir -p $(REGRESSION_TMP) && \
 	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
 	eval "$$(bash test/lib/jvmcds.sh sync-env)"; \
-	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
+	for d in $(REGRESSION_TEST_DIRS); do \
+	  GRAALGO_JAVA_OPTS="$${GRAALGO_JAVA_OPTS:-} $$(cat $${d}jvm.opts 2>/dev/null)" timeout 600 ./graalgo test ./$$d || exit 1; \
+	done
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the
@@ -696,7 +705,10 @@ JAVA_TEST_OPTS ?=
 # live set grows ~130 MB per run (measured: 6.4 GB after 50, G1 evacuation
 # failures at 4 GB, "internal error building AST: Java heap space"): it gets
 # its own cap, above CI's global JAVA_TEST_OPTS one (a cap only: the JVM uses
-# what it needs). The retention itself is a product leak, not a test bug.
+# what it needs). The retention is v1's launcher by design (BUG-0051): P3SyncMain
+# never closes its context, so each run's carriers, drainer and timer threads
+# stay alive and hold the whole run; v1 is deleted at M3, and the new path's
+# context lifecycle is gated by test/m1r/leak.sh (BUG-0052).
 JT_INTEROP_SLOW_OPTS ?= -Xmx8g
 # run_java_tests <module> <classpath> <classes> <extra JVM flags>; the extra
 # flags come AFTER JAVA_TEST_OPTS so a call can override a global heap cap.
@@ -743,7 +755,8 @@ test-java-fast: java-test-classes java-test-lists-check
 # programs in carrier mode under -ea, so Truffle's per-thread assertions
 # (EncapsulatingNodeReference) see goroutines migrate between carriers;
 # (3) test/m1r/cancel.sh: Context.close(true) of a running program, bounded
-# and leak-free, in both modes.
+# and leak-free, in both modes; (4) test/m1r/leak.sh: successive contexts in
+# one JVM leave no thread and no live heap behind (BUG-0052), in both modes.
 THREAD_MODE_JAVA := graalgo.sched.LifecycleTest graalgo.sched.ChannelTest graalgo.sched.WakeupRaceStressTest graalgo.jfr.JfrEventsTest
 THREAD_MODE_M1A := test/m1a/programs/concurrency.go test/m1a/programs/goroutine_panic.go
 THREAD_MODE_M1R := test/m1r/programs/preempt_spin.go test/m1r/programs/select_send_races.go test/m1r/programs/carrier_migration.go
@@ -756,6 +769,7 @@ test-goroutine-modes: build java-test-classes
 	GRAALGO_JAVA_OPTS="$(THREAD_MODE_OPTS)" GO="$(GO)" test/m1c/run.sh $(THREAD_MODE_M1C)
 	GRAALGO_JAVA_OPTS="$(GRAALGO_JAVA_OPTS) -ea" GO="$(GO)" test/m1r/run.sh test/m1r/programs/carrier_migration.go $(THREAD_MODE_M1A)
 	GO="$(GO)" test/m1r/cancel.sh
+	GO="$(GO)" test/m1r/leak.sh
 
 # Each module's run is logged (exit status ignored: a JVM crash or INFRA
 # exit shows up as a class with no CLASS line); quarantine_verdict.py then

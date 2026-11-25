@@ -345,7 +345,10 @@ directory's README repeats its status.
     embedder (`Context.close(true)` with goroutines blocked everywhere,
     system calls included; thread-local action reach; `os.Exit` and panic
     as Truffle hard exits; both goroutine modes, ADR-0019; run by `make
-    test-goroutine-modes`).
+    test-goroutine-modes`); [leak.sh](../test/m1r/leak.sh) runs
+    [leak/cycle.go](../test/m1r/leak/cycle.go) in successive contexts of one
+    JVM and fails on a leaked thread or live-heap growth (BUG-0052; same
+    target).
   - [m1c/](../test/m1c/) — the M1c gate (`make test-m1c`, ~15 s, per-push in `make all`):
     `sync`'s semaphores and notify lists, `internal/bytealg`, `time` and the
     syscall executor, with [run.sh](../test/m1c/run.sh) following the m1r

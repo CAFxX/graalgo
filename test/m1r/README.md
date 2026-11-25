@@ -21,6 +21,9 @@ design, so `make test-goroutine-modes` (which reruns a few programs in that mode
 leaves it out. [cancel.sh](cancel.sh) builds [cancel/probe.go](cancel/probe.go)
 (goroutines parked and spinning) and cancels it with
 `Context.close(true)` in both modes: bounded, cancelled, no thread left.
+[leak.sh](leak.sh) builds [leak/cycle.go](leak/cycle.go) and runs it in 12
+successive contexts of one JVM per mode (`graalgo.launcher.ContextLeakProbe`):
+every run right, no thread left, live heap flat (≤ 2 MB per cycle; BUG-0052).
 
 **Not here:** `sync`/`time`/syscall programs ([test/m1c/](../m1c/README.md)),
 import-free language programs ([test/m1a/](../m1a/README.md)).

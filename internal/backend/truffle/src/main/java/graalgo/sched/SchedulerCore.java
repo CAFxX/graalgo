@@ -723,6 +723,31 @@ public final class SchedulerCore {
     }
 
     /**
+     * Starts a section in which the calling goroutine is not preempted (gc's {@code acquirem}:
+     * a goroutine holding a runtime lock runs with preemption off). For runtime code that holds
+     * a Java monitor across guest code: in carrier mode a quantum park is a continuation yield,
+     * and the JDK freezes a continuation together with the monitors it holds, so every carrier
+     * that then contends for the monitor blocks (BLOCKED, not parked: it is never given back)
+     * while the frozen owner waits for one of them to run it again — BUG-0050. The section's
+     * code must not park in any other way; the deferred quantum park happens at the first poll
+     * after {@link #enablePreemption} (the deadline stays expired). No-op off goroutines.
+     */
+    public void disablePreemption() {
+        GoroutineHandle h = currentHandle.get();
+        if (h != null) {
+            h.preemptOff++;
+        }
+    }
+
+    /** Ends a {@link #disablePreemption} section. */
+    public void enablePreemption() {
+        GoroutineHandle h = currentHandle.get();
+        if (h != null) {
+            h.preemptOff--;
+        }
+    }
+
+    /**
      * Quantum check for the calling thread. No handle (not a scheduler
      * vthread) &rarr; no-op, so scheduler-less Phase-1 runs are
      * unaffected even with the replacement Safepoint on the classpath.
@@ -748,7 +773,7 @@ public final class SchedulerCore {
         // drainer). Pin sections are short and non-blocking, so the
         // yield simply moves to the first poll after unpin — the
         // deadline stays expired, so no quantum is lost.
-        if (PinLock.isHeldByCurrentThread()) {
+        if (h.preemptOff > 0 || PinLock.isHeldByCurrentThread()) {
             return h;
         }
         if (exiting) {
